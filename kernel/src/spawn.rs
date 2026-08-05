@@ -138,82 +138,55 @@ pub fn sys_spawn(
 
 /// Initialise a fresh task's saved context.
 ///
-/// HARDWARE-UNVERIFIED window setup: `windowstart = 1`, `windowbase = 0` give a
-/// single live frame; `PS.CALLINC = 1` matches a `call4`-style entry so the
-/// function's `entry` prologue rotates correctly. `a[0]` points at the task-exit
-/// trampoline so a task that returns is cleanly de-scheduled rather than
-/// jumping to garbage (plan W1.3). These values need on-target tuning at G1.
+/// The task is not entered directly. `pc` points at `_flint_task_start`, an
+/// assembly trampoline with no `entry` of its own, which reaches the task
+/// through a real `callx4` so the hardware -- not this function -- establishes
+/// CALLINC, the return address and the window state.
+///
+/// Hand-synthesising that state is what failed on hardware: a real `call4`
+/// leaves the return address in the caller's a4, which only becomes the
+/// callee's a0 once `entry` rotates the window. Putting it in a0 here produced
+/// a layout the hardware never generates, and the task's first `entry` never
+/// retired.
 unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top: u32) {
-    ctx.pc = entry as u32;
-    // Kernel mode, not user mode.
-    //
-    // Flint runs in a single protection domain by design -- there is no MPU and
-    // no privilege separation -- and startup.S runs the kernel itself with
-    // PS.UM clear. Giving tasks PS.UM=1 bought nothing, made them the only code
-    // in the system running in user mode, and routed their exceptions to a
-    // different vector (0x340 rather than 0x300) than everything else.
-    //
-    // It also matters for the window handlers: `s32e` and `l32e`, which the
-    // overflow and underflow vectors are built from, are privileged in some
-    // Xtensa configurations. Running tasks at the same level as the rest of the
-    // kernel removes that as a variable.
-    ctx.ps = PS_WOE | (1 << PS_CALLINC_SHIFT);
+    extern "C" {
+        fn _flint_task_start();
+    }
+
+    ctx.pc = _flint_task_start as usize as u32;
+
+    // Kernel mode: Flint is a single protection domain and startup.S runs the
+    // kernel with PS.UM clear, so tasks run at the same level as the handlers
+    // that serve them. CALLINC is left at 0 -- the trampoline's `callx4` sets
+    // it, rather than this function pretending a call already happened.
+    ctx.ps = PS_WOE;
     ctx.sar = 0;
     ctx.lbeg = 0;
     ctx.lend = 0;
     ctx.lcount = 0;
-    // Reserve a base save area below the top of the stack. The task's first
-    // instruction is `entry`, and if that raises a window overflow the handler
-    // spills through `s32e a0, a5, -16`, writing *below* the base register it
-    // is handed. Without a reserved area those stores land outside the stack.
+
+    // Reserve a save area below the top of the stack so the first window
+    // overflow has real memory to spill into.
     let sp = (stack_top - BASE_SAVE_AREA) & !15;
 
     ctx.a = [0u32; 16];
-    // a0 = 0, matching the reference Xtensa ports. A zero return address
-    // terminates the register-window spill chain: the overflow handler walks
-    // callers via a0, and a real address here presents the outermost frame as
-    // having a caller to spill into, which it does not.
-    //
-    // The cost is that a task returning from its entry function jumps to 0
-    // rather than reaching task_exit. That path is already unreachable for the
-    // demo tasks, which loop forever, and a crash there is easier to diagnose
-    // than a task that will not start.
-    ctx.a[0] = 0;
+    ctx.a[0] = 0;       // no caller; terminates the spill chain
     ctx.a[1] = sp;
+    ctx.a[3] = entry as u32; // the trampoline calls this
 
-    // Every window's a1 slot gets a valid stack pointer.
-    //
-    // This is what was wrong: the register file was zeroed, so whichever
-    // physical register the overflow handler used as its spill base held 0 and
-    // the spill addressed 0xFFFFFFF0. Observed on hardware as a task frozen on
-    // its own `entry` instruction -- PC, SP and WINDOWSTART identical across
-    // tens of thousands of ticks, with the stack completely untouched -- while
-    // the kernel ticked normally around it.
-    //
-    // Xtensa windows overlap by four registers, so window WB+k begins at
-    // physical register 4k and its a1 is physical register 4k+1. The stack
-    // pointers therefore live at every fourth register across the whole file,
-    // starting at index 1 -- a1, a5, a9, a13, then onward through ar_rest.
-    //
-    // Note a5 in particular: it is window WB+1's a1, which is the base the very
-    // first overflow uses. An earlier attempt set only ar_rest[1], [17] and
-    // [33], which are real a1 slots but belong to windows WB+4, WB+8 and WB+12
-    // -- so the first spill still had a zero base and nothing changed.
-    // Give every window in the current frame a valid stack pointer. Xtensa
-    // windows overlap by four registers, so window WB+k's a1 is register 4k+1:
-    // a1, a5, a9, a13.
-    let mut i = 1;
-    while i < 16 {
-        ctx.a[i] = sp;
-        i += 4;
-    }
+    // Xtensa windows overlap by four registers, so window WB+k's a1 is register
+    // 4k+1. Give each a valid stack pointer so any spill base is sane.
+    ctx.a[5] = sp;
+    ctx.a[9] = sp;
+    ctx.a[13] = sp;
 
     ctx.windowbase = 0;
     ctx.windowstart = 1;
 }
 
 /// Called when a task function returns. De-schedules the task forever.
-extern "C" fn task_exit() -> ! {
+#[no_mangle]
+extern "C" fn flint_task_exit() -> ! {
     scheduler::with(|sched| {
         let cur = sched.current;
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
