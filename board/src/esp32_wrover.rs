@@ -17,7 +17,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         name: "uart0",
         kind: BusKind::Uart,
         base_addr: 0x3FF40000,
-        irq: 3,
+        irq: 34, // ETS_UART0_INTR_SOURCE
         dma_capable: true,
         dma_pool_bytes: 512,
         config: BusConfig::Uart {
@@ -30,10 +30,13 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         },
     },
     BusMapping {
-        name: "spi2",
+        // VSPI (SPI3). GPIO 23/19/18 are VSPI's IO_MUX-native pins; pairing
+        // them with SPI2's base address at 0x3FF64000 -- as this entry used to
+        // -- describes a bus that cannot be routed without the GPIO matrix.
+        name: "spi3",
         kind: BusKind::Spi,
-        base_addr: 0x3FF64000,
-        irq: 17,
+        base_addr: 0x3FF65000,
+        irq: 31, // ETS_SPI3_INTR_SOURCE
         dma_capable: true,
         dma_pool_bytes: 2048,
         config: BusConfig::Spi {
@@ -48,7 +51,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         name: "i2c0",
         kind: BusKind::I2c,
         base_addr: 0x3FF53000,
-        irq: 19,
+        irq: 49, // ETS_I2C_EXT0_INTR_SOURCE
         dma_capable: false,
         dma_pool_bytes: 0,
         config: BusConfig::I2c {
@@ -64,7 +67,7 @@ pub const TARGET_DEVICES: &[BusDevice] = &[
     BusDevice {
         name: "temp_sensor",
         logical_driver: "bme280",
-        bus: "spi2",
+        bus: "spi3",
         cs_pin: Some(15),
         bus_speed: BusSpeed::MHz(4),
     },
@@ -79,8 +82,8 @@ pub const TARGET_DEVICES: &[BusDevice] = &[
 
 /// Direct peripheral drivers (not bus-attached).
 pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[
-    PeripheralMapping { name: "gpio", base_addr: 0x3FF44000, irq: 4, dma_capable: false, dma_pool_bytes: 0 },
-    PeripheralMapping { name: "uart0", base_addr: 0x3FF40000, irq: 3, dma_capable: true, dma_pool_bytes: 512 },
+    PeripheralMapping { name: "gpio", base_addr: 0x3FF44000, irq: 22, dma_capable: false, dma_pool_bytes: 0 },
+    PeripheralMapping { name: "uart0", base_addr: 0x3FF40000, irq: 34, dma_capable: true, dma_pool_bytes: 512 },
 ];
 
 /// System service tasks.
