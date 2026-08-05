@@ -22,23 +22,32 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` → `make fl
 
 ## Status
 
-**Pre-alpha. Do not put this in a product.** Flint compiles, links a real Xtensa
-image, and passes its host test suite — but the boot and context-switch path has
-**not yet been verified on silicon**, and several ESP32 peripheral drivers have
-known-wrong register offsets.
+**Pre-alpha. Do not put this in a product.** Flint builds, links a real Xtensa
+image, and passes its host test suite — but **nothing here has been run on
+silicon yet**, and one known defect in the context-switch path is still open.
 
 | | |
 |---|---|
-| Builds for `xtensa-esp32-none-elf` | ✅ links a 87 KB image |
-| Host unit tests | ✅ 49/49 passing |
+| Builds for `xtensa-esp32-none-elf` | ✅ |
+| Host unit tests | ✅ 99/99 passing |
 | Three-layer boundary enforced in CI | ✅ |
+| UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |
+| I²C driver | ⛔ `init()` rejects all configs — pin routing not implemented |
+| Register-window spill on switch | ⛔ **missing** — see below |
 | Boots on real hardware | ⚠️ **unverified** |
 | Preemption proven on silicon | ⚠️ **unverified** |
-| UART / GPIO / SPI / I²C drivers | ⚠️ **register audit in progress** |
 
-An adversarial review of the whole tree is tracked in
-[`doc/review-findings.md`](doc/review-findings.md). Nothing here is hidden: if a
-driver is a stub, it says so.
+**The one open blocker.** Xtensa keeps live call frames in a rotating register
+file. When the scheduler switches away from a task, that task's outer frames
+must be spilled to its stack, and Flint does not yet do this — the spill routine
+is a stub that no code calls. Expect corruption for any task interrupted more
+than one call deep. Everything else on the critical path (trap entry, register
+save/restore, boot window state, memory map, console) has been repaired and
+verified by disassembling the linked image.
+
+A full adversarial review of the tree, including what was checked and found
+sound, is in [`doc/review-findings.md`](doc/review-findings.md). Nothing is
+hidden: where a driver is a stub or a value is an assumption, it says so.
 
 **What we want from you right now:** flash it to a board, tell us what happens.
 

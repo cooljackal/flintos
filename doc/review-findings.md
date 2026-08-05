@@ -13,6 +13,35 @@ claim did not survive verification, it is recorded in
 
 **Baseline commit:** the state of the tree at first import.
 
+> ## Remediation status
+>
+> **Fixed:** P0 items 1, 2, 4, 5, 6 · P1 items 7–15 · P2 items 19–36.
+> Host tests went from 49 to 99 in the process.
+>
+> **Still open:**
+> - **P0 item 3 — the register-window spill.** The single remaining blocker
+>   on the critical path. See the entry below.
+> - **P1 items 16–18 (partly)** — README, LICENCE, and CI now exist; demo
+>   tasks still live in `FlintMain`, board selection is still hardcoded, and
+>   the internal planning documents still ship as-is.
+> - **P3 cleanup** — largely untouched.
+>
+> **Discovered during remediation, not in the original review:** the tree did
+> not compile for Xtensa at all. `global_asm!` routes the assembly through
+> LLVM's integrated assembler, which rejects the windowed instructions the
+> exception vectors are built from (`s32e`, `l32e`, `rfwo`, `rfwu`), and no
+> target-feature flag makes it accept them. The original "builds cleanly"
+> verdict came from a stale artifact cargo considered fresh. The assembly is
+> now built with `xtensa-esp32-elf-gcc` from `build.rs`.
+>
+> Several further defects surfaced only when register values were checked
+> against Espressif's headers rather than reasoned about: the I²C command
+> opcodes were each encoded one higher than the hardware expects, `MS_MODE`
+> was written to the wrong bit, and `wait_done` polled bit 0 rather than
+> `TRANS_COMPLETE` at bit 7. Classic ESP32 also turns out to have no
+> IO_MUX-native I²C pins at all, so that driver now refuses every
+> configuration rather than pretending to work.
+
 ---
 
 ## Verified sound
