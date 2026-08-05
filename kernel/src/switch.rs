@@ -24,10 +24,6 @@ use crate::{interrupt, timer, debug};
 // whether a context switch ever happens, are otherwise unobservable from the
 // console: a kernel that never schedules and a kernel whose timer never ticks
 // produce byte-identical silence.
-/// Bring-up canary counter, incremented by a dispatched task. Lives here
-/// rather than in main.rs so both the binary and the library can see it.
-pub static CANARY: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-
 static FIRST_TRAP: AtomicBool = AtomicBool::new(false);
 static FIRST_TICK: AtomicBool = AtomicBool::new(false);
 static FIRST_SWITCH: AtomicBool = AtomicBool::new(false);
@@ -65,7 +61,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             // The first few ticks are printed unconditionally: the failures
             // seen so far all occur within the first two or three, so a
             // heartbeat that only starts at 500 reports nothing at all.
-            if now <= 6 || now % 500 == 0 {
+            if now % 5000 == 0 {
                 let cur = scheduler::global().current;
                 let sp = unsafe { (*frame).a[1] };
                 let (base, size) = scheduler::global().tasks[cur as usize]
@@ -96,33 +92,8 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
                     debug::fault::raw_print("/");
                     debug::fault::raw_dec(size);
                 }
-                // Non-zero proves a dispatched task executed instructions.
-                debug::fault::raw_print(" canary=");
-                debug::fault::raw_dec(
-                    CANARY.load(core::sync::atomic::Ordering::Relaxed),
-                );
                 debug::fault::raw_print("\r\n");
 
-                // On the first few ticks, dump the interrupted window. When a
-                // task is wedged on its own `entry`, the question is which
-                // register the window overflow handler is using as its spill
-                // base and what that register actually holds -- and that has
-                // now been guessed wrong twice. Print it instead.
-                if now <= 3 {
-                    debug::fault::raw_print("        wb=0x");
-                    debug::fault::raw_hex(unsafe { (*frame).windowbase });
-                    debug::fault::raw_print(" ps=0x");
-                    debug::fault::raw_hex(unsafe { (*frame).ps });
-                    debug::fault::raw_print("\r\n        a:");
-                    for i in 0..16 {
-                        debug::fault::raw_print(" ");
-                        debug::fault::raw_hex(unsafe { (*frame).a[i] });
-                        if i == 7 {
-                            debug::fault::raw_print("\r\n          ");
-                        }
-                    }
-                    debug::fault::raw_print("\r\n");
-                }
             }
 
             if scheduler::global().on_tick(now) {

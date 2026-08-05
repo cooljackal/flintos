@@ -107,28 +107,6 @@ fn task_housekeep() {
     }
 }
 
-/// Bring-up canary: proves whether a dispatched task executes *at all*.
-///
-/// Every task so far has frozen on its own `entry` instruction, and there are
-/// two very different explanations: dispatch is broken and no task instruction
-/// ever runs, or dispatch works and `entry` specifically will not complete.
-/// From outside they look identical.
-///
-/// This body is a leaf -- no calls, no locals -- so the compiler has no reason
-/// to emit an `entry` prologue for it. If the counter advances, dispatch and
-/// execution work and the fault is confined to the windowed-call machinery. If
-/// it stays at zero, nothing about task dispatch works and the register window
-/// question is a red herring.
-///
-/// It deliberately never yields: it runs at the highest priority so it is
-/// dispatched first, and starving the others is fine for the duration of this
-/// measurement.
-fn task_canary() {
-    loop {
-        switch::CANARY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    }
-}
-
 /// The idle task body. Runs at the lowest priority on the boot/kernel stack;
 /// `waiti 0` parks the CPU until the next interrupt, which drives scheduling.
 fn idle_loop() -> ! {
@@ -255,12 +233,9 @@ pub extern "C" fn FlintMain() -> ! {
     // 12 KiB of it, so the headroom is free -- and a stack overflow here would
     // look very much like the missing window spill (issue #1), which is exactly
     // the confusion to avoid on a first bring-up.
-    // Spawned first and at the highest priority so it is the first task ever
-    // dispatched. See task_canary for what its counter distinguishes.
-    flint_api::task::spawn("canary", task_canary, Priority::Critical(0), 4096);
-    flint_api::task::spawn("sensor", task_sensor, SENSOR_PRIORITY, 16384);
-    flint_api::task::spawn("consumer", task_consumer, CONSUMER_PRIORITY, 16384);
-    flint_api::task::spawn("housekeep", task_housekeep, HOUSEKEEP_PRIORITY, 16384);
+    flint_api::task::spawn("sensor", task_sensor, SENSOR_PRIORITY, 4096);
+    flint_api::task::spawn("consumer", task_consumer, CONSUMER_PRIORITY, 4096);
+    flint_api::task::spawn("housekeep", task_housekeep, HOUSEKEEP_PRIORITY, 4096);
 
     flint_api::log_info!("[kernel] Flint RTOS boot complete, entering idle");
 
