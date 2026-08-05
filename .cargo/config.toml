@@ -1,0 +1,32 @@
+# Flint RTOS — Cargo build configuration (ESP32-WROVER)
+
+[target.xtensa-esp32-none-elf]
+# ESP32-PICO-D4 (e.g. M5Stack ATOM) has no built-in USB-JTAG, so flash + monitor
+# over USB-serial with espflash (install: cargo install espflash). Use probe-rs
+# only if you wire up an external JTAG probe.
+runner = "espflash flash --monitor"
+# runner = "probe-rs run --chip ESP32"   # alternative: external JTAG probe
+linker = "xtensa-esp32-elf-gcc"
+rustflags = [
+    "-C", "link-arg=-nostartfiles",
+    "-C", "link-arg=-Wl,--gc-sections",
+    "-C", "link-arg=-Wl,--relax",
+    "-C", "link-arg=-mlongcalls",
+    "-C", "link-arg=-mtext-section-literals",
+]
+
+[build]
+# Default target for development
+target = "xtensa-esp32-none-elf"
+
+# Rust Xtensa toolchain (install via espup or rust-build)
+#   rustup target add xtensa-esp32-none-elf
+# or use espup:
+#   cargo install espup
+#   espup install
+
+[unstable]
+build-std = ["core", "compiler_builtins"]
+
+[env]
+FLINT_BOARD = "esp32_wrover"

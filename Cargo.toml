@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "flint-hal",
+    "flint-api",
+    "arch/flint-arch-xtensa",
+    "kernel",
+    "board",
+    "drivers/physical/esp32_uart",
+    "drivers/physical/esp32_gpio",
+    "drivers/physical/esp32_spi",
+    "drivers/physical/esp32_i2c",
+    "drivers/bus/spi_bus",
+    "drivers/bus/i2c_bus",
+    "drivers/bus/uart_bus",
+    "drivers/logical/bme280",
+    "drivers/logical/ssd1306",
+]

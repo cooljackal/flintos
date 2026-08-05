@@ -1,0 +1,25 @@
+# Rust
+target/
+Cargo.lock
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.elf
+*.bin
+*.hex
+*.o
+*.d
+
+# ESP32 / Embedded
+flasher.py
+esp-idf/
