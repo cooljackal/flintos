@@ -23,6 +23,12 @@ const MAX_STACK_SIZE: u32 = 16384;
 /// the interrupt machinery alone, before the task's own locals are counted.
 const MIN_STACK_SIZE: u32 = 1024;
 
+/// Bytes reserved at the top of a task stack for the caller's register save
+/// area. Xtensa window overflow handlers store four to twelve registers just
+/// below the base register they are given, so the outermost frame needs real
+/// memory there or the very first spill writes off the end of the stack.
+const BASE_SAVE_AREA: u32 = 32;
+
 const STACK_PAINT: u32 = 0xDEADBEEF;
 
 /// Written at the lowest address of every task stack and checked on each
@@ -144,14 +150,31 @@ unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top
     ctx.lbeg = 0;
     ctx.lend = 0;
     ctx.lcount = 0;
+    // Reserve a base save area below the top of the stack. The task's first
+    // instruction is `entry`, and if that raises a window overflow the handler
+    // spills through `s32e a0, a5, -16`, writing *below* the base register it
+    // is handed. Without a reserved area those stores land outside the stack.
+    let sp = (stack_top - BASE_SAVE_AREA) & !15;
+
     ctx.a = [0u32; 16];
     ctx.a[0] = task_exit as usize as u32; // return address → task_exit
-    ctx.a[1] = stack_top & !15; // SP, 16-aligned
-    // The rest of the register file starts clean. A fresh task has no outer
-    // frames, so with windowstart = 1 nothing will ever read these -- but the
-    // trap handler restores all 64 registers unconditionally, so they must be
-    // defined rather than whatever the TCB slot held previously.
+    ctx.a[1] = sp;
+
+    // Every window gets the same valid stack pointer in its a1 slot.
+    //
+    // This is what was wrong: the register file was zeroed, so whichever
+    // physical register the overflow handler used as its spill base held 0 and
+    // the spill wrote to 0xFFFFFFF0. Observed on hardware as a task frozen on
+    // its own `entry` instruction -- PC, SP and WINDOWSTART identical across
+    // 46,000 ticks, with the stack completely untouched -- while the kernel
+    // itself kept ticking normally around it.
+    //
+    // ar_rest holds windows WB+4, WB+8 and WB+12 in 16-register blocks, so
+    // index 1 of each block is that window's a1.
     ctx.ar_rest = [0u32; 48];
+    ctx.ar_rest[1] = sp;
+    ctx.ar_rest[17] = sp;
+    ctx.ar_rest[33] = sp;
     ctx.windowbase = 0;
     ctx.windowstart = 1;
 }
