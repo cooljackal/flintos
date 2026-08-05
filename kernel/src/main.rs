@@ -175,7 +175,17 @@ pub extern "C" fn FlintMain() -> ! {
     // `XtensaTick::init` measures the real CPU frequency against the RTC
     // slow clock (issue #6) rather than assuming one; report what it found
     // before doing anything whose timing depends on it.
-    XtensaTick::init(1000);
+    // The board manifest owns the tick period. It declared TICK_PERIOD_US all
+    // along and this call ignored it, hardcoding 1 ms -- so a board could not
+    // actually change its own tick rate.
+    //
+    // Raising this is also the cleanest way to isolate a suspected register
+    // window problem: at 115200 baud a log line takes several milliseconds to
+    // shift out, so a 1 ms tick is guaranteed to interrupt one mid-write. If
+    // output is truncated at 1 ms but complete at, say, 100 ms, the fault is in
+    // what the trap does to the interrupted task's register windows (issue #1),
+    // not in the logging path.
+    XtensaTick::init(board::active::TICK_PERIOD_US);
 
     if BOOT_DIAGNOSTICS {
         let hz = XtensaTick::cpu_hz();
