@@ -10,4 +10,5 @@ fn main() {
         .join("flint-arch-xtensa")
         .join("flint32.ld");
     println!("cargo:rustc-link-arg=-T{}", ld_script.display());
+    println!("cargo:rerun-if-changed={}", ld_script.display());
 }

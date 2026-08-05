@@ -10,11 +10,18 @@
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-HOST_TARGET     := x86_64-pc-windows-msvc
+# Detect host triple at runtime
+HOST_TARGET     := $(shell rustc -vV | sed -n 's/^host: //p')
 XTENSA_TARGET   := xtensa-esp32-none-elf
 ESP_TOOLCHAIN   := esp
-ESP_GCC_DIR     := $(USERPROFILE)\.rustup\toolchains\esp\xtensa-esp-elf\bin
 CARGO           := cargo +$(ESP_TOOLCHAIN)
+
+# OS-specific paths (Windows uses USERPROFILE, POSIX uses HOME)
+ifeq ($(OS),Windows_NT)
+  ESP_GCC_DIR   := $(USERPROFILE)\.rustup\toolchains\esp\xtensa-esp-elf\bin
+else
+  ESP_GCC_DIR   := $(HOME)/.rustup/toolchains/esp/xtensa-esp-elf/bin
+endif
 
 # ── Environment Setup ──────────────────────────────────────────────────────────
 
@@ -25,13 +32,17 @@ env: ## Install the Espressif Rust Xtensa toolchain (esp-rs/rust-build)
 	$(info )
 	$(info === Toolchain installed. Activate with: ===)
 	$(info   rustup default $(ESP_TOOLCHAIN))
-	$(info   or source the env:  . $$env:USERPROFILE\export-esp.ps1)
+	$(info   or use:  make env-activate)
 	$(info )
 	$(info Then build with:  make build)
 
 .PHONY: env-activate
-env-activate: ## Source the Espressif environment (PowerShell)
+env-activate: ## Source the Espressif environment
+ifeq ($(OS),Windows_NT)
 	powershell -Command ". $$env:USERPROFILE\export-esp.ps1"
+else
+	. $(HOME)/export-esp.sh
+endif
 
 .PHONY: env-check
 env-check: ## Show installed toolchains and targets
@@ -120,8 +131,8 @@ lint: ## Run clippy on all host-checkable crates
 # ─── Info ───────────────────────────────────────────────────────────────────────
 
 .PHONY: info
-info: ## Show project structure and file sizes
-	powershell -Command "Get-ChildItem -Recurse -File | Where-Object { $$_.FullName -notmatch '\\\\.git\\\\' -and $$_.FullName -notmatch '\\\\target\\\\' } | ForEach-Object { $$_.FullName.Replace('$(CURDIR)\\', '') + ' (' + $$_.Length.ToString() + ' B)' }"
+info: ## Show tracked files and total size
+	@echo "Tracked files (excluding target/):"; git ls-files | grep -v target/ | wc -l; echo "Total workspace size:"; du -sh .
 
 # ─── Clean ──────────────────────────────────────────────────────────────────────
 
@@ -137,7 +148,7 @@ help: ## Show this help message
 	$(info )
 	$(info   Environment)
 	$(info     make env            Install Xtensa toolchain via espup)
-	$(info     make env-activate   Source the Espressif env (PowerShell))
+	$(info     make env-activate   Source the Espressif environment)
 	$(info     make env-check      Show installed toolchains)
 	$(info     make env-uninstall  Remove Espressif toolchain)
 	$(info )
@@ -145,7 +156,11 @@ help: ## Show this help message
 	$(info     make build          Debug build for ESP32)
 	$(info     make build-release  Release build (minimal binary))
 	$(info     make build-trace    Build with kernel event tracing)
-	$(info     make flash          Build + flash via probe-rs)
+	$(info     make build-dev      Build with logging (debug level 1))
+	$(info     make flash          Build + flash via espflash (USB serial))
+	$(info     make flash-dev      Flash + monitor the logging build)
+	$(info     make flash-jtag     Build + flash via probe-rs (JTAG))
+	$(info     make monitor        Open serial monitor)
 	$(info )
 	$(info   Check / Test)
 	$(info     make check          Check host crates (flint-hal, flint-api))

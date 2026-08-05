@@ -10,4 +10,3 @@ rust-version.workspace = true
 
 [dependencies]
 flint-hal = { path = "../../../flint-hal" }
-flint-arch-xtensa = { path = "../../../arch/flint-arch-xtensa" }

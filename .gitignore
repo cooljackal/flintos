@@ -1,6 +1,6 @@
 # Rust
 target/
-Cargo.lock
+# Cargo.lock IS tracked for binaries (reproducible builds required for flint-kernel)
 
 # Editor
 .vscode/
