@@ -160,21 +160,35 @@ unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top
     ctx.a[0] = task_exit as usize as u32; // return address → task_exit
     ctx.a[1] = sp;
 
-    // Every window gets the same valid stack pointer in its a1 slot.
+    // Every window's a1 slot gets a valid stack pointer.
     //
     // This is what was wrong: the register file was zeroed, so whichever
     // physical register the overflow handler used as its spill base held 0 and
-    // the spill wrote to 0xFFFFFFF0. Observed on hardware as a task frozen on
+    // the spill addressed 0xFFFFFFF0. Observed on hardware as a task frozen on
     // its own `entry` instruction -- PC, SP and WINDOWSTART identical across
-    // 46,000 ticks, with the stack completely untouched -- while the kernel
-    // itself kept ticking normally around it.
+    // tens of thousands of ticks, with the stack completely untouched -- while
+    // the kernel ticked normally around it.
     //
-    // ar_rest holds windows WB+4, WB+8 and WB+12 in 16-register blocks, so
-    // index 1 of each block is that window's a1.
+    // Xtensa windows overlap by four registers, so window WB+k begins at
+    // physical register 4k and its a1 is physical register 4k+1. The stack
+    // pointers therefore live at every fourth register across the whole file,
+    // starting at index 1 -- a1, a5, a9, a13, then onward through ar_rest.
+    //
+    // Note a5 in particular: it is window WB+1's a1, which is the base the very
+    // first overflow uses. An earlier attempt set only ar_rest[1], [17] and
+    // [33], which are real a1 slots but belong to windows WB+4, WB+8 and WB+12
+    // -- so the first spill still had a zero base and nothing changed.
     ctx.ar_rest = [0u32; 48];
-    ctx.ar_rest[1] = sp;
-    ctx.ar_rest[17] = sp;
-    ctx.ar_rest[33] = sp;
+    let mut i = 1;
+    while i < 16 {
+        ctx.a[i] = sp;
+        i += 4;
+    }
+    let mut j = 1;
+    while j < 48 {
+        ctx.ar_rest[j] = sp;
+        j += 4;
+    }
     ctx.windowbase = 0;
     ctx.windowstart = 1;
 }
