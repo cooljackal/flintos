@@ -1,0 +1,8 @@
+[package]
+name = "flint-board"
+version = "0.1.0"
+edition = "2021"
+description = "Flint RTOS board manifest — ESP32-WROVER and STM32F4"
+
+[dependencies]
+flint-hal = { path = "../flint-hal" }
