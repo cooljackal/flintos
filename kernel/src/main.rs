@@ -233,9 +233,9 @@ pub extern "C" fn FlintMain() -> ! {
     // 12 KiB of it, so the headroom is free -- and a stack overflow here would
     // look very much like the missing window spill (issue #1), which is exactly
     // the confusion to avoid on a first bring-up.
-    flint_api::task::spawn("sensor", task_sensor, SENSOR_PRIORITY, 4096);
-    flint_api::task::spawn("consumer", task_consumer, CONSUMER_PRIORITY, 4096);
-    flint_api::task::spawn("housekeep", task_housekeep, HOUSEKEEP_PRIORITY, 4096);
+    flint_api::task::spawn("sensor", task_sensor, SENSOR_PRIORITY, 16384);
+    flint_api::task::spawn("consumer", task_consumer, CONSUMER_PRIORITY, 16384);
+    flint_api::task::spawn("housekeep", task_housekeep, HOUSEKEEP_PRIORITY, 16384);
 
     flint_api::log_info!("[kernel] Flint RTOS boot complete, entering idle");
 

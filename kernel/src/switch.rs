@@ -58,17 +58,34 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             // died, or the kernel is fine and the running task is wedged. This
             // separates them, and reports where the interrupted task actually
             // is so a hang can be located rather than guessed at.
-            if now % 500 == 0 {
-                debug::fault::raw_print("[FLINT] alive tick=");
+            // The first few ticks are printed unconditionally: the failures
+            // seen so far all occur within the first two or three, so a
+            // heartbeat that only starts at 500 reports nothing at all.
+            if now <= 6 || now % 500 == 0 {
+                let cur = scheduler::global().current;
+                let sp = unsafe { (*frame).a[1] };
+                let (base, size) = scheduler::global().tasks[cur as usize]
+                    .as_ref()
+                    .map_or((0, 0), |t| (t.stack_base, t.stack_size));
+
+                debug::fault::raw_print("[FLINT] tick=");
                 debug::fault::raw_dec(now as u32);
                 debug::fault::raw_print(" cur=");
-                debug::fault::raw_dec(scheduler::global().current);
+                debug::fault::raw_dec(cur);
                 debug::fault::raw_print(" pc=0x");
                 debug::fault::raw_hex(unsafe { (*frame).pc });
-                debug::fault::raw_print(" ps=0x");
-                debug::fault::raw_hex(unsafe { (*frame).ps });
                 debug::fault::raw_print(" ws=0x");
                 debug::fault::raw_hex(unsafe { (*frame).windowstart });
+                debug::fault::raw_print(" sp=0x");
+                debug::fault::raw_hex(sp);
+                // Headroom left below the interrupted stack pointer. This is
+                // the number that decides whether the trap path is overrunning
+                // the task it interrupted: the frame alone is 288 bytes and
+                // _flint_trap reserves 272 more on top of it.
+                debug::fault::raw_print(" free=");
+                debug::fault::raw_dec(sp.saturating_sub(base));
+                debug::fault::raw_print("/");
+                debug::fault::raw_dec(size);
                 debug::fault::raw_print("\r\n");
             }
 
