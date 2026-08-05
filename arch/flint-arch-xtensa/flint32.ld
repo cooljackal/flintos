@@ -25,14 +25,38 @@ MEMORY
   iram_seg    (RX) : ORIGIN = 0x40080400, LENGTH = 0x1FC00    /* boot + asm hot path */
 
   /* Flash, cached (XIP). */
-  drom_seg    (R)  : ORIGIN = 0x3F400020, LENGTH = 0x3FFFE0   /* rodata in flash */
-  irom_seg    (RX) : ORIGIN = 0x400D0020, LENGTH = 0x3FFFE0   /* code in flash */
+  drom_seg    (R)  : ORIGIN = 0x3F400020, LENGTH = 0x3FFFE0   /* rodata in flash, 4M window */
+  /* The IROM cache window is 0x400D0000-0x40400000, not 4M. Code placed past
+   * 0x40400000 is not mapped by the MMU and faults on fetch. */
+  irom_seg    (RX) : ORIGIN = 0x400D0020, LENGTH = 0x32FFE0   /* code in flash */
 
-  /* Internal DRAM. */
-  dram_seg    (RW) : ORIGIN = 0x3FFB0000, LENGTH = 0x28000    /* 160K data/bss/kstack */
-  task_stacks (RW) : ORIGIN = 0x3FFD8000, LENGTH = 0x18000    /* 96K task stacks */
-  panic_region(RW) : ORIGIN = 0x3FFF0000, LENGTH = 0x1000     /* survives soft reset */
-  dma_pool    (RW) : ORIGIN = 0x3FFF1000, LENGTH = 0x2000     /* DMA-safe buffers */
+  /* ── Internal DRAM ───────────────────────────────────────────────────────
+   *
+   * Everything statically placed must fit below 0x3FFDC200. That bound is not
+   * arbitrary: the ROM keeps its own data and stack in the SRAM1 region above
+   * it during boot, which is why Espressif's own template caps static DRAM at
+   * exactly 0x3FFB0000 + 0x2C200. Memory above the bound is reclaimable as
+   * heap once the ROM is finished, but is not safe for compile-time placement.
+   *
+   * The previous map ran task_stacks to 0x3FFF0000 and put panic_region and
+   * dma_pool above that, i.e. squarely in the ROM's working memory.
+   *
+   * Actual static usage is small -- .data 5,328 B and .bss 8,752 B -- so the
+   * whole layout fits in the safe window with room to spare:
+   *
+   *   0x3FFB0000  dram_seg      64K   .data + .bss + kernel/boot stack
+   *   0x3FFC0000  task_stacks   96K   per-task stacks
+   *   0x3FFD8000  panic_region   4K   postmortem snapshot
+   *   0x3FFD9000  dma_pool       8K   DMA-safe buffers
+   *   0x3FFDB000  (4.5K spare up to the 0x3FFDC200 bound)
+   */
+  dram_seg    (RW) : ORIGIN = 0x3FFB0000, LENGTH = 0x10000    /* 64K data/bss/kstack */
+  task_stacks (RW) : ORIGIN = 0x3FFC0000, LENGTH = 0x18000    /* 96K task stacks */
+  /* 8-byte aligned so the u64 in PanicSnapshot is legally placed. */
+  panic_region(RW) : ORIGIN = 0x3FFD8000, LENGTH = 0x1000     /* survives soft reset */
+  /* Must be inside SRAM2 (0x3FFAE000-0x3FFDFFFF) to be reachable by the DMA
+   * engines. The old location at 0x3FFF1000 was chosen without regard to that. */
+  dma_pool    (RW) : ORIGIN = 0x3FFD9000, LENGTH = 0x2000     /* DMA-safe buffers */
 }
 
 SECTIONS
