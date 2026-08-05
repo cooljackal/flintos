@@ -23,6 +23,32 @@
 // NOTE: the reset vector is NOT here — reset is a fixed ROM address; we are
 // entered via ENTRY(_start). Offset 0x0 is WindowOverflow4.
 
+// Raw UART0 output helpers for the double-exception dump. UART0 TX FIFO is at
+// 0x3FF40000; no FIFO-space check, because by this point the system is dead and
+// a dropped character costs less than a hang in the fault handler.
+.macro DBL_CH c
+    movi a2, 0x3FF40000
+    movi a5, \c
+    s32i a5, a2, 0
+.endm
+
+// Print \val as 8 hex digits. Clobbers a2, a3, a4, a5, a6.
+.macro DBL_HEX val
+    mov  a3, \val
+    movi a4, 8
+90: extui a5, a3, 28, 4
+    movi a6, 10
+    bge  a5, a6, 91f
+    addi a5, a5, 48             // '0'
+    j    92f
+91: addi a5, a5, 87             // 'a' - 10
+92: movi a2, 0x3FF40000
+    s32i a5, a2, 0
+    slli a3, a3, 4
+    addi a4, a4, -1
+    bnez a4, 90b
+.endm
+
 .section .vectors, "ax"
 .global _vector_table_start
 .global _vector_table_end
@@ -317,15 +343,30 @@ _flint_trap_entry:
 .align 4
 .global _double_exception
 _double_exception:
-    movi a2, 0x3FF40000     // UART0 TX FIFO
-    movi a3, 0x44           // 'D'
-    s32i a3, a2, 0
-    movi a3, 0x42           // 'B'
-    s32i a3, a2, 0
-    movi a3, 0x4C           // 'L'
-    s32i a3, a2, 0
-    movi a3, 0x0A           // '\n'
-    s32i a3, a2, 0
+    // A double exception means a second exception hit while PS.EXCM was set --
+    // most often a window overflow or underflow spilling through a bad base
+    // register. "DBL" alone says nothing about where, so dump the registers
+    // that identify it. Nothing here is recoverable, so every register is fair
+    // game and no state is preserved.
+    //
+    // Format:  DBL <exccause> <epc1> <depc> <excvaddr>
+    DBL_CH 68                   // 'D'
+    DBL_CH 66                   // 'B'
+    DBL_CH 76                   // 'L'
+    DBL_CH 32
+    rsr.exccause a7
+    DBL_HEX a7
+    DBL_CH 32
+    rsr.epc1 a7
+    DBL_HEX a7
+    DBL_CH 32
+    rsr.depc a7
+    DBL_HEX a7
+    DBL_CH 32
+    rsr.excvaddr a7
+    DBL_HEX a7
+    DBL_CH 13
+    DBL_CH 10
 .Ldbl_hang:
     j .Ldbl_hang
 
