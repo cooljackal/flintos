@@ -157,7 +157,14 @@ unsafe fn io_mux_select(pin: u8, func: u32, input_enable: bool) -> BusResult<()>
 }
 
 impl Esp32Uart {
-    pub fn new(base_addr: u32) -> Self {
+    /// Bind a driver instance to a UART peripheral.
+    ///
+    /// # Safety
+    /// `base_addr` must be the base of a real ESP32 UART register block
+    /// (`UART0_BASE`, `UART1_BASE`, or `UART2_BASE`), and the caller must own
+    /// that peripheral exclusively -- two live instances on one base address
+    /// race on the same registers with no synchronisation between them.
+    pub unsafe fn new(base_addr: u32) -> Self {
         Self { base: base_addr }
     }
 
