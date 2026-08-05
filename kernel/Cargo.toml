@@ -1,0 +1,46 @@
+[package]
+name = "flint-kernel"
+version = "0.1.0"
+edition = "2021"
+description = "Flint RTOS kernel — scheduler, IPC, debug subsystems"
+
+[dependencies]
+flint-hal = { path = "../flint-hal" }
+flint-api = { path = "../flint-api" }
+flint-arch-xtensa = { path = "../arch/flint-arch-xtensa" }
+flint-board = { path = "../board" }
+
+# Physical drivers
+esp32-uart = { path = "../drivers/physical/esp32_uart" }
+esp32-gpio = { path = "../drivers/physical/esp32_gpio" }
+esp32-spi  = { path = "../drivers/physical/esp32_spi" }
+esp32-i2c  = { path = "../drivers/physical/esp32_i2c" }
+
+# Bus abstractions
+spi-bus   = { path = "../drivers/bus/spi_bus" }
+i2c-bus   = { path = "../drivers/bus/i2c_bus" }
+uart-bus  = { path = "../drivers/bus/uart_bus" }
+
+# Logical drivers
+bme280  = { path = "../drivers/logical/bme280" }
+ssd1306 = { path = "../drivers/logical/ssd1306" }
+
+[features]
+default = []
+debug-level-0 = []
+debug-level-1 = ["flint-log", "flint-metrics", "flint-panic"]
+debug-level-2 = ["debug-level-1", "flint-trace"]
+debug-level-3 = ["debug-level-2", "flint-timing", "flint-cpu-util"]
+
+# Debug features forward to flint-api so the gated macros in user/kernel code
+# actually emit (plan W7.3). Without this, enabling logging on the kernel had no
+# effect because flint-api's own feature stayed off.
+flint-log = ["flint-api/flint-log"]
+flint-metrics = ["flint-api/flint-metrics"]
+flint-panic = ["flint-api/flint-panic"]
+flint-trace = ["flint-api/flint-trace"]
+flint-timing = ["flint-api/flint-timing"]
+flint-cpu-util = ["flint-api/flint-cpu-util"]
+
+# Phase 0 boot-time self-tests
+phase0-tests = []
