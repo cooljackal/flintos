@@ -199,17 +199,15 @@ unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top
     // first overflow uses. An earlier attempt set only ar_rest[1], [17] and
     // [33], which are real a1 slots but belong to windows WB+4, WB+8 and WB+12
     // -- so the first spill still had a zero base and nothing changed.
-    ctx.ar_rest = [0u32; 48];
+    // Give every window in the current frame a valid stack pointer. Xtensa
+    // windows overlap by four registers, so window WB+k's a1 is register 4k+1:
+    // a1, a5, a9, a13.
     let mut i = 1;
     while i < 16 {
         ctx.a[i] = sp;
         i += 4;
     }
-    let mut j = 1;
-    while j < 48 {
-        ctx.ar_rest[j] = sp;
-        j += 4;
-    }
+
     ctx.windowbase = 0;
     ctx.windowstart = 1;
 }

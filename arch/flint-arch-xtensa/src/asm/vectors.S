@@ -158,83 +158,11 @@ _vector_table_end:
 // ─────────────────────────────────────────────────────────────────────────
 .section .iram.text, "ax"
 
-// ── Whole-register-file save/restore ─────────────────────────────────────
-//
-// A task's outer call frames live in the physical register file, not on its
-// stack, until a window overflow evicts them. The trap handler is itself
-// windowed Rust, so merely servicing an interrupt rotates the window and
-// spills some of the interrupted task's frames -- clearing their WINDOWSTART
-// bits while their physical registers are reused. Restoring only the current
-// window plus the original WINDOWSTART then claims those frames are still in
-// registers when they are not, and the task resumes with a corrupted call
-// chain. Observed on hardware as a task truncating mid-log-line.
-//
-// Rather than reproduce the canonical spill sequence, which depends on subtle
-// window-exception behaviour, these macros capture the entire 64-register file
-// and put it back verbatim. Whatever the handler did to the windows in between
-// is then unobservable.
-//
-// Only the current 16 registers are addressable at a time, so the file is
-// walked with `rotw 4`, four rotations returning to the starting WINDOWBASE.
-// Every logical register in a freshly rotated window is one that must be
-// preserved, so there is no free base register: EXCSAVE1 carries the frame
-// pointer across rotations (special registers do not rotate) and EXCSAVE2
-// briefly holds the one register displaced to make room for it.
-
-.macro FLINT_SAVE_WINDOW off
-    rotw 4
-    wsr.excsave2 a0             // park a0; it becomes the base register
-    rsr.excsave1 a0             // a0 = frame pointer
-    s32i a1,  a0, \off + 0x04
-    s32i a2,  a0, \off + 0x08
-    s32i a3,  a0, \off + 0x0C
-    s32i a4,  a0, \off + 0x10
-    s32i a5,  a0, \off + 0x14
-    s32i a6,  a0, \off + 0x18
-    s32i a7,  a0, \off + 0x1C
-    s32i a8,  a0, \off + 0x20
-    s32i a9,  a0, \off + 0x24
-    s32i a10, a0, \off + 0x28
-    s32i a11, a0, \off + 0x2C
-    s32i a12, a0, \off + 0x30
-    s32i a13, a0, \off + 0x34
-    s32i a14, a0, \off + 0x38
-    s32i a15, a0, \off + 0x3C
-    rsr.excsave2 a1             // a1 already saved above, so reuse as scratch
-    s32i a1,  a0, \off + 0x00   // ...to store the real a0
-.endm
-
-.macro FLINT_RESTORE_WINDOW off
-    rotw 4
-    rsr.excsave1 a0             // a0 = frame pointer; a0 itself is loaded last
-    l32i a1,  a0, \off + 0x04
-    l32i a2,  a0, \off + 0x08
-    l32i a3,  a0, \off + 0x0C
-    l32i a4,  a0, \off + 0x10
-    l32i a5,  a0, \off + 0x14
-    l32i a6,  a0, \off + 0x18
-    l32i a7,  a0, \off + 0x1C
-    l32i a8,  a0, \off + 0x20
-    l32i a9,  a0, \off + 0x24
-    l32i a10, a0, \off + 0x28
-    l32i a11, a0, \off + 0x2C
-    l32i a12, a0, \off + 0x30
-    l32i a13, a0, \off + 0x34
-    l32i a14, a0, \off + 0x38
-    l32i a15, a0, \off + 0x3C
-    l32i a0,  a0, \off + 0x00   // base register consumed by its own load
-.endm
-
 .align 4
 .global _flint_trap_entry
 .type   _flint_trap_entry, @function
 _flint_trap_entry:
-    // 288-byte frame: 96 bytes of specials plus the current window, then 192
-    // for the other 48 registers. Must match size_of::<TaskContext>(), which
-    // is asserted in flint-hal/src/types.rs. `addi` only reaches -128, so the
-    // adjustment is split.
-    addmi a1, a1, -256
-    addi  a1, a1, -32
+    addi a1, a1, -96            // 96-byte frame; matches size_of::<TaskContext>()
 
     // a2 is the only scratch we have before the frame is populated, so the
     // interrupted a2 must go into its slot BEFORE anything else uses it.
@@ -263,8 +191,7 @@ _flint_trap_entry:
     // Save current-window ARs. a1 here is the frame base; the interrupted
     // SP was frame_base + 96.
     s32i a0,  a1, 0x18
-    addmi a2, a1, 256
-    addi  a2, a2, 32            // a2 = a1 + 288, the interrupted SP
+    addi a2,  a1, 96            // a2 = the interrupted SP
     s32i a2,  a1, 0x1C          // a[1] = interrupted SP
     // a[2] at 0x20 already holds the interrupted a2, saved on entry above.
     // Do not overwrite it with the computed SP.
@@ -285,15 +212,6 @@ _flint_trap_entry:
     s32i a2, a1, 0x58
     rsr.windowstart a2
     s32i a2, a1, 0x5C
-
-    // Capture the other 48 registers. WINDOWBASE is recorded above first,
-    // because `rotw` changes it; four rotations bring it back around, so after
-    // the last one a1 is once again the frame pointer.
-    wsr.excsave1 a1
-    FLINT_SAVE_WINDOW 0x60
-    FLINT_SAVE_WINDOW 0xA0
-    FLINT_SAVE_WINDOW 0xE0
-    rotw 4
 
     // ── Leave exception mode before calling into Rust ─────────────────────
     //
@@ -351,60 +269,44 @@ _flint_trap_entry:
     wsr.epc1 a2
     rsync
 
-    // WINDOWBASE goes back before any register is restored, not after. It
-    // selects which physical registers the names a0-a15 refer to, so the
-    // resuming task's registers have to be written into the window *it* was
-    // using -- which is generally not the one the trap arrived on.
-    //
-    // EXCSAVE1 carries the frame pointer across the rotation, since special
-    // registers do not rotate.
+    // WINDOWBASE goes back before any register is restored: it selects which
+    // physical registers the names a0-a15 refer to, so the resuming task's
+    // registers must be written into the window *it* was using. EXCSAVE1
+    // carries the frame pointer across the rotation, since special registers
+    // do not rotate.
     wsr.excsave1 a1
+    l32i a2, a1, 0x5C
+    wsr.windowstart a2
     l32i a2, a1, 0x58
-    wsr.windowbase a2
+    wsr.windowbase  a2
+    rsync
+    rsr.excsave1 a1             // frame pointer, in the restored window
+
+    l32i a0,  a1, 0x18
+    l32i a4,  a1, 0x28
+    l32i a5,  a1, 0x2C
+    l32i a6,  a1, 0x30
+    l32i a7,  a1, 0x34
+    l32i a8,  a1, 0x38
+    l32i a9,  a1, 0x3C
+    l32i a10, a1, 0x40
+    l32i a11, a1, 0x44
+    l32i a12, a1, 0x48
+    l32i a13, a1, 0x4C
+    l32i a14, a1, 0x50
+    l32i a15, a1, 0x54
+
+    // PS last, with EXCM forced set so interrupts stay masked across the final
+    // loads; `rfe` clears EXCM as it returns.
+    l32i a2, a1, 0x04
+    movi a3, 0x10               // PS.EXCM
+    or   a2, a2, a3
+    wsr.ps a2
     rsync
 
-    // The other 48 registers, in the same order they were saved. The final
-    // rotation brings WINDOWBASE back to the resuming task's own window.
-    FLINT_RESTORE_WINDOW 0x60
-    FLINT_RESTORE_WINDOW 0xA0
-    FLINT_RESTORE_WINDOW 0xE0
-    rotw 4
-
-    rsr.excsave1 a0             // a0 = frame pointer until the very last load
-
-    // WINDOWSTART after WINDOWBASE. Unlike WINDOWBASE this does not remap any
-    // register, so it is safe to write with the frame pointer still live.
-    l32i a1, a0, 0x5C
-    wsr.windowstart a1
-
-    // PS with EXCM forced set. PS.EXCM masks interrupts, keeping the remaining
-    // loads atomic with respect to the tick; `rfe` clears EXCM as it returns.
-    // Writing the task's PS verbatim here would re-enable interrupts mid-
-    // restore, letting a tick land on a half-restored register file.
-    l32i a1, a0, 0x04
-    movi a2, 0x10               // PS.EXCM
-    or   a1, a1, a2
-    wsr.ps a1
-    rsync
-
-    // Now the current window's registers. a0 stays the base until it loads
-    // itself; a1 (the stack pointer) goes second to last.
-    l32i a2,  a0, 0x20
-    l32i a3,  a0, 0x24
-    l32i a4,  a0, 0x28
-    l32i a5,  a0, 0x2C
-    l32i a6,  a0, 0x30
-    l32i a7,  a0, 0x34
-    l32i a8,  a0, 0x38
-    l32i a9,  a0, 0x3C
-    l32i a10, a0, 0x40
-    l32i a11, a0, 0x44
-    l32i a12, a0, 0x48
-    l32i a13, a0, 0x4C
-    l32i a14, a0, 0x50
-    l32i a15, a0, 0x54
-    l32i a1,  a0, 0x1C          // SP
-    l32i a0,  a0, 0x18          // base consumed by its own load
+    l32i a3,  a1, 0x24
+    l32i a2,  a1, 0x20
+    l32i a1,  a1, 0x1C          // SP last
     rfe
 
 .extern _flint_trap
