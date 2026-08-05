@@ -52,6 +52,68 @@ pub mod dport {
     }
 }
 
+// ── RTC_CNTL (used only to measure the CPU clock at boot) ────────────────────
+
+pub mod rtc_cntl {
+    //! RTC timer registers, used solely by `tick::XtensaTick::init` to
+    //! measure the actual CPU clock against the RTC slow clock (issue #6) --
+    //! Flint does not otherwise touch the clock tree.
+    //!
+    //! VERIFIED against the espressif/esp-idf `master` branch (fetched
+    //! 2026-08-05):
+    //!   - `components/soc/esp32/register/soc/reg_base.h`:
+    //!     `DR_REG_RTCCNTL_BASE = 0x3FF4_8000`
+    //!   - `components/soc/esp32/register/soc/rtc_cntl_reg.h`:
+    //!     `RTC_CNTL_TIME_UPDATE_REG = DR_REG_RTCCNTL_BASE + 0x0C`
+    //!     `RTC_CNTL_TIME0_REG       = DR_REG_RTCCNTL_BASE + 0x10`
+    //!     `RTC_CNTL_TIME1_REG       = DR_REG_RTCCNTL_BASE + 0x14`
+    //!     `RTC_CNTL_TIME_UPDATE = BIT(31)` (write-1 triggers a snapshot),
+    //!     `RTC_CNTL_TIME_VALID  = BIT(30)` (read-only, set once the
+    //!     snapshot has landed in TIME0/TIME1).
+    //!   - The read sequence (write TIME_UPDATE, poll TIME_VALID, then read
+    //!     TIME0 as the low 32 bits / TIME1 as the high bits) matches
+    //!     ESP-IDF's own `rtc_time_get()` (`esp_hw_support/port/esp32/
+    //!     rtc_time.c` and predecessors). We skip ESP-IDF's follow-up write
+    //!     to `RTC_CNTL_INT_CLR_REG`: that only clears a stale "time valid"
+    //!     RTC interrupt flag, and Flint never enables that interrupt, so
+    //!     there is nothing to clear.
+    //!
+    //! UNVERIFIED: the RTC slow-clock source and its nominal rate (150 kHz
+    //! internal RC oscillator by default, per the ESP32 TRM) were taken on
+    //! the task's word rather than independently re-derived from a register
+    //! read of `RTC_CNTL_CLK_CONF_REG`. Flint's boot path never switches the
+    //! slow-clock source, so the reset default should hold, but this is the
+    //! one link in the chain not directly confirmed against a header dump.
+
+    /// RTC_CNTL peripheral base.
+    pub const BASE: u32 = 0x3FF4_8000;
+
+    const TIME_UPDATE_REG: *mut u32 = (BASE + 0x0C) as *mut u32;
+    const TIME0_REG: *const u32 = (BASE + 0x10) as *const u32;
+    const TIME1_REG: *const u32 = (BASE + 0x14) as *const u32;
+
+    const TIME_UPDATE: u32 = 1 << 31;
+    const TIME_VALID: u32 = 1 << 30;
+
+    /// Trigger an RTC counter snapshot and read it back once valid.
+    ///
+    /// Returns `None` if `TIME_VALID` has not set after `max_polls` reads of
+    /// `TIME_UPDATE_REG`, so a missing/stuck RTC block can't hang boot.
+    pub unsafe fn read_counter(max_polls: u32) -> Option<u64> {
+        core::ptr::write_volatile(TIME_UPDATE_REG, TIME_UPDATE);
+        let mut polls = 0u32;
+        while core::ptr::read_volatile(TIME_UPDATE_REG) & TIME_VALID == 0 {
+            polls += 1;
+            if polls > max_polls {
+                return None;
+            }
+        }
+        let lo = core::ptr::read_volatile(TIME0_REG) as u64;
+        let hi = core::ptr::read_volatile(TIME1_REG) as u64;
+        Some((hi << 32) | lo)
+    }
+}
+
 // ── PS access ────────────────────────────────────────────────────────────────
 
 /// Read PS.
@@ -64,6 +126,26 @@ pub unsafe fn read_ps() -> u32 {
 /// Write PS.
 pub unsafe fn write_ps(val: u32) {
     core::arch::asm!("wsr.ps {0}", "rsync", in(reg) val);
+}
+
+/// Read VECBASE (base address of the exception vector table). Used only for
+/// bring-up diagnostics: it should equal `_vector_table_start` once
+/// `startup.S` has run, proving the vector table was actually installed
+/// rather than left at the ROM's own vectors.
+pub unsafe fn read_vecbase() -> u32 {
+    let val: u32;
+    core::arch::asm!("rsr.vecbase {0}", out(reg) val);
+    val
+}
+
+/// Read the current stack pointer (`a1`). Diagnostic-only: by the time any
+/// Rust code can call this the window has already rotated at least once, so
+/// this reads whatever `a1` denotes in the *caller's* live window, which is
+/// exactly the stack pointer bring-up diagnostics want to report.
+pub unsafe fn read_sp() -> u32 {
+    let val: u32;
+    core::arch::asm!("mov {0}, a1", out(reg) val);
+    val
 }
 
 // ── Cycle counter / tick timer ───────────────────────────────────────────────
