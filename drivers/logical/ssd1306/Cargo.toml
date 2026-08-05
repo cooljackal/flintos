@@ -1,0 +1,9 @@
+[package]
+name = "ssd1306"
+version = "0.1.0"
+edition = "2021"
+description = "SSD1306 OLED display logical driver (Layer 3)"
+
+[dependencies]
+# Layer-3: depend ONLY on flint-api (plan W7.1).
+flint-api = { path = "../../../flint-api" }

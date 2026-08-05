@@ -1,0 +1,9 @@
+[package]
+name = "i2c-bus"
+version = "0.1.0"
+edition = "2021"
+description = "I2C bus abstraction layer"
+
+[dependencies]
+# Layer-2: depend ONLY on flint-api (plan W7.1).
+flint-api = { path = "../../../flint-api" }

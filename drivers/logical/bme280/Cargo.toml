@@ -1,0 +1,10 @@
+[package]
+name = "bme280"
+version = "0.1.0"
+edition = "2021"
+description = "BME280 temperature/humidity/pressure sensor logical driver (Layer 3)"
+
+[dependencies]
+# Layer-3 drivers depend ONLY on flint-api (plan W7.1). Depending on flint-hal
+# or flint-arch-* here is a layer violation — checked by tools/check-layers.sh.
+flint-api = { path = "../../../flint-api" }
