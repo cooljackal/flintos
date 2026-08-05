@@ -2,9 +2,10 @@
 
 //! Preemptive priority scheduler.
 //!
-//! 32 effective priority levels (lower number = higher priority), round-robin
-//! within a level via a 10 ms quantum. Supports priority inheritance, sleep,
-//! queue/mutex blocking, and a pending-switch flag consumed by the trap handler.
+//! 48 application priority levels plus a reserved idle level (lower number =
+//! higher priority), round-robin within a level via a 10 ms quantum. Supports
+//! priority inheritance, sleep, queue/mutex blocking, and a pending-switch flag
+//! consumed by the trap handler.
 //!
 //! Switching model (plan W1.2): **all** context switches happen in the trap
 //! handler (`crate::switch::flint_trap`) and resume via `rfe`. Cooperative
@@ -22,13 +23,36 @@ use flint_hal::types::TaskContext;
 use flint_arch_xtensa::tick::XtensaTick;
 
 pub const MAX_TASKS: usize = 32;
-/// Effective priority levels: 3 bands × 16 = 48, but encoded numerics span
-/// 0x00..=0x2F (see `Priority::numeric`), so 48 distinct values. We scan all.
-pub const NUM_PRIORITIES: usize = 48;
+
+/// Effective priority levels.
+///
+/// The public `Priority` encoding spans 0x00..=0x2F (3 bands × 16 levels, see
+/// `Priority::numeric`), so 48 values are reachable from application code. One
+/// further level exists above them, reserved for idle -- hence 49.
+pub const NUM_PRIORITIES: usize = 49;
+
+/// Highest priority value any public `Priority` can encode to
+/// (`Background(15)` == 0x2F).
+pub const MAX_PUBLIC_PRIORITY: u8 = 0x2F;
+
 pub const DEFAULT_QUANTUM_MS: u32 = 10;
 
 /// The lowest possible priority value (idle). Higher number = lower priority.
+///
+/// Deliberately one below anything application code can request. When this was
+/// 47 it collided with `Background(15)`, so a task spawned at the lowest public
+/// priority became a round-robin peer of idle and shared time-slices with it,
+/// rather than idle being a guaranteed last resort.
 pub const IDLE_PRIORITY: u8 = (NUM_PRIORITIES - 1) as u8;
+
+const _: () = assert!(
+    IDLE_PRIORITY > MAX_PUBLIC_PRIORITY,
+    "idle must sit below every priority application code can request"
+);
+const _: () = assert!(
+    NUM_PRIORITIES <= 64,
+    "ready_mask is a u64; one bit per priority level"
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
@@ -94,7 +118,6 @@ pub struct Scheduler {
     pub ready_mask: u64,
     /// Round-robin rotor: last task index dispatched at each priority level.
     last_run: [u32; NUM_PRIORITIES],
-    pub pending_switch: AtomicBool,
 }
 
 impl Scheduler {
@@ -104,7 +127,6 @@ impl Scheduler {
             current: u32::MAX,
             ready_mask: 0,
             last_run: [0; NUM_PRIORITIES],
-            pending_switch: AtomicBool::new(false),
         }
     }
 
@@ -298,7 +320,7 @@ impl Scheduler {
             self.set_ready_bit(prio);
             // A higher-priority unblocked task should preempt.
             if prio < self.current_priority() {
-                self.pending_switch.store(true, Ordering::Relaxed);
+                set_pending_switch();
             }
         }
     }
@@ -365,6 +387,26 @@ impl Scheduler {
     }
 }
 
+/// Set when a context switch is owed, consumed by the trap handler.
+///
+/// Deliberately a free-standing static rather than a `Scheduler` field.
+/// `request_switch()` is called from task context *after* its critical section
+/// has closed, so reaching this through `global()` would mint an
+/// `&'static mut Scheduler` with interrupts unmasked -- racing the trap
+/// handler's own reference and violating the contract `global()` documents.
+/// An atomic needs no such reference.
+static PENDING_SWITCH: AtomicBool = AtomicBool::new(false);
+
+/// Record that a switch is owed.
+pub fn set_pending_switch() {
+    PENDING_SWITCH.store(true, Ordering::Relaxed);
+}
+
+/// Consume the pending-switch flag, returning whether one was owed.
+pub fn take_pending_switch() -> bool {
+    PENDING_SWITCH.swap(false, Ordering::Relaxed)
+}
+
 /// Global scheduler instance. Access only via `with()` (critical section) from
 /// task context, or directly from the trap handler (interrupts already masked).
 static mut SCHEDULER: Scheduler = Scheduler::new();
@@ -382,6 +424,6 @@ pub fn with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
 /// Request a context switch: set the flag and raise the software interrupt so
 /// the switch happens in the trap handler.
 pub fn request_switch() {
-    global().pending_switch.store(true, Ordering::Relaxed);
+    set_pending_switch();
     unsafe { flint_arch_xtensa::registers::request_switch() }
 }

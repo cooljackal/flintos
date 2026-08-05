@@ -13,7 +13,22 @@ use flint_arch_xtensa::registers::{PS_UM, PS_WOE, PS_CALLINC_SHIFT};
 use crate::scheduler::{self, TaskState};
 
 const MAX_STACK_SIZE: u32 = 16384;
+
+/// Smallest stack a task may request.
+///
+/// The floor is not arbitrary. A trap lands on the *interrupted task's* stack
+/// and immediately reserves a 288-byte-aligned frame, then calls `_flint_trap`,
+/// whose own prologue reserves several hundred bytes more, and window overflows
+/// spill further frames below that. A stack under this size can be overrun by
+/// the interrupt machinery alone, before the task's own locals are counted.
+const MIN_STACK_SIZE: u32 = 1024;
+
 const STACK_PAINT: u32 = 0xDEADBEEF;
+
+/// Written at the lowest address of every task stack and checked on each
+/// context switch. Stack growth is downward, so this word is the first thing an
+/// overflow destroys.
+pub const STACK_GUARD: u32 = 0xFEEDFACE;
 
 extern "C" {
     static _task_stack_start: u32;
@@ -29,19 +44,38 @@ fn paint_stack(base: u32, size: u32) {
     for i in 0..words {
         unsafe { ptr.add(i).write(STACK_PAINT) };
     }
+    // The guard replaces the paint word at the lowest address, so an overflow
+    // is distinguishable from ordinary high-water-mark consumption.
+    unsafe { ptr.write(STACK_GUARD) };
+}
+
+/// True if `tcb`'s stack guard is still intact.
+///
+/// A false return means the task has already written past the bottom of its
+/// stack and has corrupted whatever lies below. Tasks with `stack_size == 0`
+/// (the idle task, which runs on the boot stack) are always reported intact.
+pub fn stack_guard_intact(stack_base: u32, stack_size: u32) -> bool {
+    if stack_size == 0 {
+        return true;
+    }
+    unsafe { (stack_base as *const u32).read_volatile() == STACK_GUARD }
 }
 
 fn allocate_stack(size: u32) -> Option<u32> {
     unsafe {
         let region_start = core::ptr::addr_of!(_task_stack_start) as u32;
         let region_end = core::ptr::addr_of!(_task_stack_end) as u32;
-        let base = region_start + STACK_ALLOC_OFFSET;
-        // 16-byte align each stack.
-        let size = (size + 15) & !15;
-        if base + size > region_end {
+
+        // Align the base as well as the size. Aligning only the size leaves
+        // every stack's alignment hostage to wherever the linker happened to
+        // place the region, and Xtensa requires a 16-byte-aligned SP.
+        let base = (region_start.checked_add(STACK_ALLOC_OFFSET)?).checked_add(15)? & !15;
+        let size = size.checked_add(15)? & !15;
+        let end = base.checked_add(size)?;
+        if end > region_end {
             return None; // pool exhausted (W3.5: surfaced, not panicked)
         }
-        STACK_ALLOC_OFFSET += size;
+        STACK_ALLOC_OFFSET = end - region_start;
         Some(base)
     }
 }
@@ -53,10 +87,20 @@ pub fn sys_spawn(
     priority: Priority,
     stack_size: usize,
 ) -> Option<TaskId> {
+    // Validate before taking a TCB slot, so a rejected request leaves no trace.
+    //
+    // These used to be silently clamped with `.min(MAX_STACK_SIZE)`. With no
+    // MPU, a task that believes it has the stack it asked for and quietly got
+    // less overflows into its neighbour -- exactly the silent-wrong-answer
+    // failure the mutex, queue, and timer paths were all changed to reject.
+    let stack_size = stack_size as u32;
+    if !(MIN_STACK_SIZE..=MAX_STACK_SIZE).contains(&stack_size) {
+        return None;
+    }
+
     scheduler::with(|sched| {
         let id = sched.alloc_id()? as usize;
 
-        let stack_size = (stack_size as u32).min(MAX_STACK_SIZE);
         let stack_base = match allocate_stack(stack_size) {
             Some(b) => b,
             None => {

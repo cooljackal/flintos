@@ -37,7 +37,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             XtensaTick::tick(); // ack + re-arm + advance counter
             let now = XtensaTick::now();
             if scheduler::global().on_tick(now) {
-                scheduler::global().pending_switch.store(true, Ordering::Relaxed);
+                scheduler::set_pending_switch();
             }
             timer::process_timers(now);
             // Stack high-water update for the running task.
@@ -71,7 +71,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
 
     // Decide whether to switch.
     let sched = scheduler::global();
-    if sched.pending_switch.swap(false, Ordering::Relaxed) {
+    if scheduler::take_pending_switch() {
         let cur = sched.current;
         let next = sched.schedule();
         if next != cur {
