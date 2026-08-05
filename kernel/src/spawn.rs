@@ -147,6 +147,11 @@ unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top
     ctx.a = [0u32; 16];
     ctx.a[0] = task_exit as usize as u32; // return address → task_exit
     ctx.a[1] = stack_top & !15; // SP, 16-aligned
+    // The rest of the register file starts clean. A fresh task has no outer
+    // frames, so with windowstart = 1 nothing will ever read these -- but the
+    // trap handler restores all 64 registers unconditionally, so they must be
+    // defined rather than whatever the TCB slot held previously.
+    ctx.ar_rest = [0u32; 48];
     ctx.windowbase = 0;
     ctx.windowstart = 1;
 }

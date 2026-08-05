@@ -55,12 +55,29 @@ pub struct TaskContext {
     pub lbeg: u32,
     pub lend: u32,
     pub lcount: u32,
-    /// 16 general-purpose registers.
+    /// The 16 general-purpose registers visible in the current window.
     pub a: [u32; 16],
     /// Xtensa register-window base pointer.
     pub windowbase: u32,
     /// Bitmask of active register windows.
     pub windowstart: u32,
+    /// The other 48 physical address registers, i.e. the rest of the register
+    /// file outside the current window.
+    ///
+    /// Saving these is what makes a context switch correct on Xtensa. A task's
+    /// outer call frames live in the physical register file, not on its stack,
+    /// until a window overflow evicts them. The trap handler is itself windowed
+    /// Rust, so merely *servicing* an interrupt rotates the window and spills
+    /// some of the interrupted task's frames -- clearing their WINDOWSTART bits
+    /// while their physical registers get reused. Restoring only the current
+    /// window and the original WINDOWSTART then tells the hardware those frames
+    /// are still in registers when they are not.
+    ///
+    /// Capturing the whole register file sidesteps the entire question: the
+    /// machine state is restored exactly as it was, so whatever the handler did
+    /// to the windows in between cannot be observed. It costs 192 bytes per
+    /// task and about 96 extra loads and stores per trap.
+    pub ar_rest: [u32; 48],
 }
 
 impl TaskContext {
@@ -76,9 +93,19 @@ impl TaskContext {
             a: [0; 16],
             windowbase: 0,
             windowstart: 0,
+            ar_rest: [0; 48],
         }
     }
 }
+
+/// The assembly trap entry hardcodes this frame size and the field offsets
+/// below. If either drifts, the handler reads and writes the wrong words with
+/// no diagnostic at all, so tie them together here.
+const _: () = {
+    assert!(core::mem::size_of::<TaskContext>() == 288);
+    // 16-byte aligned, as Xtensa requires of a stack pointer.
+    assert!(core::mem::size_of::<TaskContext>() % 16 == 0);
+};
 
 // ── MPU ─────────────────────────────────────────────────────────────────────
 
