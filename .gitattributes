@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Normalise line endings. Without this, a Windows checkout commits CRLF into
+# shell scripts, and `bash tools/check-layers.sh` then fails on Linux and in CI
+# with "bad interpreter: /usr/bin/env bash^M".
+
+* text=auto eol=lf
+
+# Files that must be LF regardless of platform.
+*.sh    text eol=lf
+*.rs    text eol=lf
+*.S     text eol=lf
+*.ld    text eol=lf
+*.toml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+Makefile text eol=lf
+
+# Binary artefacts — never diff or convert.
+*.elf   binary
+*.bin   binary
+*.hex   binary
+*.png   binary
