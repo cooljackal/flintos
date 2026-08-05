@@ -24,6 +24,10 @@ use crate::{interrupt, timer, debug};
 // whether a context switch ever happens, are otherwise unobservable from the
 // console: a kernel that never schedules and a kernel whose timer never ticks
 // produce byte-identical silence.
+/// Bring-up canary counter, incremented by a dispatched task. Lives here
+/// rather than in main.rs so both the binary and the library can see it.
+pub static CANARY: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 static FIRST_TRAP: AtomicBool = AtomicBool::new(false);
 static FIRST_TICK: AtomicBool = AtomicBool::new(false);
 static FIRST_SWITCH: AtomicBool = AtomicBool::new(false);
@@ -92,6 +96,11 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
                     debug::fault::raw_print("/");
                     debug::fault::raw_dec(size);
                 }
+                // Non-zero proves a dispatched task executed instructions.
+                debug::fault::raw_print(" canary=");
+                debug::fault::raw_dec(
+                    CANARY.load(core::sync::atomic::Ordering::Relaxed),
+                );
                 debug::fault::raw_print("\r\n");
 
                 // On the first few ticks, dump the interrupted window. When a

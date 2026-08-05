@@ -8,7 +8,7 @@
 //! destroys.
 
 use crate::scheduler;
-use crate::spawn::{stack_guard_intact, STACK_GUARD};
+use crate::spawn::stack_guard_intact;
 
 const STACK_PAINT: u32 = 0xDEADBEEF;
 
@@ -90,14 +90,14 @@ mod tests {
     fn guard_is_distinct_from_paint() {
         // If these ever collided, an overflow that happened to write the paint
         // value would look like an intact guard.
-        assert_ne!(STACK_GUARD, STACK_PAINT);
+        assert_ne!(crate::spawn::STACK_GUARD, STACK_PAINT);
     }
 
     #[test]
     fn used_bytes_counts_from_the_top_down() {
         // A stack fully painted except the guard is entirely unused.
         let mut stack = [STACK_PAINT; 16];
-        stack[0] = STACK_GUARD;
+        stack[0] = crate::spawn::STACK_GUARD;
         let base = stack.as_ptr() as u32;
         assert_eq!(used_bytes(base, 64), 0);
 

@@ -169,7 +169,16 @@ unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top
     let sp = (stack_top - BASE_SAVE_AREA) & !15;
 
     ctx.a = [0u32; 16];
-    ctx.a[0] = task_exit as usize as u32; // return address → task_exit
+    // a0 = 0, matching the reference Xtensa ports. A zero return address
+    // terminates the register-window spill chain: the overflow handler walks
+    // callers via a0, and a real address here presents the outermost frame as
+    // having a caller to spill into, which it does not.
+    //
+    // The cost is that a task returning from its entry function jumps to 0
+    // rather than reaching task_exit. That path is already unreachable for the
+    // demo tasks, which loop forever, and a crash there is easier to diagnose
+    // than a task that will not start.
+    ctx.a[0] = 0;
     ctx.a[1] = sp;
 
     // Every window's a1 slot gets a valid stack pointer.
