@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # The repo's .cargo/config.toml defaults to the Xtensa target and enables
+  # build-std. Host jobs must therefore pass --target explicitly to override it.
+  HOST_TARGET: x86_64-unknown-linux-gnu
+
+jobs:
+  check:
+    name: Check and test (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Crates that contain no Xtensa assembly and so build for any host.
+      - name: Check host-compatible crates
+        run: |
+          for crate in flint-hal flint-api flint-board \
+                       spi-bus i2c-bus uart-bus bme280 ssd1306; do
+            echo "::group::cargo check -p $crate"
+            cargo check -p "$crate" --target "$HOST_TARGET"
+            echo "::endgroup::"
+          done
+
+      - name: Run host unit tests
+        run: |
+          for crate in flint-hal flint-api spi-bus i2c-bus uart-bus bme280 ssd1306; do
+            echo "::group::cargo test -p $crate"
+            cargo test -p "$crate" --target "$HOST_TARGET"
+            echo "::endgroup::"
+          done
+
+      - name: Clippy
+        run: |
+          cargo clippy -p flint-hal -p flint-api --target "$HOST_TARGET" -- -D warnings
+
+  layers:
+    name: Three-layer boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce the Layer-3 to Layer-1 dependency boundary
+        run: bash tools/check-layers.sh
+
+  licence:
+    name: Licence headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every source file carries an SPDX identifier
+        run: |
+          missing=0
+          for f in $(git ls-files '*.rs' '*.S' '*.ld' '*.sh') Makefile; do
+            if ! head -5 "$f" | grep -q 'SPDX-License-Identifier'; then
+              echo "::error file=$f::missing SPDX-License-Identifier header"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "$missing file(s) missing an SPDX header. See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "All source files carry an SPDX header."
+
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Every commit in this PR is signed off
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          failed=0
+          for sha in $(git rev-list "$base..$head"); do
+            author="$(git show -s --format='%an <%ae>' "$sha")"
+            if ! git show -s --format='%B' "$sha" | grep -qiF "Signed-off-by: $author"; then
+              echo "::error::commit $sha is not signed off by its author ($author)"
+              echo "  fix with: git rebase --signoff $base"
+              failed=$((failed + 1))
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "$failed commit(s) missing a DCO sign-off. See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "All commits signed off."
+
+  xtensa:
+    name: Build for ESP32 (Xtensa)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # toolchain install is slow and occasionally flaky
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Espressif Rust toolchain
+        run: |
+          cargo install espup --locked
+          espup install
+
+      - name: Build the kernel image
+        run: |
+          . "$HOME/export-esp.sh"
+          cargo +esp build \
+            --target xtensa-esp32-none-elf \
+            -Z build-std=core,compiler_builtins
