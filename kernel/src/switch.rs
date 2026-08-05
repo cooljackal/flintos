@@ -52,6 +52,26 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             XtensaTick::tick(); // ack + re-arm + advance counter
             announce_once(&FIRST_TICK, "[FLINT] first timer tick\r\n");
             let now = XtensaTick::now();
+
+            // Bring-up heartbeat. Truncated console output has two completely
+            // different causes that look identical from outside: the kernel
+            // died, or the kernel is fine and the running task is wedged. This
+            // separates them, and reports where the interrupted task actually
+            // is so a hang can be located rather than guessed at.
+            if now % 500 == 0 {
+                debug::fault::raw_print("[FLINT] alive tick=");
+                debug::fault::raw_dec(now as u32);
+                debug::fault::raw_print(" cur=");
+                debug::fault::raw_dec(scheduler::global().current);
+                debug::fault::raw_print(" pc=0x");
+                debug::fault::raw_hex(unsafe { (*frame).pc });
+                debug::fault::raw_print(" ps=0x");
+                debug::fault::raw_hex(unsafe { (*frame).ps });
+                debug::fault::raw_print(" ws=0x");
+                debug::fault::raw_hex(unsafe { (*frame).windowstart });
+                debug::fault::raw_print("\r\n");
+            }
+
             if scheduler::global().on_tick(now) {
                 scheduler::set_pending_switch();
             }
