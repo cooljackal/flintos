@@ -222,6 +222,22 @@ impl Scheduler {
             }
         }
 
+        // A ready task at a better priority than the running one must preempt.
+        //
+        // Without this the two cases above are the *only* things that ever
+        // request a switch, and neither covers the ordinary situation of a
+        // higher-priority task simply being Ready: one fires only when a
+        // *blocked* task times out, the other only when a task at the *same*
+        // priority is waiting its turn. Observed on hardware as a system that
+        // boots cleanly, services its interrupts, and then runs the idle task
+        // forever while three higher-priority Ready tasks sit in ready_mask --
+        // nothing was ever dispatched for the first time.
+        if let Some(best) = self.highest_ready_priority() {
+            if best < cur_prio {
+                need_switch = true;
+            }
+        }
+
         // Decrement the current task's quantum; expiry triggers round-robin.
         if let Some(tcb) = &mut self.tasks[self.current as usize] {
             tcb.quantum = tcb.quantum.saturating_sub(1);
@@ -238,6 +254,16 @@ impl Scheduler {
         }
 
         need_switch
+    }
+
+    /// The best (numerically lowest) priority level with a runnable task, or
+    /// `None` if nothing is ready.
+    pub fn highest_ready_priority(&self) -> Option<u8> {
+        if self.ready_mask == 0 {
+            None
+        } else {
+            Some(self.ready_mask.trailing_zeros() as u8)
+        }
     }
 
     fn another_ready_at(&self, prio: u8, except: u32) -> bool {

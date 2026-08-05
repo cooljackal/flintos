@@ -15,19 +15,34 @@ use flint_hal::tick::TickSource;
 use flint_hal::types::TaskContext;
 use flint_arch_xtensa::registers;
 use flint_arch_xtensa::tick::XtensaTick;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::scheduler::{self, TaskState};
 use crate::{interrupt, timer, debug};
 
+// One-shot bring-up markers. Whether the timer interrupt fires at all, and
+// whether a context switch ever happens, are otherwise unobservable from the
+// console: a kernel that never schedules and a kernel whose timer never ticks
+// produce byte-identical silence.
+static FIRST_TRAP: AtomicBool = AtomicBool::new(false);
+static FIRST_TICK: AtomicBool = AtomicBool::new(false);
+static FIRST_SWITCH: AtomicBool = AtomicBool::new(false);
+
+fn announce_once(flag: &AtomicBool, msg: &str) {
+    if !flag.swap(true, Ordering::Relaxed) {
+        debug::fault::raw_print(msg);
+    }
+}
+
 /// Called from `_flint_trap_entry` in vectors.S.
 ///
 /// # Safety
-/// `frame` must point to a valid 96-byte `TaskContext`-layout frame built by
-/// the trap entry stub.
+/// `frame` must point to a valid `TaskContext`-layout frame built by the trap
+/// entry stub.
 #[no_mangle]
 pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
     let cause = unsafe { registers::read_exccause() };
+    announce_once(&FIRST_TRAP, "[FLINT] first trap serviced\r\n");
 
     if cause == registers::EXCCAUSE_LEVEL1_INTERRUPT {
         let pending = unsafe { registers::read_interrupt() & registers::read_intenable() };
@@ -35,6 +50,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
         // Timer tick.
         if pending & registers::INT_TIMER0_MASK != 0 {
             XtensaTick::tick(); // ack + re-arm + advance counter
+            announce_once(&FIRST_TICK, "[FLINT] first timer tick\r\n");
             let now = XtensaTick::now();
             if scheduler::global().on_tick(now) {
                 scheduler::set_pending_switch();
@@ -75,6 +91,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
         let cur = sched.current;
         let next = sched.schedule();
         if next != cur {
+            announce_once(&FIRST_SWITCH, "[FLINT] first context switch\r\n");
             // Save the interrupted context into the current task's TCB, unless
             // it has been torn down.
             if let Some(tcb) = &mut sched.tasks[cur as usize] {
