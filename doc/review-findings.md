@@ -18,13 +18,24 @@ claim did not survive verification, it is recorded in
 > **Fixed:** P0 items 1, 2, 4, 5, 6 · P1 items 7–15 · P2 items 19–36.
 > Host tests went from 49 to 99 in the process.
 >
-> **Still open:**
-> - **P0 item 3 — the register-window spill.** The single remaining blocker
->   on the critical path. See the entry below.
-> - **P1 items 16–18 (partly)** — README, LICENCE, and CI now exist; demo
->   tasks still live in `FlintMain`, board selection is still hardcoded, and
->   the internal planning documents still ship as-is.
-> - **P3 cleanup** — largely untouched.
+> **Still open — tracked as GitHub issues, which are the source of truth.**
+> This document is the historical record of the review; it is not updated as
+> work lands.
+>
+> | Issue | Item |
+> |---|---|
+> | [#1](https://github.com/cooljackal/flintos/issues/1) | P0 — register-window spill on context switch (**the remaining blocker**) |
+> | [#2](https://github.com/cooljackal/flintos/issues/2) | P1 — I²C GPIO-matrix pin routing |
+> | [#3](https://github.com/cooljackal/flintos/issues/3) | P1 — demo tasks hardcoded in `FlintMain` |
+> | [#4](https://github.com/cooljackal/flintos/issues/4) | P1 — multi-board support; M5Stack Atom manifest |
+> | [#5](https://github.com/cooljackal/flintos/issues/5) | P1 — replace internal planning docs with user docs |
+> | [#6](https://github.com/cooljackal/flintos/issues/6) | P1 — program the CPU clock instead of assuming it |
+> | [#7](https://github.com/cooljackal/flintos/issues/7) | P2 — panic handler does not mask interrupts or halt |
+> | [#8](https://github.com/cooljackal/flintos/issues/8) | P2 — `request_switch()` outside a critical section |
+> | [#9](https://github.com/cooljackal/flintos/issues/9) | P2 — `IDLE_PRIORITY` collides with `Background(15)` |
+> | [#10](https://github.com/cooljackal/flintos/issues/10) | P2 — `spawn()` silently truncates stacks |
+> | [#11](https://github.com/cooljackal/flintos/issues/11)–[#14](https://github.com/cooljackal/flintos/issues/14) | P3 — naming, stale docs, `RawTrapFrame`, build warnings |
+> | [#15](https://github.com/cooljackal/flintos/issues/15) | Hardware bring-up gates G0 and G1 |
 >
 > **Discovered during remediation, not in the original review:** the tree did
 > not compile for Xtensa at all. `global_asm!` routes the assembly through

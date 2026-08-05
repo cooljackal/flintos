@@ -45,11 +45,16 @@ than one call deep. Everything else on the critical path (trap entry, register
 save/restore, boot window state, memory map, console) has been repaired and
 verified by disassembling the linked image.
 
-A full adversarial review of the tree, including what was checked and found
-sound, is in [`doc/review-findings.md`](doc/review-findings.md). Nothing is
-hidden: where a driver is a stub or a value is an assumption, it says so.
+Open work is tracked in
+[issues](https://github.com/cooljackal/flintos/issues) — that is the source of
+truth. The full adversarial review that produced them, including what was
+checked and found sound, is in
+[`doc/review-findings.md`](doc/review-findings.md). Nothing is hidden: where a
+driver is a stub or a value is an assumption, it says so.
 
-**What we want from you right now:** flash it to a board, tell us what happens.
+**What we want from you right now:** flash it to a board, tell us what happens —
+[issue #15](https://github.com/cooljackal/flintos/issues/15) is the bring-up
+gate, and a garbled serial dump is a useful result.
 
 ---
 
