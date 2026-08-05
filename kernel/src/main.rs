@@ -10,6 +10,7 @@ use flint_arch_xtensa::tick::XtensaTick;
 use flint_arch_xtensa::registers;
 
 mod board;
+mod counters;
 mod debug;
 mod dma_broker;
 mod interrupt;
@@ -71,39 +72,32 @@ const SENSOR_PRIORITY: Priority = Priority::Normal(1);
 const CONSUMER_PRIORITY: Priority = Priority::Normal(5);
 const HOUSEKEEP_PRIORITY: Priority = Priority::Background(1);
 
+// Bring-up form: counters, not log lines.
+//
+// The logging path is several calls deep and writes to the same UART the trap
+// handler's diagnostics use, so a task dying inside it cannot be told apart
+// from a task that was never scheduled. A counter each proves scheduling on its
+// own, with no shared resource and no call depth.
+use core::sync::atomic::Ordering as O;
+
 fn task_sensor() {
-    let mut count = 0u32;
     loop {
-        count += 1;
-        flint_api::log_info!(
-            "[sensor    prio={:?}] n={} tick={}",
-            SENSOR_PRIORITY, count, flint_api::timer::now_ms()
-        );
+        counters::SENSOR.fetch_add(1, O::Relaxed);
         flint_api::task::sleep_ms(500);
     }
 }
 
 fn task_consumer() {
-    let mut count = 0u32;
     loop {
-        count += 1;
-        flint_api::log_info!(
-            "[consumer  prio={:?}] n={} tick={}",
-            CONSUMER_PRIORITY, count, flint_api::timer::now_ms()
-        );
+        counters::CONSUMER.fetch_add(1, O::Relaxed);
         flint_api::task::sleep_ms(1000);
     }
 }
 
 fn task_housekeep() {
-    let mut count = 0u32;
     loop {
         flint_api::task::sleep_ms(3000);
-        count += 1;
-        flint_api::log_info!(
-            "[housekeep prio={:?}] n={} tick={}",
-            HOUSEKEEP_PRIORITY, count, flint_api::timer::now_ms()
-        );
+        counters::HOUSEKEEP.fetch_add(1, O::Relaxed);
     }
 }
 

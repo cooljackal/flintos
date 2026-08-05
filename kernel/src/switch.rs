@@ -61,14 +61,9 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             // The first few ticks are printed unconditionally: the failures
             // seen so far all occur within the first two or three, so a
             // heartbeat that only starts at 500 reports nothing at all.
-            if now <= 20 || now % 5000 == 0 {
+            if now % 1000 == 0 {
                 let cur = scheduler::global().current;
-                let sp = unsafe { (*frame).a[1] };
-                let (base, size) = scheduler::global().tasks[cur as usize]
-                    .as_ref()
-                    .map_or((0, 0), |t| (t.stack_base, t.stack_size));
-
-                debug::fault::raw_print("[FLINT] tick=");
+                debug::fault::raw_print("[FLINT] t=");
                 debug::fault::raw_dec(now as u32);
                 debug::fault::raw_print(" cur=");
                 debug::fault::raw_dec(cur);
@@ -76,24 +71,14 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
                 debug::fault::raw_hex(unsafe { (*frame).pc });
                 debug::fault::raw_print(" ws=0x");
                 debug::fault::raw_hex(unsafe { (*frame).windowstart });
-                debug::fault::raw_print(" sp=0x");
-                debug::fault::raw_hex(sp);
-                // Headroom left below the interrupted stack pointer. This is
-                // the number that decides whether the trap path is overrunning
-                // the task it interrupted: the frame alone is 288 bytes and
-                // _flint_trap reserves 272 more on top of it.
-                debug::fault::raw_print(" free=");
-                // stack_size 0 means the task runs on the boot stack (idle),
-                // where there is no pool to measure against.
-                if size == 0 {
-                    debug::fault::raw_print("n/a");
-                } else {
-                    debug::fault::raw_dec(sp.saturating_sub(base));
-                    debug::fault::raw_print("/");
-                    debug::fault::raw_dec(size);
-                }
-                debug::fault::raw_print("\r\n");
-
+                debug::fault::raw_print(" n=");
+                debug::fault::raw_dec(crate::counters::sensor());
+                debug::fault::raw_print("/");
+                debug::fault::raw_dec(crate::counters::consumer());
+                debug::fault::raw_print("/");
+                debug::fault::raw_dec(crate::counters::housekeep());
+                debug::fault::raw_print("
+");
             }
 
             if scheduler::global().on_tick(now) {

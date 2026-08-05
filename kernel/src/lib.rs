@@ -4,6 +4,7 @@
 #![feature(asm_experimental_arch)]
 
 pub mod board;
+pub mod counters;
 pub mod debug;
 pub mod dma_broker;
 pub mod interrupt;
