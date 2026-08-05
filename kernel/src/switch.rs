@@ -61,7 +61,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             // The first few ticks are printed unconditionally: the failures
             // seen so far all occur within the first two or three, so a
             // heartbeat that only starts at 500 reports nothing at all.
-            if now % 5000 == 0 {
+            if now <= 20 || now % 5000 == 0 {
                 let cur = scheduler::global().current;
                 let sp = unsafe { (*frame).a[1] };
                 let (base, size) = scheduler::global().tasks[cur as usize]
