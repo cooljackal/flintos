@@ -138,40 +138,68 @@ Then activate the environment in your shell:
 ```
 </details>
 
-### 2. Build
+### 2. Build and flash
 
 ```bash
 git clone https://github.com/cooljackal/flintos
 cd flintos
-cargo +esp build --target xtensa-esp32-none-elf -Z build-std=core,compiler_builtins --features debug-level-1
+make flash-dev
 ```
 
-`debug-level-1` turns on logging, which is what makes the demo tasks visible.
+`flash-dev` builds with `debug-level-1` and flashes over USB serial.
+**Use it rather than `make flash`** — logging is off by default, so `make flash`
+boots correctly but prints no task output, which looks exactly like a kernel
+that isn't scheduling.
 
-### 3. Flash and watch
+Building for a board other than the WROVER default:
 
 ```bash
-espflash flash target/xtensa-esp32-none-elf/debug/flint-kernel --baud 921600 --monitor
+cargo +esp build -p flint-kernel --target xtensa-esp32-none-elf -Z build-std=core,compiler_builtins --features debug-level-1 --no-default-features --features board-m5-atom
 ```
 
-Expected output:
+Board features: `board-esp32-wrover` (default), `board-esp32-devkitc`,
+`board-m5-atom` (ESP32-PICO-D4). Enabling two is a compile error, not a warning
+— a silently wrong pin map presents as the board being broken.
+
+### 3. What a healthy boot looks like
 
 ```
-[FLINT] FlintMain reached
-Flint RTOS booting...
-[kernel] Flint RTOS boot complete, entering idle
-[sensor] reading #1 tick=500
-[consumer] processing tick=1000
-[sensor] reading #2 tick=1000
-[housekeep] alive tick=3000
+[FLINT] FlintMain reached (_start -> Rust OK)
+[FLINT] VECBASE=0x40080000 _vector_table_start=0x40080000 MATCH
+[FLINT] PS=0x0004000f WOE=1
+[FLINT] SP=0x3ffb1f30 task_stack_pool=[0x3ffc0000, 0x3ffd8000)
+[FLINT] startup::init done
+[FLINT] cpu_hz=80000000 (measured)
+[FLINT] tick period=80000 CCOUNT ticks
+[FLINT] unmasking interrupts...
+[FLINT] interrupts unmasked, entering idle
+[sensor    prio=Normal(1)]  n=1 tick=500
+[consumer  prio=Normal(5)]  n=1 tick=1000
+[sensor    prio=Normal(1)]  n=2 tick=1000
+[housekeep prio=Background(1)] n=1 tick=3000
 ```
 
-Three tasks at three priorities, interleaving on a 1 ms tick. If you see that,
-preemption works.
+Each banner line proves the step before it, so the **last line you see tells you
+where it died**:
 
-> **If you don't see that** — that is the single most useful bug report you can
-> file right now. Open an issue with your board model and the raw serial output,
-> garbled or not.
+| Last line | What it means |
+|---|---|
+| *(nothing)* | Dead before Rust, or the console baud is wrong |
+| `FlintMain reached` | The vector table didn't install — check `VECBASE` |
+| `VECBASE ... MISMATCH` | Traps will go to ROM; nothing will schedule |
+| `WOE=0` | Register windows off; every windowed call is unreliable |
+| `cpu_hz=... (ASSUMED)` | Clock measurement failed; every timeout is scaled by a guess |
+| `unmasking interrupts...` | **It died in its first-ever interrupt** — trap entry or `_flint_trap` |
+
+If tasks appear but the timing is off by a constant factor, that's the CPU clock
+([#6](https://github.com/cooljackal/flintos/issues/6)). If they run briefly and
+then misbehave, that's most likely the missing window spill
+([#1](https://github.com/cooljackal/flintos/issues/1)) — a genuine stack
+overflow reports itself by name instead.
+
+> **If it doesn't work, that is the single most useful thing you can report.**
+> [Issue #15](https://github.com/cooljackal/flintos/issues/15) is the bring-up
+> gate — post your board model and the raw serial output, garbled or not.
 
 ---
 
