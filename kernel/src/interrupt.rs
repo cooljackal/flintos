@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Interrupt routing framework (plan W6.2).
 //!
 //! A peripheral IRQ vectors into the trap handler, which calls [`dispatch`].

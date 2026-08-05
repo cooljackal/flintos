@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * ESP32 (PICO-D4 / WROVER) Linker Script for Flint RTOS — flash-XIP layout.
  *

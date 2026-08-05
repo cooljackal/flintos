@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Timer services.
 //!
 //! Provides `now_ms()` for wall-clock time, `once_ms()` for one-shot

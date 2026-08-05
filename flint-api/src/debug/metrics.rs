@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Named metrics: counters and gauges.
 //!
 //! `Counter` is a monotonically increasing named value

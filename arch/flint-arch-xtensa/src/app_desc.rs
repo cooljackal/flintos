@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! ESP-IDF application descriptor.
 //!
 //! The ESP-IDF 2nd-stage bootloader (the one espflash bundles) refuses to hand

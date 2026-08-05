@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Architecture-specific syscall ABI.
 //!
 //! Each architecture (Xtensa, ARM) provides an `impl SyscallABI` that

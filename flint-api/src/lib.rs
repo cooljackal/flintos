@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Flint RTOS public API crate.
 //!
 //! This crate provides the user-facing primitives:

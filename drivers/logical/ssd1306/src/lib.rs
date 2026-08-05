@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! SSD1306 OLED display driver (128x64, I2C or SPI).
 //!
 //! Layer 3 logical driver — knows nothing about the bus or MCU.

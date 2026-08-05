@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! UART bus abstraction.
 //!
 //! Wraps a [`PhysicalBus`] impl and exposes the [`Bus`] trait.

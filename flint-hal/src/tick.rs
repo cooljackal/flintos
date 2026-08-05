@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Hardware timer tick source trait.
 //!
 //! The system tick drives preemptive scheduling, timeouts, and sleep.

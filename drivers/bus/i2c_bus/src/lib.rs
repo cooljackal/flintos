@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! I2C bus abstraction.
 //!
 //! Wraps a [`PhysicalBus`] impl with a fixed slave address and

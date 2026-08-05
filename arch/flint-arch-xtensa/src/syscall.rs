@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Xtensa context ABI (plan W5.1, Option A locked).
 //!
 //! Flint is a single protection domain: the `flint-api` → kernel boundary is a

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Priority-inheritance mutex.
 //!
 //! A mutex whose owner blocks until the lock is acquired, and whose

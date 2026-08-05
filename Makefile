@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # Flint RTOS — Developer Makefile
 # ================================
 # Targets: env, check, build, clean, lint

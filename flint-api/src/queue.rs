@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Bounded typed message queue.
 //!
 //! `Queue<T, N>` is a lock-free bounded ring safe for **multiple producers and

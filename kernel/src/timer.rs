@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Timer subsystem: sleep and one-shot/periodic callbacks (plan W1, W3.5).
 //!
 //! `sleep_ms` blocks the current task until the target tick, then requests a

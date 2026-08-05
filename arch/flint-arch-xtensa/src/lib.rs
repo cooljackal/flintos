@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Xtensa LX6 architecture support for ESP32.
 //!
 //! Provides:

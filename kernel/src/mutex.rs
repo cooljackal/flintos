@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Kernel-side priority-inheritance mutex (plan W3.2, W3.5, W4).
 //!
 //! A higher-priority task blocking on a mutex held by a lower-priority owner

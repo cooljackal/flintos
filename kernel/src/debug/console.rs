@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Console output bridge — wires the debug/log system to the UART.
 //!
 //! Provides `Console` (a `core::fmt::Write` implementation) and the

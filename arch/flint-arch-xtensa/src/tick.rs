@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tick source using the Xtensa CCOUNT / CCOMPARE0 timer (plan W1.1).
 //!
 //! CCOUNT free-runs at the CPU frequency. A CCOMPARE0 match raises the internal

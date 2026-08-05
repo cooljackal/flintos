@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Critical section trait.
 //!
 //! A token-based critical section masks interrupts up to a configurable

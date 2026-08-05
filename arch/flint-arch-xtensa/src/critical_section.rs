@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Xtensa `CriticalSection` implementation (plan W2.1).
 //!
 //! Masks interrupts up to `CRITICAL_SECTION_PRIORITY` by raising `PS.INTLEVEL`

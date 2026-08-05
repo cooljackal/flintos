@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Xtensa LX6 register definitions and inline accessors.
 //!
 //! Interrupt control on Xtensa is via **CPU special registers** (`rsr`/`wsr`),

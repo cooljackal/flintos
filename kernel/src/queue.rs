@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Kernel-side queue waiter management (plan W4).
 //!
 //! When a task blocks on a full queue (send) or empty queue (recv), it is

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Trap handler — the single point where context switches happen (plan W1.2).
 //!
 //! `_flint_trap` is called by the assembly trap entry (`vectors.S`) with a

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Debug and diagnostics subsystem.
 //!
 //! Provides kernel logging (`write`, ring buffer), console output via

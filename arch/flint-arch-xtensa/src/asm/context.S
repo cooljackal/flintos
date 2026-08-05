@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Xtensa LX6 Context Save / Restore
 //
 // ┌──────────────────────────────────────────────────────────────────────┐

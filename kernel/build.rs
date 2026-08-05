@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 fn main() {
     // Pass the linker script to the final linker invocation.
     let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());

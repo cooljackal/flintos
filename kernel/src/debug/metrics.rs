@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /// The metrics table is populated at compile time by the
 /// `flint::Counter`/`flint::Gauge` static definitions in user code.
 

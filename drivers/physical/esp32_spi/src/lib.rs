@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #![no_std]
 
 use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, SpiMode};

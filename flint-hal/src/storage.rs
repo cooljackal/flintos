@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Storage traits for block devices and raw byte-addressable storage.
 //!
 //! Block devices (flash, SD card, USB MSC) are accessed via `BlockDevice`.

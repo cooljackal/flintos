@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /// Postmortem snapshot region (defined in linker script).
 extern "C" {
     static _panic_region_start: u32;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Boot startup — board initialisation, driver setup.
 //!
 //! Called from FlintMain() before the scheduler starts.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! MPU manager — OPTIONAL (may never ship).
 //!
 //! Per the locked architecture decision, Flint is a **single protection

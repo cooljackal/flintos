@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! MPU (Memory Protection Unit) manager trait.
 //!
 //! Provides task isolation by configuring hardware memory-protection

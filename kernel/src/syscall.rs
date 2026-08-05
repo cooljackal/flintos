@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Kernel dispatch ABI (plan W5.1, Option A).
 //!
 //! Flint is a single protection domain: `flint-api` calls these `#[no_mangle]`

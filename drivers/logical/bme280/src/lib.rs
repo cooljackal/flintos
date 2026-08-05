@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! BME280 temperature / humidity / pressure sensor driver.
 //!
 //! Layer 3 logical driver — knows nothing about the bus or MCU.

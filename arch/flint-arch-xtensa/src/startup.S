@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // ESP32 Boot Startup
 //
 // Reached as the image entry point (ENTRY(_start) in the linker script) after

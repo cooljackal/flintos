@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Preemptive priority scheduler.
 //!
 //! 32 effective priority levels (lower number = higher priority), round-robin

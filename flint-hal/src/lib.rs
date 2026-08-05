@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Flint RTOS Hardware Abstraction Layer.
 //!
 //! Defines the trait interfaces for all hardware-facing abstractions:

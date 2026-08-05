@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Board manifest for Flint RTOS.
 //!
 //! Each supported board is a submodule that exports:

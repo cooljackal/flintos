@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Bus abstraction traits and types.
 //!
 //! Three-layer bus model:

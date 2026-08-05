@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /// Trigger a panic from user code.
 /// In release builds, this performs a minimal reset.
 /// In debug builds, it captures a full postmortem snapshot.

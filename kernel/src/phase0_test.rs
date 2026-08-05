@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Phase 0 standalone tests (plan W5.3).
 //!
 //! Option A removed the `syscall` instruction, so the old "syscall under

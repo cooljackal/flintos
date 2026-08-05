@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Task creation and stack allocation (plan W1.3, W0.1).
 //!
 //! Stacks are bump-allocated from the linker-defined `task_stacks` region

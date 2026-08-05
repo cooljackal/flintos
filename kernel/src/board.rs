@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Board manifest integration.
 //!
 //! Re-exports the board manifest and provides runtime initialisation

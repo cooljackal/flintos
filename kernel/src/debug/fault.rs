@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Raw UART0 fault reporter (bring-up diagnostics).
 //!
 //! Writes directly to the UART0 TX FIFO that the ROM/bootloader already

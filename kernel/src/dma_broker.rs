@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! DMA Broker (Phase 3).
 //!
 //! Manages a pool of DMA-safe SRAM and provides safe submission/await

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Layer-boundary enforcement (plan W7.1).
 #
 # Layer-3 (drivers/logical/*) and Layer-2 (drivers/bus/*) crates may depend ONLY

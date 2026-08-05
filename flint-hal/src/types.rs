@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Core type definitions shared across the kernel, HAL, and API layers.
 //!
 //! These types are architecture-agnostic and form the common vocabulary
