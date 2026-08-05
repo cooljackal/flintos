@@ -1,0 +1,9 @@
+[package]
+name = "esp32-gpio"
+version = "0.1.0"
+edition = "2021"
+description = "ESP32 GPIO physical driver"
+
+[dependencies]
+flint-hal = { path = "../../../flint-hal" }
+flint-arch-xtensa = { path = "../../../arch/flint-arch-xtensa" }

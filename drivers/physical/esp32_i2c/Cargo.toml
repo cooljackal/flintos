@@ -1,0 +1,9 @@
+[package]
+name = "esp32-i2c"
+version = "0.1.0"
+edition = "2021"
+description = "ESP32 I2C physical driver"
+
+[dependencies]
+flint-hal = { path = "../../../flint-hal" }
+flint-arch-xtensa = { path = "../../../arch/flint-arch-xtensa" }

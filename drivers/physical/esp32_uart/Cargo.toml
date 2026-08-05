@@ -1,0 +1,9 @@
+[package]
+name = "esp32-uart"
+version = "0.1.0"
+edition = "2021"
+description = "ESP32 UART physical driver"
+
+[dependencies]
+flint-hal = { path = "../../../flint-hal" }
+flint-arch-xtensa = { path = "../../../arch/flint-arch-xtensa" }
