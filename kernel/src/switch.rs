@@ -83,10 +83,37 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
                 // the task it interrupted: the frame alone is 288 bytes and
                 // _flint_trap reserves 272 more on top of it.
                 debug::fault::raw_print(" free=");
-                debug::fault::raw_dec(sp.saturating_sub(base));
-                debug::fault::raw_print("/");
-                debug::fault::raw_dec(size);
+                // stack_size 0 means the task runs on the boot stack (idle),
+                // where there is no pool to measure against.
+                if size == 0 {
+                    debug::fault::raw_print("n/a");
+                } else {
+                    debug::fault::raw_dec(sp.saturating_sub(base));
+                    debug::fault::raw_print("/");
+                    debug::fault::raw_dec(size);
+                }
                 debug::fault::raw_print("\r\n");
+
+                // On the first few ticks, dump the interrupted window. When a
+                // task is wedged on its own `entry`, the question is which
+                // register the window overflow handler is using as its spill
+                // base and what that register actually holds -- and that has
+                // now been guessed wrong twice. Print it instead.
+                if now <= 3 {
+                    debug::fault::raw_print("        wb=0x");
+                    debug::fault::raw_hex(unsafe { (*frame).windowbase });
+                    debug::fault::raw_print(" ps=0x");
+                    debug::fault::raw_hex(unsafe { (*frame).ps });
+                    debug::fault::raw_print("\r\n        a:");
+                    for i in 0..16 {
+                        debug::fault::raw_print(" ");
+                        debug::fault::raw_hex(unsafe { (*frame).a[i] });
+                        if i == 7 {
+                            debug::fault::raw_print("\r\n          ");
+                        }
+                    }
+                    debug::fault::raw_print("\r\n");
+                }
             }
 
             if scheduler::global().on_tick(now) {

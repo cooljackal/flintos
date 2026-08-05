@@ -145,7 +145,19 @@ pub fn sys_spawn(
 /// jumping to garbage (plan W1.3). These values need on-target tuning at G1.
 unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top: u32) {
     ctx.pc = entry as u32;
-    ctx.ps = PS_UM | PS_WOE | (1 << PS_CALLINC_SHIFT);
+    // Kernel mode, not user mode.
+    //
+    // Flint runs in a single protection domain by design -- there is no MPU and
+    // no privilege separation -- and startup.S runs the kernel itself with
+    // PS.UM clear. Giving tasks PS.UM=1 bought nothing, made them the only code
+    // in the system running in user mode, and routed their exceptions to a
+    // different vector (0x340 rather than 0x300) than everything else.
+    //
+    // It also matters for the window handlers: `s32e` and `l32e`, which the
+    // overflow and underflow vectors are built from, are privileged in some
+    // Xtensa configurations. Running tasks at the same level as the rest of the
+    // kernel removes that as a variable.
+    ctx.ps = PS_WOE | (1 << PS_CALLINC_SHIFT);
     ctx.sar = 0;
     ctx.lbeg = 0;
     ctx.lend = 0;
