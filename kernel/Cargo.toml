@@ -1,8 +1,12 @@
 [package]
 name = "flint-kernel"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Flint RTOS kernel — scheduler, IPC, debug subsystems"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 flint-hal = { path = "../flint-hal" }

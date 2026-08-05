@@ -1,8 +1,12 @@
 [package]
 name = "flint-hal"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Flint RTOS HAL trait definitions — no implementations"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 # Must never depend on any arch or board crate
 [dependencies]

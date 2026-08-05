@@ -16,3 +16,35 @@ members = [
     "drivers/logical/bme280",
     "drivers/logical/ssd1306",
 ]
+
+# Shared metadata. Every member inherits these with `field.workspace = true`
+# so version and licence stay in lock-step across all 14 crates.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Farhan Husain <cooljackal@gmail.com>"]
+repository = "https://github.com/cooljackal/flintos"
+rust-version = "1.86"
+
+# ── Build profiles ────────────────────────────────────────────────────────────
+#
+# `panic = "abort"` matches the kernel's own #[panic_handler]: there is no
+# unwinder on bare metal, and no allocator to support one. Cargo ignores this
+# setting for the test/bench profiles, so host-side `cargo test` still works.
+
+[profile.dev]
+# opt-level 0 produces very large stack frames on Xtensa -- the trap handler
+# alone reserves 272 bytes, and it runs on the *interrupted task's* stack. At
+# opt-level 1 frames shrink enough for the 4 KiB default task stack to hold a
+# trap plus the calls it makes, while debug info stays fully intact.
+opt-level = 1
+debug = true
+panic = "abort"
+
+[profile.release]
+opt-level = "z"     # size is the binding constraint on a 4 MB flash part
+lto = true
+codegen-units = 1
+debug = true        # symbols stay in the ELF; espflash strips them for the image
+panic = "abort"

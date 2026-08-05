@@ -1,8 +1,12 @@
 [package]
 name = "flint-arch-xtensa"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Xtensa LX6 HAL implementation for Flint RTOS (ESP32 family)"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 flint-hal = { path = "../../flint-hal" }
