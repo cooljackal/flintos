@@ -13,9 +13,12 @@
 #![no_std]
 #![feature(asm_experimental_arch)]
 
-core::arch::global_asm!(include_str!("asm/vectors.S"));
-core::arch::global_asm!(include_str!("asm/context.S"));
-core::arch::global_asm!(include_str!("startup.S"));
+// The assembly sources are NOT included here with `global_asm!`. They are
+// assembled by `build.rs` with `xtensa-esp32-elf-gcc` and linked as a static
+// archive. LLVM's integrated assembler, which `global_asm!` routes through,
+// rejects the windowed-register instructions (`s32e`, `l32e`, `rfwo`, `rfwu`)
+// that the exception vectors are built from, so this crate could not be
+// compiled for its own target. See build.rs.
 
 pub mod app_desc;
 pub mod critical_section;

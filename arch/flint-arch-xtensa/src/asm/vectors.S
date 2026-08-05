@@ -163,6 +163,16 @@ _vector_table_end:
 _flint_trap_entry:
     addi a1, a1, -96            // reserve 96-byte frame (W0.3: fits offset 0x5C)
 
+    // a2 is the only scratch we have before the frame is populated, so the
+    // interrupted a2 must go into its slot BEFORE anything else uses it.
+    //
+    // The previous revision started with `rsr.epc1 a2`, destroying a2 on the
+    // very first instruction, and later stored the computed stack pointer into
+    // the a[2] slot. Every task resumed from any interrupt therefore came back
+    // with a2 holding its own SP -- and a2 is the first argument and the return
+    // value register in the Xtensa windowed ABI.
+    s32i a2,  a1, 0x20          // a[2], real value
+
     // Save special registers.
     rsr.epc1   a2
     s32i a2,  a1, 0x00          // pc
@@ -182,7 +192,8 @@ _flint_trap_entry:
     s32i a0,  a1, 0x18
     addi a2,  a1, 96
     s32i a2,  a1, 0x1C          // a[1] = interrupted SP
-    s32i a2,  a1, 0x20          // a[2] scratch (overwritten by handler if needed)
+    // a[2] at 0x20 already holds the interrupted a2, saved on entry above.
+    // Do not overwrite it with the computed SP.
     s32i a3,  a1, 0x24
     s32i a4,  a1, 0x28
     s32i a5,  a1, 0x2C
@@ -213,12 +224,18 @@ _flint_trap_entry:
 
     mov  a1, a6                 // a1 = resume frame ptr
 
-    // Restore special registers.
-    l32i a2, a1, 0x5C
-    wsr.windowstart a2
-    l32i a2, a1, 0x58
-    wsr.windowbase  a2
-    rsync
+    // ── Restore, in an order the register windows permit ──────────────────
+    //
+    // Ordering here is not cosmetic. Writing WINDOWBASE re-maps which physical
+    // registers the names a0-a15 refer to, so a1 stops being the frame pointer
+    // the moment the write takes effect. The previous revision restored
+    // WINDOWSTART/WINDOWBASE first and then continued issuing a1-relative
+    // loads, which read from whatever the rotated a1 happened to contain --
+    // every restore after the rotation was reading garbage.
+    //
+    // So: scalar special registers first, while the mapping is still the one
+    // we entered with; then the window mapping; then the address registers.
+
     l32i a2, a1, 0x08
     wsr.sar a2
     l32i a2, a1, 0x0C
@@ -227,15 +244,22 @@ _flint_trap_entry:
     wsr.lend a2
     l32i a2, a1, 0x14
     wsr.lcount a2
-    l32i a2, a1, 0x04
-    wsr.ps  a2
     l32i a2, a1, 0x00
     wsr.epc1 a2
     rsync
 
-    // Restore ARs.
+    // EXCSAVE1 is a special register, so it does not rotate with the window.
+    // It is how the frame pointer survives the WINDOWBASE write.
+    wsr.excsave1 a1
+    l32i a2, a1, 0x5C
+    wsr.windowstart a2
+    l32i a2, a1, 0x58
+    wsr.windowbase  a2
+    rsync
+    rsr.excsave1 a1             // frame pointer, in the restored window
+
+    // Restore ARs. a2 and a3 stay live as scratch for the PS write below.
     l32i a0,  a1, 0x18
-    l32i a3,  a1, 0x24
     l32i a4,  a1, 0x28
     l32i a5,  a1, 0x2C
     l32i a6,  a1, 0x30
@@ -248,6 +272,19 @@ _flint_trap_entry:
     l32i a13, a1, 0x4C
     l32i a14, a1, 0x50
     l32i a15, a1, 0x54
+
+    // PS goes back last, with EXCM forced set. PS.EXCM masks interrupts, so
+    // this keeps the final three loads atomic with respect to the tick; `rfe`
+    // clears EXCM as it returns. Writing the task's PS verbatim here would
+    // re-enable interrupts mid-restore, letting a tick land on a half-restored
+    // register file.
+    l32i a2, a1, 0x04
+    movi a3, 0x10               // PS.EXCM
+    or   a2, a2, a3
+    wsr.ps a2
+    rsync
+
+    l32i a3,  a1, 0x24
     l32i a2,  a1, 0x20
     l32i a1,  a1, 0x1C          // SP last
     rfe
