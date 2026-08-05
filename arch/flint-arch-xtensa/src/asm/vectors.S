@@ -212,11 +212,31 @@ _flint_trap_entry:
     rsr.windowstart a2
     s32i a2, a1, 0x5C
 
+    // ── Leave exception mode before calling into Rust ─────────────────────
+    //
+    // Hardware sets PS.EXCM on exception entry, and while EXCM is set a window
+    // overflow cannot be serviced normally -- it escalates directly to the
+    // double exception vector. `_flint_trap` is a windowed function, so the
+    // `callx4` below overflows a window as soon as the handler nests a call.
+    //
+    // This is not hypothetical: on the first ever interrupt taken on real
+    // hardware, the board printed "DBL" from the double exception vector at
+    // exactly this point.
+    //
+    // Clear EXCM so window exceptions dispatch through their normal vectors,
+    // and raise INTLEVEL to 3 (the ESP32's EXCM level) so no further interrupt
+    // can nest while this one is being serviced. Everything the exception left
+    // in EPC1 and EXCCAUSE has already been copied into the frame above, so it
+    // is safe for a window exception to overwrite those now.
+    movi a2, 0x40003            // PS: WOE=1, INTLEVEL=3, EXCM=0, UM=0
+    wsr.ps a2
+    rsync
+
     // Call the Rust handler with the frame pointer.
-    // ABI NOTE (bring-up): _flint_trap is a windowed extern "C" fn. We clear a0
-    // to terminate the call chain and pass the frame in a6 (→ callee a2 under
-    // call4 rotation); the return value comes back in a6. PS.EXCM/WOE handling
-    // around this windowed call is the key item to validate on hardware (G1).
+    // ABI NOTE: _flint_trap is a windowed extern "C" fn. We clear a0 to
+    // terminate the call chain (so a spill walking the chain stops here) and
+    // pass the frame in a6 (→ callee a2 under call4 rotation); the return
+    // value comes back in a6.
     movi a0, 0
     mov  a6, a1
     movi a3, _flint_trap

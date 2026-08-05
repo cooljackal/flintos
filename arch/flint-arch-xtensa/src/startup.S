@@ -75,10 +75,6 @@ call_start_cpu0:
     bltu a3, a4, .L_bss_loop
 .L_bss_done:
 
-    // ── Kernel/boot stack ────────────────────────────────────────────────
-    .extern _kernel_stack_end
-    movi a1, _kernel_stack_end
-
     // ── Establish the register-window state ──────────────────────────────
     //
     // Every Rust function built for this target begins with `entry`, which is
@@ -90,8 +86,7 @@ call_start_cpu0:
     //
     // Start from a clean single live window (WINDOWBASE=0, WINDOWSTART=1) so
     // the window exception handlers have an unambiguous starting point, then
-    // enable WOE. The stack is already set above, which matters because from
-    // this point a window overflow can fire and will spill to it.
+    // enable WOE.
     movi a2, 0
     wsr.windowbase a2
     movi a2, 1
@@ -103,6 +98,17 @@ call_start_cpu0:
     movi a2, 0x4000F
     wsr.ps a2
     rsync
+
+    // ── Kernel/boot stack ────────────────────────────────────────────────
+    //
+    // Set AFTER the window rotation above, not before. Writing WINDOWBASE
+    // re-maps which physical register the name `a1` refers to, so a stack
+    // pointer loaded beforehand is simply left behind in the old window --
+    // execution then continues on whatever stack the ROM bootloader was using
+    // (observed on hardware as SP=0x3ffe3bb4, in ROM's SRAM1 area, rather than
+    // _kernel_stack_end at 0x3ffb3710).
+    .extern _kernel_stack_end
+    movi a1, _kernel_stack_end
 
     // ── Enter the Rust kernel (interrupts still masked; FlintMain unmasks).
     .extern FlintMain
