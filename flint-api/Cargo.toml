@@ -1,0 +1,22 @@
+[package]
+name = "flint-api"
+version = "0.1.0"
+edition = "2021"
+description = "Flint RTOS public API crate — flint::task, flint::queue, flint::mutex, flint::timer, flint::log"
+
+[dependencies]
+flint-hal = { path = "../flint-hal" }
+
+[features]
+default = []
+debug-level-0 = []
+debug-level-1 = ["flint-log", "flint-metrics", "flint-panic"]
+debug-level-2 = ["debug-level-1", "flint-trace"]
+debug-level-3 = ["debug-level-2", "flint-timing", "flint-cpu-util"]
+
+flint-log = []
+flint-metrics = []
+flint-panic = []
+flint-trace = []
+flint-timing = []
+flint-cpu-util = []
