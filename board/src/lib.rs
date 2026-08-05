@@ -7,7 +7,248 @@
 //! - `TARGET_DEVICES` — logical device attachments
 //! - `TARGET_PERIPHERALS` — direct peripheral mappings
 //! - `TARGET_SERVICES` — system service tasks
+//!
+//! ## Board selection
+//!
+//! The active board is chosen at compile time via Cargo features, one per
+//! supported board (`board-esp32-wrover`, `board-esp32-devkitc`,
+//! `board-m5-atom`, ...). Exactly one must be enabled — the `compile_error!`s
+//! below turn "zero selected" and "more than one selected" into build
+//! failures instead of a silently wrong manifest, which on real hardware
+//! shows up as a very confusing bring-up bug (wrong pins, wrong IRQ, etc).
+//!
+//! Downstream crates (namely `flint-kernel`) never name a board module
+//! directly; they use `flint_board::active`, which this crate re-exports
+//! to whichever board module was selected.
+//!
+//! Selecting a board from the kernel crate, which is what gets built:
+//! ```text
+//! cargo build -p flint-kernel --no-default-features --features board-m5-atom
+//! cargo build -p flint-kernel --no-default-features --features board-esp32-devkitc
+//! cargo build -p flint-kernel   # default: board-esp32-wrover
+//! ```
+//!
+//! Adding a new board: add a `board-<name>` feature in `Cargo.toml`, a
+//! `#[cfg(feature = "board-<name>")] pub mod <name>;` line below, an arm in
+//! the `active` re-export block, and extend both `compile_error!` guards
+//! (the "more than one" guard is pairwise across all board features).
 
 #![no_std]
 
+#[cfg(feature = "board-esp32-wrover")]
 pub mod esp32_wrover;
+
+#[cfg(feature = "board-esp32-devkitc")]
+pub mod esp32_devkitc;
+
+#[cfg(feature = "board-m5-atom")]
+pub mod m5_atom;
+
+// ── Exactly-one-board enforcement ───────────────────────────────────────────
+
+#[cfg(not(any(
+    feature = "board-esp32-wrover",
+    feature = "board-esp32-devkitc",
+    feature = "board-m5-atom",
+)))]
+compile_error!(
+    "flint-board: no board selected. Enable exactly one `board-*` feature, e.g.\n\
+     \n\
+     \tcargo build -p flint-kernel --features board-m5-atom\n\
+     \n\
+     Available boards: board-esp32-wrover (default), board-esp32-devkitc, board-m5-atom."
+);
+
+#[cfg(any(
+    all(feature = "board-esp32-wrover", feature = "board-esp32-devkitc"),
+    all(feature = "board-esp32-wrover", feature = "board-m5-atom"),
+    all(feature = "board-esp32-devkitc", feature = "board-m5-atom"),
+))]
+compile_error!(
+    "flint-board: more than one `board-*` feature is enabled. A build with two \
+     board manifests merged in is not a real board — it silently produces the \
+     wrong pin/IRQ/bus map. Build with `--no-default-features --features <one-board>`."
+);
+
+// ── Active board re-export ──────────────────────────────────────────────────
+
+#[cfg(all(
+    feature = "board-esp32-wrover",
+    not(feature = "board-esp32-devkitc"),
+    not(feature = "board-m5-atom"),
+))]
+pub use esp32_wrover as active;
+
+#[cfg(all(
+    feature = "board-esp32-devkitc",
+    not(feature = "board-esp32-wrover"),
+    not(feature = "board-m5-atom"),
+))]
+pub use esp32_devkitc as active;
+
+#[cfg(all(
+    feature = "board-m5-atom",
+    not(feature = "board-esp32-wrover"),
+    not(feature = "board-esp32-devkitc"),
+))]
+pub use m5_atom as active;
+
+// ── Manifest invariant tests ────────────────────────────────────────────────
+//
+// Run against whichever board is currently selected (`crate::active`), so
+// `cargo test -p flint-board --no-default-features --features <board>`
+// checks that board's manifest. These exist to catch copy-paste errors —
+// e.g. a base address copied from the wrong bus, a pin number that isn't a
+// real GPIO, two buses accidentally sharing a name, or a device pointing at
+// a bus that was renamed/removed — which is exactly how board manifests
+// tend to go wrong when a new one is cloned from an existing file.
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use crate::active::*;
+    use flint_hal::bus::BusConfig;
+
+    // ESP32 peripheral registers live in the DPORT-mapped bus window
+    // 0x3FF4_0000..0x3FF8_0000. Widened slightly on both sides so this
+    // doesn't need updating for every new base address, while still
+    // catching a base address copy-pasted from an unrelated address space.
+    const PERIPH_BASE_LOW: u32 = 0x3FF0_0000;
+    const PERIPH_BASE_HIGH: u32 = 0x3FF8_FFFF;
+
+    // ESP32 (and ESP32-PICO-D4) expose GPIO0..=39.
+    const MAX_GPIO: u8 = 39;
+
+    #[test]
+    fn board_name_non_empty() {
+        assert!(!BOARD_NAME.is_empty());
+    }
+
+    #[test]
+    fn bus_base_addrs_are_plausible() {
+        for bus in TARGET_BUSES {
+            assert!(
+                bus.base_addr >= PERIPH_BASE_LOW && bus.base_addr <= PERIPH_BASE_HIGH,
+                "bus '{}' has base_addr {:#010x} outside the ESP32 peripheral bus window",
+                bus.name,
+                bus.base_addr,
+            );
+        }
+    }
+
+    #[test]
+    fn peripheral_base_addrs_are_plausible() {
+        for p in TARGET_PERIPHERALS {
+            assert!(
+                p.base_addr >= PERIPH_BASE_LOW && p.base_addr <= PERIPH_BASE_HIGH,
+                "peripheral '{}' has base_addr {:#010x} outside the ESP32 peripheral bus window",
+                p.name,
+                p.base_addr,
+            );
+        }
+    }
+
+    #[test]
+    fn uart_pins_are_valid_gpios() {
+        for bus in TARGET_BUSES {
+            if let BusConfig::Uart { tx, rx, .. } = bus.config {
+                assert!(tx <= MAX_GPIO, "bus '{}' uart tx pin {} is not a valid ESP32 GPIO", bus.name, tx);
+                assert!(rx <= MAX_GPIO, "bus '{}' uart rx pin {} is not a valid ESP32 GPIO", bus.name, rx);
+            }
+        }
+    }
+
+    #[test]
+    fn spi_and_i2c_pins_are_valid_gpios() {
+        for bus in TARGET_BUSES {
+            match bus.config {
+                BusConfig::Spi { mosi, miso, sck, .. } => {
+                    for (label, pin) in [("mosi", mosi), ("miso", miso), ("sck", sck)] {
+                        assert!(
+                            pin <= MAX_GPIO,
+                            "bus '{}' spi {} pin {} is not a valid ESP32 GPIO",
+                            bus.name,
+                            label,
+                            pin
+                        );
+                    }
+                }
+                BusConfig::I2c { sda, scl, .. } => {
+                    for (label, pin) in [("sda", sda), ("scl", scl)] {
+                        assert!(
+                            pin <= MAX_GPIO,
+                            "bus '{}' i2c {} pin {} is not a valid ESP32 GPIO",
+                            bus.name,
+                            label,
+                            pin
+                        );
+                    }
+                }
+                BusConfig::Uart { .. } => {}
+            }
+        }
+    }
+
+    #[test]
+    fn bus_names_are_unique() {
+        for i in 0..TARGET_BUSES.len() {
+            for j in (i + 1)..TARGET_BUSES.len() {
+                assert_ne!(
+                    TARGET_BUSES[i].name,
+                    TARGET_BUSES[j].name,
+                    "duplicate bus name '{}' in TARGET_BUSES",
+                    TARGET_BUSES[i].name,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn peripheral_names_are_unique() {
+        for i in 0..TARGET_PERIPHERALS.len() {
+            for j in (i + 1)..TARGET_PERIPHERALS.len() {
+                assert_ne!(
+                    TARGET_PERIPHERALS[i].name,
+                    TARGET_PERIPHERALS[j].name,
+                    "duplicate peripheral name '{}' in TARGET_PERIPHERALS",
+                    TARGET_PERIPHERALS[i].name,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn service_names_are_unique() {
+        for i in 0..TARGET_SERVICES.len() {
+            for j in (i + 1)..TARGET_SERVICES.len() {
+                assert_ne!(
+                    TARGET_SERVICES[i].name,
+                    TARGET_SERVICES[j].name,
+                    "duplicate service name '{}' in TARGET_SERVICES",
+                    TARGET_SERVICES[i].name,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn device_entries_reference_an_existing_bus() {
+        for device in TARGET_DEVICES {
+            assert!(
+                TARGET_BUSES.iter().any(|b| b.name == device.bus),
+                "device '{}' references bus '{}', which is not in TARGET_BUSES",
+                device.name,
+                device.bus,
+            );
+        }
+    }
+
+    #[test]
+    fn device_cs_pin_is_valid_gpio_when_present() {
+        for device in TARGET_DEVICES {
+            if let Some(cs) = device.cs_pin {
+                assert!(cs <= MAX_GPIO, "device '{}' cs_pin {} is not a valid ESP32 GPIO", device.name, cs);
+            }
+        }
+    }
+}

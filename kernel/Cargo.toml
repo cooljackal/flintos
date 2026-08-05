@@ -12,7 +12,7 @@ rust-version.workspace = true
 flint-hal = { path = "../flint-hal" }
 flint-api = { path = "../flint-api" }
 flint-arch-xtensa = { path = "../arch/flint-arch-xtensa" }
-flint-board = { path = "../board" }
+flint-board = { path = "../board", default-features = false }
 
 # Physical drivers
 esp32-uart = { path = "../drivers/physical/esp32_uart" }
@@ -30,7 +30,21 @@ bme280  = { path = "../drivers/logical/bme280" }
 ssd1306 = { path = "../drivers/logical/ssd1306" }
 
 [features]
-default = []
+# Board selection forwards straight through to flint-board (see
+# board/src/lib.rs for the "exactly one" enforcement). This is the crate
+# users actually build, so board selection happens here. `board-esp32-wrover`
+# is a default feature, so switching boards needs --no-default-features or
+# the default and the requested board both stay enabled and flint-board's
+# compile_error! rejects the build:
+#
+#   cargo build -p flint-kernel   # default: board-esp32-wrover
+#   cargo build -p flint-kernel --no-default-features --features board-m5-atom
+#   cargo build -p flint-kernel --no-default-features --features board-esp32-devkitc
+default = ["board-esp32-wrover"]
+board-esp32-wrover = ["flint-board/board-esp32-wrover"]
+board-esp32-devkitc = ["flint-board/board-esp32-devkitc"]
+board-m5-atom = ["flint-board/board-m5-atom"]
+
 debug-level-0 = []
 debug-level-1 = ["flint-log", "flint-metrics", "flint-panic"]
 debug-level-2 = ["debug-level-1", "flint-trace"]

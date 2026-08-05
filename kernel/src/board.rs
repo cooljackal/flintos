@@ -4,5 +4,15 @@
 //!
 //! Re-exports the board manifest and provides runtime initialisation
 //! of board-level resources (buses, devices, peripherals).
+//!
+//! The concrete board is selected by a Cargo feature on `flint-board`
+//! (forwarded through this crate's own `board-*` features — see
+//! `kernel/Cargo.toml`), not named here. This module just forwards
+//! whichever manifest `flint-board` resolved to, so switching boards never
+//! touches kernel source:
+//!
+//! ```text
+//! cargo build -p flint-kernel --no-default-features --features board-m5-atom
+//! ```
 
-pub use flint_board::esp32_wrover as active;
+pub use flint_board::active;
