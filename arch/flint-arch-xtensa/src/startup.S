@@ -79,6 +79,31 @@ call_start_cpu0:
     .extern _kernel_stack_end
     movi a1, _kernel_stack_end
 
+    // ── Establish the register-window state ──────────────────────────────
+    //
+    // Every Rust function built for this target begins with `entry`, which is
+    // a windowed instruction and requires PS.WOE=1. Nothing here ever set PS
+    // beyond the INTLEVEL field, so the entire kernel was relying on whatever
+    // window state the ROM bootloader happened to leave behind. That is an
+    // inherited invariant, not an established one, and it silently governs
+    // whether any Rust code runs at all.
+    //
+    // Start from a clean single live window (WINDOWBASE=0, WINDOWSTART=1) so
+    // the window exception handlers have an unambiguous starting point, then
+    // enable WOE. The stack is already set above, which matters because from
+    // this point a window overflow can fire and will spill to it.
+    movi a2, 0
+    wsr.windowbase a2
+    movi a2, 1
+    wsr.windowstart a2
+    rsync
+
+    // PS = WOE | INTLEVEL(15); EXCM=0 so window exceptions can dispatch,
+    // UM=0 so we run privileged, CALLINC=0 to match the call0 below.
+    movi a2, 0x4000F
+    wsr.ps a2
+    rsync
+
     // ── Enter the Rust kernel (interrupts still masked; FlintMain unmasks).
     .extern FlintMain
     call0 FlintMain

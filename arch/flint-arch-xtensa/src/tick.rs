@@ -14,8 +14,25 @@ use crate::critical_section;
 
 pub struct XtensaTick;
 
-/// CPU clock — ESP32 default after boot is 240 MHz.
-const CPU_HZ: u64 = 240_000_000;
+/// CPU clock feeding CCOUNT, in Hz.
+///
+/// **This is an assumption, and every timeout in the system scales with it.**
+/// Nothing in Flint's boot path programs the clock tree, so the CPU runs at
+/// whatever frequency the second-stage bootloader left it at. espflash writes
+/// the stock ESP-IDF bootloader, which configures 80 MHz and then expects the
+/// *application* to raise the clock during its own init. Flint has no such
+/// init, so 80 MHz is what the part is actually running at.
+///
+/// The previous value of 240 MHz was the figure an ESP-IDF application would
+/// see *after* calling `esp_clk_init()`, which never happens here -- it made
+/// every tick period three times shorter than intended.
+///
+/// If the demo tasks visibly run at the wrong rate, this constant is the first
+/// thing to check: the error is exactly the ratio of the real clock to this
+/// value. The durable fix is to program the PLL explicitly during boot, or to
+/// read the configured frequency back from the clock registers, rather than
+/// assuming one. Tracked in doc/review-findings.md.
+const CPU_HZ: u64 = 80_000_000;
 
 /// CCOUNT increments per tick period (set in `init`). Fits u32 for any
 /// reasonable period (1 ms @ 240 MHz = 240_000).
