@@ -56,11 +56,22 @@ fn pool_size() -> u32 {
 }
 
 /// Allocate a DMA-safe buffer (bump allocator over the linker `dma_pool`).
+///
+/// Item 8: both the alignment step (`size + 3`) and the bump step
+/// (`start + aligned`) used unchecked `u32` arithmetic. A `size` near
+/// `u32::MAX` wraps `(size + 3) & !3` to a small aligned value, and even
+/// with a merely large-but-in-range `aligned`, `start + aligned` can wrap
+/// past `u32::MAX` back to a small `end` — in both cases the `end >
+/// pool_size()` guard is bypassed by the wrapped value looking small, so the
+/// caller gets `Ok` with a handle describing memory outside (or the bump
+/// pointer moving *backward*, aliasing already-live allocations rather than
+/// past) the pool. Checked arithmetic turns both into the pool-exhausted
+/// error the size genuinely earned instead of a bogus success.
 pub fn alloc(size: u32) -> Result<DmaHandle, DmaError> {
     crate::scheduler::with(|sched| {
-        let aligned = (size + 3) & !3;
+        let aligned = checked_align_up4(size).ok_or(DmaError::PoolExhausted)?;
         let start = unsafe { DMA_OFFSET };
-        let end = start + aligned;
+        let end = start.checked_add(aligned).ok_or(DmaError::PoolExhausted)?;
         if end > pool_size() {
             return Err(DmaError::PoolExhausted);
         }
@@ -71,6 +82,12 @@ pub fn alloc(size: u32) -> Result<DmaHandle, DmaError> {
             owner_task: sched.current,
         })
     })
+}
+
+/// Round `size` up to the next multiple of 4, or `None` if doing so would
+/// overflow `u32` (i.e. `size` is within 3 of `u32::MAX`).
+fn checked_align_up4(size: u32) -> Option<u32> {
+    size.checked_add(3).map(|v| v & !3)
 }
 
 /// Submit a DMA transfer. Validates ownership; engine programming is a Phase-3+

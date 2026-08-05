@@ -11,7 +11,19 @@ use flint_arch_xtensa::cs_with;
 use crate::scheduler::{self, TaskState};
 
 /// Sleep the current task for `ms` milliseconds.
+///
+/// Blocking, so it must never be called from trap context (a top-half ISR or
+/// a timer callback) — that would suspend whichever task was interrupted,
+/// not "the caller", wedging it forever (item 11). `sleep_ms` has no way to
+/// return an error to its `()`-returning caller, and silently returning
+/// without sleeping would be exactly the "plausible-looking wrong result"
+/// the project's philosophy forbids, so misuse is a loud panic instead.
 pub fn sleep_ms(ms: u32) {
+    if crate::interrupt::in_interrupt() {
+        crate::debug::panic::handle(&format_args!(
+            "timer::sleep_ms called from interrupt context"
+        ));
+    }
     scheduler::with(|sched| {
         let cur = sched.current;
         let wake = sched.ticks().wrapping_add(ms as u64);
@@ -81,20 +93,61 @@ pub fn cancel(id: u32) {
 
 /// Fire any due timers. Called from the trap handler (interrupts already
 /// masked), so no extra critical section is taken.
+///
+/// No `&mut` into the static `TIMERS` array is ever held across a callback
+/// invocation (item 6). The original code kept `entry`/`slot` borrowed for
+/// the callback's entire duration and used them again afterward — but the
+/// callback runs arbitrary code, including `once`/`cancel`/`every`, which
+/// take their own `&mut` into the same static. That's an aliasing violation
+/// on its own, and worse: if the callback frees *its own* slot (`cancel`)
+/// and a subsequent `once()` reuses that index for an unrelated timer, the
+/// stale post-call `entry`/`slot` reference would then corrupt that
+/// unrelated timer's `fire_at`/interval. Instead we snapshot the small bit
+/// of Copy data we need, drop the borrow, invoke the callback, then
+/// re-acquire the slot by index and verify the id still matches before
+/// mutating it.
 pub fn process_timers(now: u64) {
-    unsafe {
-        let timers = &mut *core::ptr::addr_of_mut!(TIMERS);
-        for slot in timers.iter_mut() {
-            if let Some(entry) = slot {
-                if entry.fire_at <= now {
-                    if let Some(cb) = entry.callback {
-                        cb();
+    for i in 0..MAX_TIMERS {
+        // Snapshot (id, callback, interval) for a due entry, if any, then let
+        // the borrow end here — nothing below holds a live reference into
+        // `TIMERS` while `cb()` runs.
+        let due = unsafe {
+            let timers = &*core::ptr::addr_of!(TIMERS);
+            timers[i].as_ref().and_then(|e| {
+                if e.fire_at <= now {
+                    Some((e.id, e.callback, e.interval))
+                } else {
+                    None
+                }
+            })
+        };
+        let (id, callback, interval) = match due {
+            Some(d) => d,
+            None => continue,
+        };
+
+        if let Some(cb) = callback {
+            // Trap-context marker so the callback's own attempts to block
+            // (mutex lock, queue send/recv, sleep) refuse instead of
+            // wedging the interrupted task (item 11).
+            let _guard = crate::interrupt::InterruptGuard::enter();
+            cb();
+        }
+
+        // Re-acquire by index and verify identity: the callback may have
+        // canceled this very timer (freeing slot `i`) and a fresh `once()`/
+        // `every()` may have already reused it for something else. Only
+        // mutate if slot `i` still holds *this* timer.
+        unsafe {
+            let timers = &mut *core::ptr::addr_of_mut!(TIMERS);
+            let still_same = matches!(&timers[i], Some(e) if e.id == id);
+            if still_same {
+                if interval > 0 {
+                    if let Some(entry) = &mut timers[i] {
+                        entry.fire_at = now.wrapping_add(interval as u64);
                     }
-                    if entry.interval > 0 {
-                        entry.fire_at = now.wrapping_add(entry.interval as u64);
-                    } else {
-                        *slot = None;
-                    }
+                } else {
+                    timers[i] = None;
                 }
             }
         }

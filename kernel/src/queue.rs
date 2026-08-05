@@ -47,17 +47,41 @@ fn push(list: &mut [u32; MAX_WAITERS], count: &mut u32, id: u32) -> bool {
     }
 }
 
-fn pop(list: &mut [u32; MAX_WAITERS], count: &mut u32) -> Option<u32> {
-    if *count > 0 {
-        let id = list[0];
-        for i in 1..*count as usize {
-            list[i - 1] = list[i];
+/// Pop the first waiter still actually blocked in `expected` state, leaving
+/// any earlier entries the tick has already timed out untouched (item 5).
+///
+/// The tick (`Scheduler::on_tick`) marks a timed-out waiter `Ready` *without*
+/// removing it from this list — by design, per the module docs, it detects
+/// its own timeout on resume by finding itself still listed. If we popped
+/// unconditionally here (the old `pop`), we could hand a timed-out task's
+/// spot to nobody (it silently vanishes from the list, so on resume it no
+/// longer finds itself listed and wrongly concludes it was woken normally —
+/// stealing a delivery it never received) while the *real* waiter behind it
+/// in FIFO order never gets woken at all. Skipping stale entries in place
+/// preserves both: the timed-out task still finds itself listed later, and
+/// the real waiter is the one actually returned here.
+fn pop_first_blocked(
+    list: &mut [u32; MAX_WAITERS],
+    count: &mut u32,
+    expected: TaskState,
+) -> Option<u32> {
+    let n = *count as usize;
+    for i in 0..n {
+        let id = list[i];
+        let still_waiting = scheduler::global().tasks[id as usize]
+            .as_ref()
+            .is_some_and(|t| t.state == expected);
+        if still_waiting {
+            for k in i + 1..n {
+                list[k - 1] = list[k];
+            }
+            *count -= 1;
+            return Some(id);
         }
-        *count -= 1;
-        Some(id)
-    } else {
-        None
+        // Stale (already timed out, or otherwise no longer waiting): leave
+        // it in the list and keep scanning.
     }
+    None
 }
 
 fn contains(list: &[u32; MAX_WAITERS], count: u32, id: u32) -> bool {
@@ -130,8 +154,17 @@ fn deadline_for(timeout_ms: u32) -> u64 {
 
 /// Block the caller waiting to send on a full queue.
 /// Returns true if woken by an opening slot (caller should retry), false on
-/// timeout or if the waiter table is full.
+/// timeout, if the waiter table is full, or (item 11) if called from
+/// interrupt context — blocking there would suspend the interrupted task,
+/// not the caller, wedging it forever, so we refuse instead.
 pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
+    if crate::interrupt::in_interrupt() {
+        crate::debug::log::write(
+            flint_api::debug::log::Level::Error,
+            &format_args!("queue::block_send called from interrupt context (q={:#x})", q_addr),
+        );
+        return false;
+    }
     let cur = scheduler::with(|sched| {
         let cur = sched.current;
         let dl = deadline_for(timeout_ms);
@@ -169,6 +202,13 @@ pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
 
 /// Block the caller waiting to receive on an empty queue. See [`block_send`].
 pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
+    if crate::interrupt::in_interrupt() {
+        crate::debug::log::write(
+            flint_api::debug::log::Level::Error,
+            &format_args!("queue::block_recv called from interrupt context (q={:#x})", q_addr),
+        );
+        return false;
+    }
     let cur = scheduler::with(|sched| {
         let cur = sched.current;
         let dl = deadline_for(timeout_ms);
@@ -206,7 +246,9 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
 /// Wake one receiver after a successful send (a message is now available).
 pub fn wake_one_receiver(q_addr: usize) {
     cs_with(|| {
-        let id = waiters().find(q_addr).and_then(|l| pop(&mut l.recv_waiters, &mut l.recv_count));
+        let id = waiters().find(q_addr).and_then(|l| {
+            pop_first_blocked(&mut l.recv_waiters, &mut l.recv_count, TaskState::BlockedRecv)
+        });
         if let Some(id) = id {
             scheduler::global().unblock(id);
         }
@@ -216,7 +258,9 @@ pub fn wake_one_receiver(q_addr: usize) {
 /// Wake one sender after a successful receive (a slot is now free).
 pub fn wake_one_sender(q_addr: usize) {
     cs_with(|| {
-        let id = waiters().find(q_addr).and_then(|l| pop(&mut l.send_waiters, &mut l.send_count));
+        let id = waiters().find(q_addr).and_then(|l| {
+            pop_first_blocked(&mut l.send_waiters, &mut l.send_count, TaskState::BlockedSend)
+        });
         if let Some(id) = id {
             scheduler::global().unblock(id);
         }
