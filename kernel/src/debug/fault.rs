@@ -23,7 +23,7 @@ unsafe fn raw_puts(s: &str) {
     }
 }
 
-unsafe fn raw_hex(v: u32) {
+unsafe fn raw_hex_inner(v: u32) {
     raw_puts("0x");
     for i in (0..8).rev() {
         let nib = ((v >> (i * 4)) & 0xF) as u8;
@@ -31,9 +31,41 @@ unsafe fn raw_hex(v: u32) {
     }
 }
 
+unsafe fn raw_dec_inner(v: u32) {
+    if v == 0 {
+        raw_putc(b'0');
+        return;
+    }
+    // Max u32 is 10 decimal digits (4294967295).
+    let mut digits = [0u8; 10];
+    let mut n = v;
+    let mut i = 0;
+    while n > 0 {
+        digits[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    while i > 0 {
+        i -= 1;
+        raw_putc(digits[i]);
+    }
+}
+
 /// Print a raw marker string to UART0 (boot-progress bisection).
 pub fn raw_print(s: &str) {
     unsafe { raw_puts(s) }
+}
+
+/// Print `v` as `0xNNNNNNNN` (8 hex digits, no allocation, no `core::fmt`) to
+/// UART0. For boot diagnostics printed before the logging subsystem exists.
+pub fn raw_hex(v: u32) {
+    unsafe { raw_hex_inner(v) }
+}
+
+/// Print `v` in decimal (no allocation, no `core::fmt`) to UART0. For boot
+/// diagnostics printed before the logging subsystem exists.
+pub fn raw_dec(v: u32) {
+    unsafe { raw_dec_inner(v) }
 }
 
 /// Report a CPU exception over raw UART0 and halt. Called from the trap handler
