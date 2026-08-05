@@ -23,6 +23,27 @@ else
   ESP_GCC_DIR   := $(HOME)/.rustup/toolchains/esp/xtensa-esp-elf/bin
 endif
 
+# espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --
+# both are esp-idf-format images on the same silicon, so one set of flags
+# covers both boards; see the flash-mode note below).
+ESPFLASH_CHIP  := esp32
+# Flashing (host -> chip) can run fast; this is unrelated to the console baud.
+FLASH_BAUD     := 921600
+# Must match the app's UART0 console baud (board/src/esp32_wrover.rs sets
+# 115200). espflash's flash/monitor subcommands take TWO separate baud
+# flags -- `--baud`/`-B` is the flashing/sync speed, `--monitor-baud`/`-r` is
+# the post-flash serial monitor speed -- do not conflate them, or --monitor
+# output after `flash` is unreadable even though flashing itself succeeded.
+MONITOR_BAUD   := 115200
+# DIO is the safe default flash mode for both ESP32-PICO-D4 (embedded flash)
+# and ESP32-WROVER (external flash) -- it is also espflash's own default when
+# no --flash-mode is given, so this pins that behavior explicitly rather than
+# relying on it silently. --flash-freq/--flash-size are deliberately left
+# unset: for the `flash` target espflash reads the actual connected chip's
+# flash size/frequency over the wire, which is more reliable than hard-coding
+# a value that could be wrong for one of the two boards.
+FLASH_MODE     := dio
+
 # ── Environment Setup ──────────────────────────────────────────────────────────
 
 .PHONY: env
@@ -71,24 +92,32 @@ build-trace: ## Build with kernel event tracing (debug level 2)
 	$(CARGO) build --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins --features "debug-level-2"
 
 .PHONY: flash
-flash: build ## Build + flash via espflash (USB serial)
-	espflash flash target/$(XTENSA_TARGET)/debug/flint-kernel --baud 921600 --monitor
+flash: build ## Build + flash via espflash (USB serial, ESP32-PICO-D4 or WROVER)
+	espflash flash target/$(XTENSA_TARGET)/debug/flint-kernel \
+		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
+		--baud $(FLASH_BAUD) --monitor --monitor-baud $(MONITOR_BAUD)
 
 .PHONY: build-dev
 build-dev: ## Build with logging on (needed to SEE the demo task output at G1)
 	$(CARGO) build --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins --features debug-level-1
 
 .PHONY: flash-dev
-flash-dev: build-dev ## Flash + monitor the logging build (ESP32-PICO/ATOM, USB serial)
-	espflash flash target/$(XTENSA_TARGET)/debug/flint-kernel --baud 921600 --monitor
+flash-dev: build-dev ## Flash + monitor the logging build (USB serial, ESP32-PICO-D4 or WROVER)
+	espflash flash target/$(XTENSA_TARGET)/debug/flint-kernel \
+		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
+		--baud $(FLASH_BAUD) --monitor --monitor-baud $(MONITOR_BAUD)
 
 .PHONY: flash-jtag
 flash-jtag: build ## Build + flash via probe-rs (JTAG)
 	probe-rs run --chip ESP32 target/$(XTENSA_TARGET)/debug/flint-kernel
 
+.PHONY: erase
+erase: ## Erase the entire flash (recover from a bad/stuck prior image)
+	espflash erase-flash --chip $(ESPFLASH_CHIP)
+
 .PHONY: monitor
-monitor: ## Open serial monitor (115200 8N1)
-	espflash monitor --baud 115200
+monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
+	espflash monitor --chip $(ESPFLASH_CHIP) --monitor-baud $(MONITOR_BAUD)
 
 # ─── Check (host target — pure Rust only, no Xtensa asm) ───────────────────────
 
@@ -160,6 +189,7 @@ help: ## Show this help message
 	$(info     make flash          Build + flash via espflash (USB serial))
 	$(info     make flash-dev      Flash + monitor the logging build)
 	$(info     make flash-jtag     Build + flash via probe-rs (JTAG))
+	$(info     make erase          Erase entire flash (recover from bad image))
 	$(info     make monitor        Open serial monitor)
 	$(info )
 	$(info   Check / Test)

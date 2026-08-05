@@ -1,10 +1,27 @@
-# Flint RTOS — Cargo build configuration (ESP32-WROVER)
+# Flint RTOS — Cargo build configuration.
+#
+# Board selection is a Cargo feature on flint-kernel, not a setting here:
+#   (default)                                          ESP32-WROVER
+#   --no-default-features --features board-m5-atom     M5Stack Atom (PICO-D4)
+#   --no-default-features --features board-esp32-devkitc  DevKitC / WROOM-32
+#
+# All classic-ESP32 boards share the same image format and flashing flags --
+# see the Makefile flash targets for the full explicit espflash options.
 
 [target.xtensa-esp32-none-elf]
-# ESP32-PICO-D4 (e.g. M5Stack ATOM) has no built-in USB-JTAG, so flash + monitor
-# over USB-serial with espflash (install: cargo install espflash). Use probe-rs
-# only if you wire up an external JTAG probe.
-runner = "espflash flash --monitor"
+# Classic ESP32 (PICO-D4 and WROVER alike) has no built-in USB-JTAG, so flash +
+# monitor over USB-serial with espflash (install: cargo install espflash). Use
+# probe-rs only if you wire up an external JTAG probe.
+#
+# --chip: explicit target chip (avoids relying on auto-detect).
+# --flash-mode dio: safe default for both PICO-D4's embedded flash and
+#   WROVER's external flash; also espflash's own default, pinned explicitly.
+# --baud: flashing speed, separate from the app's console baud.
+# --monitor-baud: MUST match the app's UART0 console baud (115200, set in
+#   board/src/esp32_wrover.rs) -- this is a distinct flag from --baud, and
+#   conflating the two produces unreadable monitor output after a successful
+#   flash.
+runner = "espflash flash --chip esp32 --flash-mode dio --baud 921600 --monitor --monitor-baud 115200"
 # runner = "probe-rs run --chip ESP32"   # alternative: external JTAG probe
 linker = "xtensa-esp32-elf-gcc"
 rustflags = [
@@ -27,6 +44,3 @@ target = "xtensa-esp32-none-elf"
 
 [unstable]
 build-std = ["core", "compiler_builtins"]
-
-[env]
-FLINT_BOARD = "esp32_wrover"
