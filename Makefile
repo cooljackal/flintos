@@ -27,14 +27,26 @@ endif
 # both are esp-idf-format images on the same silicon, so one set of flags
 # covers both boards; see the flash-mode note below).
 ESPFLASH_CHIP  := esp32
-# Flashing (host -> chip) can run fast; this is unrelated to the console baud.
-FLASH_BAUD     := 921600
+# Flashing (host -> chip) speed. Unrelated to the console baud.
+#
+# 115200 by default because it is the rate every USB-serial bridge handles.
+# espflash itself warns above this ("Setting baud rate higher than 115,200 can
+# cause issues"), and it is not an idle warning: at 921600 the connection
+# reliably completes the handshake, uploads the flash stub, and then dies with
+# "Error while connecting to device" on CP2102/CH340 bridges and through most
+# USB hubs. A bring-up default that fails on common hardware is worse than a
+# slow one -- the image is ~110 KB, so 115200 costs about ten seconds.
+#
+# Once flashing works on your board, raise it:
+#   make flash-dev FLASH_BAUD=460800
+# 460800 is a good middle ground; 921600 works on some FTDI/native-USB setups.
+FLASH_BAUD     ?= 115200
 # Must match the app's UART0 console baud (board/src/esp32_wrover.rs sets
 # 115200). espflash's flash/monitor subcommands take TWO separate baud
 # flags -- `--baud`/`-B` is the flashing/sync speed, `--monitor-baud`/`-r` is
 # the post-flash serial monitor speed -- do not conflate them, or --monitor
 # output after `flash` is unreadable even though flashing itself succeeded.
-MONITOR_BAUD   := 115200
+MONITOR_BAUD   ?= 115200
 # DIO is the safe default flash mode for both ESP32-PICO-D4 (embedded flash)
 # and ESP32-WROVER (external flash) -- it is also espflash's own default when
 # no --flash-mode is given, so this pins that behavior explicitly rather than

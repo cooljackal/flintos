@@ -16,12 +16,16 @@
 # --chip: explicit target chip (avoids relying on auto-detect).
 # --flash-mode dio: safe default for both PICO-D4's embedded flash and
 #   WROVER's external flash; also espflash's own default, pinned explicitly.
-# --baud: flashing speed, separate from the app's console baud.
+# --baud: flashing speed, separate from the app's console baud. Kept at
+#   115200 because espflash warns above that rate and, in practice, higher
+#   rates complete the handshake and then fail with "Error while connecting
+#   to device" on CP2102/CH340 bridges and through USB hubs. Raise it via
+#   `make flash FLASH_BAUD=460800` once you know your board tolerates it.
 # --monitor-baud: MUST match the app's UART0 console baud (115200, set in
 #   board/src/esp32_wrover.rs) -- this is a distinct flag from --baud, and
 #   conflating the two produces unreadable monitor output after a successful
 #   flash.
-runner = "espflash flash --chip esp32 --flash-mode dio --baud 921600 --monitor --monitor-baud 115200"
+runner = "espflash flash --chip esp32 --flash-mode dio --baud 115200 --monitor --monitor-baud 115200"
 # runner = "probe-rs run --chip ESP32"   # alternative: external JTAG probe
 linker = "xtensa-esp32-elf-gcc"
 rustflags = [

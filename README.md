@@ -161,6 +161,39 @@ Board features: `board-esp32-wrover` (default), `board-esp32-devkitc`,
 `board-m5-atom` (ESP32-PICO-D4). Enabling two is a compile error, not a warning
 — a silently wrong pin map presents as the board being broken.
 
+<details>
+<summary><b>If flashing fails</b></summary>
+
+**`Error while connecting to device`, right after `Using flash stub`** — the
+baud switch failed. This is the common one. Flashing defaults to 115200 for
+that reason; if you raised it, put it back:
+
+```bash
+make flash-dev FLASH_BAUD=115200
+```
+
+**`Error while connecting to device`, before the stub** — the board isn't in
+download mode. Most dev boards enter it automatically via DTR/RTS, but some
+(and most USB hubs) don't. Hold **BOOT**/**GPIO0**, tap **EN**/**RST**, release
+BOOT, then flash. On an M5Stack Atom the reset button is the small side button.
+
+**Wrong or busy serial port** — close any other monitor first; only one process
+can hold the port. Pass it explicitly with `--port COM5` (or `/dev/ttyUSB0`).
+
+**A previous image is wedging the board** — erase and retry:
+
+```bash
+make erase
+```
+
+**The flash stub itself is the problem** — rare, but on some clones:
+`espflash flash --no-stub ...`
+
+Flashing succeeds but the console is garbage: that's a baud mismatch, not a
+kernel fault. `--monitor-baud` must be 115200 to match the board manifest, and
+it is a *different* flag from `--baud`.
+</details>
+
 ### 3. What a healthy boot looks like
 
 ```
