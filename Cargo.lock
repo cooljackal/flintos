@@ -101,6 +101,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-size"
+version = "0.1.0"
+
+[[package]]
 name = "flint-soc-esp32"
 version = "0.1.0"
 dependencies = [

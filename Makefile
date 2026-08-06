@@ -18,18 +18,29 @@ CARGO           := cargo +$(ESP_TOOLCHAIN)
 
 # OS-specific paths (Windows uses USERPROFILE, POSIX uses HOME).
 #
-# Forward slashes even on Windows: the same string is handed to bash, which
-# reads `C:/Users/x` but not `C:\Users\x`.
+# Forward slashes even on Windows: this ends up on PATH for a gcc invoked
+# through cargo, and the shells in between do not agree on backslashes.
 ifeq ($(OS),Windows_NT)
   ESP_HOME      := $(subst \,/,$(USERPROFILE))
-  TOOL_EXE      := .exe
 else
   ESP_HOME      := $(HOME)
-  TOOL_EXE      :=
 endif
 
 ESP_GCC_DIR    := $(ESP_HOME)/.rustup/toolchains/esp/xtensa-esp-elf/bin
-XTENSA_SIZE    := $(ESP_GCC_DIR)/xtensa-esp32-elf-size$(TOOL_EXE)
+
+# The memory map, read by `make size` to name and bound each region.
+LD_SCRIPT      := arch/xtensa/flint32.ld
+
+# Crates with no Xtensa assembly, so they build and test on any host. One list,
+# shared by check, test-host and lint -- they used to keep three copies and the
+# copies had drifted.
+#
+# flint-soc-esp32 is here despite naming a chip: it is addresses and lookup
+# tables, and its tests are the only place the signal map gets checked at all.
+HOST_CRATES    := flint-hal flint-api flint-soc-esp32 flint-board \
+                  esp32-uart esp32-spi esp32-i2c esp32-gpio \
+                  spi-bus i2c-bus uart-bus bme280 ssd1306 \
+                  flint-build flint-size
 
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --
 # both are esp-idf-format images on the same silicon, so one set of flags
@@ -79,11 +90,6 @@ FLASH_MODE     := dio
 # the default board stays enabled alongside the requested one and flint-board's
 # compile_error! rejects the build -- deliberately, because a binary with two
 # board manifests merged in is not a build for either board.
-# Crates that contain no Xtensa assembly, so they build and test on any host.
-# flint-soc-esp32 is here despite naming a chip: it is addresses and lookup
-# tables, and its tests are the only place the signal map gets checked at all.
-HOST_CRATES    := flint-hal flint-api flint-soc-esp32 flint-board esp32-uart esp32-spi esp32-i2c esp32-gpio spi-bus i2c-bus uart-bus bme280 ssd1306
-
 APP            ?= demo
 BOARD          ?= board-esp32-wrover
 DEBUG          ?= debug-level-1
@@ -130,16 +136,16 @@ export PATH := $(ESP_GCC_DIR):$(PATH)
 .PHONY: build
 build: ## Build the selected app (APP=demo BOARD=board-esp32-wrover DEBUG=debug-level-1)
 	$(CARGO) build $(APP_FLAGS)
-	@bash tools/image-size.sh $(APP_BIN) '' '$(XTENSA_SIZE)' || true
+	@$(MAKE) --no-print-directory size
 
 .PHONY: build-release
 build-release: ## Build release (smallest binary)
 	$(CARGO) build $(APP_FLAGS) --release
-	@bash tools/image-size.sh target/$(XTENSA_TARGET)/release/$(APP) '' '$(XTENSA_SIZE)' || true
+	@$(MAKE) --no-print-directory size APP_BIN=target/$(XTENSA_TARGET)/release/$(APP)
 
 .PHONY: size
 size: ## Report where the image's bytes went, per memory region
-	@bash tools/image-size.sh $(APP_BIN) '' '$(XTENSA_SIZE)'
+	@cargo run -q -p flint-size --target $(HOST_TARGET) -- $(APP_BIN) $(LD_SCRIPT)
 
 .PHONY: build-trace
 build-trace: ## Build with kernel event tracing

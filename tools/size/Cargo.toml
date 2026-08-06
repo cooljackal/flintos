@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "flint-size"
+version.workspace = true
+edition.workspace = true
+description = "Report where a Flint image's bytes went, per memory region"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "flint-size"
+path = "src/main.rs"
+
+[dependencies]

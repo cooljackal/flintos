@@ -29,7 +29,7 @@ thin, and the API will change.
 | | |
 |---|---|
 | Builds for `xtensa-esp32-none-elf` | ✅ |
-| Host unit tests | ✅ 145 passing |
+| Host unit tests | ✅ 150 passing |
 | Three-layer boundary enforced in CI | ✅ |
 | UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |
 | Boots on real hardware | ✅ ESP32-PICO, 80 MHz measured |
@@ -355,19 +355,19 @@ today (none exist yet); when you need something production-proven — use
 ## Project layout
 
 ```
-apps/                      applications — the binaries you actually flash
-hal/                 traits + types every layer depends on (depends on nothing)
-api/                 the API your application code uses
-tools/build/               build-script helper that gives an app the linker script
-arch/xtensa/    CPU — boot, vectors, context switch, tick
-soc/esp32/       chip — peripheral map, IO_MUX, GPIO matrix, clock gating
-kernel/                    scheduler, IPC, timers, IRQ routing, debug — a library
-board/                     PCB — which pin is wired to what
-drivers/physical/          Layer 1 — MCU register drivers
-drivers/bus/               Layer 2 — transport abstractions
-drivers/logical/           Layer 3 — device drivers, MCU-agnostic
-tools/check-layers.sh      enforces the Layer 3 → Layer 1 boundary
-tools/image-size.sh        where the image's bytes went, per memory region
+apps/                  applications — the binaries you actually flash
+hal/                   traits + types every layer depends on (depends on nothing)
+api/                   the API your application code uses
+arch/xtensa/           CPU — boot, vectors, context switch, tick
+soc/esp32/             chip — peripheral map, IO_MUX, GPIO matrix, clock gating
+kernel/                scheduler, IPC, timers, IRQ routing, debug — a library
+board/                 PCB — which pin is wired to what
+drivers/physical/      Layer 1 — MCU register drivers
+drivers/bus/           Layer 2 — transport abstractions
+drivers/logical/       Layer 3 — device drivers, MCU-agnostic
+tools/build/           build-script helper that gives an app the linker script
+tools/size/            `make size` — where the image's bytes went, per region
+tools/check-layers.sh  enforces the Layer 3 → Layer 1 boundary
 ```
 
 **arch / SoC / board are three separate tiers, deliberately.** The CPU core, the
@@ -402,20 +402,30 @@ memories with wildly different budgets, and the one that runs out is IRAM or
 DRAM long before flash.
 
 ```
-  REGION               USED       SIZE                         FULL
-  vectors_seg         963 B    1.0 KiB  ###################.  94.0%
-  iram_seg            678 B  127.0 KiB  ....................   0.5%
-  dram_seg         16.5 KiB   64.0 KiB  #####...............  25.8%
-  task_stacks      96.0 KiB   96.0 KiB  #################### 100.0%
-  drom_seg         17.8 KiB    4.0 MiB  ....................   0.4%
-  irom_seg         25.1 KiB    3.2 MiB  ....................   0.8%
-
-  flash image      42.9 KiB    3.9 MiB  ....................   1.1%
+  Flint image: demo
++----------------+------------+------------+----------------------+--------+
+| REGION         |       USED |   CAPACITY | USAGE                |   FULL |
++----------------+------------+------------+----------------------+--------+
+| drom_seg       |   18.9 KiB |    4.0 MiB | #................... |   0.5% |
+| dram_seg       |   16.5 KiB |   64.0 KiB | #####............... |  25.8% |
+| task_stacks *  |   96.0 KiB |   96.0 KiB | #################### | 100.0% |
+| vectors_seg    |      963 B |    1.0 KiB | ###################. |  94.0% |
+| iram_seg       |      678 B |  127.0 KiB | #................... |   0.5% |
+| irom_seg       |   28.4 KiB |    3.2 MiB | #................... |   0.9% |
++----------------+------------+------------+----------------------+--------+
+| flash total    |   56.6 KiB |    3.9 MiB | #................... |   1.4% |
++----------------+------------+------------+----------------------+--------+
 ```
 
-Region sizes come from the linker script, so the report cannot drift from the
-map the image was linked against. `task_stacks` at 100% is the reserved pool,
-not usage — see `debug::stack` for actual high-water marks.
+Region bounds come from the linker script, so the report cannot drift from the
+map the image was linked against.
+
+Two things the table marks rather than hides. `task_stacks` at 100% is a
+reservation, not usage — nothing in it is stored in the image, and per-task
+high-water marks come from `debug::stack` at runtime. And espflash will report a
+larger number than `flash total`: the ESP32 maps flash in 64 KiB pages, so the
+image builder pads to land the mapped segments on a page boundary. That padding
+is real flash but it is not anyone's code.
 
 Debug features are additive and compile out entirely:
 `debug-level-0` (silent) through `debug-level-3` (full trace).
