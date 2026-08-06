@@ -38,6 +38,15 @@ const WDT_WKEY: u32 = 0x50D8_3AA1;
 const RTC_WDTCONFIG0: u32 = RTC_CNTL_BASE + 0x8C;
 const RTC_WDTCONFIG1: u32 = RTC_CNTL_BASE + 0x90;
 const RTC_WDTFEED: u32 = RTC_CNTL_BASE + 0xA0;
+/// The feed is bit 31, not bit 0.
+///
+/// Writing 1 here does nothing at all, and nothing reports that it did nothing:
+/// the watchdog simply counts down from when it was armed and resets the board
+/// on schedule, whatever the software believes it is doing. That made the
+/// `WDT=kernel` verification pass for the wrong reason -- the board reset at
+/// five seconds because the timeout expired, not because the deliberate hang
+/// stopped the feeding.
+const RTC_WDT_FEED_BIT: u32 = 1 << 31;
 const RTC_WDTWPROTECT: u32 = RTC_CNTL_BASE + 0xA4;
 
 const RTC_WDT_EN: u32 = 1 << 31;
@@ -123,7 +132,7 @@ pub unsafe fn rwdt_arm(ms: u32) {
 pub unsafe fn rwdt_feed() {
     let wp = RTC_WDTWPROTECT as *mut u32;
     wp.write_volatile(WDT_WKEY);
-    (RTC_WDTFEED as *mut u32).write_volatile(1);
+    (RTC_WDTFEED as *mut u32).write_volatile(RTC_WDT_FEED_BIT);
     wp.write_volatile(0);
 }
 
@@ -298,6 +307,16 @@ mod tests {
         assert_eq!(mwdt_ticks_for_ms(1_000), 2_000);
         assert_eq!(mwdt_ticks_for_ms(0), 1);
         assert_eq!(mwdt_ticks_for_ms(u32::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn the_rtc_feed_is_bit_31() {
+        // Writing bit 0 is silently ignored, so the watchdog counts from arm
+        // time and resets on schedule no matter how diligently it is fed. A
+        // watchdog that cannot be fed is a timer, and it took a reset-cause
+        // register to notice the difference.
+        assert_eq!(RTC_WDT_FEED_BIT, 1 << 31);
+        assert_ne!(RTC_WDT_FEED_BIT, 1, "bit 0 is not the feed");
     }
 
     #[test]
