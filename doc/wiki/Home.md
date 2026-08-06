@@ -21,6 +21,7 @@ most drivers thin, API will change. Don't ship it.
 |---|---|
 | [Getting Started](Getting-Started) | Toolchain, first flash, reading the output |
 | [Writing an Application](Writing-an-Application) | Your own tasks |
+| [Upgrading](Upgrading) | `make upgrade` — what a pull broke |
 | [Troubleshooting](Troubleshooting) | It didn't work |
 
 ## Reference

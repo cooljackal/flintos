@@ -14,7 +14,7 @@ use hal::types::Priority;
 // Names `main` below as this build's application entry point. The kernel calls
 // it once the console, tick timer and idle task are up, and unmasks interrupts
 // when it returns.
-kernel::flint_app!(main);
+kernel::flint_app!(main, abi = 1);
 
 fn main() {
     task::spawn("hello", hello, Priority::Normal(1), 4096);

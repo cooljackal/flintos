@@ -40,7 +40,7 @@ An application is three files.
 use api::task;
 use hal::types::Priority;
 
-kernel::flint_app!(main);
+kernel::flint_app!(main, abi = 1);
 
 fn main() {
     task::spawn("worker", worker, Priority::Normal(1), 4096);

@@ -3,6 +3,7 @@
 **Start**
 - [Getting Started](Getting-Started)
 - [Writing an Application](Writing-an-Application)
+- [Upgrading](Upgrading)
 - [Troubleshooting](Troubleshooting)
 
 **Reference**

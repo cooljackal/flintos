@@ -15,6 +15,24 @@
 
 #![no_std]
 
+/// The application-facing ABI version.
+///
+/// Bumped whenever the surface an application compiles against changes
+/// incompatibly: a signature in `api`, a `hal` type an application names, the
+/// `flint_app!` contract, or the shape of a board manifest.
+///
+/// Applications declare the version they were written against
+/// (`flint_app!(main, abi = N)`), and the kernel refuses to build against a
+/// declaration it does not match. Flint moves fast and applications live in
+/// their own crates, so `git pull` routinely updates the kernel underneath one
+/// written against something older. Without this the result is a type error
+/// somewhere in the application — or worse, a silent change in behaviour.
+///
+/// Every bump needs a **Breaking** entry in `CHANGELOG.md` saying what to
+/// change. A bump without one is worse than no version at all: it tells a user
+/// they are broken and not how to stop being broken.
+pub const ABI: u32 = 1;
+
 pub mod debug;
 pub mod mutex;
 pub mod queue;

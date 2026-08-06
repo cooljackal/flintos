@@ -49,6 +49,10 @@ pub mod timer;
 
 pub use scheduler::{Scheduler, TaskState, MAX_TASKS};
 
+/// The application-facing ABI this kernel provides, re-exported so
+/// `flint_app!` can check it without the application naming `api` itself.
+pub use api::ABI;
+
 // ── Panic handler ───────────────────────────────────────────────────────────
 //
 // Lives here rather than in each application: there must be exactly one in the

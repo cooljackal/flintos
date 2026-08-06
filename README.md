@@ -265,7 +265,7 @@ A whole application, `apps/hello/src/main.rs`:
 use api::task;
 use hal::types::Priority;
 
-kernel::flint_app!(main);
+kernel::flint_app!(main, abi = 1);
 
 fn main() {
     task::spawn("blink", blink, Priority::Normal(1), 4096);

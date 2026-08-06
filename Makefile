@@ -187,6 +187,9 @@ DEBUG          ?= debug-level-1
 
 # Anything else the app forwards, comma-separated. Currently just:
 #   make build EXTRA_FEATURES=self-test   # boot-time register-window check
+# `make upgrade` only: skip the pull and check what is already checked out.
+PULL           ?= 1
+
 EXTRA_FEATURES ?=
 
 COMMA          := ,
@@ -332,6 +335,19 @@ test-target: ## Flash and run the on-target self-tests (needs a board attached)
 	$(BASH) tools/target-test.sh
 
 # The judging half of the harness, checked without hardware. It is the part
+# ── Upgrading ─────────────────────────────────────────────────────────────────
+#
+# Applications are separate crates, so a pull never touches apps/<yours>/. What
+# it does not do by itself is tell you what changed underneath them.
+#
+#   make upgrade            # pull, rebuild every app, report what broke
+#   make upgrade PULL=0     # check against what is already checked out
+.PHONY: upgrade
+upgrade: ## Pull the latest Flint and report which applications it broke
+	@PULL="$(PULL)" BOARD="$(BOARD)" DEBUG="$(DEBUG)" \
+	CARGO="$(CARGO)" XTENSA_TARGET="$(XTENSA_TARGET)" \
+	$(BASH) tools/upgrade.sh
+
 # most likely to be wrong and the most expensive to exercise for real, and a
 # harness that calls a dropped serial line a pass is worse than none.
 .PHONY: test-harness

@@ -59,7 +59,24 @@ extern "C" {
 /// ```
 #[macro_export]
 macro_rules! flint_app {
-    ($main:path) => {
+    ($main:path, abi = $abi:literal) => {
+        // Checked at compile time, so an application written against an older
+        // Flint fails to build with something that names the problem, instead
+        // of erroring deep inside a call it did not change.
+        const _: () = {
+            if $abi != $crate::ABI {
+                ::core::panic!(::core::concat!(
+                    "Flint ABI mismatch: this application declares `abi = ",
+                    ::core::stringify!($abi),
+                    "`, which is not the ABI this kernel provides (see `api::ABI`).\n",
+                    "The application-facing API changed incompatibly since it was \
+                     written. Read the Breaking entries in CHANGELOG.md, apply them, \
+                     then update the declaration in `flint_app!`.\n",
+                    "`make upgrade` reports which applications this affects."
+                ));
+            }
+        };
+
         #[no_mangle]
         pub extern "C" fn flint_app_main() {
             // Bind through a `fn()` so the macro rejects a signature the kernel
@@ -67,6 +84,19 @@ macro_rules! flint_app {
             let entry: fn() = $main;
             entry();
         }
+    };
+
+    // Without the declaration there is nothing to check, and an unversioned
+    // application is exactly the one that breaks silently. Say so here rather
+    // than letting `macro_rules!` report "no rules expected this token".
+    ($main:path) => {
+        ::core::compile_error!(
+            "flint_app! needs the ABI this application was written against:\n\
+             \n    kernel::flint_app!(main, abi = 1);\n\n\
+             It is checked at build time so a kernel upgrade that changes the \
+             application-facing API fails here, naming the cause, instead of \
+             somewhere in your own code."
+        );
     };
 }
 

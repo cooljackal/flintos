@@ -109,6 +109,42 @@ jobs:
           fi
           echo "All source files carry an SPDX header."
 
+  changelog:
+    name: Changelog for API changes
+    runs-on: ubuntu-latest
+    # PR-only, like the DCO check: this is a review-time obligation, and on a
+    # push to main there is no reliable base to diff against.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # An application compiles against api/, hal/ and board/. A change there
+      # can break code in a repository we cannot see, and the only way its
+      # author learns what to do is this file.
+      - name: A change to the application-facing API is described in CHANGELOG.md
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          changed=$(git diff --name-only "$base" "$head")
+
+          if ! echo "$changed" | grep -qE '^(api|hal|board)/'; then
+            echo "No application-facing crate touched; nothing to describe."
+            exit 0
+          fi
+
+          echo "Touched by this PR:"
+          echo "$changed" | grep -E '^(api|hal|board)/' | sed 's/^/  /'
+
+          if echo "$changed" | grep -qx 'CHANGELOG.md'; then
+            echo "CHANGELOG.md updated."
+            exit 0
+          fi
+
+          echo "::error::This PR changes api/, hal/ or board/ but does not touch CHANGELOG.md. Applications compile against those crates, so a change here can break code in a repository nobody on this PR can see. Add an entry saying what to do about it -- under Breaking if it is. If the change genuinely cannot affect an application, say so in the Added or Fixed section rather than skipping the file."
+          exit 1
+
   dco:
     name: DCO sign-off
     runs-on: ubuntu-latest

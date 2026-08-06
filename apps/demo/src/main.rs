@@ -21,7 +21,7 @@
 use api::task;
 use hal::types::Priority;
 
-kernel::flint_app!(main);
+kernel::flint_app!(main, abi = 1);
 
 // Priorities live here as named constants and are used both to spawn a task and
 // in what that task logs about itself, so the number in the log can never drift
