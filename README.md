@@ -37,7 +37,10 @@ thin, and the API will change.
 | Register-window spill on switch | ✅ |
 | GPIO-matrix pin routing | ✅ any signal to any pad, or a clear error |
 | I²C driver | ⚠️ routes and configures; untested against a real device |
+| The kernel's own unit tests | ⛔ [cannot run anywhere yet](https://github.com/cooljackal/flintos/issues/17) |
 | Anything beyond ESP32 | ⛔ no Cortex-M port yet |
+
+**Documentation:** the [wiki](https://github.com/cooljackal/flintos/wiki).
 
 Open work is tracked in
 [issues](https://github.com/cooljackal/flintos/issues) — that is the source of
@@ -324,16 +327,20 @@ fn bump() {
 
 ## Supported hardware
 
-| Board | SoC | Status |
-|---|---|---|
-| ESP32-PICO | ESP32-PICO-D4 (Xtensa LX6) | ✅ Boots, schedules, preempts |
-| ESP32-WROVER | ESP32 | Manifest present, untested |
-| ESP32-DevKitC / WROOM-32 | ESP32 | Should work — same manifest, untested |
-| M5Stack Atom (Lite/Matrix) | ESP32-PICO-D4 | Same SoC; needs a manifest for its pin map |
-| STM32F3 / F4 (Cortex-M) | ARM32 | Planned — needs a whole `flint-arch-cortex-m` |
+| Board | SoC | Status | Pinout |
+|---|---|---|---|
+| M5Stack Atom (Lite/Matrix) | ESP32-PICO-D4 (Xtensa LX6) | ✅ Boots, schedules, preempts | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
+| ESP32-WROVER | ESP32 | Manifest present, untested | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-WROVER) |
+| ESP32-DevKitC / WROOM-32 | ESP32 | Should work — same manifest, untested | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-DevKitC) |
+| STM32F3 / F4 (Cortex-M) | ARM32 | Planned — needs a whole `flint-arch-cortex-m` | — |
 
-Adding a board is one file. Copy `board/src/esp32_wrover.rs`, change the pin
-numbers and base addresses, and register it in `board/src/lib.rs`.
+Adding a board is one file — see
+[Adding a Board](https://github.com/cooljackal/flintos/wiki/Adding-a-Board).
+
+The wiki carries the full [ESP32 pin table](https://github.com/cooljackal/flintos/wiki/SoC-ESP32):
+which pins are safe, which are strapping, which are input-only, what's reserved
+for flash and PSRAM, plus the peripheral map and the GPIO-matrix signal indices.
+The point is not having to go looking somewhere else.
 
 ---
 
@@ -433,10 +440,11 @@ Debug features are additive and compile out entirely:
 ## Roadmap
 
 - **Done** — ESP32 bring-up: trap handler, register-window spill, context
-  switch, preemption and tick all proven on silicon.
-- **Now** — user documentation on the wiki; a panic handler that actually halts.
-- **Next** — I²C against a real device; driver register audit against the TRM;
-  M5Stack Atom board manifest.
+  switch, preemption and tick all proven on silicon. Applications split out of
+  the kernel. arch/SoC/board split, with GPIO-matrix pin routing. Wiki docs.
+- **Now** — getting the kernel's own tests to run somewhere
+  ([#17](https://github.com/cooljackal/flintos/issues/17)).
+- **Next** — I²C against a real device; driver register audit against the TRM.
 - **Later** — Layer-1 drivers as isolated tasks with one-IPC-hop request/reply;
   `nsh` shell; Cortex-M port for STM32F3/F4.
 
