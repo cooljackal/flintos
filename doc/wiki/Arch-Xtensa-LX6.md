@@ -1,6 +1,6 @@
 # Xtensa LX6
 
-The CPU core in the ESP32. Crate: `arch/xtensa` (`flint-arch-xtensa`).
+The CPU core in the ESP32. Crate: `arch/xtensa` (`arch-xtensa`).
 
 You only need this page if you're touching the trap path, the tick, or a new
 Xtensa chip. Application code never sees any of it.

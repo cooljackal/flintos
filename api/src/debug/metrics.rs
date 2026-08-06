@@ -11,7 +11,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use flint_api::debug::metrics::Counter;
+//! use api::debug::metrics::Counter;
 //!
 //! static ERRORS: Counter = Counter::new("spi_timeouts");
 //! ERRORS.increment();

@@ -7,7 +7,7 @@
 //! does **not** mask debug/NMI level interrupts, preserving real-time response
 //! for the highest-priority events.
 
-use flint_hal::critical_section::{CriticalSection, CriticalSectionToken};
+use hal::critical_section::{CriticalSection, CriticalSectionToken};
 
 /// Interrupt level masked inside a critical section. Level-1 application and
 /// driver interrupts (incl. the timer tick) are masked; higher levels are not.

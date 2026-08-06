@@ -12,7 +12,7 @@
 //! ```ignore
 //! // apps/<name>/build.rs
 //! fn main() {
-//!     flint_build::link();
+//!     build::link();
 //! }
 //! ```
 
@@ -32,10 +32,10 @@ pub fn link() {
 
     let script = find_ld_script().unwrap_or_else(|| {
         panic!(
-            "flint-build: could not find {LD_SCRIPT} in any ancestor of \
+            "build: could not find {LD_SCRIPT} in any ancestor of \
              CARGO_MANIFEST_DIR. An application must live inside the Flint \
              workspace, or supply its own linker script instead of calling \
-             flint_build::link()."
+             build::link()."
         )
     });
 

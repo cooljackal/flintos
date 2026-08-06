@@ -15,8 +15,8 @@
 // crate doesn't back with a real driver would just be a landmine for
 // whoever wires one up next.
 
-use flint_hal::bus::*;
-use flint_soc_esp32::addr;
+use hal::bus::*;
+use soc_esp32::addr;
 
 pub const BOARD_NAME: &str = "M5Stack-ATOM (ESP32-PICO-D4)";
 pub const TICK_PERIOD_US: u32 = 1000;

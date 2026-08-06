@@ -1,5 +1,6 @@
 [package]
-name = "flint-kernel"
+name = "kernel"
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "Flint RTOS kernel — scheduler, IPC, debug subsystems"
@@ -9,10 +10,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../hal" }
-flint-api = { path = "../api" }
-flint-arch-xtensa = { path = "../arch/xtensa" }
-flint-board = { path = "../board", default-features = false }
+hal = { path = "../hal" }
+api = { path = "../api" }
+arch-xtensa = { path = "../arch/xtensa" }
+board = { path = "../board", default-features = false }
 
 # The console UART is the one driver the kernel itself names: `startup::init`
 # constructs it from the board manifest so log and panic have somewhere to go
@@ -20,46 +21,46 @@ flint-board = { path = "../board", default-features = false }
 #
 # The other eight drivers are deliberately absent. The kernel used to depend on
 # all nine, but Rust dependencies are not transitive -- an application wanting
-# `flint-driver-bme280` declares it itself -- and the kernel re-exports none of
-# them, so no symbol could ever reach them. `--gc-sections` kept them out of the
-# image, so this costs image size nothing; what it cost was compiling 2,477
-# lines on every kernel build to satisfy nothing.
+# `bme280` declares it itself -- and the kernel re-exports none of them, so no
+# symbol could ever reach them. `--gc-sections` kept them out of the image, so
+# this costs image size nothing; what it cost was compiling 2,477 lines on
+# every kernel build to satisfy nothing.
 #
 # They are still checked for Xtensa, by `make check-all` walking the whole
 # workspace -- now called from the Xtensa CI job, because being pulled in here
 # is what used to give them that coverage.
-flint-esp32-uart = { path = "../drivers/physical/esp32-uart" }
+esp32-uart = { path = "../drivers/physical/esp32-uart" }
 
 [features]
-# Board selection forwards straight through to flint-board (see
-# board/src/lib.rs for the "exactly one" enforcement). This is the crate
-# users actually build, so board selection happens here. `board-esp32-wrover`
-# is a default feature, so switching boards needs --no-default-features or
-# the default and the requested board both stay enabled and flint-board's
-# compile_error! rejects the build:
+# Board selection forwards straight through to `board` (see board/src/lib.rs
+# for the "exactly one" enforcement). This is the crate users actually build,
+# so board selection happens here. `board-esp32-wrover` is a default feature,
+# so switching boards needs --no-default-features or the default and the
+# requested board both stay enabled and `board`'s compile_error! rejects the
+# build:
 #
-#   cargo build -p flint-kernel   # default: board-esp32-wrover
-#   cargo build -p flint-kernel --no-default-features --features board-m5-atom
-#   cargo build -p flint-kernel --no-default-features --features board-esp32-devkitc
+#   cargo build -p kernel   # default: board-esp32-wrover
+#   cargo build -p kernel --no-default-features --features board-m5-atom
+#   cargo build -p kernel --no-default-features --features board-esp32-devkitc
 default = ["board-esp32-wrover"]
-board-esp32-wrover = ["flint-board/board-esp32-wrover"]
-board-esp32-devkitc = ["flint-board/board-esp32-devkitc"]
-board-m5-atom = ["flint-board/board-m5-atom"]
+board-esp32-wrover = ["board/board-esp32-wrover"]
+board-esp32-devkitc = ["board/board-esp32-devkitc"]
+board-m5-atom = ["board/board-m5-atom"]
 
 debug-level-0 = []
 debug-level-1 = ["flint-log", "flint-metrics", "flint-panic"]
 debug-level-2 = ["debug-level-1", "flint-trace"]
 debug-level-3 = ["debug-level-2", "flint-timing", "flint-cpu-util"]
 
-# Debug features forward to flint-api so the gated macros in user/kernel code
+# Debug features forward to `api` so the gated macros in user/kernel code
 # actually emit (plan W7.3). Without this, enabling logging on the kernel had no
-# effect because flint-api's own feature stayed off.
-flint-log = ["flint-api/flint-log"]
-flint-metrics = ["flint-api/flint-metrics"]
-flint-panic = ["flint-api/flint-panic"]
-flint-trace = ["flint-api/flint-trace"]
-flint-timing = ["flint-api/flint-timing"]
-flint-cpu-util = ["flint-api/flint-cpu-util"]
+# effect because `api`'s own feature stayed off.
+flint-log = ["api/flint-log"]
+flint-metrics = ["api/flint-metrics"]
+flint-panic = ["api/flint-panic"]
+flint-trace = ["api/flint-trace"]
+flint-timing = ["api/flint-timing"]
+flint-cpu-util = ["api/flint-cpu-util"]
 
 # Boot-time self-test: drives a deep windowed recursion after interrupts are
 # unmasked and checks the result, so a trap that corrupts the interrupted

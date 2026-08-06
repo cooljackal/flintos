@@ -3,22 +3,21 @@
 # Layer-boundary enforcement (plan W7.1).
 #
 # Layer-3 (drivers/logical/*) and Layer-2 (drivers/bus/*) crates may depend ONLY
-# on flint-api. Any other dependency gives a device or bus driver a route to
-# hardware register definitions, defeating the three-layer model. This is the
-# structural boundary the design promises -- enforce it here so it cannot
-# silently rot.
+# on api. Any other dependency gives a device or bus driver a route to hardware
+# register definitions, defeating the three-layer model. This is the structural
+# boundary the design promises -- enforce it here so it cannot silently rot.
 #
-# This is a WHITELIST: everything except flint-api is a violation. It used to be
-# a blacklist of three prefixes (flint-hal, flint-arch-*, flint-soc-*), which
-# missed the most obvious violation of all -- a bus crate depending directly on
-# a Layer-1 physical driver such as flint-esp32-spi -- and every crates.io
-# dependency besides. Naming what is allowed is both shorter and total.
+# This is a WHITELIST: everything except api is a violation. It used to be a
+# blacklist of three prefixes (hal, arch-*, soc-*), which missed the most
+# obvious violation of all -- a bus crate depending directly on a Layer-1
+# physical driver such as esp32-spi -- and every crates.io dependency besides.
+# Naming what is allowed is both shorter and total.
 #
 # It reads `cargo metadata` rather than grepping manifests, for two reasons:
 # resolved package names see through Cargo's rename syntax (a blacklist grep for
-# `^\s*flint-hal\s*=` is defeated by `hal = { package = "flint-hal", ... }`),
-# and identity comes from the package name rather than from where the directory
-# happens to sit.
+# `^\s*hal\s*=` is defeated by `h = { package = "hal", ... }`), and identity
+# comes from the package name rather than from where the directory happens to
+# sit.
 #
 # Exit non-zero on any violation. Wired into CI and `make check-layers`.
 
@@ -45,7 +44,7 @@ PYSRC=$(cat <<'EOF'
 import json, os, sys
 
 # The one dependency a portable driver is allowed to name.
-ALLOWED = {"flint-api"}
+ALLOWED = {"api"}
 
 # Directory -> layer. Layer is a property of the package, but the directory is
 # what declares intent, and a crate in the wrong directory is its own bug.
@@ -71,7 +70,7 @@ for pkg in meta["packages"]:
             continue
         if dep["name"] not in ALLOWED:
             violations.append(
-                "LAYER VIOLATION: %s (%s) depends on %s -- may depend only on flint-api"
+                "LAYER VIOLATION: %s (%s) depends on %s -- may depend only on api"
                 % (pkg["name"], layer, dep["name"])
             )
 
@@ -81,14 +80,14 @@ for v in violations:
 if violations:
     print("")
     print("%d layer violation(s) found. Logical and bus drivers must depend "
-          "only on flint-api." % len(violations))
+          "only on api." % len(violations))
     sys.exit(1)
 
 if checked == 0:
     print("check-layers: matched no logical/bus crates -- has the layout moved?")
     sys.exit(1)
 
-print("Layer boundary OK: %d logical/bus crates depend only on flint-api." % checked)
+print("Layer boundary OK: %d logical/bus crates depend only on api." % checked)
 EOF
 )
 

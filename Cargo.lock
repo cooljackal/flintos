@@ -3,140 +3,140 @@
 version = 4
 
 [[package]]
+name = "api"
+version = "0.1.0"
+dependencies = [
+ "hal",
+]
+
+[[package]]
+name = "arch-xtensa"
+version = "0.1.0"
+dependencies = [
+ "hal",
+]
+
+[[package]]
+name = "bme280"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
+
+[[package]]
+name = "board"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-esp32",
+]
+
+[[package]]
+name = "build"
+version = "0.1.0"
+
+[[package]]
 name = "demo"
 version = "0.1.0"
 dependencies = [
- "flint-api",
- "flint-build",
- "flint-hal",
- "flint-kernel",
+ "api",
+ "build",
+ "hal",
+ "kernel",
 ]
 
 [[package]]
-name = "flint-api"
+name = "esp32-gpio"
 version = "0.1.0"
 dependencies = [
- "flint-hal",
+ "hal",
+ "soc-esp32",
 ]
 
 [[package]]
-name = "flint-arch-xtensa"
+name = "esp32-i2c"
 version = "0.1.0"
 dependencies = [
- "flint-hal",
+ "hal",
+ "soc-esp32",
 ]
 
 [[package]]
-name = "flint-board"
+name = "esp32-spi"
 version = "0.1.0"
 dependencies = [
- "flint-hal",
- "flint-soc-esp32",
+ "hal",
+ "soc-esp32",
 ]
 
 [[package]]
-name = "flint-build"
-version = "0.1.0"
-
-[[package]]
-name = "flint-driver-bme280"
+name = "esp32-uart"
 version = "0.1.0"
 dependencies = [
- "flint-api",
+ "hal",
+ "soc-esp32",
 ]
 
 [[package]]
-name = "flint-driver-ssd1306"
+name = "hal"
 version = "0.1.0"
-dependencies = [
- "flint-api",
-]
-
-[[package]]
-name = "flint-esp32-gpio"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
- "flint-soc-esp32",
-]
-
-[[package]]
-name = "flint-esp32-i2c"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
- "flint-soc-esp32",
-]
-
-[[package]]
-name = "flint-esp32-spi"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
- "flint-soc-esp32",
-]
-
-[[package]]
-name = "flint-esp32-uart"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
- "flint-soc-esp32",
-]
-
-[[package]]
-name = "flint-hal"
-version = "0.1.0"
-
-[[package]]
-name = "flint-i2c-bus"
-version = "0.1.0"
-dependencies = [
- "flint-api",
-]
-
-[[package]]
-name = "flint-kernel"
-version = "0.1.0"
-dependencies = [
- "flint-api",
- "flint-arch-xtensa",
- "flint-board",
- "flint-esp32-uart",
- "flint-hal",
-]
-
-[[package]]
-name = "flint-size"
-version = "0.1.0"
-
-[[package]]
-name = "flint-soc-esp32"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
-]
-
-[[package]]
-name = "flint-spi-bus"
-version = "0.1.0"
-dependencies = [
- "flint-api",
-]
-
-[[package]]
-name = "flint-uart-bus"
-version = "0.1.0"
-dependencies = [
- "flint-api",
-]
 
 [[package]]
 name = "hello"
 version = "0.1.0"
 dependencies = [
- "flint-api",
- "flint-build",
- "flint-hal",
- "flint-kernel",
+ "api",
+ "build",
+ "hal",
+ "kernel",
+]
+
+[[package]]
+name = "i2c-bus"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
+
+[[package]]
+name = "kernel"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "arch-xtensa",
+ "board",
+ "esp32-uart",
+ "hal",
+]
+
+[[package]]
+name = "size"
+version = "0.1.0"
+
+[[package]]
+name = "soc-esp32"
+version = "0.1.0"
+dependencies = [
+ "hal",
+]
+
+[[package]]
+name = "spi-bus"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
+
+[[package]]
+name = "ssd1306"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
+
+[[package]]
+name = "uart-bus"
+version = "0.1.0"
+dependencies = [
+ "api",
 ]

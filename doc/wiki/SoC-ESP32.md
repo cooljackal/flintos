@@ -3,7 +3,7 @@
 Classic ESP32 (and the PICO-D4 SiP built on it). Xtensa LX6 dual-core; Flint
 uses core 0 only.
 
-Crate: `soc/esp32` (`flint-soc-esp32`). Everything below is in code —
+Crate: `soc/esp32` (`soc-esp32`). Everything below is in code —
 `addr.rs`, `io_mux.rs`, `gpio_matrix.rs`, `dport.rs`, `pinmux.rs`.
 
 ## Pins
@@ -57,8 +57,8 @@ pad. A few high-speed signals also have "native" pads that bypass the matrix for
 lower latency.
 
 ```rust
-use flint_hal::pinmux::{PinConfig, PinMux, Signal};
-use flint_soc_esp32::Esp32PinMux;
+use hal::pinmux::{PinConfig, PinMux, Signal};
+use soc_esp32::Esp32PinMux;
 
 let mux = Esp32PinMux::new();
 mux.can_route(Signal::I2cSda(0), 21)?;      // pure check, no registers touched

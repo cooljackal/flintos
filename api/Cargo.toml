@@ -1,5 +1,6 @@
 [package]
-name = "flint-api"
+name = "api"
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "Flint RTOS public API crate — flint::task, flint::queue, flint::mutex, flint::timer, flint::log"
@@ -9,7 +10,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../hal" }
+hal = { path = "../hal" }
 
 [features]
 default = []

@@ -13,8 +13,8 @@
 //! permission controller, *not* an ARM-style base/size region MPU, so the old
 //! `base | permission_bits` encoding was meaningless and has been removed.
 
-use flint_hal::mpu::{MpuManager, TaskDescriptor};
-use flint_hal::types::RegionDescriptor;
+use hal::mpu::{MpuManager, TaskDescriptor};
+use hal::types::RegionDescriptor;
 
 /// No-op MPU manager for the single-protection-domain configuration.
 pub struct Esp32Mpu;

@@ -3,9 +3,9 @@
 //! Bus abstraction traits and types.
 //!
 //! Three-layer bus model:
-//! - **Layer 1 – PhysicalBus**: raw register-level driver (e.g. `flint_esp32_spi`).
-//! - **Layer 2 – Bus**: protocol-level abstraction (e.g. `flint_spi_bus::SpiBus`).
-//! - **Layer 3 – Logical driver**: device driver using `BusHandle` (e.g. `flint_driver_bme280::Bme280`).
+//! - **Layer 1 – PhysicalBus**: raw register-level driver (e.g. `esp32_spi`).
+//! - **Layer 2 – Bus**: protocol-level abstraction (e.g. `spi_bus::SpiBus`).
+//! - **Layer 3 – Logical driver**: device driver using `BusHandle` (e.g. `bme280::Bme280`).
 //!
 //! The `BusHandle` struct is the bridge between layers 2 and 3: it wraps
 //! a `&dyn Bus` reference and provides delegation methods.
@@ -142,7 +142,7 @@ pub enum UartStopBits {
 
 // ── Layer 2: Bus abstraction trait ─────────────────────────────────────────
 
-/// Implemented by bus abstractions (`flint_spi_bus`, `flint_i2c_bus`, `flint_uart_bus`).
+/// Implemented by bus abstractions (`spi_bus`, `i2c_bus`, `uart_bus`).
 ///
 /// These sit above the physical driver and provide a protocol-aware
 /// interface.  They are linked directly into the calling task — no IPC.
@@ -169,7 +169,7 @@ pub trait Bus: Send + Sync {
 
 // ── Layer 1: Physical bus trait ────────────────────────────────────────────
 
-/// Implemented by physical driver crates (e.g. `flint_esp32_spi`).
+/// Implemented by physical driver crates (e.g. `esp32_spi`).
 ///
 /// These have direct hardware register access and run at the lowest
 /// level of the driver stack.

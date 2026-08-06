@@ -11,7 +11,7 @@
 //!
 //! All waiter-table access happens inside a critical section.
 
-use flint_arch_xtensa::cs_with;
+use arch_xtensa::cs_with;
 use crate::scheduler::{self, TaskState};
 
 const MAX_WAITERS: usize = 16;
@@ -160,7 +160,7 @@ fn deadline_for(timeout_ms: u32) -> u64 {
 pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
     if crate::interrupt::in_interrupt() {
         crate::debug::log::write(
-            flint_api::debug::log::Level::Error,
+            api::debug::log::Level::Error,
             &format_args!("queue::block_send called from interrupt context (q={:#x})", q_addr),
         );
         return false;
@@ -204,7 +204,7 @@ pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
 pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
     if crate::interrupt::in_interrupt() {
         crate::debug::log::write(
-            flint_api::debug::log::Level::Error,
+            api::debug::log::Level::Error,
             &format_args!("queue::block_recv called from interrupt context (q={:#x})", q_addr),
         );
         return false;

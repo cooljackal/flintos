@@ -2,13 +2,13 @@
 
 //! Kernel dispatch ABI (plan W5.1, Option A).
 //!
-//! Flint is a single protection domain: `flint-api` calls these `#[no_mangle]`
+//! Flint is a single protection domain: `api` calls these `#[no_mangle]`
 //! functions directly via `extern "Rust"` linkage — there is no `syscall`
 //! instruction. Each function that mutates scheduler/IPC state does so inside a
 //! critical section (`scheduler::with` / `cs_with`) so it cannot race the trap
 //! handler (plan W2.2).
 
-use flint_hal::types::{Priority, TaskId};
+use hal::types::{Priority, TaskId};
 use crate::scheduler::{self, TaskState};
 use crate::spawn;
 use crate::timer;
@@ -124,7 +124,7 @@ pub fn _flint_sys_mutex_unlock(mutex: *const core::ffi::c_void) {
 
 #[no_mangle]
 pub fn _flint_sys_log_write(
-    level: flint_api::debug::log::Level,
+    level: api::debug::log::Level,
     args: &core::fmt::Arguments<'_>,
 ) {
     debug::log::write(level, args);

@@ -7,8 +7,8 @@
 
 #![no_std]
 
-use flint_api::bus::{Bus, BusError, BusResult, BusSpeed};
-use flint_api::PhysicalBus;
+use api::bus::{Bus, BusError, BusResult, BusSpeed};
+use api::PhysicalBus;
 
 /// UART bus abstraction.
 pub struct UartBus {
@@ -57,7 +57,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use flint_api::bus::{BusConfig, BusSpeed};
+    use api::bus::{BusConfig, BusSpeed};
 
     struct MockUart;
 

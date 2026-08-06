@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use flint_api::mutex::{Mutex, lock};
+//! use api::mutex::{Mutex, lock};
 //!
 //! static DATA: Mutex<u32> = Mutex::new(0);
 //!

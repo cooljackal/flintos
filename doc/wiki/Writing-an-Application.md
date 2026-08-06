@@ -13,10 +13,10 @@ An application is three files.
 #![no_std]
 #![no_main]
 
-use flint_api::task;
-use flint_hal::types::Priority;
+use api::task;
+use hal::types::Priority;
 
-flint_kernel::flint_app!(main);
+kernel::flint_app!(main);
 
 fn main() {
     task::spawn("worker", worker, Priority::Normal(1), 4096);
@@ -24,7 +24,7 @@ fn main() {
 
 fn worker() {
     loop {
-        flint_api::log_info!("tick");
+        api::log_info!("tick");
         task::sleep_ms(1000);
     }
 }
@@ -37,7 +37,7 @@ fn worker() {
 
 ```rust
 fn main() {
-    flint_build::link();
+    build::link();
 }
 ```
 
@@ -47,27 +47,27 @@ Supplies the linker script. Cargo won't inherit it from a dependency.
 
 ```toml
 [dependencies]
-flint-kernel = { path = "../../kernel", default-features = false }
-flint-api = { path = "../../api" }
-flint-hal = { path = "../../hal" }
+kernel = { path = "../../kernel", default-features = false }
+api = { path = "../../api" }
+hal = { path = "../../hal" }
 
 [build-dependencies]
-flint-build = { path = "../../tools/build" }
+build = { path = "../../tools/build" }
 
 [features]
 default = ["board-esp32-wrover", "debug-level-1"]
-board-esp32-wrover = ["flint-kernel/board-esp32-wrover"]
-board-esp32-devkitc = ["flint-kernel/board-esp32-devkitc"]
-board-m5-atom = ["flint-kernel/board-m5-atom"]
-debug-level-0 = ["flint-kernel/debug-level-0"]
-debug-level-1 = ["flint-kernel/debug-level-1"]
-debug-level-2 = ["flint-kernel/debug-level-2"]
-debug-level-3 = ["flint-kernel/debug-level-3"]
-phase0-tests = ["flint-kernel/phase0-tests"]
+board-esp32-wrover = ["kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
+board-m5-atom = ["kernel/board-m5-atom"]
+debug-level-0 = ["kernel/debug-level-0"]
+debug-level-1 = ["kernel/debug-level-1"]
+debug-level-2 = ["kernel/debug-level-2"]
+debug-level-3 = ["kernel/debug-level-3"]
+phase0-tests = ["kernel/phase0-tests"]
 ```
 
 Copy the feature block verbatim. Exactly one `board-*` must reach
-`flint-board`, which is why the app sets `default-features = false` and `make`
+`board`, which is why the app sets `default-features = false` and `make`
 passes `--no-default-features`. Cargo unions features; without that the default
 board stays on alongside the one you asked for.
 

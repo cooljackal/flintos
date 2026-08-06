@@ -36,7 +36,7 @@ pub use critical_section::{with as cs_with, XtensaCriticalSection, XtensaCsToken
 
 /// Size of the frame the trap entry builds. This is `TaskContext` itself — the
 /// entry stores each field at its `#[repr(C)]` offset.
-pub const TRAP_FRAME_BYTES: usize = core::mem::size_of::<flint_hal::TaskContext>();
+pub const TRAP_FRAME_BYTES: usize = core::mem::size_of::<hal::TaskContext>();
 
 /// Bytes below a frame's stack pointer that the Xtensa windowed ABI reserves
 /// for the caller's `a0`-`a3` when a window overflows.

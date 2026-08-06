@@ -85,7 +85,7 @@ Flint is a small preemptive RTOS built around three ideas:
    your app          ┌─────────────────────────────────────────┐
    ──────────        │  task    task    task    task           │  ← you write these
                      └────────────────┬────────────────────────┘
-                                      │  flint-api
+                                      │  api
    Layer 3           ┌────────────────┴────────────────────────┐
    logical drivers   │  bme280        ssd1306      your_device │  ← portable across MCUs
                      └────────────────┬────────────────────────┘
@@ -107,7 +107,7 @@ Flint is a small preemptive RTOS built around three ideas:
 ```
 
 The boundary between Layer 3 and Layer 1 is the whole point. A `bme280` driver
-depends only on `flint-api` — it cannot name an ESP32 register even if it wants
+depends only on `api` — it cannot name an ESP32 register even if it wants
 to, because `tools/check-layers.sh` fails the build if it tries.
 
 ---
@@ -261,10 +261,10 @@ A whole application, `apps/hello/src/main.rs`:
 #![no_std]
 #![no_main]
 
-use flint_api::task;
-use flint_hal::types::Priority;
+use api::task;
+use hal::types::Priority;
 
-flint_kernel::flint_app!(main);
+kernel::flint_app!(main);
 
 fn main() {
     task::spawn("blink", blink, Priority::Normal(1), 4096);
@@ -272,7 +272,7 @@ fn main() {
 
 fn blink() {
     loop {
-        flint_api::log_info!("tick at {} ms", flint_api::timer::now_ms());
+        api::log_info!("tick at {} ms", api::timer::now_ms());
         task::sleep_ms(500);
     }
 }
@@ -287,7 +287,7 @@ so you can slot a task in without renumbering everything else.
 ### Talking between tasks
 
 ```rust
-use flint_api::queue::{self, Queue};
+use api::queue::{self, Queue};
 
 static READINGS: Queue<u32, 8> = Queue::new();
 
@@ -301,7 +301,7 @@ fn producer() {
 fn consumer() {
     loop {
         if let Ok(v) = queue::recv(&READINGS, 5000) {
-            flint_api::log_info!("got {}", v);
+            api::log_info!("got {}", v);
         }
     }
 }
@@ -313,7 +313,7 @@ handler.
 ### Sharing state
 
 ```rust
-use flint_api::mutex::{self, Mutex};
+use api::mutex::{self, Mutex};
 
 static COUNTER: Mutex<u32> = Mutex::new(0);
 
@@ -332,7 +332,7 @@ fn bump() {
 | M5Stack Atom (Lite/Matrix) | ESP32-PICO-D4 (Xtensa LX6) | ✅ Boots, schedules, preempts | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
 | ESP32-WROVER | ESP32 | Manifest present, untested | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-WROVER) |
 | ESP32-DevKitC / WROOM-32 | ESP32 | Should work — same manifest, untested | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-DevKitC) |
-| STM32F3 / F4 (Cortex-M) | ARM32 | Planned — needs a whole `flint-arch-cortex-m` | — |
+| STM32F3 / F4 (Cortex-M) | ARM32 | Planned — needs a whole `arch-cortex-m` | — |
 
 Adding a board is one file — see
 [Adding a Board](https://github.com/cooljackal/flintos/wiki/Adding-a-Board).

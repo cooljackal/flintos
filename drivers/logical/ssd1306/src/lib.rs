@@ -12,8 +12,8 @@
 //! command stream, 0x40 for a data/GRAM stream — see [`Ssd1306::cmd`] and
 //! [`Ssd1306::data`]); over SPI there is no control byte at all — the host
 //! instead drives a dedicated D/C GPIO pin high or low around each byte.
-//! [`BusHandle`] exposes no GPIO control, only [`flint_api::bus::Bus::select`]/
-//! [`flint_api::bus::Bus::deselect`] and byte transfer, so there is no way
+//! [`BusHandle`] exposes no GPIO control, only [`api::bus::Bus::select`]/
+//! [`api::bus::Bus::deselect`] and byte transfer, so there is no way
 //! for this crate to toggle a D/C line even if it wanted to. Inlining the
 //! I2C control byte into an SPI stream would corrupt every command, so
 //! rather than pretend to support a transport this driver cannot correctly
@@ -23,7 +23,7 @@
 
 #![no_std]
 
-use flint_api::bus::{BusHandle, BusResult};
+use api::bus::{BusHandle, BusResult};
 
 /// SSD1306 OLED display (128x64, I2C).
 pub struct Ssd1306 {
@@ -242,7 +242,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use flint_api::bus::{Bus, BusSpeed, BusResult};
+    use api::bus::{Bus, BusSpeed, BusResult};
     use std::sync::Mutex;
     use std::vec::Vec;
 
@@ -268,7 +268,7 @@ mod tests {
             Ok(())
         }
         fn read(&self, _buf: &mut [u8]) -> BusResult<()> { Ok(()) }
-        fn set_speed(&self, _speed: BusSpeed) -> BusResult<()> { Err(flint_api::bus::BusError::InvalidConfig) }
+        fn set_speed(&self, _speed: BusSpeed) -> BusResult<()> { Err(api::bus::BusError::InvalidConfig) }
         fn select(&self) -> BusResult<()> { Ok(()) }
         fn deselect(&self) -> BusResult<()> { Ok(()) }
     }

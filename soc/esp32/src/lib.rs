@@ -11,7 +11,7 @@
 //!   offset table
 //! - [`gpio_matrix`] — signal routing, and the signal index map
 //! - [`pinmux`] — [`Esp32PinMux`], the chip's implementation of
-//!   [`flint_hal::PinMux`]
+//!   [`hal::PinMux`]
 //!
 //! It sits between the arch layer (Xtensa LX6: traps, context switch, tick,
 //! which the ESP32 shares with other Xtensa parts) and the board layer (which

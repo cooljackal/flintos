@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::fmt::Write;
-use flint_api::debug::log::Level;
+use api::debug::log::Level;
 
 /// Log entry in the ring buffer.
 struct LogEntry {
@@ -36,7 +36,7 @@ pub fn write(level: Level, args: &core::fmt::Arguments<'_>) {
     let (tick, task) = crate::scheduler::with(|s| (s.ticks(), s.current));
 
     // Store in the ring buffer (under a critical section — shared with readers).
-    flint_arch_xtensa::cs_with(|| unsafe {
+    arch_xtensa::cs_with(|| unsafe {
         let ring = &mut *core::ptr::addr_of_mut!(RING_BUF);
         ring[RING_TAIL] = Some(LogEntry { tick, level, task, msg: buf, len: len as u8 });
         RING_TAIL = (RING_TAIL + 1) % RING_BUF_SIZE;
@@ -77,7 +77,7 @@ fn level_str(level: Level) -> &'static str {
 /// N lines that did *not* make it out of the UART.
 pub fn dump() {
     let mut console = crate::debug::console::Console;
-    flint_arch_xtensa::cs_with(|| unsafe {
+    arch_xtensa::cs_with(|| unsafe {
         let ring = &*core::ptr::addr_of!(RING_BUF);
         for i in 0..RING_COUNT {
             let idx = (RING_HEAD + i) % RING_BUF_SIZE;

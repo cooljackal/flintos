@@ -2,10 +2,10 @@
 
 #![no_std]
 
-use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, UartDataBits, UartParity, UartStopBits};
-use flint_hal::pinmux::{PinConfig, PinMux, Signal};
-use flint_soc_esp32::addr;
-use flint_soc_esp32::{dport, Esp32PinMux, APB_HZ};
+use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, UartDataBits, UartParity, UartStopBits};
+use hal::pinmux::{PinConfig, PinMux, Signal};
+use soc_esp32::addr;
+use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
 /// ESP32 UART physical driver.
 /// Registers at `base_addr` (0x3FF40000 for UART0).
@@ -69,8 +69,8 @@ const CLKDIV_FRAG_MASK: u32 = 0xF << CLKDIV_FRAG_SHIFT;
 // ── Pin routing ──────────────────────────────────────────────────────────────
 //
 // Bases, native pads, and the IO_MUX offset table all live in
-// `flint-soc-esp32` now. They are chip facts, and this driver used to carry
-// its own copy of them -- as did `flint-esp32-spi`, separately, with a table that had
+// `soc-esp32` now. They are chip facts, and this driver used to carry
+// its own copy of them -- as did `esp32-spi`, separately, with a table that had
 // drifted from this one.
 
 /// Route TX and RX for controller `instance`.
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn instance_lookup_covers_all_three_uarts() {
-        use flint_soc_esp32::addr::{UART0_BASE, UART1_BASE, UART2_BASE};
+        use soc_esp32::addr::{UART0_BASE, UART1_BASE, UART2_BASE};
         assert_eq!(addr::uart_instance(UART0_BASE), Some(0));
         assert_eq!(addr::uart_instance(UART1_BASE), Some(1));
         assert_eq!(addr::uart_instance(UART2_BASE), Some(2));

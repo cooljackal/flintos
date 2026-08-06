@@ -11,10 +11,10 @@
 //! Interrupts are masked for the whole handler (we are inside the trap), so the
 //! scheduler is accessed directly without an extra critical section.
 
-use flint_hal::tick::TickSource;
-use flint_hal::types::TaskContext;
-use flint_arch_xtensa::registers;
-use flint_arch_xtensa::tick::XtensaTick;
+use hal::tick::TickSource;
+use hal::types::TaskContext;
+use arch_xtensa::registers;
+use arch_xtensa::tick::XtensaTick;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::scheduler::{self, TaskState};

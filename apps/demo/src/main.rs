@@ -18,10 +18,10 @@
 #![no_std]
 #![no_main]
 
-use flint_api::task;
-use flint_hal::types::Priority;
+use api::task;
+use hal::types::Priority;
 
-flint_kernel::flint_app!(main);
+kernel::flint_app!(main);
 
 // Priorities live here as named constants and are used both to spawn a task and
 // in what that task logs about itself, so the number in the log can never drift
@@ -47,7 +47,7 @@ fn task_sensor() {
     let mut n = 0u32;
     loop {
         n += 1;
-        flint_api::log_info!("[sensor] prio={:?} n={}", SENSOR_PRIORITY, n);
+        api::log_info!("[sensor] prio={:?} n={}", SENSOR_PRIORITY, n);
         task::sleep_ms(500);
     }
 }
@@ -56,7 +56,7 @@ fn task_consumer() {
     let mut n = 0u32;
     loop {
         n += 1;
-        flint_api::log_info!("[consumer] prio={:?} n={}", CONSUMER_PRIORITY, n);
+        api::log_info!("[consumer] prio={:?} n={}", CONSUMER_PRIORITY, n);
         task::sleep_ms(1000);
     }
 }
@@ -66,6 +66,6 @@ fn task_housekeep() {
     loop {
         task::sleep_ms(3000);
         n += 1;
-        flint_api::log_info!("[housekeep] prio={:?} n={}", HOUSEKEEP_PRIORITY, n);
+        api::log_info!("[housekeep] prio={:?} n={}", HOUSEKEEP_PRIORITY, n);
     }
 }

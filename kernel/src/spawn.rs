@@ -7,8 +7,8 @@
 //! initial `TaskContext` is built so the first dispatch (`rfe` in the trap
 //! handler) lands at the entry point with a clean single register window.
 
-use flint_hal::types::{Priority, TaskId};
-use flint_arch_xtensa::registers::PS_WOE;
+use hal::types::{Priority, TaskId};
+use arch_xtensa::registers::PS_WOE;
 
 use crate::scheduler::{self, TaskState};
 
@@ -148,7 +148,7 @@ pub fn sys_spawn(
 /// callee's a0 once `entry` rotates the window. Putting it in a0 here produced
 /// a layout the hardware never generates, and the task's first `entry` never
 /// retired.
-unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top: u32) {
+unsafe fn init_context(ctx: &mut hal::TaskContext, entry: usize, stack_top: u32) {
     extern "C" {
         fn _flint_task_start();
     }

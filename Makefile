@@ -87,13 +87,13 @@ LD_SCRIPT      := arch/xtensa/flint32.ld
 # remembers to add it here; a crate that genuinely needs the Xtensa toolchain has
 # to declare itself, once, with a reason.
 #
-#   flint-arch-xtensa  #![feature(asm_experimental_arch)] -- E0554 on stable
-#   flint-kernel       depends on flint-arch-xtensa
-#   hello, demo        depend on flint-kernel
+#   arch-xtensa        #![feature(asm_experimental_arch)] -- E0554 on stable
+#   kernel             depends on arch-xtensa
+#   hello, demo        depend on kernel
 #
 # This replaces a hand-kept list of fifteen names, which lived here and in three
 # more copies in ci.yml. Those copies had already drifted once.
-HOST_EXCLUDE   := flint-arch-xtensa flint-kernel hello demo
+HOST_EXCLUDE   := arch-xtensa kernel hello demo
 HOST_SELECT    := --workspace $(addprefix --exclude ,$(HOST_EXCLUDE))
 
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --
@@ -141,9 +141,9 @@ FLASH_MODE     := dio
 #   make apps                                     # what is available
 #
 # --no-default-features is not optional. Cargo unions features, so without it
-# the default board stays enabled alongside the requested one and flint-board's
-# compile_error! rejects the build -- deliberately, because a binary with two
-# board manifests merged in is not a build for either board.
+# the default board stays enabled alongside the requested one and the board
+# crate's compile_error! rejects the build -- deliberately, because a binary
+# with two board manifests merged in is not a build for either board.
 APP            ?= demo
 BOARD          ?= board-esp32-wrover
 DEBUG          ?= debug-level-1
@@ -205,7 +205,7 @@ build-release: ## Build release (smallest binary)
 
 .PHONY: size
 size: ## Report where the image's bytes went, per memory region
-	@cargo run -q -p flint-size --target $(HOST_TARGET) -- $(APP_BIN) $(LD_SCRIPT)
+	@cargo run -q -p size --target $(HOST_TARGET) -- $(APP_BIN) $(LD_SCRIPT)
 
 .PHONY: build-trace
 build-trace: ## Build with kernel event tracing
@@ -253,7 +253,7 @@ check: ## Check every host-compatible crate
 .PHONY: check-all
 check-all: ## Full check including arch (requires Xtensa toolchain)
 	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
-		--workspace --exclude flint-build --exclude flint-size
+		--workspace --exclude build --exclude size
 
 .PHONY: check-layers
 check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)

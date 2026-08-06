@@ -24,7 +24,7 @@
 //! # Example (non-blocking)
 //!
 //! ```ignore
-//! use flint_api::queue::Queue;
+//! use api::queue::Queue;
 //! static Q: Queue<u32, 16> = Queue::new();
 //! assert!(Q.try_send(42).is_ok());
 //! assert_eq!(Q.try_recv(), Ok(42));
@@ -230,7 +230,7 @@ struct Deadline {
 
 impl Deadline {
     /// Compute the absolute deadline for `timeout_ms`, anchored at `now`
-    /// (milliseconds, same clock as `flint_api::timer::now_ms`).
+    /// (milliseconds, same clock as `api::timer::now_ms`).
     fn new(timeout_ms: u32, now: u64) -> Self {
         if timeout_ms == u32::MAX {
             Deadline { at: None }

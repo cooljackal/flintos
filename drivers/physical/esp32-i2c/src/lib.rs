@@ -2,15 +2,15 @@
 
 #![no_std]
 
-use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus};
-use flint_hal::pinmux::{PinConfig, PinMux, Signal};
-use flint_soc_esp32::addr;
-use flint_soc_esp32::{dport, Esp32PinMux, APB_HZ};
+use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus};
+use hal::pinmux::{PinConfig, PinMux, Signal};
+use soc_esp32::addr;
+use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
 /// ESP32 I2C master driver (polled mode).
 ///
 /// Base: 0x3FF53000 (I2C0) or 0x3FF67000 (I2C1) -- see
-/// `flint_soc_esp32::addr`. A prior revision documented I2C1 as 0x3FF53020, a
+/// `soc_esp32::addr`. A prior revision documented I2C1 as 0x3FF53020, a
 /// +0x20 offset from I2C0, but the two controllers are entirely separate
 /// register blocks.
 pub struct Esp32I2c {
@@ -114,7 +114,7 @@ const I2C_TRANS_COMPLETE: u32 = 1 << 7;
 // Unlike UART and HSPI/VSPI, the classic ESP32 I2C controllers have *no*
 // IO_MUX-native SDA/SCL pins. Both signals are always carried through the GPIO
 // matrix, which is why this driver rejected every configuration until the SoC
-// layer existed to do that routing. `flint_soc_esp32::Esp32PinMux` now owns it:
+// layer existed to do that routing. `soc_esp32::Esp32PinMux` now owns it:
 // the signal indices, the per-pad GPIO function number (which is not uniform),
 // the open-drain pad driver bit, and leaving output-enable with the peripheral
 // so the controller can release the line.
@@ -349,7 +349,7 @@ impl PhysicalBus for Esp32I2c {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flint_soc_esp32::addr::{I2C0_BASE, I2C1_BASE};
+    use soc_esp32::addr::{I2C0_BASE, I2C1_BASE};
 
     #[test]
     fn register_offsets_match_trm_i2c_summary() {

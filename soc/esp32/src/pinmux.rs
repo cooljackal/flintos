@@ -6,8 +6,8 @@
 //! IO_MUX direct where the pad is native to the signal, the GPIO matrix
 //! otherwise, and an error where the silicon cannot do it at all.
 
-use flint_hal::bus::{BusError, BusResult};
-use flint_hal::pinmux::{PinConfig, PinMux, Signal, SignalDirection};
+use hal::bus::{BusError, BusResult};
+use hal::pinmux::{PinConfig, PinMux, Signal, SignalDirection};
 
 use crate::{gpio_matrix, io_mux};
 

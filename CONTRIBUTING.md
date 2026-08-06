@@ -72,13 +72,13 @@ make check-layers # three-layer boundary enforcement
 ## The layer boundary is not negotiable
 
 `tools/check-layers.sh` enforces the rule mechanically: **Layer-2 (`drivers/bus/`)
-and Layer-3 (`drivers/logical/`) crates may depend only on `flint-api`.** A bus or
-device driver that reaches for `flint-hal` or a `flint-arch-*` crate has gained
+and Layer-3 (`drivers/logical/`) crates may depend only on `api`.** A bus or
+device driver that reaches for `hal` or an `arch-*` crate has gained
 access to register definitions, which defeats the portability the three-layer
 model exists to provide. CI fails on any violation.
 
 If you genuinely need something from a lower layer, the fix is to widen the
-`flint-api` surface — not to bypass the boundary.
+`api` surface — not to bypass the boundary.
 
 ## Hardware claims
 

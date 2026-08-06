@@ -157,7 +157,7 @@ impl Default for PinConfig {
 
 /// Connects peripheral signals to pins, in whatever idiom the SoC uses.
 ///
-/// Implemented once per SoC family (`flint-soc-esp32`, `flint-soc-stm32f4`,
+/// Implemented once per SoC family (`soc-esp32`, `soc-stm32f4`,
 /// ...), never per board and never per driver.
 pub trait PinMux {
     /// Whether this silicon could route `signal` to `pin`, without doing it.

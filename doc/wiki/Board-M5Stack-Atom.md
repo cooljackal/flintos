@@ -33,7 +33,7 @@ These are plain constants, not bus entries — no driver in this tree drives the
 yet. Reach for them directly:
 
 ```rust
-use flint_board::active::{RGB_LED_GPIO, BUTTON_GPIO};
+use board::active::{RGB_LED_GPIO, BUTTON_GPIO};
 ```
 
 GPIO39 is input-only, which is fine for a button.

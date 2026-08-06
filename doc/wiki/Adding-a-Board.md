@@ -35,7 +35,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[
 ];
 ```
 
-Base addresses and IRQs come from `flint_soc_esp32::addr`. Don't paste hex — a
+Base addresses and IRQs come from `soc_esp32::addr`. Don't paste hex — a
 typo in one board file is invisible from every other.
 
 **Only declare buses that exist on your board.** An `i2c0` entry for a device
@@ -72,13 +72,13 @@ by one line per existing board.
 In each app's `Cargo.toml`:
 
 ```toml
-board-my-board = ["flint-kernel/board-my-board"]
+board-my-board = ["kernel/board-my-board"]
 ```
 
 And `kernel/Cargo.toml`:
 
 ```toml
-board-my-board = ["flint-board/board-my-board"]
+board-my-board = ["board/board-my-board"]
 ```
 
 ## 4. Build

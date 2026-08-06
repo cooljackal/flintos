@@ -2,7 +2,7 @@
 
 #![no_std]
 
-use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus};
+use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus};
 
 /// ESP32 GPIO driver (pins 0-39; 32-39 are input-only on real silicon but the
 /// register plumbing is symmetric, so this driver does not special-case them).

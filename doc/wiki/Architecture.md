@@ -36,7 +36,7 @@ Board manifests declare pins and nothing else.
    your app          ┌─────────────────────────────────────────┐
    ──────────        │  task    task    task    task           │  ← you write these
                      └────────────────┬────────────────────────┘
-                                      │  flint-api
+                                      │  api
    Layer 3           ┌────────────────┴────────────────────────┐
    logical drivers   │  bme280        ssd1306      your_device │  ← portable across MCUs
                      └────────────────┬────────────────────────┘
@@ -48,14 +48,14 @@ Board manifests declare pins and nothing else.
                      └─────────────────────────────────────────┘
 ```
 
-- **Layer 3** knows a device, not a chip. Depends only on `flint-api`.
+- **Layer 3** knows a device, not a chip. Depends only on `api`.
 - **Layer 2** knows a protocol, not registers.
-- **Layer 1** knows registers. Depends on `flint-hal` and its SoC crate.
+- **Layer 1** knows registers. Depends on `hal` and its SoC crate.
 
 New sensor → write only Layer 3. New MCU → write only Layer 1.
 
 **This is enforced.** `tools/check-layers.sh` fails the build if a Layer 2 or 3
-crate names `flint-hal`, `flint-arch-*` or `flint-soc-*`. It runs in CI.
+crate names `hal`, `arch-*` or `soc-*`. It runs in CI.
 
 ## Repository
 
@@ -73,9 +73,10 @@ drivers/logical/       Layer 3
 tools/                 build helper, size report, layer check
 ```
 
-Directory names carry no `flint-` prefix; package names do. A package name is
-global and has to be unambiguous on crates.io; a directory is already scoped by
-its path.
+A package name is its directory leaf, unprefixed: `hal/` is `hal`,
+`drivers/logical/bme280/` is `bme280`. Nothing here is published — every package
+sets `publish = false` — so there is no global namespace to be unambiguous in,
+and a prefix would only make every name longer.
 
 ## The kernel is a library
 

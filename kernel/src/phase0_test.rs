@@ -10,7 +10,7 @@
 //! Gated behind the `phase0-tests` feature; run during bring-up at gate G5.
 
 #[cfg(feature = "phase0-tests")]
-use flint_arch_xtensa::registers;
+use arch_xtensa::registers;
 
 /// Run all Phase 0 tests. Panics on failure (printed by the panic handler).
 pub fn run() {

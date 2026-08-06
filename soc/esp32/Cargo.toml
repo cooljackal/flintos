@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "flint-soc-esp32"
+name = "soc-esp32"
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "ESP32 SoC support — peripheral map, IO_MUX, GPIO matrix, DPORT clock gating"
@@ -11,4 +12,4 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../../hal" }
+hal = { path = "../../hal" }

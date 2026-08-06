@@ -17,15 +17,15 @@
 //! failures instead of a silently wrong manifest, which on real hardware
 //! shows up as a very confusing bring-up bug (wrong pins, wrong IRQ, etc).
 //!
-//! Downstream crates (namely `flint-kernel`) never name a board module
-//! directly; they use `flint_board::active`, which this crate re-exports
+//! Downstream crates (namely `kernel`) never name a board module
+//! directly; they use `board::active`, which this crate re-exports
 //! to whichever board module was selected.
 //!
 //! Selecting a board from the kernel crate, which is what gets built:
 //! ```text
-//! cargo build -p flint-kernel --no-default-features --features board-m5-atom
-//! cargo build -p flint-kernel --no-default-features --features board-esp32-devkitc
-//! cargo build -p flint-kernel   # default: board-esp32-wrover
+//! cargo build -p kernel --no-default-features --features board-m5-atom
+//! cargo build -p kernel --no-default-features --features board-esp32-devkitc
+//! cargo build -p kernel   # default: board-esp32-wrover
 //! ```
 //!
 //! Adding a new board: add a `board-<name>` feature in `Cargo.toml`, a
@@ -52,9 +52,9 @@ pub mod m5_atom;
     feature = "board-m5-atom",
 )))]
 compile_error!(
-    "flint-board: no board selected. Enable exactly one `board-*` feature, e.g.\n\
+    "board: no board selected. Enable exactly one `board-*` feature, e.g.\n\
      \n\
-     \tcargo build -p flint-kernel --features board-m5-atom\n\
+     \tcargo build -p kernel --features board-m5-atom\n\
      \n\
      Available boards: board-esp32-wrover (default), board-esp32-devkitc, board-m5-atom."
 );
@@ -65,7 +65,7 @@ compile_error!(
     all(feature = "board-esp32-devkitc", feature = "board-m5-atom"),
 ))]
 compile_error!(
-    "flint-board: more than one `board-*` feature is enabled. A build with two \
+    "board: more than one `board-*` feature is enabled. A build with two \
      board manifests merged in is not a real board — it silently produces the \
      wrong pin/IRQ/bus map. Build with `--no-default-features --features <one-board>`."
 );
@@ -96,7 +96,7 @@ pub use m5_atom as active;
 // ── Manifest invariant tests ────────────────────────────────────────────────
 //
 // Run against whichever board is currently selected (`crate::active`), so
-// `cargo test -p flint-board --no-default-features --features <board>`
+// `cargo test -p board --no-default-features --features <board>`
 // checks that board's manifest. These exist to catch copy-paste errors —
 // e.g. a base address copied from the wrong bus, a pin number that isn't a
 // real GPIO, two buses accidentally sharing a name, or a device pointing at
@@ -107,7 +107,7 @@ mod tests {
     extern crate std;
 
     use crate::active::*;
-    use flint_hal::bus::BusConfig;
+    use hal::bus::BusConfig;
 
     // ESP32 peripheral registers live in the DPORT-mapped bus window
     // 0x3FF4_0000..0x3FF8_0000. Widened slightly on both sides so this

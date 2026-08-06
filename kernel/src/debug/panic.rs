@@ -22,7 +22,7 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use flint_arch_xtensa::registers;
+use arch_xtensa::registers;
 
 use crate::scheduler::TaskState;
 

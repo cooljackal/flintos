@@ -1,5 +1,6 @@
 [package]
-name = "flint-i2c-bus"
+name = "i2c-bus"
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "I2C bus abstraction layer"
@@ -9,5 +10,5 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# Layer-2: depend ONLY on flint-api (plan W7.1).
-flint-api = { path = "../../../api" }
+# Layer-2: depend ONLY on api (plan W7.1).
+api = { path = "../../../api" }

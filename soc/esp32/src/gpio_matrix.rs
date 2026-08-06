@@ -21,8 +21,8 @@
 //!
 //! Confirmed against esp-idf `soc/gpio_reg.h` and `soc/gpio_sig_map.h`.
 
-use flint_hal::bus::{BusError, BusResult};
-use flint_hal::pinmux::{PinDrive, Signal};
+use hal::bus::{BusError, BusResult};
+use hal::pinmux::{PinDrive, Signal};
 
 use crate::addr::GPIO_BASE;
 

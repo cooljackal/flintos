@@ -5,25 +5,25 @@ catch for you.
 
 | You are writing | Layer | Directory | Package name | May depend on |
 |---|---|---|---|---|
-| A sensor, display, radio | 3 — logical | `drivers/logical/<device>/` | `flint-driver-<device>` | `flint-api` **only** |
-| A protocol wrapper | 2 — bus | `drivers/bus/<proto>-bus/` | `flint-<proto>-bus` | `flint-api` **only** |
-| A peripheral register driver | 1 — physical | `drivers/physical/<chip>-<periph>/` | `flint-<chip>-<periph>` | `flint-hal`, `flint-soc-*` |
+| A sensor, display, radio | 3 — logical | `drivers/logical/<device>/` | `<device>` | `api` **only** |
+| A protocol wrapper | 2 — bus | `drivers/bus/<proto>-bus/` | `<proto>-bus` | `api` **only** |
+| A peripheral register driver | 1 — physical | `drivers/physical/<chip>-<periph>/` | `<chip>-<periph>` | `hal`, `soc-*` |
 
-The directory drops the `flint-` prefix; the package name keeps it, because a
-package name has to be unambiguous on crates.io. `bme280` and `ssd1306` are
-already taken there by unrelated crates — hence `flint-driver-bme280`.
+The package name is the directory leaf, with no prefix — `drivers/logical/bme280/`
+is `bme280`, `drivers/physical/esp32-i2c/` is `esp32-i2c`.
 
-`flint-driver-` is the namespace the community driver convention reserves, so a
-third-party driver for the same device is named the same way. Layer 1 and 2 do
-not take it: an on-chip peripheral is not a device, and a bus abstraction is not
-a driver.
+Nothing in this tree is published: every package sets `publish = false`, so there
+is no global namespace to be unambiguous in. Unrelated crates named `bme280` and
+`ssd1306` exist on crates.io and it costs us nothing, because these never go
+there. A prefix would buy no clarity and make every path-dependency longer.
 
 Two checks run in CI and fail the build:
 
-- `tools/check-layers.sh` — a Layer 2 or 3 crate may name **only** `flint-api`.
+- `tools/check-layers.sh` — a Layer 2 or 3 crate may name **only** `api`.
   Anything else is a violation, including a Layer 1 driver.
-- `tools/check-names.sh` — the package name and directory must match the table
-  above. A publishable crate without a `flint-` prefix is rejected.
+- `tools/check-names.sh` — every package must set `publish = false`, must not
+  carry a `flint-` prefix, and its name must match its directory as in the table
+  above.
 
 ## Layer 3 — a device
 
@@ -32,7 +32,7 @@ Knows a device, not a chip. Works on any MCU Flint supports, unchanged.
 ```rust
 #![no_std]
 
-use flint_api::bus::{BusHandle, BusResult};
+use api::bus::{BusHandle, BusResult};
 
 pub struct Bme280 {
     bus: BusHandle,
@@ -59,7 +59,7 @@ wanting a register address or a pin number, you're in the wrong layer.
 
 ## Layer 2 — a bus
 
-Turns a `PhysicalBus` into a protocol. Implement `flint_api::bus::Bus`:
+Turns a `PhysicalBus` into a protocol. Implement `api::bus::Bus`:
 
 ```rust
 fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()>;
@@ -75,7 +75,7 @@ Chip select, framing, retries live here. Registers don't.
 ## Layer 1 — a peripheral
 
 The only layer that touches hardware. Implement
-`flint_hal::bus::PhysicalBus`:
+`hal::bus::PhysicalBus`:
 
 ```rust
 fn init(&mut self, config: &BusConfig) -> BusResult<()>;

@@ -11,8 +11,8 @@
 // otherwise identical to the WROVER manifest — same SoC, same default
 // IO_MUX pins, same interrupt sources.
 
-use flint_hal::bus::*;
-use flint_soc_esp32::addr;
+use hal::bus::*;
+use soc_esp32::addr;
 
 pub const BOARD_NAME: &str = "ESP32-DevKitC";
 pub const TICK_PERIOD_US: u32 = 1000;

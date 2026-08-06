@@ -13,13 +13,13 @@
 //!    function 2, for a few it is 0. A driver that hardcodes one value silently
 //!    puts some pads into a completely different peripheral's function.
 //!
-//! Both used to be duplicated, separately, inside `flint-esp32-uart` and
-//! `flint-esp32-spi`.
+//! Both used to be duplicated, separately, inside `esp32-uart` and
+//! `esp32-spi`.
 //!
 //! Offsets confirmed against esp-idf `soc/io_mux_reg.h` (`GPIO_PIN_MUX_REG`).
 
-use flint_hal::bus::{BusError, BusResult};
-use flint_hal::pinmux::PinPull;
+use hal::bus::{BusError, BusResult};
+use hal::pinmux::PinPull;
 
 use crate::addr::IO_MUX_BASE;
 

@@ -34,7 +34,7 @@ fn main() {
     // cross-assembler.
     if !target.starts_with("xtensa-") {
         println!(
-            "cargo:warning=flint-arch-xtensa: target is `{target}`, skipping assembly build"
+            "cargo:warning=arch-xtensa: target is `{target}`, skipping assembly build"
         );
         return;
     }

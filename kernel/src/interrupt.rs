@@ -12,8 +12,8 @@
 //! Handler-table access is guarded by a critical section.
 
 use core::sync::atomic::{AtomicU32, Ordering};
-use flint_arch_xtensa::cs_with;
-use flint_arch_xtensa::registers;
+use arch_xtensa::cs_with;
+use arch_xtensa::registers;
 
 const MAX_HANDLERS: usize = 32;
 
@@ -90,7 +90,7 @@ pub fn register(irq: u8, isr: fn()) -> bool {
         let h = handlers();
         if h.iter().flatten().any(|handler| handler.irq == irq) {
             crate::debug::log::write(
-                flint_api::debug::log::Level::Error,
+                api::debug::log::Level::Error,
                 &format_args!("interrupt::register: irq {} already has a handler", irq),
             );
             return false;
@@ -102,7 +102,7 @@ pub fn register(irq: u8, isr: fn()) -> bool {
             }
         }
         crate::debug::log::write(
-            flint_api::debug::log::Level::Error,
+            api::debug::log::Level::Error,
             &format_args!("interrupt::register: handler table full (irq {})", irq),
         );
         false
@@ -139,7 +139,7 @@ pub fn dispatch(irq: u8) {
 pub fn clear_pending(irq: u8) {
     if irq >= 32 {
         crate::debug::log::write(
-            flint_api::debug::log::Level::Error,
+            api::debug::log::Level::Error,
             &format_args!("interrupt::clear_pending: irq {} out of range (max 31)", irq),
         );
         return;

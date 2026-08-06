@@ -3,25 +3,31 @@
 # Package naming and layout enforcement.
 #
 # The convention is stated in the root Cargo.toml; this is what makes it true.
-# It went unchecked until two crates -- `bme280` and `ssd1306` -- had shipped
-# under names already owned by well-known third-party crates on crates.io. A
-# convention that lives only in a comment is a convention that drifts, and the
+# A convention that lives only in a comment is a convention that drifts, and the
 # repo already has the pattern for fixing that: tools/check-layers.sh.
+#
+# Nothing in this workspace is published. Every package is a path member of one
+# repo, so a package name only ever has to be unique here -- and short, plain
+# names (`hal`, `api`, `kernel`) read better in every `use` and every `-p` flag
+# than a repo prefix repeated twenty times. That only stays safe while the
+# packages stay unpublished: `hal` and `api` are names this project has no claim
+# to on crates.io, so a stray `cargo publish` would be both a mistake and,
+# for most of them, a collision. `publish = false` is what forecloses it, which
+# makes it the invariant worth checking rather than the name shape it permits.
 #
 # Three rules:
 #
-#   1. A publishable package is named `flint-<slug>`. A package may drop the
-#      prefix only by setting `publish = false` -- the applications do, because
-#      the package name is also `make APP=<name>` and the flashed ELF filename.
+#   1. Every package sets `publish = false`. Cargo reports that as an empty
+#      allow-list in `cargo metadata`; a publishable package is null, and an
+#      explicit registry list still means publishable.
 #
-#   2. A package's directory leaf is its slug, or its slug with a leading
-#      category word removed when the slug repeats one (`flint-arch-xtensa` ->
-#      `arch/xtensa/`, `flint-driver-bme280` -> `drivers/logical/bme280/`).
+#   2. No package name carries a `flint-` prefix -- the inverse of the rule this
+#      file used to enforce, kept so the old convention cannot creep back in one
+#      crate at a time.
 #
-#   3. A Layer-3 logical driver is named `flint-driver-<device>`, the namespace
-#      the community driver convention reserves. A third-party BME280 driver is
-#      `flint-driver-bme280` too, so a first-party one cannot sit elsewhere
-#      without splitting the namespace in two.
+#   3. A package's directory leaf is its name, or its name with a leading
+#      category word removed when the name repeats one (`arch-xtensa` ->
+#      `arch/xtensa/`, `soc-esp32` -> `soc/esp32/`, `build` -> `tools/build/`).
 #
 # Exit non-zero on any violation. Wired into CI and `make check-names`.
 
@@ -45,9 +51,7 @@ done
 PYSRC=$(cat <<'EOF'
 import json, os, sys
 
-PREFIX = "flint-"
-DRIVER_PREFIX = "flint-driver-"
-LOGICAL_DIR = "drivers/logical"
+FORBIDDEN_PREFIX = "flint-"
 
 meta = json.load(sys.stdin)
 root = meta["workspace_root"].replace("\\", "/").rstrip("/") + "/"
@@ -61,29 +65,31 @@ for pkg in sorted(meta["packages"], key=lambda p: p["name"]):
     leaf = parts[-1]
     ancestors = parts[:-1]
 
-    # cargo metadata reports `publish = false` as an empty allow-list, and a
-    # publishable package as null. Anything else is an explicit registry list,
-    # which still means publishable.
-    publishable = pkg.get("publish") != []
+    # Rule 1 -- never published. cargo metadata reports `publish = false` as an
+    # empty allow-list, and a publishable package as null. Anything else is an
+    # explicit registry list, which still means publishable.
+    if pkg.get("publish") != []:
+        violations.append(
+            "PUBLISH: %s is publishable\n"
+            "         fix: add `publish = false` to %s/Cargo.toml -- no package "
+            "in this workspace is published" % (name, rel)
+        )
 
-    # Rule 1 -- prefix, unless the package opts out of publishing.
-    if not name.startswith(PREFIX):
-        if publishable:
-            violations.append(
-                "NAME: %s has no `flint-` prefix and is publishable\n"
-                "      fix: rename to %s%s, or add `publish = false` if it is "
-                "never published" % (name, PREFIX, name)
-            )
-        slug = name
-    else:
-        slug = name[len(PREFIX):]
+    # Rule 2 -- no repo prefix, now that the names need not be globally unique.
+    if name.startswith(FORBIDDEN_PREFIX):
+        violations.append(
+            "NAME: %s carries the obsolete `%s` prefix\n"
+            "      fix: rename to %s"
+            % (name, FORBIDDEN_PREFIX, name[len(FORBIDDEN_PREFIX):])
+        )
 
-    # Rule 2 -- directory leaf is the slug, or the slug minus a leading category
-    # word that repeats an ancestor directory (tolerating drivers/ -> driver-).
-    if leaf != slug:
+    # Rule 3 -- directory leaf is the name, or the name minus a leading category
+    # word that repeats an ancestor directory (tolerating a plural ancestor, so
+    # `drivers/` matches a `driver-` category word).
+    if leaf != name:
         ok = False
-        if "-" in slug:
-            word, rest = slug.split("-", 1)
+        if "-" in name:
+            word, rest = name.split("-", 1)
             if rest == leaf and any(
                 a == word or a == word + "s" for a in ancestors
             ):
@@ -92,16 +98,8 @@ for pkg in sorted(meta["packages"], key=lambda p: p["name"]):
             violations.append(
                 "LAYOUT: %s lives in %s/ -- expected leaf `%s`, or `<category>-%s` "
                 "with the category naming an ancestor directory"
-                % (name, rel, slug, leaf)
+                % (name, rel, name, leaf)
             )
-
-    # Rule 3 -- Layer-3 drivers claim the reserved community namespace.
-    if ("/" + LOGICAL_DIR + "/") in "/" + rel + "/" and not name.startswith(DRIVER_PREFIX):
-        violations.append(
-            "NAMESPACE: %s is a Layer-3 logical driver and must be named `%s<device>`\n"
-            "           (see \"Community Driver Convention\" in the plan)"
-            % (name, DRIVER_PREFIX)
-        )
 
 for v in violations:
     print(v)

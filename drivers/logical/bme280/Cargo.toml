@@ -1,5 +1,6 @@
 [package]
-name = "flint-driver-bme280"
+name = "bme280"
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "BME280 temperature/humidity/pressure sensor logical driver (Layer 3)"
@@ -9,6 +10,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# Layer-3 drivers depend ONLY on flint-api (plan W7.1). Depending on flint-hal
-# or flint-arch-* here is a layer violation — checked by tools/check-layers.sh.
-flint-api = { path = "../../../api" }
+# Layer-3 drivers depend ONLY on `api` (plan W7.1). Depending on `hal` or
+# `arch-*` here is a layer violation — checked by tools/check-layers.sh.
+api = { path = "../../../api" }

@@ -9,9 +9,9 @@
 //! Everything above that line is the kernel's business — console, tick timer,
 //! idle task, interrupt unmasking. Everything below it is the application's.
 
-use flint_arch_xtensa::registers;
-use flint_arch_xtensa::tick::XtensaTick;
-use flint_hal::tick::TickSource;
+use arch_xtensa::registers;
+use arch_xtensa::tick::XtensaTick;
+use hal::tick::TickSource;
 
 use crate::{board, debug, scheduler};
 
@@ -51,10 +51,10 @@ extern "C" {
 /// #![no_std]
 /// #![no_main]
 ///
-/// flint_kernel::flint_app!(main);
+/// kernel::flint_app!(main);
 ///
 /// fn main() {
-///     flint_api::task::spawn("blink", blink, Priority::Normal(1), 4096);
+///     api::task::spawn("blink", blink, Priority::Normal(1), 4096);
 /// }
 /// ```
 #[macro_export]
@@ -118,7 +118,7 @@ pub extern "C" fn FlintMain() -> ! {
     unsafe { flint_app_main() };
 
     #[cfg(feature = "flint-log")]
-    flint_api::log_info!("[kernel] Flint RTOS boot complete, entering idle");
+    api::log_info!("[kernel] Flint RTOS boot complete, entering idle");
 
     // A build with logging compiled out looks exactly like a board that boots
     // and then dies: the banner appears, the tasks run, and nothing they print

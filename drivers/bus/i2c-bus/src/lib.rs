@@ -8,7 +8,7 @@
 
 #![no_std]
 
-use flint_api::bus::{Bus, BusError, BusResult, BusSpeed, PhysicalBus};
+use api::bus::{Bus, BusError, BusResult, BusSpeed, PhysicalBus};
 
 /// I2C bus abstraction.
 pub struct I2cBus {
@@ -80,7 +80,7 @@ mod tests {
         fn set_enabled(&mut self, _: bool) {}
     }
 
-    use flint_api::bus::BusConfig;
+    use api::bus::BusConfig;
 
     #[test]
     fn i2c_write_builds_frame() {

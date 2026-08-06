@@ -1,5 +1,6 @@
 [package]
-name = "flint-board"
+name = "board"
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "Flint RTOS board manifests — ESP32-WROVER, ESP32-DevKitC/WROOM-32, M5Stack ATOM (ESP32-PICO-D4)"
@@ -9,8 +10,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../hal" }
-flint-soc-esp32 = { path = "../soc/esp32" }
+hal = { path = "../hal" }
+soc-esp32 = { path = "../soc/esp32" }
 
 # Board selection. Exactly one `board-*` feature must be enabled — see
 # `src/lib.rs` for the compile_error! that enforces this. Selection lives

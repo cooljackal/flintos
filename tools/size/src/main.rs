@@ -31,7 +31,7 @@ fn main() -> ExitCode {
     let elf_path = match args.next() {
         Some(p) => p,
         None => {
-            eprintln!("usage: flint-size <elf> [linker-script]");
+            eprintln!("usage: size <elf> [linker-script]");
             return ExitCode::FAILURE;
         }
     };
@@ -42,7 +42,7 @@ fn main() -> ExitCode {
     let elf = match std::fs::read(&elf_path) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("flint-size: {elf_path}: {e}");
+            eprintln!("size: {elf_path}: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -51,13 +51,13 @@ fn main() -> ExitCode {
     let sections = match parse_sections(&elf) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("flint-size: {elf_path}: {e}");
+            eprintln!("size: {elf_path}: {e}");
             return ExitCode::FAILURE;
         }
     };
     let regions = parse_regions(&ld);
     if regions.is_empty() {
-        eprintln!("flint-size: no MEMORY regions found in {ld_path}");
+        eprintln!("size: no MEMORY regions found in {ld_path}");
         return ExitCode::FAILURE;
     }
 

@@ -1,5 +1,6 @@
 [package]
-name = "flint-driver-ssd1306"
+name = "ssd1306"
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "SSD1306 OLED display logical driver (Layer 3)"
@@ -9,5 +10,5 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# Layer-3: depend ONLY on flint-api (plan W7.1).
-flint-api = { path = "../../../api" }
+# Layer-3: depend ONLY on api (plan W7.1).
+api = { path = "../../../api" }

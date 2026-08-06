@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use flint_hal::types::{TaskId, Priority};
+use hal::types::{TaskId, Priority};
 
 /// Spawn a new task.
 pub fn spawn(

@@ -22,7 +22,7 @@
 #[macro_export]
 macro_rules! log_error {
     ($($arg:tt)*) => {
-        $crate::debug::log::__flint_log(flint_api::debug::log::Level::Error, format_args!($($arg)*))
+        $crate::debug::log::__flint_log(api::debug::log::Level::Error, format_args!($($arg)*))
     };
 }
 
@@ -30,7 +30,7 @@ macro_rules! log_error {
 #[macro_export]
 macro_rules! log_warn {
     ($($arg:tt)*) => {
-        $crate::debug::log::__flint_log(flint_api::debug::log::Level::Warn, format_args!($($arg)*))
+        $crate::debug::log::__flint_log(api::debug::log::Level::Warn, format_args!($($arg)*))
     };
 }
 
@@ -38,7 +38,7 @@ macro_rules! log_warn {
 #[macro_export]
 macro_rules! log_info {
     ($($arg:tt)*) => {
-        $crate::debug::log::__flint_log(flint_api::debug::log::Level::Info, format_args!($($arg)*))
+        $crate::debug::log::__flint_log(api::debug::log::Level::Info, format_args!($($arg)*))
     };
 }
 
@@ -47,7 +47,7 @@ macro_rules! log_info {
 macro_rules! log_debug {
     ($($arg:tt)*) => {
         #[cfg(feature = "flint-log")]
-        $crate::debug::log::__flint_log(flint_api::debug::log::Level::Debug, format_args!($($arg)*))
+        $crate::debug::log::__flint_log(api::debug::log::Level::Debug, format_args!($($arg)*))
     };
 }
 
@@ -56,7 +56,7 @@ macro_rules! log_debug {
 macro_rules! log_trace {
     ($($arg:tt)*) => {
         #[cfg(feature = "flint-trace")]
-        $crate::debug::log::__flint_log(flint_api::debug::log::Level::Trace, format_args!($($arg)*))
+        $crate::debug::log::__flint_log(api::debug::log::Level::Trace, format_args!($($arg)*))
     };
 }
 

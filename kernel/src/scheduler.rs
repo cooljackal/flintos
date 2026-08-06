@@ -18,9 +18,9 @@
 //! interrupts already masked. Both exclude each other.
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use flint_hal::tick::TickSource;
-use flint_hal::types::TaskContext;
-use flint_arch_xtensa::tick::XtensaTick;
+use hal::tick::TickSource;
+use hal::types::TaskContext;
+use arch_xtensa::tick::XtensaTick;
 
 pub const MAX_TASKS: usize = 32;
 
@@ -460,12 +460,12 @@ pub fn global() -> &'static mut Scheduler {
 
 /// Run `f` with the scheduler under a critical section (task-context safe).
 pub fn with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
-    flint_arch_xtensa::cs_with(|| f(global()))
+    arch_xtensa::cs_with(|| f(global()))
 }
 
 /// Request a context switch: set the flag and raise the software interrupt so
 /// the switch happens in the trap handler.
 pub fn request_switch() {
     set_pending_switch();
-    unsafe { flint_arch_xtensa::registers::request_switch() }
+    unsafe { arch_xtensa::registers::request_switch() }
 }

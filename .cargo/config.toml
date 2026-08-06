@@ -1,6 +1,6 @@
 # Flint RTOS — Cargo build configuration.
 #
-# Board selection is a Cargo feature on flint-kernel, not a setting here:
+# Board selection is a Cargo feature on kernel, not a setting here:
 #   (default)                                          ESP32-WROVER
 #   --no-default-features --features board-m5-atom     M5Stack Atom (PICO-D4)
 #   --no-default-features --features board-esp32-devkitc  DevKitC / WROOM-32

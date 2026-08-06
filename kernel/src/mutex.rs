@@ -8,7 +8,7 @@
 //! it still holds (so multiple held mutexes compose correctly), and ownership
 //! transfers to the next waiter.
 
-use flint_arch_xtensa::cs_with;
+use arch_xtensa::cs_with;
 use crate::scheduler::{self};
 
 const MAX_MUTEXES: usize = 16;
@@ -59,7 +59,7 @@ enum LockOutcome {
 }
 
 fn log_error(args: core::fmt::Arguments<'_>) {
-    crate::debug::log::write(flint_api::debug::log::Level::Error, &args);
+    crate::debug::log::write(api::debug::log::Level::Error, &args);
 }
 
 /// Lock `addr`. Returns true if owned on return (immediately or after blocking

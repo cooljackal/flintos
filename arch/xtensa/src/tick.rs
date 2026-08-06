@@ -8,7 +8,7 @@
 //! register. This is the single authoritative tick counter for the system.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use flint_hal::tick::TickSource;
+use hal::tick::TickSource;
 use crate::registers;
 use crate::critical_section;
 

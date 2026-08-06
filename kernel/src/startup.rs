@@ -4,11 +4,11 @@
 //!
 //! Called from FlintMain() before the scheduler starts.
 
-use flint_hal::bus::{BusKind, PhysicalBus};
+use hal::bus::{BusKind, PhysicalBus};
 use crate::board::active;
 
 /// Global UART console driver (used by log/panic).
-pub static mut CONSOLE_UART: Option<flint_esp32_uart::Esp32Uart> = None;
+pub static mut CONSOLE_UART: Option<esp32_uart::Esp32Uart> = None;
 
 /// Initialise board-level hardware.
 /// Must be called before the scheduler starts.
@@ -19,7 +19,7 @@ pub fn init() {
             // SAFETY: `base_addr` comes from the board manifest, which is the
             // single source of truth for peripheral addresses, and this is the
             // only place a console UART is constructed.
-            let mut uart = unsafe { flint_esp32_uart::Esp32Uart::new(bus.base_addr) };
+            let mut uart = unsafe { esp32_uart::Esp32Uart::new(bus.base_addr) };
             let configured = uart.init(&bus.config);
             unsafe {
                 CONSOLE_UART = Some(uart);

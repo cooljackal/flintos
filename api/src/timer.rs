@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use flint_api::timer::{once_ms, now_ms};
+//! use api::timer::{once_ms, now_ms};
 //!
 //! fn callback() { /* ... */ }
 //!

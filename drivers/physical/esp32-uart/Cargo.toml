@@ -1,5 +1,6 @@
 [package]
-name = "flint-esp32-uart"
+name = "esp32-uart"
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "ESP32 UART physical driver"
@@ -9,5 +10,5 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../../../hal" }
-flint-soc-esp32 = { path = "../../../soc/esp32" }
+hal = { path = "../../../hal" }
+soc-esp32 = { path = "../../../soc/esp32" }

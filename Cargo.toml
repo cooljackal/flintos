@@ -1,50 +1,36 @@
 [workspace]
 resolver = "2"
-# Directory names carry no `flint-` prefix; package names do.
+# Package names carry no prefix, because nothing here is published. Flint is
+# not a pure-Rust library -- it ships a linker script and a flashed image
+# alongside the crates -- so it will never go to crates.io, and a package name
+# therefore only has to be unique within this workspace. Every package sets
+# `publish = false` directly under its `name`, and that is what keeps the short
+# names honest: an unprefixed `hal` or `bme280` would otherwise be a standing
+# claim on a crates.io name that is not ours to make (`bme280` and `ssd1306`
+# are both well-known third-party driver crates already).
 #
-# A package name is a global identifier -- it has to be unambiguous on
-# crates.io, hence `flint-hal` rather than `hal`, and `flint-driver-bme280`
-# rather than `bme280`, which is already a well-known third-party driver crate
-# (as is `ssd1306`). A directory is scoped by its path already, so `hal/`,
-# `arch/xtensa/` and `drivers/logical/bme280/` say everything the longer names
-# did.
+# A package's name is its directory leaf. The category directories -- `tools/`,
+# `apps/`, `drivers/physical/`, `drivers/logical/`, `drivers/bus/` -- scope the
+# path but contribute nothing to the name:
 #
-# Each layer names itself after what it is portable across, which is the thing
-# a reader needs to know before depending on it:
+#     hal/                          -> hal
+#     tools/build/                  -> build
+#     tools/size/                   -> size
+#     apps/demo/                    -> demo
+#     drivers/physical/esp32-uart/  -> esp32-uart
+#     drivers/logical/bme280/       -> bme280
 #
-#   Layer 3  flint-driver-<device>       flint-driver-bme280, flint-driver-ssd1306
-#   Layer 2  flint-<protocol>-bus        flint-spi-bus, flint-i2c-bus, flint-uart-bus
-#   Layer 1  flint-<chip>-<peripheral>   flint-esp32-uart, flint-esp32-spi
+# Two packages fold their category word into the name, because the bare leaf
+# names something far larger than the crate -- `xtensa` is an instruction set
+# and `esp32` a whole chip family -- and a dependency line shows the name
+# without the path that would have disambiguated it:
 #
-# `flint-driver-` is the namespace the community driver convention reserves
-# (see doc/internal/flint_rtos_plan_rev8.md, "Community Driver Convention"):
-# a third-party BME280 driver is `flint-driver-bme280` too, so the first-party
-# ones cannot sit in a different namespace without splitting it in two. Only
-# Layer 3 takes the prefix -- it names an external *device*, which is what the
-# convention is about. An ESP32 UART is an on-chip peripheral, not a device,
-# and a bus abstraction is not a driver at all.
+#     arch/xtensa/                  -> arch-xtensa
+#     soc/esp32/                    -> soc-esp32
 #
-# Stating the directory mapping precisely, because the short version
-# ("directory = package minus `flint-`") is not true of every crate here:
-#
-#   a package's directory leaf is its name minus `flint-`, minus a leading
-#   category word when the name repeats one
-#
-#     flint-hal            -> hal/                          no category
-#     flint-esp32-uart     -> drivers/physical/esp32-uart/   leaf is the whole slug
-#     flint-driver-bme280  -> drivers/logical/bme280/        slug repeats `driver`
-#     flint-arch-xtensa    -> arch/xtensa/                   slug repeats `arch`
-#     flint-soc-esp32      -> soc/esp32/                     slug repeats `soc`
-#     flint-build          -> tools/build/                   slug omits `tools`
-#
-# A category word appears in the name only where the bare leaf would be too
-# generic to publish: `xtensa`, `esp32` and `bme280` alone are not Flint's to
-# claim.
-#
-# The applications are the one exception, and they are marked rather than
-# assumed: `demo` and `hello` have no prefix and set `publish = false`, since
-# the package name is also `make APP=<name>` and the flashed ELF filename. An
-# unprefixed name is only honest if the crate is never published.
+# Cargo *feature* names are a separate namespace and do keep the prefix:
+# `flint-log`, `flint-trace`, `flint-metrics` and the rest are written on a
+# dependency line, where they sit among features belonging to other crates.
 members = [
     "hal",
     "api",

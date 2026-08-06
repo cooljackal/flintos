@@ -2,10 +2,10 @@
 
 #![no_std]
 
-use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, SpiMode};
-use flint_hal::pinmux::{PinConfig, PinMux, Signal};
-use flint_soc_esp32::addr;
-use flint_soc_esp32::{dport, Esp32PinMux, APB_HZ};
+use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, SpiMode};
+use hal::pinmux::{PinConfig, PinMux, Signal};
+use soc_esp32::addr;
+use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
 /// ESP32 SPI2 (HSPI) / SPI3 (VSPI) physical driver (polled mode).
 ///
@@ -69,8 +69,8 @@ const SPI_TIMEOUT_SPINS: u32 = 1_000_000;
 // ── Pin routing ──────────────────────────────────────────────────────────────
 //
 // Bases, DPORT clock bits, native pads and the IO_MUX offset table all live in
-// `flint-soc-esp32`. This driver used to carry its own copy of that table with
-// a comment saying to keep it in sync with the one in `flint-esp32-uart` by hand --
+// `soc-esp32`. This driver used to carry its own copy of that table with
+// a comment saying to keep it in sync with the one in `esp32-uart` by hand --
 // which is exactly the arrangement the SoC layer exists to end.
 
 /// Route MOSI, MISO and SCK for controller `instance`.
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn dport_clk_bits_are_distinct_and_match_known_bases() {
-        use flint_soc_esp32::addr::{SPI2_BASE, SPI3_BASE};
+        use soc_esp32::addr::{SPI2_BASE, SPI3_BASE};
         assert_eq!(dport::clock_bit(SPI2_BASE), Some(dport::ClockBit::SPI2));
         assert_eq!(dport::clock_bit(SPI3_BASE), Some(dport::ClockBit::SPI3));
         assert_ne!(dport::clock_bit(SPI2_BASE), dport::clock_bit(SPI3_BASE));
@@ -331,7 +331,7 @@ mod tests {
     fn spi1_is_not_addressable_as_a_general_purpose_controller() {
         // SPI1 drives the boot flash; routing it anywhere bricks the running
         // image.
-        use flint_soc_esp32::addr::SPI1_BASE;
+        use soc_esp32::addr::SPI1_BASE;
         assert_eq!(addr::spi_instance(SPI1_BASE), None);
     }
 

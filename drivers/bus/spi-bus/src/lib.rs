@@ -7,7 +7,7 @@
 
 #![no_std]
 
-use flint_api::bus::{Bus, BusConfig, BusError, BusResult, BusSpeed, PhysicalBus};
+use api::bus::{Bus, BusConfig, BusError, BusResult, BusSpeed, PhysicalBus};
 
 /// SPI bus abstraction.
 pub struct SpiBus {
@@ -76,7 +76,7 @@ mod tests {
     fn spi_transfer_echo() {
         let phys: &'static dyn PhysicalBus = &MockSpi;
         let bus = SpiBus::new(phys, BusConfig::Spi {
-            mosi: 23, miso: 19, sck: 18, max_speed: BusSpeed::MHz(1), mode: flint_api::bus::SpiMode::Mode0,
+            mosi: 23, miso: 19, sck: 18, max_speed: BusSpeed::MHz(1), mode: api::bus::SpiMode::Mode0,
         });
         let mut rx = [0u8; 4];
         assert!(bus.transfer(b"data", &mut rx).is_ok());
@@ -87,7 +87,7 @@ mod tests {
     fn spi_write_read() {
         let phys: &'static dyn PhysicalBus = &MockSpi;
         let bus = SpiBus::new(phys, BusConfig::Spi {
-            mosi: 23, miso: 19, sck: 18, max_speed: BusSpeed::MHz(1), mode: flint_api::bus::SpiMode::Mode0,
+            mosi: 23, miso: 19, sck: 18, max_speed: BusSpeed::MHz(1), mode: api::bus::SpiMode::Mode0,
         });
         assert!(bus.write(b"hello").is_ok());
         let mut buf = [0u8; 5];

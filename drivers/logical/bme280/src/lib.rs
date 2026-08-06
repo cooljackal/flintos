@@ -29,7 +29,7 @@
 
 #![no_std]
 
-use flint_api::bus::{BusError, BusHandle, BusResult};
+use api::bus::{BusError, BusHandle, BusResult};
 
 // ── BME280 register map (BME280 datasheet, register memory map) ───────────
 //
@@ -388,7 +388,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use flint_api::bus::{Bus, BusResult, BusSpeed};
+    use api::bus::{Bus, BusResult, BusSpeed};
     use std::sync::Mutex;
     use std::vec::Vec;
 

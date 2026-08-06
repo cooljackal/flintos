@@ -2,11 +2,8 @@
 
 [package]
 name = "demo"
-# The only packages without a `flint-` prefix, and the reason the convention
-# can afford the exception: an application is a flashed binary, never a
-# published crate. The name is the interface -- `make APP=demo` and the ELF
-# filename are both this string -- so `publish = false` is what keeps the
-# short name honest rather than a claim on a crates.io name someone else owns.
+# The name is the interface here, more than for any other package: `make
+# APP=demo` and the flashed ELF filename are both this string.
 publish = false
 version.workspace = true
 edition.workspace = true
@@ -17,24 +14,24 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-kernel = { path = "../../kernel", default-features = false }
-flint-api = { path = "../../api" }
-flint-hal = { path = "../../hal" }
+kernel = { path = "../../kernel", default-features = false }
+api = { path = "../../api" }
+hal = { path = "../../hal" }
 
 [build-dependencies]
-flint-build = { path = "../../tools/build" }
+build = { path = "../../tools/build" }
 
 [features]
 default = ["board-esp32-wrover", "debug-level-1"]
 
-board-esp32-wrover = ["flint-kernel/board-esp32-wrover"]
-board-esp32-devkitc = ["flint-kernel/board-esp32-devkitc"]
-board-m5-atom = ["flint-kernel/board-m5-atom"]
+board-esp32-wrover = ["kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
+board-m5-atom = ["kernel/board-m5-atom"]
 
-debug-level-0 = ["flint-kernel/debug-level-0"]
-debug-level-1 = ["flint-kernel/debug-level-1"]
-debug-level-2 = ["flint-kernel/debug-level-2"]
-debug-level-3 = ["flint-kernel/debug-level-3"]
+debug-level-0 = ["kernel/debug-level-0"]
+debug-level-1 = ["kernel/debug-level-1"]
+debug-level-2 = ["kernel/debug-level-2"]
+debug-level-3 = ["kernel/debug-level-3"]
 
 # Boot-time register-window self-test. Off by default; `make ... EXTRA_FEATURES=phase0-tests`.
-phase0-tests = ["flint-kernel/phase0-tests"]
+phase0-tests = ["kernel/phase0-tests"]
