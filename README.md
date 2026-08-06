@@ -30,7 +30,7 @@ thin, and the API will change.
 | What | Where it stands |
 |---|---|
 | Builds for `xtensa-esp32-none-elf` | ✅ |
-| Host unit tests | ✅ 160 passing, kernel included |
+| Host unit tests | ✅ 176 passing, kernel included |
 | On-target self-tests | ✅ 5 passing on ESP32-PICO — `make test-target` |
 | Layer boundary and package naming enforced in CI | ✅ |
 | UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |
@@ -39,7 +39,9 @@ thin, and the API will change.
 | Register-window spill on switch | ✅ |
 | GPIO-matrix pin routing | ✅ any signal to any pad, or a clear error |
 | I²C driver | ⚠️ routes and configures; untested against a real device |
-| Races and priority inversion | ⛔ no test reaches them; the host stubs cannot, and the on-target suite does not yet try |
+| Priority inversion | ✅ 11 host tests, including inheritance through a chain of blocked owners |
+| Queue concurrency | ✅ 5 host tests on real threads — exactly-once delivery, contended slots, torn publish |
+| Task-vs-ISR races | ⚠️ one on-target test; the host stubs mask nothing, so they cannot reach this ([#50](https://github.com/cooljackal/flintos/issues/50)) |
 | Anything beyond ESP32 | ⛔ no Cortex-M port yet |
 
 **Documentation:** the [wiki](https://github.com/cooljackal/flintos/wiki).
