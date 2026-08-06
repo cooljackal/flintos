@@ -119,6 +119,11 @@ ESPFLASH_CHIP  := esp32
 #   make flash-dev FLASH_BAUD=460800
 # 460800 is a good middle ground; 921600 works on some FTDI/native-USB setups.
 FLASH_BAUD     ?= 115200
+# Serial port. Empty lets espflash auto-detect, which is right when exactly one
+# board is attached. With more than one it prompts, so name the port:
+#   make flash PORT=COM5          (Windows)
+#   make flash PORT=/dev/ttyUSB0  (Linux)
+PORT           ?=
 # Must match the app's UART0 console baud (board/src/esp32_wrover.rs sets
 # 115200). espflash's flash/monitor subcommands take TWO separate baud
 # flags -- `--baud`/`-B` is the flashing/sync speed, `--monitor-baud`/`-r` is
@@ -279,8 +284,15 @@ test-host: ## Run host-side unit tests
 # critical section that genuinely masks the timer, a tick driven by silicon.
 # See kernel/src/selftest.rs.
 
+#   make test-target BOARD=board-m5-atom PORT=COM5
+#
+# PORT matters as soon as a second serial device is attached: espflash prompts
+# for a choice, and the harness has no terminal to answer with.
 .PHONY: test-target
 test-target: ## Flash and run the on-target self-tests (needs a board attached)
+	APP="$(APP)" BOARD="$(BOARD)" DEBUG="$(DEBUG)" PORT="$(PORT)" \
+	FLASH_BAUD="$(FLASH_BAUD)" MONITOR_BAUD="$(MONITOR_BAUD)" \
+	ESPFLASH_CHIP="$(ESPFLASH_CHIP)" FLASH_MODE="$(FLASH_MODE)" \
 	bash tools/target-test.sh
 
 # The judging half of the harness, checked without hardware. It is the part

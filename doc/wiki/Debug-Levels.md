@@ -53,17 +53,45 @@ On by default. It's how you bisect a failing boot; see
 inside the trap handler. **Off** by default, because on a working kernel it's
 pure noise. Turn it on when the console goes quiet.
 
-## Boot self-test
+## On-target self-tests
 
-Separate from the levels:
+Separate from the levels, and the only tests that exercise the machine rather
+than the kernel's logic:
+
+```bash
+make test-target                                   # auto-detect the port
+make test-target BOARD=board-m5-atom PORT=COM5     # ESP32-PICO on Windows
+make test-target BOARD=board-m5-atom PORT=/dev/ttyUSB0
+```
+
+Flashes the board, captures the serial output, and exits non-zero if anything
+failed. Five checks run after interrupts are unmasked, each chosen because a
+host test cannot fail it:
+
+| Test | What only silicon can show |
+|---|---|
+| `timer_preserves_windowed_context` | a trap corrupting the interrupted task's register windows |
+| `deep_window_recursion_returns_intact` | a window spilled past the physical register file and misrestored |
+| `tick_advances` | the timer interrupt actually fires |
+| `tick_never_goes_backwards` | `tick()`'s wrapping `CCOUNT` re-base slipping |
+| `critical_section_masks_the_tick` | that a critical section really masks — on a host `cs_with` masks nothing, so this is unfalsifiable there |
+
+**Set `PORT` whenever more than one serial device is attached.** Otherwise
+espflash prompts for a choice, the harness has no terminal to answer with, and
+you get a timeout that reports "the board never reached the self-test" — a
+confusing way to say "pick a port".
+
+The harness is strict on purpose: it counts the `PASS`/`FAIL` lines that
+actually arrived and rejects the run if they disagree with the board's own
+summary. A dropped serial line reads as a void run, not a pass. If that
+triggers, lower `MONITOR_BAUD`.
+
+To flash the self-test image without the harness judging it — useful when you
+want to watch the console yourself:
 
 ```bash
 make flash EXTRA_FEATURES=self-test
 ```
-
-Drives a deep windowed recursion after interrupts are unmasked and checks the
-result — the regression test for register-window corruption across a trap. Fails
-the boot loudly if the trap path breaks. Off by default.
 
 ## Cost
 

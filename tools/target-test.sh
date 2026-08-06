@@ -10,9 +10,16 @@
 # timer, a tick that advances because silicon counts. It needs a board plugged
 # in, so it is user-initiated rather than part of CI.
 #
-#   make test-target                     # flash and judge
-#   make test-target APP=hello           # a different application
+#   make test-target                          # flash and judge
+#   make test-target BOARD=board-m5-atom      # an ESP32-PICO board
+#   make test-target PORT=COM5                # name the port explicitly
+#   make test-target APP=hello                # a different application
 #   bash tools/target-test.sh --parse-only run.log
+#
+# Set PORT whenever more than one serial device is attached. Without it espflash
+# asks which one to use, and this script has no terminal to answer with -- it
+# would sit at the prompt until the timeout and then report a board that never
+# started, which is a confusing way to say "pick a port".
 #
 # `--parse-only` exists so the judging logic can be tested without hardware,
 # which is the half of this script most likely to be wrong. See its own tests in
@@ -140,9 +147,15 @@ echo "==> Flashing and capturing (timeout ${TIMEOUT_SECS}s)"
 # is killed once the terminating marker arrives or the timeout expires. Polling
 # the log beats piping into `read`, which would leave espflash orphaned holding
 # the serial port open — and the next run would then fail to open it.
+PORT_ARGS=()
+if [ -n "${PORT:-}" ]; then
+    PORT_ARGS=(--port "$PORT")
+fi
+
 espflash flash "$BIN" \
     --chip "$ESPFLASH_CHIP" --flash-mode "$FLASH_MODE" \
     --baud "$FLASH_BAUD" --monitor --monitor-baud "$MONITOR_BAUD" \
+    "${PORT_ARGS[@]}" \
     >"$LOG" 2>&1 &
 ESPFLASH_PID=$!
 
