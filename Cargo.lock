@@ -107,6 +107,7 @@ dependencies = [
  "board",
  "esp32-uart",
  "hal",
+ "soc-esp32",
 ]
 
 [[package]]

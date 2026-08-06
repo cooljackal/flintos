@@ -30,7 +30,7 @@ thin, and the API will change.
 | What | Where it stands |
 |---|---|
 | Builds for `xtensa-esp32-none-elf` | ✅ |
-| Host unit tests | ✅ 176 passing, kernel included |
+| Host unit tests | ✅ 183 passing, kernel included |
 | On-target self-tests | 11 tests — 5 verified on ESP32-PICO, 6 race tests added and not yet run on hardware |
 | Layer boundary and package naming enforced in CI | ✅ |
 | UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |

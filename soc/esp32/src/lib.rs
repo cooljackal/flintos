@@ -31,6 +31,7 @@ pub mod dport;
 pub mod gpio_matrix;
 pub mod io_mux;
 pub mod pinmux;
+pub mod wdt;
 
 pub use pinmux::Esp32PinMux;
 

@@ -41,6 +41,10 @@ esp32-uart = { path = "../drivers/physical/esp32-uart" }
 # stand-ins in `arch::host` take its place.
 [target.'cfg(target_os = "none")'.dependencies]
 arch-xtensa = { path = "../arch/xtensa" }
+# Same scoping, different reason: `soc-esp32` builds fine on a host (its own
+# tests run there), but the kernel only reaches it from `watchdog`, which writes
+# real registers and so is target-only too.
+soc-esp32 = { path = "../soc/esp32" }
 
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs

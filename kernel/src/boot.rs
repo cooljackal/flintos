@@ -273,6 +273,11 @@ fn install_idle_task() {
 /// `waiti 0` parks the CPU until the next interrupt, which drives scheduling.
 fn idle_loop() -> ! {
     loop {
+        // Proof that scheduling still reaches the bottom of the priority
+        // range. A task that never yields starves this loop, and the watchdog
+        // it feeds is the only thing that notices -- the tick keeps running
+        // throughout, so nothing else in the system sees a problem.
+        crate::watchdog::feed_from_idle();
         crate::arch::wait_for_interrupt();
     }
 }

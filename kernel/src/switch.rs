@@ -65,6 +65,11 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
         // Timer tick.
         if pending & registers::INT_TIMER0_MASK != 0 {
             Tick::tick(); // ack + re-arm + advance counter
+
+            // Proof of life for the RTC watchdog. Here rather than anywhere in
+            // task context: this runs if and only if the kernel is still
+            // servicing interrupts, which is exactly the property it attests.
+            crate::watchdog::feed_from_tick();
             announce_once(&FIRST_TICK, "[FLINT] first timer tick\r\n");
             let now = Tick::now();
 

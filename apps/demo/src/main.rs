@@ -38,6 +38,18 @@ const HOUSEKEEP_PRIORITY: Priority = Priority::Background(1);
 const STACK: usize = 4096;
 
 fn main() {
+    // Opt in to the watchdogs. Off unless an application asks, because a board
+    // that resets itself for reasons its author never requested is a very
+    // confusing first experience -- and on a board being single-stepped, a
+    // halted CPU looks exactly like a hung one.
+    //
+    // Two of them, catching different failures: the RTC watchdog is fed from
+    // the timer interrupt and fires if the kernel stops servicing it, while the
+    // timer-group one is fed from the idle task and fires if some task stops
+    // yielding. A spinning task keeps the tick alive, so only the second
+    // notices it.
+    unsafe { kernel::watchdog::arm() };
+
     task::spawn("sensor", task_sensor, SENSOR_PRIORITY, STACK);
     task::spawn("consumer", task_consumer, CONSUMER_PRIORITY, STACK);
     task::spawn("housekeep", task_housekeep, HOUSEKEEP_PRIORITY, STACK);

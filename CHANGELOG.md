@@ -58,6 +58,14 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Added
 
+- **Watchdogs**, off unless an application opts in with
+  `kernel::watchdog::arm()`. Two of them: the RTC watchdog is fed from the timer
+  interrupt and catches a kernel that has stopped servicing it, and a
+  timer-group watchdog is fed from the idle task and catches a task that never
+  yields. Neither catches the other's failure — a spinning task keeps the tick
+  alive, so only the idle-fed one notices.
+- Six on-target tests for task-versus-ISR races, including a queue fed from the
+  timer ISR and drained by a task.
 - On-target self-test suite: `make test-target` flashes a board and turns the
   serial output into an exit code.
 - Host tests for priority inversion and queue races, and `make test-host` now

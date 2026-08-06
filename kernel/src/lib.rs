@@ -34,6 +34,8 @@ pub mod mutex;
 pub mod boot;
 #[cfg(target_os = "none")]
 pub mod switch;
+#[cfg(target_os = "none")]
+pub mod watchdog;
 
 #[cfg(all(feature = "self-test", target_os = "none"))]
 pub mod selftest;
