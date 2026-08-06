@@ -7,11 +7,21 @@ on:
   pull_request:
     branches: [main]
 
+# Three pushes to a PR should not run three full matrices; the later one carries
+# the newer code and wins. Keyed by ref so a PR never cancels main's run.
+# `wiki.yml` has done this since it was written -- this file had not.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # The repo's .cargo/config.toml defaults to the Xtensa target and enables
   # build-std. Host jobs must therefore pass --target explicitly to override it.
   HOST_TARGET: x86_64-unknown-linux-gnu
+  # Pinned rather than "latest": this is the Xtensa toolchain cache key, so an
+  # unpinned version would silently re-download ~1 GB whenever espup released.
+  ESPUP_VERSION: "0.17.1"
 
 jobs:
   check:
@@ -23,65 +33,55 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy
 
-      - uses: Swatinem/rust-cache@v2
+      # No dependency cache here on purpose. Every package in this workspace is
+      # a path member -- `Cargo.lock` carries zero `source =` and zero
+      # `checksum =` entries -- and rust-cache does not cache workspace crates
+      # themselves. It would restore an empty registry and a target dir stripped
+      # of everything this build produces, then pay to save it again.
 
-      # Crates that contain no Xtensa assembly and so build for any host.
-      # flint-soc-esp32 is here despite naming a chip: it is register
-      # addresses and lookup tables, and its tests are the only place the
-      # signal map and IO_MUX offsets get checked at all.
+      # Both steps below go through `make`, which owns the one definition of
+      # which crates build on the host (`HOST_SELECT` in the Makefile). This
+      # file used to carry three more copies of that list, and a fourth lived
+      # in the Makefile; every crate added or renamed had to edit all four,
+      # with nothing failing if one was missed.
+      #
       # -D warnings via RUSTFLAGS is safe for host jobs and only for host jobs:
       # .cargo/config.toml sets rustflags for the Xtensa target only, and
       # RUSTFLAGS replaces config rustflags rather than adding to them. Setting
       # it globally would silently drop the linker script and -mlongcalls from
       # the ESP32 build, which fails at link time with no hint as to why.
-      - name: Check host-compatible crates
+      #
+      # There is no separate `cargo check` step: clippy is a check-mode pass
+      # over lib, bins and tests, so it compiles a superset of what `check`
+      # did and fails on the same errors a moment sooner.
+      #
+      # --all-targets (in `make lint`) so test code is linted too. Tests are
+      # where lints accumulate: they are written fast and read rarely.
+      - name: Clippy (lib, bins and tests)
         env:
           RUSTFLAGS: -D warnings
-        run: |
-          for crate in flint-hal flint-api flint-soc-esp32 flint-board \
-                       flint-esp32-uart flint-esp32-spi flint-esp32-i2c flint-esp32-gpio \
-                       flint-spi-bus flint-i2c-bus flint-uart-bus flint-driver-bme280 flint-driver-ssd1306 \
-                       flint-build flint-size; do
-            echo "::group::cargo check -p $crate"
-            cargo check -p "$crate" --target "$HOST_TARGET"
-            echo "::endgroup::"
-          done
+        run: make lint
 
       - name: Run host unit tests
         env:
           RUSTFLAGS: -D warnings
-        run: |
-          for crate in flint-hal flint-api flint-soc-esp32 flint-board \
-                       flint-esp32-uart flint-esp32-spi flint-esp32-i2c flint-esp32-gpio \
-                       flint-spi-bus flint-i2c-bus flint-uart-bus flint-driver-bme280 flint-driver-ssd1306 \
-                       flint-build flint-size; do
-            echo "::group::cargo test -p $crate"
-            cargo test -p "$crate" --target "$HOST_TARGET"
-            echo "::endgroup::"
-          done
+        run: make test-host
 
-      # --all-targets so test code is linted too. Tests are where lints
-      # accumulate: they are written fast and read rarely.
-      - name: Clippy
-        run: |
-          for crate in flint-hal flint-api flint-soc-esp32 flint-board \
-                       flint-esp32-uart flint-esp32-spi flint-esp32-i2c flint-esp32-gpio \
-                       flint-spi-bus flint-i2c-bus flint-uart-bus flint-driver-bme280 flint-driver-ssd1306 \
-                       flint-build flint-size; do
-            echo "::group::cargo clippy -p $crate"
-            cargo clippy -p "$crate" --target "$HOST_TARGET" --all-targets -- -D warnings
-            echo "::endgroup::"
-          done
-
-  layers:
-    name: Three-layer boundary
+  # Both checks are structural: they read `cargo metadata` and assert something
+  # about the shape of the workspace that no compiler error would catch. They
+  # share a job because each takes about a second, and a runner costs a billed
+  # minute either way.
+  structure:
+    name: Workspace structure
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - name: Enforce the Layer-3 to Layer-1 dependency boundary
-        run: bash tools/check-layers.sh
+        run: make check-layers
+      - name: Enforce the package naming and layout convention
+        run: make check-names
 
   licence:
     name: Licence headers
@@ -138,10 +138,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The Xtensa toolchain is ~1 GB of LLVM and rustc. Downloading it on every
+      # push, in a job that is advisory (`continue-on-error` above), was the most
+      # expensive thing in this workflow. Keyed on the espup version, so a bump
+      # below is what invalidates it.
+      - name: Cache the Espressif toolchain
+        id: esp-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains/esp
+            ~/.espressif
+            ~/export-esp.sh
+          key: esp-${{ runner.os }}-espup-${{ env.ESPUP_VERSION }}
+
+      # espup publishes prebuilt binaries. `cargo install espup --locked`
+      # compiled it from source on every run -- minutes of CPU to produce a
+      # binary its own release page already has.
       - name: Install the Espressif Rust toolchain
+        if: steps.esp-cache.outputs.cache-hit != 'true'
         run: |
-          cargo install espup --locked
-          espup install
+          curl -fsSL -o /tmp/espup \
+            "https://github.com/esp-rs/espup/releases/download/v${ESPUP_VERSION}/espup-x86_64-unknown-linux-gnu"
+          chmod +x /tmp/espup
+          /tmp/espup install
 
       # Every crate, not just the applications. The kernel names exactly one
       # driver (the console UART), so building an application reaches only that

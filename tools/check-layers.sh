@@ -3,43 +3,93 @@
 # Layer-boundary enforcement (plan W7.1).
 #
 # Layer-3 (drivers/logical/*) and Layer-2 (drivers/bus/*) crates may depend ONLY
-# on flint-api. Depending on flint-hal, a flint-arch-* crate, or a flint-soc-*
-# crate is a layer violation: it would give a device/bus driver access to
+# on flint-api. Any other dependency gives a device or bus driver a route to
 # hardware register definitions, defeating the three-layer model. This is the
-# structural boundary the design promises — enforce it here so it cannot
+# structural boundary the design promises -- enforce it here so it cannot
 # silently rot.
 #
-# flint-soc-* is the newest of these and the easiest to reach for by accident:
-# a bus driver that wants a peripheral base address or a pin routed is a bus
-# driver that has stopped being portable.
+# This is a WHITELIST: everything except flint-api is a violation. It used to be
+# a blacklist of three prefixes (flint-hal, flint-arch-*, flint-soc-*), which
+# missed the most obvious violation of all -- a bus crate depending directly on
+# a Layer-1 physical driver such as flint-esp32-spi -- and every crates.io
+# dependency besides. Naming what is allowed is both shorter and total.
 #
-# Exit non-zero on any violation. Wire into CI and `make check-layers`.
+# It reads `cargo metadata` rather than grepping manifests, for two reasons:
+# resolved package names see through Cargo's rename syntax (a blacklist grep for
+# `^\s*flint-hal\s*=` is defeated by `hal = { package = "flint-hal", ... }`),
+# and identity comes from the package name rather than from where the directory
+# happens to sit.
+#
+# Exit non-zero on any violation. Wired into CI and `make check-layers`.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-violations=0
-for manifest in drivers/logical/*/Cargo.toml drivers/bus/*/Cargo.toml; do
-    [ -e "$manifest" ] || continue
-    crate_dir=$(dirname "$manifest")
-    # Look only inside [dependencies]-style lines for forbidden crates.
-    if grep -Eq '^\s*flint-hal\s*=' "$manifest"; then
-        echo "LAYER VIOLATION: $crate_dir depends on flint-hal (must use flint-api)"
-        violations=$((violations + 1))
-    fi
-    if grep -Eq '^\s*flint-arch' "$manifest"; then
-        echo "LAYER VIOLATION: $crate_dir depends on a flint-arch-* crate (Layer-1 only)"
-        violations=$((violations + 1))
-    fi
-    if grep -Eq '^\s*flint-soc' "$manifest"; then
-        echo "LAYER VIOLATION: $crate_dir depends on a flint-soc-* crate (Layer-1 only)"
-        violations=$((violations + 1))
+# Probe each candidate by running it, rather than trusting `command -v`: Windows
+# ships a `python3` shim on PATH that is not an interpreter at all -- it prints
+# an advert for the Microsoft Store and exits non-zero.
+PY=""
+for candidate in python3 python py; do
+    if command -v "$candidate" >/dev/null 2>&1 &&
+       "$candidate" -c 'import json,sys' >/dev/null 2>&1; then
+        PY="$candidate"
+        break
     fi
 done
-
-if [ "$violations" -ne 0 ]; then
-    echo ""
-    echo "$violations layer violation(s) found. Logical/bus drivers must depend only on flint-api."
+[ -n "$PY" ] || {
+    echo "check-layers: needs a working python3 (or python) to read cargo metadata" >&2
     exit 1
-fi
-echo "Layer boundary OK: all logical/bus drivers depend only on flint-api."
+}
+
+PYSRC=$(cat <<'EOF'
+import json, os, sys
+
+# The one dependency a portable driver is allowed to name.
+ALLOWED = {"flint-api"}
+
+# Directory -> layer. Layer is a property of the package, but the directory is
+# what declares intent, and a crate in the wrong directory is its own bug.
+LAYERS = {
+    "drivers/logical": "Layer-3 logical driver",
+    "drivers/bus":     "Layer-2 bus abstraction",
+}
+
+meta = json.load(sys.stdin)
+violations = []
+checked = 0
+
+for pkg in meta["packages"]:
+    path = os.path.dirname(pkg["manifest_path"]).replace("\\", "/")
+    layer = next((l for d, l in LAYERS.items() if "/%s/" % d in path + "/"), None)
+    if layer is None:
+        continue
+    checked += 1
+    for dep in pkg["dependencies"]:
+        # dev-dependencies are test scaffolding; they never ship in the image
+        # and so cannot leak hardware access into a driver's public surface.
+        if dep["kind"] == "dev":
+            continue
+        if dep["name"] not in ALLOWED:
+            violations.append(
+                "LAYER VIOLATION: %s (%s) depends on %s -- may depend only on flint-api"
+                % (pkg["name"], layer, dep["name"])
+            )
+
+for v in violations:
+    print(v)
+
+if violations:
+    print("")
+    print("%d layer violation(s) found. Logical and bus drivers must depend "
+          "only on flint-api." % len(violations))
+    sys.exit(1)
+
+if checked == 0:
+    print("check-layers: matched no logical/bus crates -- has the layout moved?")
+    sys.exit(1)
+
+print("Layer boundary OK: %d logical/bus crates depend only on flint-api." % checked)
+EOF
+)
+
+cargo metadata --format-version 1 --no-deps | "$PY" -c "$PYSRC"

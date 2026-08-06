@@ -15,7 +15,12 @@
 # reliably on every Windows shell, and when it fails the variable is empty and
 # every `cargo --target $(HOST_TARGET)` dies with "--target takes a target
 # architecture as an argument" -- a message that points nowhere near the cause.
-HOST_TARGET     := $(shell rustc --print host-tuple)
+#
+# `?=` rather than `:=` so a caller can override it from the environment. CI
+# sets HOST_TARGET explicitly; with `:=` make would silently ignore that and
+# substitute its own detection, which happens to agree on the runner and so
+# would hide the override rather than honour it.
+HOST_TARGET     ?= $(shell rustc --print host-tuple)
 XTENSA_TARGET   := xtensa-esp32-none-elf
 ESP_TOOLCHAIN   := esp
 CARGO           := cargo +$(ESP_TOOLCHAIN)
@@ -76,16 +81,20 @@ endif
 # The memory map, read by `make size` to name and bound each region.
 LD_SCRIPT      := arch/xtensa/flint32.ld
 
-# Crates with no Xtensa assembly, so they build and test on any host. One list,
-# shared by check, test-host and lint -- they used to keep three copies and the
-# copies had drifted.
+# Every workspace member builds and tests on the host EXCEPT these four, so name
+# the exceptions rather than listing the other fifteen. A crate added tomorrow is
+# covered the day it lands, instead of being silently skipped until someone
+# remembers to add it here; a crate that genuinely needs the Xtensa toolchain has
+# to declare itself, once, with a reason.
 #
-# flint-soc-esp32 is here despite naming a chip: it is addresses and lookup
-# tables, and its tests are the only place the signal map gets checked at all.
-HOST_CRATES    := flint-hal flint-api flint-soc-esp32 flint-board \
-                  flint-esp32-uart flint-esp32-spi flint-esp32-i2c flint-esp32-gpio \
-                  flint-spi-bus flint-i2c-bus flint-uart-bus flint-driver-bme280 flint-driver-ssd1306 \
-                  flint-build flint-size
+#   flint-arch-xtensa  #![feature(asm_experimental_arch)] -- E0554 on stable
+#   flint-kernel       depends on flint-arch-xtensa
+#   hello, demo        depend on flint-kernel
+#
+# This replaces a hand-kept list of fifteen names, which lived here and in three
+# more copies in ci.yml. Those copies had already drifted once.
+HOST_EXCLUDE   := flint-arch-xtensa flint-kernel hello demo
+HOST_SELECT    := --workspace $(addprefix --exclude ,$(HOST_EXCLUDE))
 
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --
 # both are esp-idf-format images on the same silicon, so one set of flags
@@ -239,10 +248,7 @@ monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
 
 .PHONY: check
 check: ## Check every host-compatible crate
-	@for c in $(HOST_CRATES); do \
-		echo "cargo check -p $$c"; \
-		cargo check -p "$$c" --target $(HOST_TARGET) || exit 1; \
-	done
+	cargo check $(HOST_SELECT) --target $(HOST_TARGET)
 
 .PHONY: check-all
 check-all: ## Full check including arch (requires Xtensa toolchain)
@@ -253,18 +259,19 @@ check-all: ## Full check including arch (requires Xtensa toolchain)
 check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)
 	bash tools/check-layers.sh
 
+.PHONY: check-names
+check-names: ## Enforce the package naming and layout convention
+	bash tools/check-names.sh
+
 .PHONY: test-host
 test-host: ## Run host-side unit tests
-	@for c in $(HOST_CRATES); do \
-		echo "cargo test -p $$c"; \
-		cargo test -p "$$c" --target $(HOST_TARGET) || exit 1; \
-	done
+	cargo test $(HOST_SELECT) --target $(HOST_TARGET)
 
 # ─── Lint ───────────────────────────────────────────────────────────────────────
 
 .PHONY: lint
 lint: ## Run clippy on every host crate, tests included, warnings denied
-	cargo clippy $(addprefix -p ,$(HOST_CRATES)) --target $(HOST_TARGET) \
+	cargo clippy $(HOST_SELECT) --target $(HOST_TARGET) \
 		--all-targets -- -D warnings
 
 # ─── Info ───────────────────────────────────────────────────────────────────────

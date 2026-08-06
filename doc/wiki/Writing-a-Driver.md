@@ -3,14 +3,27 @@
 Pick your layer first. Getting this wrong is the one mistake the build will
 catch for you.
 
-| You are writing | Layer | Directory | May depend on |
-|---|---|---|---|
-| A sensor, display, radio | 3 — logical | `drivers/logical/` | `flint-api` **only** |
-| A protocol wrapper | 2 — bus | `drivers/bus/` | `flint-api` **only** |
-| A peripheral register driver | 1 — physical | `drivers/physical/` | `flint-hal`, `flint-soc-*` |
+| You are writing | Layer | Directory | Package name | May depend on |
+|---|---|---|---|---|
+| A sensor, display, radio | 3 — logical | `drivers/logical/<device>/` | `flint-driver-<device>` | `flint-api` **only** |
+| A protocol wrapper | 2 — bus | `drivers/bus/<proto>-bus/` | `flint-<proto>-bus` | `flint-api` **only** |
+| A peripheral register driver | 1 — physical | `drivers/physical/<chip>-<periph>/` | `flint-<chip>-<periph>` | `flint-hal`, `flint-soc-*` |
 
-`tools/check-layers.sh` fails the build if a Layer 2 or 3 crate names
-`flint-hal`, `flint-arch-*` or `flint-soc-*`. It runs in CI.
+The directory drops the `flint-` prefix; the package name keeps it, because a
+package name has to be unambiguous on crates.io. `bme280` and `ssd1306` are
+already taken there by unrelated crates — hence `flint-driver-bme280`.
+
+`flint-driver-` is the namespace the community driver convention reserves, so a
+third-party driver for the same device is named the same way. Layer 1 and 2 do
+not take it: an on-chip peripheral is not a device, and a bus abstraction is not
+a driver.
+
+Two checks run in CI and fail the build:
+
+- `tools/check-layers.sh` — a Layer 2 or 3 crate may name **only** `flint-api`.
+  Anything else is a violation, including a Layer 1 driver.
+- `tools/check-names.sh` — the package name and directory must match the table
+  above. A publishable crate without a `flint-` prefix is rejected.
 
 ## Layer 3 — a device
 
@@ -142,6 +155,15 @@ value was wrong once.
 
 Add to the workspace `members`, then to the board manifest's `TARGET_BUSES` or
 `TARGET_DEVICES`. See [Adding a Board](Adding-a-Board).
+
+Adding it to `members` is what puts it in CI: the host jobs select the whole
+workspace minus the few crates that need the Xtensa toolchain, so a new driver
+is checked, tested and linted from the day it lands. Run `make check-names`
+before you push — it catches a mistyped package name in about a second, which
+is faster than a CI round-trip.
+
+Nothing needs to depend on your crate for it to be built. The kernel names only
+the console UART; an application that wants your driver declares it itself.
 
 ## Interrupts
 
