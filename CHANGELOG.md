@@ -64,6 +64,10 @@ A kernel that provides a different one refuses to build and points here.
   timer-group watchdog is fed from the idle task and catches a task that never
   yields. Neither catches the other's failure — a spinning task keeps the tick
   alive, so only the idle-fed one notices.
+- **Hardware RNG** as `kernel::rng`. Suitable for backoffs, jitter and test
+  seeds; **not** for keys or tokens — the generator is only cryptographically
+  useful with the radio running, and Flint does not bring the radio up. Said
+  plainly in the module docs rather than hidden behind a reassuring name.
 - Six on-target tests for task-versus-ISR races, including a queue fed from the
   timer ISR and drained by a task.
 - On-target self-test suite: `make test-target` flashes a board and turns the

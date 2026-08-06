@@ -37,6 +37,14 @@ pub mod switch;
 #[cfg(target_os = "none")]
 pub mod watchdog;
 
+/// The chip's hardware random number generator.
+///
+/// Re-exported rather than wrapped: there is nothing to add, and a wrapper
+/// would only put distance between the caller and the entropy caveat in its
+/// docs -- which is the part that matters.
+#[cfg(target_os = "none")]
+pub use soc_esp32::rng;
+
 #[cfg(all(feature = "self-test", target_os = "none"))]
 pub mod selftest;
 pub mod queue;
