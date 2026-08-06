@@ -29,7 +29,7 @@ thin, and the API will change.
 | | |
 |---|---|
 | Builds for `xtensa-esp32-none-elf` | ✅ |
-| Host unit tests | ✅ 150 passing |
+| Host unit tests | ✅ 152 passing |
 | Three-layer boundary enforced in CI | ✅ |
 | UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |
 | Boots on real hardware | ✅ ESP32-PICO, 80 MHz measured |
@@ -382,7 +382,7 @@ alternate-function lists per pad, NXP has IOMUXC. Drivers call
 `PinMux::route(signal, pin, config)` and each SoC crate implements it in its own
 idiom, returning an error where the silicon genuinely cannot comply.
 
-~6,400 lines of Rust and ~570 lines of Xtensa assembly.
+~11,000 lines of Rust and ~800 lines of Xtensa assembly.
 
 ## Development
 

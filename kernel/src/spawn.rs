@@ -189,11 +189,18 @@ unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top
 extern "C" fn flint_task_exit() -> ! {
     scheduler::with(|sched| {
         let cur = sched.current;
-        if let Some(tcb) = &mut sched.tasks[cur as usize] {
-            tcb.state = TaskState::Suspended;
-            let prio = tcb.priority;
-            sched.ready_mask &= !(1u64 << prio);
-        }
+        let Some(tcb) = &mut sched.tasks[cur as usize] else {
+            return;
+        };
+        tcb.state = TaskState::Suspended;
+        let prio = tcb.priority;
+        // Recompute rather than clear. A priority level is shared: clearing the
+        // bit outright strands every *other* Ready task at the same level,
+        // because `schedule()` only visits levels present in ready_mask. Two
+        // round-robin peers, one returns from its entry function, and the
+        // survivor is never dispatched again -- its TCB still says Ready, so
+        // nothing anywhere reports a problem.
+        sched.recompute_ready_bit(prio);
     });
     scheduler::request_switch();
     // Wait to be switched away.

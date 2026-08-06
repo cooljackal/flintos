@@ -36,13 +36,21 @@ impl Esp32PinMux {
 /// `soc/io_mux_reg.h`.
 fn native_pad(signal: Signal) -> Option<(u8, u32)> {
     Some(match signal {
-        // UART. Function 0 on every UART pad.
+        // UART. The function number is *not* uniform: UART0's pads are named
+        // U0TXD/U0RXD and carry it as function 0, but UART1 and UART2 borrow
+        // pads whose function 0 is something else entirely -- SD_DATA2/SD_DATA3
+        // on GPIO9/10, plain GPIO on 16/17 -- and reach the UART at function 4.
+        // Confirmed against esp-idf `soc/io_mux_reg.h`: FUNC_U0TXD_U0TXD = 0,
+        // FUNC_SD_DATA3_U1TXD = 4, FUNC_GPIO17_U2TXD = 4.
+        //
+        // Using 0 for all six, as this table originally did, would have wired
+        // UART1 to the SDIO controller and left the port dead with no error.
         Signal::UartTx(0) => (1, 0),
         Signal::UartRx(0) => (3, 0),
-        Signal::UartTx(1) => (10, 0),
-        Signal::UartRx(1) => (9, 0),
-        Signal::UartTx(2) => (17, 0),
-        Signal::UartRx(2) => (16, 0),
+        Signal::UartTx(1) => (10, 4),
+        Signal::UartRx(1) => (9, 4),
+        Signal::UartTx(2) => (17, 4),
+        Signal::UartRx(2) => (16, 4),
 
         // SPI2 ("HSPI"), function 1.
         Signal::SpiMosi(2) => (13, 1),
@@ -180,6 +188,17 @@ mod tests {
         let mux = Esp32PinMux::new();
         assert!(mux.is_native(Signal::UartTx(0), 1));
         assert!(!mux.is_native(Signal::UartTx(0), 2));
+    }
+
+    #[test]
+    fn uart1_and_uart2_are_function_4_not_0() {
+        // Their pads' function 0 is SD_DATA2/SD_DATA3 and plain GPIO
+        // respectively -- routing them as function 0 wires the pad to the SDIO
+        // controller and the port never transmits.
+        assert_eq!(native_pad(Signal::UartTx(1)), Some((10, 4)));
+        assert_eq!(native_pad(Signal::UartRx(1)), Some((9, 4)));
+        assert_eq!(native_pad(Signal::UartTx(2)), Some((17, 4)));
+        assert_eq!(native_pad(Signal::UartRx(2)), Some((16, 4)));
     }
 
     #[test]

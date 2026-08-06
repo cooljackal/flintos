@@ -216,10 +216,24 @@ impl PhysicalBus for Esp32Spi {
 
                 unsafe {
                     // Clock configuration.
+                    //
+                    // clkcnt_N and clkcnt_L must hold the same value: the
+                    // resulting frequency is APB / ((pre + 1) * (N + 1)), and L
+                    // is the low-phase count, not an independent divisor.
+                    // clkcnt_H is the high-phase boundary, so N/2 gives a
+                    // roughly even duty cycle. Matches esp-idf's
+                    // `spi_ll_master_cal_clock`.
+                    //
+                    // A previous revision wrote N = div/2 and L = div-1. Those
+                    // agree only at div == 2, which is what both board
+                    // manifests happen to ask for (40 MHz off an 80 MHz APB) --
+                    // so it was correct for every configuration in the tree and
+                    // ran at roughly double the requested clock for any other.
+                    let n = div - 1;
                     self.reg(SPI_CLOCK).write_volatile(
-                        ((div / 2) << 12) |         // clkcnt_N
-                        ((div / 2) << 6) |          // clkcnt_H
-                        ((div - 1) & 0x3F)          // clkcnt_L
+                        ((n & 0x3F) << 12) |        // clkcnt_N
+                        (((n / 2) & 0x3F) << 6) |   // clkcnt_H
+                        (n & 0x3F)                  // clkcnt_L
                     );
 
                     // SPI mode (CPOL, CPHA).

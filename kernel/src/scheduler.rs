@@ -170,7 +170,7 @@ impl Scheduler {
 
     /// Recompute the ready bit for a priority level by scanning for any Ready
     /// task at that level (used after a task leaves Ready or changes priority).
-    fn recompute_ready_bit(&mut self, prio: u8) {
+    pub(crate) fn recompute_ready_bit(&mut self, prio: u8) {
         let any = self.tasks.iter().flatten().any(|t| {
             t.priority == prio && matches!(t.state, TaskState::Ready | TaskState::Running)
         });

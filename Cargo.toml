@@ -34,7 +34,7 @@ members = [
 ]
 
 # Shared metadata. Every member inherits these with `field.workspace = true`
-# so version and licence stay in lock-step across all 14 crates.
+# so version and licence stay in lock-step across every crate.
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

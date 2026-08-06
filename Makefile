@@ -10,8 +10,12 @@
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-# Detect host triple at runtime
-HOST_TARGET     := $(shell rustc -vV | sed -n 's/^host: //p')
+# Detect the host triple. `rustc --print host-tuple` rather than piping
+# `rustc -vV` through sed: make's $(shell) does not get a pipeline through
+# reliably on every Windows shell, and when it fails the variable is empty and
+# every `cargo --target $(HOST_TARGET)` dies with "--target takes a target
+# architecture as an argument" -- a message that points nowhere near the cause.
+HOST_TARGET     := $(shell rustc --print host-tuple)
 XTENSA_TARGET   := xtensa-esp32-none-elf
 ESP_TOOLCHAIN   := esp
 CARGO           := cargo +$(ESP_TOOLCHAIN)
@@ -195,7 +199,8 @@ check: ## Check every host-compatible crate
 
 .PHONY: check-all
 check-all: ## Full check including arch (requires Xtensa toolchain)
-	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins
+	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
+		--workspace --exclude flint-build --exclude flint-size
 
 .PHONY: check-layers
 check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)
@@ -254,6 +259,7 @@ help: ## Show this help message
 	$(info     make check          Check every host crate)
 	$(info     make check-all      Full check including arch)
 	$(info     make test-host      Run host-side unit tests)
+	$(info     make check-layers   Enforce the three-layer driver boundary)
 	$(info )
 	$(info   Quality)
 	$(info     make lint           Clippy on host crates, warnings denied)

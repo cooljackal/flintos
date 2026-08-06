@@ -85,16 +85,17 @@ pub fn offset(pin: u8) -> Option<u32> {
 
 /// The `MCU_SEL` value that puts a pad under GPIO-matrix control.
 ///
-/// Function 2 for most pads. The exceptions are the six pads whose IO_MUX
-/// function list starts with GPIO rather than a dedicated peripheral: GPIO0 and
-/// GPIO2 (strapping pins), and the input-only pads 34-39, which have no
-/// alternate functions at all. Confirmed against esp-idf `soc/io_mux_reg.h`
-/// (`FUNC_GPIOn_GPIOn` / `PIN_FUNC_GPIO`).
-pub fn gpio_function(pin: u8) -> u32 {
-    match pin {
-        34..=39 => 0,
-        _ => 2,
-    }
+/// Function 2, for every pad without exception. esp-idf spells this
+/// `PIN_FUNC_GPIO` and writes it unconditionally in `gpio_pad_select_gpio()`;
+/// every `FUNC_<pad>_GPIOn` in `soc/io_mux_reg.h` is 2, including
+/// `FUNC_GPIO34_GPIO34` and `FUNC_GPIO39_GPIO39`.
+///
+/// This used to return 0 for pins 34-39 on the theory that input-only pads have
+/// no alternate functions and so start at GPIO. They do have the usual function
+/// list, and function 0 on those pads is a different signal entirely -- a
+/// matrix-routed input on GPIO34-39 would have been wired to the wrong thing.
+pub const fn gpio_function(_pin: u8) -> u32 {
+    2
 }
 
 /// Whether a pad can drive an output at all.
@@ -192,13 +193,12 @@ mod tests {
     }
 
     #[test]
-    fn gpio_function_is_not_uniform() {
-        // Function 2 for ordinary pads, 0 for the input-only ones. Hardcoding
-        // either value alone misconfigures the other group.
-        assert_eq!(gpio_function(21), 2);
-        assert_eq!(gpio_function(22), 2);
-        assert_eq!(gpio_function(36), 0);
-        assert_eq!(gpio_function(39), 0);
+    fn gpio_function_is_two_on_every_pad() {
+        // Including the input-only ones, which an earlier revision special-cased
+        // to 0. esp-idf's PIN_FUNC_GPIO is 2 and it is written unconditionally.
+        for pin in 0..=39u8 {
+            assert_eq!(gpio_function(pin), 2, "GPIO{pin}");
+        }
     }
 
     #[test]

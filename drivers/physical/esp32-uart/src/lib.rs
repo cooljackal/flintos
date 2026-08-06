@@ -5,7 +5,7 @@
 use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, UartDataBits, UartParity, UartStopBits};
 use flint_hal::pinmux::{PinConfig, PinMux, Signal};
 use flint_soc_esp32::addr;
-use flint_soc_esp32::{Esp32PinMux, APB_HZ};
+use flint_soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
 /// ESP32 UART physical driver.
 /// Registers at `base_addr` (0x3FF40000 for UART0).
@@ -195,6 +195,17 @@ impl PhysicalBus for Esp32Uart {
         };
 
         let instance = addr::uart_instance(self.base).ok_or(BusError::InvalidConfig)?;
+
+        // Clock and un-reset the peripheral before touching its registers.
+        // UART0 works without this because the boot ROM has already ungated it
+        // for its own console output -- but UART1 and UART2 come up gated off
+        // and held in reset, and every write below would land nowhere with no
+        // fault at all. The SPI and I2C drivers have always done this; this one
+        // got away with not doing it because the console is the only port
+        // anything has wired up so far.
+        let clk_bit = dport::clock_bit(self.base).ok_or(BusError::InvalidConfig)?;
+        unsafe { dport::enable(clk_bit) };
+
         route_pins(instance, *tx, *rx)?;
 
         // Drain anything the bootloader left queued before re-framing the port,

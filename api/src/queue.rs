@@ -181,8 +181,16 @@ impl<T, const N: usize> Queue<T, N> {
 
     /// Send from interrupt context — never blocks (single CAS attempts only
     /// on both the slot state and `tail`; see `try_send`).
+    ///
+    /// Wakes a blocked receiver on success, which is the entire point of the
+    /// ISR-to-driver-task pattern this exists for. It used to be a bare
+    /// `try_send`: the message landed in the ring and nothing woke the task
+    /// waiting for it, so a driver task blocked in `recv(&Q, u32::MAX)` stayed
+    /// blocked forever with its data sitting in the queue.
     pub fn send_isr(&self, msg: T) -> Result<(), T> {
-        self.try_send(msg)
+        self.try_send(msg)?;
+        wake_receiver(self.addr());
+        Ok(())
     }
 
     /// Approximate number of messages currently queued.

@@ -102,7 +102,17 @@ fn parse_sections(elf: &[u8]) -> Result<Vec<Section>, String> {
     if shoff == 0 || shnum == 0 {
         return Err("no section headers".into());
     }
-    let need = shoff + shnum * shentsize;
+    // Every field this function reads sits within the first 0x18 bytes of an
+    // entry, so an entry smaller than that cannot be indexed safely.
+    if shentsize < 0x18 {
+        return Err("section header entries are too small to be ELF32".into());
+    }
+    if shstrndx >= shnum {
+        return Err("section-name string table index is out of range".into());
+    }
+    let need = shoff
+        .checked_add(shnum.checked_mul(shentsize).ok_or("section table overflows")?)
+        .ok_or("section table overflows")?;
     if need > elf.len() {
         return Err("section header table runs past the end of the file".into());
     }
@@ -460,6 +470,21 @@ MEMORY
         let mut fake = vec![0u8; 64];
         fake[0..4].copy_from_slice(b"\x7fELF");
         fake[4] = 2; // 64-bit
+        assert!(parse_sections(&fake).is_err());
+    }
+
+    #[test]
+    fn malformed_headers_return_an_error_rather_than_panicking() {
+        // A truncated or hostile ELF must not take the build down with an
+        // index-out-of-bounds. This tool runs on every `make build`.
+        let mut fake = vec![0u8; 64];
+        fake[0..4].copy_from_slice(b"\x7fELF");
+        fake[4] = 1; // 32-bit
+        fake[5] = 1; // little-endian
+        fake[0x20..0x24].copy_from_slice(&8u32.to_le_bytes()); // e_shoff
+        fake[0x2E..0x30].copy_from_slice(&0u16.to_le_bytes()); // e_shentsize = 0
+        fake[0x30..0x32].copy_from_slice(&1u16.to_le_bytes()); // e_shnum
+        fake[0x32..0x34].copy_from_slice(&99u16.to_le_bytes()); // e_shstrndx, out of range
         assert!(parse_sections(&fake).is_err());
     }
 
