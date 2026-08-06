@@ -148,12 +148,18 @@ const TIMG_WDTFEED: u32 = 0x60;
 const TIMG_WDTWPROTECT: u32 = 0x64;
 
 const TIMG_WDT_EN: u32 = 1 << 31;
-const TIMG_WDT_STG0_SHIFT: u32 = 28;
-/// Reset the digital core. Stage actions match the RWDT's encoding except that
-/// the timer groups cannot reset the RTC domain.
+
+// From esp-idf `soc/timer_group_reg.h`. Note this is **not** the RTC
+// watchdog's layout, which was the mistake here: the stage fields are two bits
+// wide at shift 29, not three at 28. Writing action 3 at shift 28 set bit 29
+// (stage 0 low bit -> action 1, "interrupt") and bit 28 (stage 1 high bit ->
+// action 2, "reset CPU"), so stage 0 raised an unhandled interrupt and stage 1
+// did the resetting, on a timeout that was never programmed.
+const TIMG_WDT_STG0_SHIFT: u32 = 29;
+/// Stage actions are 2 bits: 0 off, 1 interrupt, 2 reset CPU, 3 reset system.
 const TIMG_WDT_ACTION_RESET_SYSTEM: u32 = 3;
-const TIMG_WDT_SYS_RESET_LENGTH_SHIFT: u32 = 8;
-const TIMG_WDT_CPU_RESET_LENGTH_SHIFT: u32 = 5;
+const TIMG_WDT_SYS_RESET_LENGTH_SHIFT: u32 = 15;
+const TIMG_WDT_CPU_RESET_LENGTH_SHIFT: u32 = 18;
 const TIMG_WDT_RESET_LENGTH_MAX: u32 = 7;
 /// Prescaler, bits [31:16] of CONFIG1.
 const TIMG_WDT_PRESCALE_SHIFT: u32 = 16;
@@ -213,6 +219,9 @@ pub unsafe fn mwdt_arm(which: Mwdt, ms: u32) {
         .write_volatile(MWDT_PRESCALE << TIMG_WDT_PRESCALE_SHIFT);
     ((base + TIMG_WDTCONFIG2) as *mut u32).write_volatile(mwdt_ticks_for_ms(ms));
 
+    // Stages 1-3 are left at zero (off) by writing the whole register rather
+    // than a read-modify-write: a stage left armed with a timeout nobody
+    // programmed fires on whatever happened to be in its config register.
     let cfg = TIMG_WDT_EN
         | (TIMG_WDT_ACTION_RESET_SYSTEM << TIMG_WDT_STG0_SHIFT)
         | (TIMG_WDT_RESET_LENGTH_MAX << TIMG_WDT_SYS_RESET_LENGTH_SHIFT)
@@ -323,6 +332,26 @@ mod tests {
         // And neither pulse length may be zero.
         assert_ne!((cfg >> RTC_WDT_SYS_RESET_LENGTH_SHIFT) & 0x7, 0);
         assert_ne!((cfg >> RTC_WDT_CPU_RESET_LENGTH_SHIFT) & 0x7, 0);
+    }
+
+    #[test]
+    fn timg_stage_fields_are_two_bits_and_do_not_collide() {
+        // The bug: action 3 written at shift 28 spilled into stage 1. Stage 0
+        // became "interrupt" and stage 1 became "reset CPU" on a timeout that
+        // was never programmed -- so the board reset, at the wrong time, for
+        // the wrong reason, which is why the WDT=idle run fired early.
+        let stg0 = TIMG_WDT_ACTION_RESET_SYSTEM << TIMG_WDT_STG0_SHIFT;
+        assert_eq!(stg0, 0x3 << 29, "stage 0 must occupy bits 30:29 only");
+
+        let stg1_bits = 0x3u32 << 27;
+        assert_eq!(stg0 & stg1_bits, 0, "stage 0 spills into stage 1");
+
+        let sys = 0x7u32 << TIMG_WDT_SYS_RESET_LENGTH_SHIFT;
+        let cpu = 0x7u32 << TIMG_WDT_CPU_RESET_LENGTH_SHIFT;
+        assert_eq!(sys & cpu, 0, "the reset lengths overlap");
+        assert_eq!((sys | cpu) & (stg0 | stg1_bits), 0, "a length overlaps a stage");
+        assert_ne!(sys, 0);
+        assert_ne!(cpu, 0);
     }
 
     #[test]
