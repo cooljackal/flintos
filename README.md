@@ -26,7 +26,7 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` → `make fl
 on real silicon — verified on an ESP32-PICO — but it is young, most drivers are
 thin, and the API will change.
 
-| | |
+| What | Where it stands |
 |---|---|
 | Builds for `xtensa-esp32-none-elf` | ✅ |
 | Host unit tests | ✅ 148 passing |

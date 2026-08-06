@@ -28,7 +28,7 @@ jobs:
     name: Publish doc/wiki
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Sync doc/wiki to the GitHub wiki
         env:

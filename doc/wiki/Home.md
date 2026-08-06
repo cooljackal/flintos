@@ -17,7 +17,7 @@ most drivers thin, API will change. Don't ship it.
 
 ## Start here
 
-| | |
+| Page | What it covers |
 |---|---|
 | [Getting Started](Getting-Started) | Toolchain, first flash, reading the output |
 | [Writing an Application](Writing-an-Application) | Your own tasks |
@@ -25,7 +25,7 @@ most drivers thin, API will change. Don't ship it.
 
 ## Reference
 
-| | |
+| Page | What it covers |
 |---|---|
 | [Architecture](Architecture) | How the layers fit |
 | [Debug Levels](Debug-Levels) | What each level costs |
@@ -36,7 +36,7 @@ most drivers thin, API will change. Don't ship it.
 
 Pin tables and register maps, so you don't have to go looking.
 
-| | |
+| Page | What it covers |
 |---|---|
 | [Xtensa LX6](Arch-Xtensa-LX6) | The CPU: windows, traps, tick |
 | [ESP32](SoC-ESP32) | The chip: every pin, every peripheral |
