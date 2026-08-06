@@ -34,55 +34,19 @@ fn announce_once(flag: &AtomicBool, msg: &str) {
     }
 }
 
-/// Force every live register window out to its stack save area.
-///
-/// Xtensa keeps a task's outer call frames in the physical register file, not
-/// on its stack, until a window overflow evicts them. Switching tasks leaves
-/// those registers holding the *previous* task's frames while the incoming
-/// task's WINDOWSTART claims they are its own -- so its next `retw` pulls
-/// another task's data. Seen on hardware as a stack pointer coming back as 2,
-/// which then faulted the trap entry itself and produced a double exception.
-///
-/// Recursing past the 16-window ring makes each `entry` displace an older
-/// frame, and the hardware's overflow handler writes that frame to its stack
-/// save area. Once every frame is in memory, the restore path can mark only the
-/// current window live and let underflow refill the rest from the stack.
-///
-/// This must run on *every* trap, not only on the ones that switch. The restore
-/// path unconditionally rebuilds WINDOWSTART as `1 << WINDOWBASE`, so if a trap
-/// returns to the same task without having spilled, the caller frames still sat
-/// in the register file while their WINDOWSTART bits were being cleared. The
-/// task's next `retw` then underflowed and refilled from a stack save area
-/// nothing had ever written. Seen on hardware as a stack pointer of 0x3f401da7
-/// -- a rodata address -- which faulted the trap entry itself and produced a
-/// double exception.
-///
-/// `callx8` advances WINDOWBASE two slots per call, so twelve levels rotates
-/// 24 slots through a 16-slot ring: everything is evicted, with margin. Costs
-/// ~600 bytes of the interrupted task's stack.
-///
-/// `black_box` keeps the recursion from being flattened; the whole point is the
-/// call depth, which an optimiser would otherwise remove.
-#[inline(never)]
-fn spill_windows(depth: u32) -> u32 {
-    if depth == 0 {
-        0
-    } else {
-        core::hint::black_box(spill_windows(depth - 1)).wrapping_add(1)
-    }
-}
-
 /// Called from `_flint_trap_entry` in vectors.S.
+///
+/// Register windows are already spilled by the time this runs: the trap entry
+/// does it in assembly, before it moves the stack pointer. It cannot be done
+/// from here -- a spill driven from Rust runs with a1 already lowered by the
+/// size of the trap frame, so the overflow handlers write each caller's
+/// registers 112 bytes below where the matching underflow will read them.
 ///
 /// # Safety
 /// `frame` must point to a valid `TaskContext`-layout frame built by the trap
 /// entry stub.
 #[no_mangle]
 pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
-    // Before anything else, and before this handler's own call depth starts
-    // evicting windows we have no record of. See spill_windows.
-    core::hint::black_box(spill_windows(12));
-
     let cause = unsafe { registers::read_exccause() };
     announce_once(&FIRST_TRAP, "[FLINT] first trap serviced\r\n");
 

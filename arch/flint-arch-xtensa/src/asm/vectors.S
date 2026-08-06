@@ -188,39 +188,96 @@ _vector_table_end:
 .global _flint_trap_entry
 .type   _flint_trap_entry, @function
 _flint_trap_entry:
-    addi a1, a1, -96            // 96-byte frame; matches size_of::<TaskContext>()
-
-    // a2 is the only scratch we have before the frame is populated, so the
-    // interrupted a2 must go into its slot BEFORE anything else uses it.
+    // ── Phase 1: specials, without touching a1 ────────────────────────────
     //
-    // The previous revision started with `rsr.epc1 a2`, destroying a2 on the
-    // very first instruction, and later stored the computed stack pointer into
-    // the a[2] slot. Every task resumed from any interrupt therefore came back
-    // with a2 holding its own SP -- and a2 is the first argument and the return
-    // value register in the Xtensa windowed ABI.
-    s32i a2,  a1, 0x20          // a[2], real value
+    // a1 must keep the interrupted task's real stack pointer until the
+    // register windows have been spilled, and that constraint drives the whole
+    // shape of this prologue.
+    //
+    // A window overflow writes a caller's a0-a3 to `[sp - 16]` of the frame
+    // *below* it, and the matching underflow reads them back from the same
+    // place when the task returns. Both addresses come from a1 in the window
+    // being spilled. If a1 has been moved down to make room for a trap frame,
+    // the spill lands 112 bytes away from where the underflow will look, and
+    // the task returns into whatever was already in that memory. On hardware
+    // that surfaced as a stack pointer of 0x3f401da7 -- a rodata address --
+    // which then faulted this very instruction sequence and escalated to a
+    // double exception.
+    //
+    // So the specials are written through a scratch frame pointer while a1 is
+    // left alone, and a1 only moves after the spill. This is the same ordering
+    // constraint Zephyr and NuttX satisfy by spilling before their exception
+    // frame is allocated.
+    //
+    // EXCSAVE1/EXCSAVE2 hold the two registers we need as scratch. They do not
+    // rotate with the window, and nothing between here and the reload below
+    // touches them: the window overflow and underflow vectors use only s32e /
+    // l32e against the frame registers.
+    wsr.excsave1 a2
+    wsr.excsave2 a3
 
-    // Save special registers.
+    addi a3, a1, -112           // frame base, 16 bytes clear of the ABI save area
+
     rsr.epc1   a2
-    s32i a2,  a1, 0x00          // pc
+    s32i a2,  a3, 0x00          // pc
     rsr.ps     a2
-    s32i a2,  a1, 0x04          // ps
+    s32i a2,  a3, 0x04          // ps
     rsr.sar    a2
-    s32i a2,  a1, 0x08
+    s32i a2,  a3, 0x08
     rsr.lbeg   a2
-    s32i a2,  a1, 0x0C
+    s32i a2,  a3, 0x0C
     rsr.lend   a2
-    s32i a2,  a1, 0x10
+    s32i a2,  a3, 0x10
     rsr.lcount a2
-    s32i a2,  a1, 0x14
+    s32i a2,  a3, 0x14
 
-    // Save current-window ARs. a1 here is the frame base; the interrupted
-    // SP was frame_base + 96.
+    // ── Leave exception mode ──────────────────────────────────────────────
+    //
+    // Hardware sets PS.EXCM on exception entry, and while EXCM is set a window
+    // overflow cannot be serviced normally -- it escalates directly to the
+    // double exception vector. The spill below depends on those overflows
+    // dispatching, and so does the `callx4` into the Rust handler further on.
+    //
+    // Raise INTLEVEL to 3 (the ESP32's EXCM level) so nothing can nest while
+    // this trap is being serviced. EPC1 is already in the frame, so the window
+    // exceptions are free to overwrite it.
+    movi a2, 0x40003            // PS: WOE=1, INTLEVEL=3, EXCM=0, UM=0
+    wsr.ps a2
+    rsync
+
+    rsr.excsave1 a2
+    rsr.excsave2 a3             // register file pristine again, a1 untouched
+
+    // ── Spill every live window to its owner's stack ──────────────────────
+    //
+    // The canonical sequence (Zephyr SPILL_ALL_WINDOWS, NuttX/FreeRTOS
+    // SPILL_REGISTERS). `and a12, a12, a12` is an identity write whose only
+    // purpose is to reference a register belonging to an older live window,
+    // which raises the overflow that writes that window to memory; `rotw`
+    // steps WINDOWBASE around the ring so every window is touched in turn.
+    // 3+3+3+3+4 = 16 slots, a full trip around the 64-register file, so
+    // WINDOWBASE ends where it started and nothing is destroyed.
+    //
+    // Afterwards WINDOWSTART is exactly `1 << WINDOWBASE`, which is why the
+    // values snapshotted below can be restored verbatim on the way out.
+    and a12, a12, a12
+    rotw 3
+    and a12, a12, a12
+    rotw 3
+    and a12, a12, a12
+    rotw 3
+    and a12, a12, a12
+    rotw 3
+    and a12, a12, a12
+    rotw 4
+
+    // ── Phase 2: the frame proper ─────────────────────────────────────────
+    addi a1, a1, -112           // 96-byte frame + the 16-byte ABI save area above it
+
     s32i a0,  a1, 0x18
-    addi a2,  a1, 96            // a2 = the interrupted SP
-    s32i a2,  a1, 0x1C          // a[1] = interrupted SP
-    // a[2] at 0x20 already holds the interrupted a2, saved on entry above.
-    // Do not overwrite it with the computed SP.
+    addi a0,  a1, 112           // the interrupted SP
+    s32i a0,  a1, 0x1C          // a[1]
+    s32i a2,  a1, 0x20
     s32i a3,  a1, 0x24
     s32i a4,  a1, 0x28
     s32i a5,  a1, 0x2C
@@ -237,27 +294,7 @@ _flint_trap_entry:
     rsr.windowbase  a2
     s32i a2, a1, 0x58
     rsr.windowstart a2
-    s32i a2, a1, 0x5C
-
-    // ── Leave exception mode before calling into Rust ─────────────────────
-    //
-    // Hardware sets PS.EXCM on exception entry, and while EXCM is set a window
-    // overflow cannot be serviced normally -- it escalates directly to the
-    // double exception vector. `_flint_trap` is a windowed function, so the
-    // `callx4` below overflows a window as soon as the handler nests a call.
-    //
-    // This is not hypothetical: on the first ever interrupt taken on real
-    // hardware, the board printed "DBL" from the double exception vector at
-    // exactly this point.
-    //
-    // Clear EXCM so window exceptions dispatch through their normal vectors,
-    // and raise INTLEVEL to 3 (the ESP32's EXCM level) so no further interrupt
-    // can nest while this one is being serviced. Everything the exception left
-    // in EPC1 and EXCCAUSE has already been copied into the frame above, so it
-    // is safe for a window exception to overwrite those now.
-    movi a2, 0x40003            // PS: WOE=1, INTLEVEL=3, EXCM=0, UM=0
-    wsr.ps a2
-    rsync
+    s32i a2, a1, 0x5C           // == 1 << windowbase, courtesy of the spill
 
     // Call the Rust handler with the frame pointer.
     // ABI NOTE: _flint_trap is a windowed extern "C" fn. We clear a0 to
@@ -302,16 +339,14 @@ _flint_trap_entry:
     // do not rotate.
     wsr.excsave1 a1
 
-    // WINDOWSTART is rebuilt as "only the current window is live" rather than
-    // restored verbatim. The saved value claims the task's outer frames are
-    // still in the register file, but the handler that ran in between rotated
-    // the window and the physical registers now hold someone else's data.
-    // Marking just this window live makes each `retw` take an underflow and
-    // refill from the task's own stack, where spill_windows put it.
+    // Both go back verbatim. The saved WINDOWSTART was read after the entry
+    // spill, so it already says "only this window is live" -- every outer frame
+    // is in memory, and the task's next `retw` takes an underflow and refills
+    // from its own stack. Restoring the *pre-spill* value would be wrong: it
+    // claims frames are in the register file that the handler has since
+    // overwritten.
     l32i a2, a1, 0x58           // windowbase
-    movi a3, 1
-    ssl  a2
-    sll  a3, a3                 // a3 = 1 << windowbase
+    l32i a3, a1, 0x5C           // windowstart
     wsr.windowstart a3
     wsr.windowbase  a2
     rsync
