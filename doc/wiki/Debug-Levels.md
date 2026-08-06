@@ -58,7 +58,7 @@ pure noise. Turn it on when the console goes quiet.
 Separate from the levels:
 
 ```bash
-make flash EXTRA_FEATURES=phase0-tests
+make flash EXTRA_FEATURES=self-test
 ```
 
 Drives a deep windowed recursion after interrupts are unmasked and checks the

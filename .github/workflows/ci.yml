@@ -83,6 +83,12 @@ jobs:
       - name: Enforce the package naming and layout convention
         run: make check-names
 
+      # The on-target suite itself needs a board and so cannot run here, but the
+      # logic that decides whether a board passed is just text handling, and it
+      # is the part that would otherwise go unchecked until it mattered.
+      - name: The on-target harness judges a run correctly
+        run: make test-harness
+
   licence:
     name: Licence headers
     runs-on: ubuntu-latest

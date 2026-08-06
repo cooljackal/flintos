@@ -38,5 +38,5 @@ debug-level-1 = ["kernel/debug-level-1"]
 debug-level-2 = ["kernel/debug-level-2"]
 debug-level-3 = ["kernel/debug-level-3"]
 
-# Boot-time register-window self-test. Off by default; `make ... EXTRA_FEATURES=phase0-tests`.
-phase0-tests = ["kernel/phase0-tests"]
+# Boot-time register-window self-test. Off by default; `make ... EXTRA_FEATURES=self-test`.
+self-test = ["kernel/self-test"]

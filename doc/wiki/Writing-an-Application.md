@@ -63,7 +63,7 @@ debug-level-0 = ["kernel/debug-level-0"]
 debug-level-1 = ["kernel/debug-level-1"]
 debug-level-2 = ["kernel/debug-level-2"]
 debug-level-3 = ["kernel/debug-level-3"]
-phase0-tests = ["kernel/phase0-tests"]
+self-test = ["kernel/self-test"]
 ```
 
 Copy the feature block verbatim. Exactly one `board-*` must reach
