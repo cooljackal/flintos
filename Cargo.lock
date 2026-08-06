@@ -102,16 +102,8 @@ dependencies = [
  "flint-api",
  "flint-arch-xtensa",
  "flint-board",
- "flint-driver-bme280",
- "flint-driver-ssd1306",
- "flint-esp32-gpio",
- "flint-esp32-i2c",
- "flint-esp32-spi",
  "flint-esp32-uart",
  "flint-hal",
- "flint-i2c-bus",
- "flint-spi-bus",
- "flint-uart-bus",
 ]
 
 [[package]]

@@ -143,6 +143,15 @@ jobs:
           cargo install espup --locked
           espup install
 
+      # Every crate, not just the applications. The kernel names exactly one
+      # driver (the console UART), so building an application reaches only that
+      # one -- the other eight drivers would be checked for the host and never
+      # for Xtensa, and a target-specific break in them would land silently.
+      - name: Check every crate for Xtensa
+        run: |
+          . "$HOME/export-esp.sh"
+          make check-all
+
       # Build every application, not just one. An app carries its own
       # build.rs and feature pass-through, so a broken one is invisible to a
       # build of any other.

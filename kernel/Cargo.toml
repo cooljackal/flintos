@@ -14,20 +14,21 @@ flint-api = { path = "../api" }
 flint-arch-xtensa = { path = "../arch/xtensa" }
 flint-board = { path = "../board", default-features = false }
 
-# Physical drivers
+# The console UART is the one driver the kernel itself names: `startup::init`
+# constructs it from the board manifest so log and panic have somewhere to go
+# before any application code runs.
+#
+# The other eight drivers are deliberately absent. The kernel used to depend on
+# all nine, but Rust dependencies are not transitive -- an application wanting
+# `flint-driver-bme280` declares it itself -- and the kernel re-exports none of
+# them, so no symbol could ever reach them. `--gc-sections` kept them out of the
+# image, so this costs image size nothing; what it cost was compiling 2,477
+# lines on every kernel build to satisfy nothing.
+#
+# They are still checked for Xtensa, by `make check-all` walking the whole
+# workspace -- now called from the Xtensa CI job, because being pulled in here
+# is what used to give them that coverage.
 flint-esp32-uart = { path = "../drivers/physical/esp32-uart" }
-flint-esp32-gpio = { path = "../drivers/physical/esp32-gpio" }
-flint-esp32-spi  = { path = "../drivers/physical/esp32-spi" }
-flint-esp32-i2c  = { path = "../drivers/physical/esp32-i2c" }
-
-# Bus abstractions
-flint-spi-bus   = { path = "../drivers/bus/spi-bus" }
-flint-i2c-bus   = { path = "../drivers/bus/i2c-bus" }
-flint-uart-bus  = { path = "../drivers/bus/uart-bus" }
-
-# Logical drivers
-flint-driver-bme280  = { path = "../drivers/logical/bme280" }
-flint-driver-ssd1306 = { path = "../drivers/logical/ssd1306" }
 
 [features]
 # Board selection forwards straight through to flint-board (see
