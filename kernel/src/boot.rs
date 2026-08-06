@@ -108,6 +108,7 @@ pub extern "C" fn FlintMain() -> ! {
         // touch anything else.
         debug::fault::raw_print("\r\n[FLINT] FlintMain reached (_start -> Rust OK)\r\n");
         report_boot_state();
+        report_reset_cause();
     }
 
     // Step 1: board init (UART console).
@@ -187,6 +188,22 @@ pub extern "C" fn FlintMain() -> ! {
 
     // Step 6: become the idle task.
     idle_loop();
+}
+
+/// Say why the chip last reset.
+///
+/// Unconditional, not gated on a diagnostic flag: after an unexplained reboot
+/// this is the first thing worth knowing, and it is one line. Three watchdogs
+/// exist and are armed for different reasons, so "a watchdog did it" is not an
+/// answer -- the register distinguishes them and this prints which.
+fn report_reset_cause() {
+    let cause = unsafe { soc_esp32::reset::cause() };
+    debug::fault::raw_print("[FLINT] reset cause=");
+    debug::fault::raw_dec(cause);
+    debug::fault::raw_print(" (");
+    debug::fault::raw_print(soc_esp32::reset::name(cause));
+    debug::fault::raw_print(")
+");
 }
 
 /// Report what `startup.S` left behind: vector table, window state, stack.
