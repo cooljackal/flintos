@@ -12,6 +12,7 @@
 pub mod bus;
 pub mod critical_section;
 pub mod mpu;
+pub mod pinmux;
 pub mod storage;
 pub mod syscall;
 pub mod tick;
@@ -20,6 +21,7 @@ pub mod types;
 pub use bus::*;
 pub use critical_section::CriticalSection;
 pub use mpu::MpuManager;
+pub use pinmux::{PinConfig, PinDrive, PinMux, PinPull, Signal, SignalDirection};
 pub use storage::*;
 pub use syscall::SyscallABI;
 pub use tick::TickSource;

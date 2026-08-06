@@ -8,7 +8,7 @@
 //! handler) lands at the entry point with a clean single register window.
 
 use flint_hal::types::{Priority, TaskId};
-use flint_arch_xtensa::registers::{PS_UM, PS_WOE, PS_CALLINC_SHIFT};
+use flint_arch_xtensa::registers::PS_WOE;
 
 use crate::scheduler::{self, TaskState};
 
@@ -153,7 +153,7 @@ unsafe fn init_context(ctx: &mut flint_hal::TaskContext, entry: usize, stack_top
         fn _flint_task_start();
     }
 
-    ctx.pc = _flint_task_start as usize as u32;
+    ctx.pc = _flint_task_start as *const () as usize as u32;
 
     // Kernel mode: Flint is a single protection domain and startup.S runs the
     // kernel with PS.UM clear, so tasks run at the same level as the handlers

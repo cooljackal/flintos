@@ -148,8 +148,11 @@ of logging:
 make apps                                  # what's available
 make flash APP=hello                       # the minimal one-task template
 make flash APP=demo BOARD=board-m5-atom    # M5Stack Atom (ESP32-PICO-D4)
-make flash APP=hello DEBUG=debug-level-0   # no logging at all
 ```
+
+`DEBUG` defaults to `debug-level-1`, which is what you want while developing.
+`debug-level-0` compiles logging out entirely — the tasks still run, they just
+print nothing, so leave it alone until you are shipping.
 
 Board features: `board-esp32-wrover` (default), `board-esp32-devkitc`,
 `board-m5-atom`. Enabling two is a compile error, not a warning — a silently

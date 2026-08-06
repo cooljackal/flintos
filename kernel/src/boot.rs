@@ -111,7 +111,19 @@ pub extern "C" fn FlintMain() -> ! {
     // Step 4: hand over to the application, which spawns its own tasks.
     unsafe { flint_app_main() };
 
+    #[cfg(feature = "flint-log")]
     flint_api::log_info!("[kernel] Flint RTOS boot complete, entering idle");
+
+    // A build with logging compiled out looks exactly like a board that boots
+    // and then dies: the banner appears, the tasks run, and nothing they print
+    // reaches the console because there is no print. Say so once, over raw
+    // UART0, which does not depend on the feature that is missing.
+    #[cfg(not(feature = "flint-log"))]
+    debug::fault::raw_print(
+        "[FLINT] boot complete. Logging is COMPILED OUT (debug-level-0) -- tasks will \
+         run but print nothing.\r\n[FLINT] Rebuild with DEBUG=debug-level-1 to see task \
+         output.\r\n",
+    );
 
     // Step 5: unmask interrupts. The next tick will preempt idle and start the
     // highest-priority ready task via the trap handler. Everything up to here

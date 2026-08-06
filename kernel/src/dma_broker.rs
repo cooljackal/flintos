@@ -27,7 +27,24 @@ pub struct DmaHandle {
     pub(crate) owner_task: u32,
 }
 
-/// DMA pool region (defined in linker script).
+impl DmaHandle {
+    /// Byte offset of this buffer within the DMA pool.
+    pub fn pool_offset(&self) -> u32 {
+        self.pool_offset
+    }
+
+    /// Size of this buffer in bytes, rounded up to the pool's alignment.
+    pub fn size(&self) -> u32 {
+        self.size
+    }
+
+    /// Task that allocated this buffer, and the only one permitted to use it.
+    pub fn owner_task(&self) -> u32 {
+        self.owner_task
+    }
+}
+
+// DMA pool region (defined in linker script).
 extern "C" {
     static _dma_pool_start: u32;
     static _dma_pool_end: u32;
@@ -48,11 +65,11 @@ static NEXT_TRANSFER_ID: AtomicU32 = AtomicU32::new(1);
 static mut DMA_OFFSET: u32 = 0;
 
 fn pool_size() -> u32 {
-    unsafe {
-        let start = core::ptr::addr_of!(_dma_pool_start) as u32;
-        let end = core::ptr::addr_of!(_dma_pool_end) as u32;
-        end.saturating_sub(start)
-    }
+    // Taking the address of a static is safe; only reading through it is not,
+    // and nothing here does.
+    let start = core::ptr::addr_of!(_dma_pool_start) as u32;
+    let end = core::ptr::addr_of!(_dma_pool_end) as u32;
+    end.saturating_sub(start)
 }
 
 /// Allocate a DMA-safe buffer (bump allocator over the linker `dma_pool`).
