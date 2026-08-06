@@ -37,6 +37,7 @@ thin, and the API will change.
 | Boots on real hardware | ✅ ESP32-PICO, 80 MHz measured |
 | Preemptive multitasking on silicon | ✅ three tasks, three priorities, timing exact |
 | Register-window spill on switch | ✅ |
+| Watchdogs | ✅ both verified resetting a real board — `make test-watchdog` |
 | GPIO-matrix pin routing | ✅ any signal to any pad, or a clear error |
 | I²C driver | ⚠️ routes and configures; untested against a real device |
 | Priority inversion | ✅ 11 host tests, including inheritance through a chain of blocked owners |
