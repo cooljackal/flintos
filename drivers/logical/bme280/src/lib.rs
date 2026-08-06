@@ -674,9 +674,11 @@ mod tests {
 
     #[test]
     fn bme280_full_pipeline_reports_worked_example_temperature() {
-        let mut bus = MockBmeBus::default();
-        bus.calib_low = worked_example_calib_low();
-        bus.calib_high = worked_example_calib_high();
+        let mut bus = MockBmeBus {
+            calib_low: worked_example_calib_low(),
+            calib_high: worked_example_calib_high(),
+            ..Default::default()
+        };
         // adc_T=519888 packed as press(3B, arbitrary)+temp(3B)+hum(2B).
         let adc_t = 519_888i32;
         bus.data = [

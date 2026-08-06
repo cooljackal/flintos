@@ -79,6 +79,11 @@ FLASH_MODE     := dio
 # the default board stays enabled alongside the requested one and flint-board's
 # compile_error! rejects the build -- deliberately, because a binary with two
 # board manifests merged in is not a build for either board.
+# Crates that contain no Xtensa assembly, so they build and test on any host.
+# flint-soc-esp32 is here despite naming a chip: it is addresses and lookup
+# tables, and its tests are the only place the signal map gets checked at all.
+HOST_CRATES    := flint-hal flint-api flint-soc-esp32 flint-board esp32-uart esp32-spi esp32-i2c esp32-gpio spi-bus i2c-bus uart-bus bme280 ssd1306
+
 APP            ?= demo
 BOARD          ?= board-esp32-wrover
 DEBUG          ?= debug-level-1
@@ -176,20 +181,11 @@ monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
 # ─── Check (host target — pure Rust only, no Xtensa asm) ───────────────────────
 
 .PHONY: check
-check: ## Check all host-compatible crates (flint-hal, flint-api, board, drivers)
-	cargo check -p flint-hal --target $(HOST_TARGET)
-	cargo check -p flint-api --target $(HOST_TARGET)
-	cargo check -p flint-soc-esp32 --target $(HOST_TARGET)
-	cargo check -p flint-board --target $(HOST_TARGET)
-	cargo check -p esp32-uart --target $(HOST_TARGET)
-	cargo check -p esp32-spi --target $(HOST_TARGET)
-	cargo check -p esp32-i2c --target $(HOST_TARGET)
-	cargo check -p esp32-gpio --target $(HOST_TARGET)
-	cargo check -p spi-bus --target $(HOST_TARGET)
-	cargo check -p i2c-bus --target $(HOST_TARGET)
-	cargo check -p uart-bus --target $(HOST_TARGET)
-	cargo check -p bme280 --target $(HOST_TARGET)
-	cargo check -p ssd1306 --target $(HOST_TARGET)
+check: ## Check every host-compatible crate
+	@for c in $(HOST_CRATES); do \
+		echo "cargo check -p $$c"; \
+		cargo check -p "$$c" --target $(HOST_TARGET) || exit 1; \
+	done
 
 .PHONY: check-all
 check-all: ## Full check including arch (requires Xtensa toolchain)
@@ -200,27 +196,18 @@ check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)
 	bash tools/check-layers.sh
 
 .PHONY: test-host
-test-host: ## Run host-side tests (hal, api, drivers)
-	cargo test -p flint-hal --target $(HOST_TARGET)
-	cargo test -p flint-api --target $(HOST_TARGET)
-	cargo test -p flint-soc-esp32 --target $(HOST_TARGET)
-	cargo test -p flint-board --target $(HOST_TARGET)
-	cargo test -p esp32-uart --target $(HOST_TARGET)
-	cargo test -p esp32-spi --target $(HOST_TARGET)
-	cargo test -p esp32-i2c --target $(HOST_TARGET)
-	cargo test -p esp32-gpio --target $(HOST_TARGET)
-	cargo test -p spi-bus --target $(HOST_TARGET)
-	cargo test -p i2c-bus --target $(HOST_TARGET)
-	cargo test -p uart-bus --target $(HOST_TARGET)
-	cargo test -p bme280 --target $(HOST_TARGET)
-	cargo test -p ssd1306 --target $(HOST_TARGET)
+test-host: ## Run host-side unit tests
+	@for c in $(HOST_CRATES); do \
+		echo "cargo test -p $$c"; \
+		cargo test -p "$$c" --target $(HOST_TARGET) || exit 1; \
+	done
 
 # ─── Lint ───────────────────────────────────────────────────────────────────────
 
 .PHONY: lint
-lint: ## Run clippy on all host-checkable crates
-	cargo clippy -p flint-hal --target $(HOST_TARGET) -- -D warnings
-	cargo clippy -p flint-api --target $(HOST_TARGET) -- -D warnings
+lint: ## Run clippy on every host crate, tests included, warnings denied
+	cargo clippy $(addprefix -p ,$(HOST_CRATES)) --target $(HOST_TARGET) \
+		--all-targets -- -D warnings
 
 # ─── Info ───────────────────────────────────────────────────────────────────────
 
@@ -250,20 +237,20 @@ help: ## Show this help message
 	$(info     make build          Debug build for ESP32)
 	$(info     make build-release  Release build (minimal binary))
 	$(info     make build-trace    Build with kernel event tracing)
-	$(info     make build-dev      Build with logging (debug level 1))
+	$(info     make size           Image size per memory region)
 	$(info     make flash          Build + flash via espflash (USB serial))
-	$(info     make flash-dev      Flash + monitor the logging build)
+	$(info     make apps           List applications in apps/)
 	$(info     make flash-jtag     Build + flash via probe-rs (JTAG))
 	$(info     make erase          Erase entire flash (recover from bad image))
 	$(info     make monitor        Open serial monitor)
 	$(info )
 	$(info   Check / Test)
-	$(info     make check          Check host crates (flint-hal, flint-api))
+	$(info     make check          Check every host crate)
 	$(info     make check-all      Full check including arch)
 	$(info     make test-host      Run host-side unit tests)
 	$(info )
 	$(info   Quality)
-	$(info     make lint           Run clippy on host crates)
+	$(info     make lint           Clippy on host crates, warnings denied)
 	$(info     make info           Show project file tree)
 	$(info     make clean          Remove build artifacts)
 	$(info )

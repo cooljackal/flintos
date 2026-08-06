@@ -191,13 +191,12 @@ mod tests {
 
     #[test]
     fn bus_names_are_unique() {
-        for i in 0..TARGET_BUSES.len() {
-            for j in (i + 1)..TARGET_BUSES.len() {
+        for (i, bus) in TARGET_BUSES.iter().enumerate() {
+            for other in &TARGET_BUSES[i + 1..] {
                 assert_ne!(
-                    TARGET_BUSES[i].name,
-                    TARGET_BUSES[j].name,
+                    bus.name, other.name,
                     "duplicate bus name '{}' in TARGET_BUSES",
-                    TARGET_BUSES[i].name,
+                    bus.name,
                 );
             }
         }
@@ -205,13 +204,12 @@ mod tests {
 
     #[test]
     fn peripheral_names_are_unique() {
-        for i in 0..TARGET_PERIPHERALS.len() {
-            for j in (i + 1)..TARGET_PERIPHERALS.len() {
+        for (i, p) in TARGET_PERIPHERALS.iter().enumerate() {
+            for other in &TARGET_PERIPHERALS[i + 1..] {
                 assert_ne!(
-                    TARGET_PERIPHERALS[i].name,
-                    TARGET_PERIPHERALS[j].name,
+                    p.name, other.name,
                     "duplicate peripheral name '{}' in TARGET_PERIPHERALS",
-                    TARGET_PERIPHERALS[i].name,
+                    p.name,
                 );
             }
         }
@@ -219,13 +217,12 @@ mod tests {
 
     #[test]
     fn service_names_are_unique() {
-        for i in 0..TARGET_SERVICES.len() {
-            for j in (i + 1)..TARGET_SERVICES.len() {
+        for (i, svc) in TARGET_SERVICES.iter().enumerate() {
+            for other in &TARGET_SERVICES[i + 1..] {
                 assert_ne!(
-                    TARGET_SERVICES[i].name,
-                    TARGET_SERVICES[j].name,
+                    svc.name, other.name,
                     "duplicate service name '{}' in TARGET_SERVICES",
-                    TARGET_SERVICES[i].name,
+                    svc.name,
                 );
             }
         }

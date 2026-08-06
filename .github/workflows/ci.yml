@@ -31,7 +31,14 @@ jobs:
       # flint-soc-esp32 is here despite naming a chip: it is register
       # addresses and lookup tables, and its tests are the only place the
       # signal map and IO_MUX offsets get checked at all.
+      # -D warnings via RUSTFLAGS is safe for host jobs and only for host jobs:
+      # .cargo/config.toml sets rustflags for the Xtensa target only, and
+      # RUSTFLAGS replaces config rustflags rather than adding to them. Setting
+      # it globally would silently drop the linker script and -mlongcalls from
+      # the ESP32 build, which fails at link time with no hint as to why.
       - name: Check host-compatible crates
+        env:
+          RUSTFLAGS: -D warnings
         run: |
           for crate in flint-hal flint-api flint-soc-esp32 flint-board \
                        esp32-uart esp32-spi esp32-i2c esp32-gpio \
@@ -42,6 +49,8 @@ jobs:
           done
 
       - name: Run host unit tests
+        env:
+          RUSTFLAGS: -D warnings
         run: |
           for crate in flint-hal flint-api flint-soc-esp32 flint-board \
                        esp32-uart esp32-spi esp32-i2c esp32-gpio \
@@ -51,9 +60,17 @@ jobs:
             echo "::endgroup::"
           done
 
+      # --all-targets so test code is linted too. Tests are where lints
+      # accumulate: they are written fast and read rarely.
       - name: Clippy
         run: |
-          cargo clippy -p flint-hal -p flint-api -p flint-soc-esp32 --target "$HOST_TARGET" -- -D warnings
+          for crate in flint-hal flint-api flint-soc-esp32 flint-board \
+                       esp32-uart esp32-spi esp32-i2c esp32-gpio \
+                       spi-bus i2c-bus uart-bus bme280 ssd1306; do
+            echo "::group::cargo clippy -p $crate"
+            cargo clippy -p "$crate" --target "$HOST_TARGET" --all-targets -- -D warnings
+            echo "::endgroup::"
+          done
 
   layers:
     name: Three-layer boundary
@@ -126,15 +143,31 @@ jobs:
       # Build every application, not just one. An app carries its own
       # build.rs and feature pass-through, so a broken one is invisible to a
       # build of any other.
+      #
+      # Warnings fail this job too, but by inspecting the output rather than by
+      # setting RUSTFLAGS: the Xtensa target's rustflags in .cargo/config.toml
+      # carry the linker script and -mlongcalls, and RUSTFLAGS *replaces* config
+      # rustflags rather than adding to them. Setting it here fails the link
+      # with no hint as to why.
       - name: Build every application image
         run: |
           . "$HOME/export-esp.sh"
+          status=0
           for app in apps/*/; do
             name=$(basename "$app")
             echo "::group::$name"
+            set -o pipefail
             cargo +esp build \
               --target xtensa-esp32-none-elf \
               -Z build-std=core,compiler_builtins \
-              -p "$name"
+              -p "$name" 2>&1 | tee "build-$name.log" || status=1
+            set +o pipefail
             echo "::endgroup::"
+            # `warning: N warnings emitted` is a summary line, not a warning.
+            if grep -E '^warning' "build-$name.log" | grep -qv 'generated .* warning'; then
+              echo "::error::$name built with warnings"
+              grep -E '^warning' "build-$name.log"
+              status=1
+            fi
           done
+          exit "$status"

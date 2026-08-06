@@ -81,6 +81,15 @@ const I2C_CMD_OP_STOP: u32 = 3 << 11;
 const I2C_CMD_OP_END: u32 = 4 << 11;
 const I2C_CMD_ACK_VALUE_NAK: u32 = 1 << 10;
 
+// ── Address byte ─────────────────────────────────────────────────────────────
+//
+// The 7-bit slave address is shifted up one and the low bit carries direction.
+// Named rather than written as `| 0` and `| 1`, which reads as a magic number
+// in one direction and as a no-op in the other.
+
+const I2C_RW_WRITE: u32 = 0;
+const I2C_RW_READ: u32 = 1;
+
 // ── I2C_CTR_REG bits ──────────────────────────────────────────────────────────
 //
 // Confirmed against esp-idf `soc/i2c_reg.h`. A prior revision wrote
@@ -147,7 +156,16 @@ const I2C_TIMEOUT_SPINS: u32 = 1_000_000;
 /// (address byte, folded into the first WRITE) + n (data, one WRITE/READ
 /// command per byte in this simple polled implementation) + 1 (STOP), so
 /// the largest `n` that fits is `I2C_COMD_SLOTS - 3`.
-const I2C_MAX_BYTES: usize = I2C_COMD_SLOTS - 3;
+const I2C_MAX_BYTES: usize = I2C_COMD_SLOTS - I2C_COMD_OVERHEAD;
+
+/// Command slots a transfer spends on framing rather than data: one RSTART,
+/// one WRITE carrying the address byte, one STOP.
+const I2C_COMD_OVERHEAD: usize = 3;
+
+// The budget, checked at compile time. Equality, not `<=`: I2C_MAX_BYTES is
+// meant to be the largest payload that fits, so anything else means the two
+// constants have drifted apart.
+const _: () = assert!(I2C_MAX_BYTES + I2C_COMD_OVERHEAD == I2C_COMD_SLOTS);
 
 impl Esp32I2c {
     /// Bind a driver instance to the I2C register block at `base_addr`.
@@ -205,7 +223,8 @@ impl Esp32I2c {
 
             // Command 1: WRITE 1 byte (the slave address + R/W=0), from the
             // FIFO.
-            self.reg(I2C_FIFO_DATA).write_volatile(((addr as u32) << 1) | 0);
+            self.reg(I2C_FIFO_DATA)
+                .write_volatile(((addr as u32) << 1) | I2C_RW_WRITE);
             self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_WRITE | 1);
             slot += 1;
 
@@ -238,7 +257,8 @@ impl Esp32I2c {
 
             // Command 1: WRITE 1 byte (the slave address + R/W=1), from the
             // FIFO.
-            self.reg(I2C_FIFO_DATA).write_volatile(((addr as u32) << 1) | 1);
+            self.reg(I2C_FIFO_DATA)
+                .write_volatile(((addr as u32) << 1) | I2C_RW_READ);
             self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_WRITE | 1);
             slot += 1;
 
@@ -400,11 +420,10 @@ mod tests {
 
     #[test]
     fn byte_count_is_bounded_to_fit_the_command_register_file() {
-        // 1 (RSTART) + 1 (address, folded into a WRITE) + n (data) + 1
-        // (STOP) must not exceed I2C_COMD_SLOTS.
+        // The relationship is asserted at compile time; this pins the number
+        // itself, so a change to I2C_COMD_SLOTS is a visible decision rather
+        // than a silent capacity change.
         assert_eq!(I2C_MAX_BYTES, 13);
-        assert!(1 + 1 + I2C_MAX_BYTES + 1 <= I2C_COMD_SLOTS);
-        assert!(1 + 1 + (I2C_MAX_BYTES + 1) + 1 > I2C_COMD_SLOTS);
     }
 
     #[test]

@@ -25,10 +25,10 @@ impl I2cBus {
 
 impl Bus for I2cBus {
     fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-        if tx.len() > 0 {
+        if !tx.is_empty() {
             self.phys.raw_transfer(&[self.addr], &mut [])?;
         }
-        if rx.len() > 0 {
+        if !rx.is_empty() {
             self.phys.raw_transfer(&[self.addr | 1], &mut [0; 64])?;
         }
         let _ = rx;

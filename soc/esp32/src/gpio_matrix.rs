@@ -65,6 +65,23 @@ pub const IN_CONST_ZERO: u32 = 0x30;
 /// `IN_SEL` value that feeds a peripheral input a constant 1.
 pub const IN_CONST_ONE: u32 = 0x38;
 
+// Relationships between the constants above, checked at compile time rather
+// than in a test: they hold or the crate does not build, and they hold for
+// every consumer rather than only for whoever runs `cargo test`.
+const _: () = {
+    // 48 and 56 are not GPIO numbers -- they are the matrix's way of tying an
+    // unused peripheral input low or high, and must not collide with a real pad.
+    assert!(IN_CONST_ZERO > crate::MAX_GPIO as u32);
+    assert!(IN_CONST_ONE > crate::MAX_GPIO as u32);
+    assert!(IN_CONST_ONE <= IN_SEL_MASK);
+    // The 256 input registers must end exactly where the output registers
+    // begin; if either offset were wrong, routing would write the wrong file.
+    assert!(FUNC_IN_SEL_CFG + NUM_SIGNALS * 4 == FUNC_OUT_SEL_CFG);
+    // "Driven by the GPIO_OUT register" sits past every peripheral signal.
+    assert!(SIG_GPIO_OUT == NUM_SIGNALS);
+    assert!(SIG_GPIO_OUT <= OUT_SEL_MASK);
+};
+
 // ── Signal index map ────────────────────────────────────────────────────────
 
 /// Peripheral signal index for a [`Signal`], as used by both register files.
@@ -187,14 +204,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_two_register_files_abut_exactly() {
-        // 256 input registers starting at 0x130 must end precisely where the
-        // output registers begin. If either constant were wrong this would
-        // not hold, and routing would write into the wrong file.
-        assert_eq!(FUNC_IN_SEL_CFG + NUM_SIGNALS * 4, FUNC_OUT_SEL_CFG);
-    }
-
-    #[test]
     fn i2c_signal_indices_match_the_idf_map() {
         // The pair that unblocks I2C on this chip. SCL is the lower index.
         assert_eq!(signal_index(Signal::I2cScl(0)), Some(29));
@@ -240,18 +249,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn constant_input_selectors_are_outside_the_gpio_range() {
-        // 48 and 56 are not GPIO numbers; they are the matrix's way of tying
-        // an unused peripheral input low or high.
-        assert!(IN_CONST_ZERO > crate::MAX_GPIO as u32);
-        assert!(IN_CONST_ONE > crate::MAX_GPIO as u32);
-        assert!(IN_CONST_ONE <= IN_SEL_MASK);
-    }
-
-    #[test]
-    fn gpio_out_signal_is_past_the_peripheral_signals() {
-        assert_eq!(SIG_GPIO_OUT, NUM_SIGNALS);
-        assert!(SIG_GPIO_OUT <= OUT_SEL_MASK);
-    }
 }

@@ -57,6 +57,12 @@ pub struct Queue<T, const N: usize> {
 unsafe impl<T: Send, const N: usize> Send for Queue<T, N> {}
 unsafe impl<T: Send, const N: usize> Sync for Queue<T, N> {}
 
+impl<T, const N: usize> Default for Queue<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T, const N: usize> Queue<T, N> {
     /// Create a new, empty queue. `N` must be >= 1.
     pub const fn new() -> Self {
@@ -125,16 +131,15 @@ impl<T, const N: usize> Queue<T, N> {
         }
     }
 
-    /// Try to receive a message without blocking. `Err(())` if empty or if
-    /// the next slot has been reserved by a producer but not yet published.
-    pub fn try_recv(&self) -> Result<T, ()> {
+    /// Try to receive a message without blocking.
+    pub fn try_recv(&self) -> Result<T, RecvError> {
         // See the matching comment in `try_send`.
         let mut retries_left = N + 1;
         loop {
             let head = self.head.load(Ordering::Acquire);
             let tail = self.tail.load(Ordering::Acquire);
             if head == tail {
-                return Err(()); // empty
+                return Err(RecvError::Empty);
             }
             let slot = head % N;
             // Claim the physical slot *before* the logical position (mirrors
@@ -150,7 +155,7 @@ impl<T, const N: usize> Queue<T, N> {
             {
                 // Producer reserved the position but hasn't published yet
                 // (Writing), or another consumer already claimed it.
-                return Err(());
+                return Err(RecvError::Contended);
             }
             if self
                 .head
@@ -169,7 +174,7 @@ impl<T, const N: usize> Queue<T, N> {
             self.state[slot].store(SLOT_READY, Ordering::Release);
             retries_left -= 1;
             if retries_left == 0 {
-                return Err(());
+                return Err(RecvError::Contended);
             }
         }
     }
@@ -293,7 +298,7 @@ pub fn recv<T, const N: usize>(q: &Queue<T, N>, timeout_ms: u32) -> Result<T, Re
         return Ok(m);
     }
     if timeout_ms == 0 {
-        return Err(RecvError);
+        return Err(RecvError::Timeout);
     }
     #[cfg(not(test))]
     {
@@ -301,10 +306,10 @@ pub fn recv<T, const N: usize>(q: &Queue<T, N>, timeout_ms: u32) -> Result<T, Re
         loop {
             let remaining = match deadline.remaining_ms(crate::timer::now_ms()) {
                 Some(r) => r,
-                None => return Err(RecvError), // deadline already passed
+                None => return Err(RecvError::Timeout), // deadline already passed
             };
             if !block_recv(q.addr(), remaining) {
-                return Err(RecvError); // timed out
+                return Err(RecvError::Timeout); // timed out
             }
             if let Ok(m) = q.try_recv() {
                 wake_sender(q.addr());
@@ -313,7 +318,7 @@ pub fn recv<T, const N: usize>(q: &Queue<T, N>, timeout_ms: u32) -> Result<T, Re
         }
     }
     #[cfg(test)]
-    Err(RecvError)
+    Err(RecvError::Timeout)
 }
 
 /// Current depth (free function mirror used by demos).
@@ -362,9 +367,23 @@ fn wake_sender(q_addr: usize) {
 /// Error returned by [`send`] when the message could not be delivered.
 pub struct SendError<T>(pub T);
 
-/// Error returned by [`recv`] when no message could be received.
+/// Why a receive failed.
+///
+/// One type for both the blocking and non-blocking paths. `try_recv` used to
+/// return `Result<T, ()>`, which said only "not now" and left every caller to
+/// guess which case it was in -- and they want opposite responses: `Empty`
+/// means wait for a producer, `Contended` means retry immediately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RecvError;
+pub enum RecvError {
+    /// Nothing queued.
+    Empty,
+    /// A message exists but is not readable yet: a producer reserved the slot
+    /// and has not published it, or another consumer claimed it first.
+    /// Retrying straight away is the right response.
+    Contended,
+    /// [`recv`] waited and gave up.
+    Timeout,
+}
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -393,7 +412,7 @@ mod tests {
     #[test]
     fn empty_queue_recv_fails() {
         let q = Queue::<u32, 4>::new();
-        assert_eq!(q.try_recv(), Err(()));
+        assert_eq!(q.try_recv(), Err(RecvError::Empty));
     }
 
     #[test]
@@ -424,8 +443,8 @@ mod tests {
     #[test]
     fn blocking_recv_fallback() {
         let q = Queue::<u32, 4>::new();
-        assert_eq!(recv(&q, 0), Err(RecvError));
-        assert_eq!(recv(&q, 100), Err(RecvError));
+        assert_eq!(recv(&q, 0), Err(RecvError::Timeout));
+        assert_eq!(recv(&q, 100), Err(RecvError::Timeout));
         q.try_send(99).ok();
         assert_eq!(recv(&q, 0), Ok(99));
     }
@@ -440,8 +459,12 @@ mod tests {
     }
 
     #[test]
-    fn recv_error_eq() {
-        assert_eq!(RecvError, RecvError);
+    fn recv_error_distinguishes_its_cases() {
+        // The point of the enum: an empty queue and a contended slot are not
+        // the same event and do not want the same response.
+        assert_eq!(RecvError::Empty, RecvError::Empty);
+        assert_ne!(RecvError::Empty, RecvError::Contended);
+        assert_ne!(RecvError::Empty, RecvError::Timeout);
     }
 
     // ── Item 4: claim-before-read race ──────────────────────────────────────
@@ -476,10 +499,15 @@ mod tests {
     fn consumer_cannot_claim_unpublished_slot() {
         // A producer that has reserved `tail` (Writing) but not yet
         // published (Ready) must not hand its half-written slot to a reader.
+        //
+        // Contended, not Empty: there *is* a message coming, so the caller
+        // should retry rather than go and wait on a producer that has already
+        // started. Distinguishing these two is what the enum is for -- under
+        // `Result<T, ()>` this case was indistinguishable from an empty queue.
         let q = Queue::<u32, 1>::new();
         q.tail.store(1, Ordering::Relaxed);
         q.state[0].store(SLOT_WRITING, Ordering::Relaxed);
-        assert_eq!(q.try_recv(), Err(()));
+        assert_eq!(q.try_recv(), Err(RecvError::Contended));
     }
 
     // ── Item 9: deadline math ────────────────────────────────────────────────
