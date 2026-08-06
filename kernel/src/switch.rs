@@ -34,6 +34,31 @@ fn announce_once(flag: &AtomicBool, msg: &str) {
     }
 }
 
+/// Force every live register window out to its stack save area.
+///
+/// Xtensa keeps a task's outer call frames in the physical register file, not
+/// on its stack, until a window overflow evicts them. Switching tasks leaves
+/// those registers holding the *previous* task's frames while the incoming
+/// task's WINDOWSTART claims they are its own -- so its next `retw` pulls
+/// another task's data. Seen on hardware as a stack pointer coming back as 2,
+/// which then faulted the trap entry itself and produced a double exception.
+///
+/// Recursing past the 16-window ring makes each `entry` displace an older
+/// frame, and the hardware's overflow handler writes that frame to its stack
+/// save area. Once every frame is in memory, the restore path can mark only the
+/// current window live and let underflow refill the rest from the stack.
+///
+/// `black_box` keeps the recursion from being flattened; the whole point is the
+/// call depth, which an optimiser would otherwise remove.
+#[inline(never)]
+fn spill_windows(depth: u32) -> u32 {
+    if depth == 0 {
+        0
+    } else {
+        core::hint::black_box(spill_windows(depth - 1)).wrapping_add(1)
+    }
+}
+
 /// Called from `_flint_trap_entry` in vectors.S.
 ///
 /// # Safety
@@ -121,6 +146,11 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
         let next = sched.schedule();
         if next != cur {
             announce_once(&FIRST_SWITCH, "[FLINT] first context switch\r\n");
+            // Flush the outgoing task's register windows to its stack before
+            // its context is captured, so the incoming task cannot inherit
+            // them. See spill_windows.
+            core::hint::black_box(spill_windows(20));
+
             // Save the interrupted context into the current task's TCB, unless
             // it has been torn down.
             if let Some(tcb) = &mut sched.tasks[cur as usize] {

@@ -301,9 +301,18 @@ _flint_trap_entry:
     // carries the frame pointer across the rotation, since special registers
     // do not rotate.
     wsr.excsave1 a1
-    l32i a2, a1, 0x5C
-    wsr.windowstart a2
-    l32i a2, a1, 0x58
+
+    // WINDOWSTART is rebuilt as "only the current window is live" rather than
+    // restored verbatim. The saved value claims the task's outer frames are
+    // still in the register file, but the handler that ran in between rotated
+    // the window and the physical registers now hold someone else's data.
+    // Marking just this window live makes each `retw` take an underflow and
+    // refill from the task's own stack, where spill_windows put it.
+    l32i a2, a1, 0x58           // windowbase
+    movi a3, 1
+    ssl  a2
+    sll  a3, a3                 // a3 = 1 << windowbase
+    wsr.windowstart a3
     wsr.windowbase  a2
     rsync
     rsr.excsave1 a1             // frame pointer, in the restored window
