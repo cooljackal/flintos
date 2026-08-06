@@ -1,5 +1,5 @@
 [package]
-name = "esp32-spi"
+name = "flint-esp32-spi"
 version.workspace = true
 edition.workspace = true
 description = "ESP32 SPI physical driver"

@@ -1,5 +1,5 @@
 [package]
-name = "bme280"
+name = "flint-driver-bme280"
 version.workspace = true
 edition.workspace = true
 description = "BME280 temperature/humidity/pressure sensor logical driver (Layer 3)"

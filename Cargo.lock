@@ -3,13 +3,6 @@
 version = 4
 
 [[package]]
-name = "bme280"
-version = "0.1.0"
-dependencies = [
- "flint-api",
-]
-
-[[package]]
 name = "demo"
 version = "0.1.0"
 dependencies = [
@@ -17,38 +10,6 @@ dependencies = [
  "flint-build",
  "flint-hal",
  "flint-kernel",
-]
-
-[[package]]
-name = "esp32-gpio"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
- "flint-soc-esp32",
-]
-
-[[package]]
-name = "esp32-i2c"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
- "flint-soc-esp32",
-]
-
-[[package]]
-name = "esp32-spi"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
- "flint-soc-esp32",
-]
-
-[[package]]
-name = "esp32-uart"
-version = "0.1.0"
-dependencies = [
- "flint-hal",
- "flint-soc-esp32",
 ]
 
 [[package]]
@@ -78,26 +39,79 @@ name = "flint-build"
 version = "0.1.0"
 
 [[package]]
+name = "flint-driver-bme280"
+version = "0.1.0"
+dependencies = [
+ "flint-api",
+]
+
+[[package]]
+name = "flint-driver-ssd1306"
+version = "0.1.0"
+dependencies = [
+ "flint-api",
+]
+
+[[package]]
+name = "flint-esp32-gpio"
+version = "0.1.0"
+dependencies = [
+ "flint-hal",
+ "flint-soc-esp32",
+]
+
+[[package]]
+name = "flint-esp32-i2c"
+version = "0.1.0"
+dependencies = [
+ "flint-hal",
+ "flint-soc-esp32",
+]
+
+[[package]]
+name = "flint-esp32-spi"
+version = "0.1.0"
+dependencies = [
+ "flint-hal",
+ "flint-soc-esp32",
+]
+
+[[package]]
+name = "flint-esp32-uart"
+version = "0.1.0"
+dependencies = [
+ "flint-hal",
+ "flint-soc-esp32",
+]
+
+[[package]]
 name = "flint-hal"
 version = "0.1.0"
+
+[[package]]
+name = "flint-i2c-bus"
+version = "0.1.0"
+dependencies = [
+ "flint-api",
+]
 
 [[package]]
 name = "flint-kernel"
 version = "0.1.0"
 dependencies = [
- "bme280",
- "esp32-gpio",
- "esp32-i2c",
- "esp32-spi",
- "esp32-uart",
  "flint-api",
  "flint-arch-xtensa",
  "flint-board",
+ "flint-driver-bme280",
+ "flint-driver-ssd1306",
+ "flint-esp32-gpio",
+ "flint-esp32-i2c",
+ "flint-esp32-spi",
+ "flint-esp32-uart",
  "flint-hal",
- "i2c-bus",
- "spi-bus",
- "ssd1306",
- "uart-bus",
+ "flint-i2c-bus",
+ "flint-spi-bus",
+ "flint-uart-bus",
 ]
 
 [[package]]
@@ -112,6 +126,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-spi-bus"
+version = "0.1.0"
+dependencies = [
+ "flint-api",
+]
+
+[[package]]
+name = "flint-uart-bus"
+version = "0.1.0"
+dependencies = [
+ "flint-api",
+]
+
+[[package]]
 name = "hello"
 version = "0.1.0"
 dependencies = [
@@ -119,32 +147,4 @@ dependencies = [
  "flint-build",
  "flint-hal",
  "flint-kernel",
-]
-
-[[package]]
-name = "i2c-bus"
-version = "0.1.0"
-dependencies = [
- "flint-api",
-]
-
-[[package]]
-name = "spi-bus"
-version = "0.1.0"
-dependencies = [
- "flint-api",
-]
-
-[[package]]
-name = "ssd1306"
-version = "0.1.0"
-dependencies = [
- "flint-api",
-]
-
-[[package]]
-name = "uart-bus"
-version = "0.1.0"
-dependencies = [
- "flint-api",
 ]

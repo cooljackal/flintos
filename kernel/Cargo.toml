@@ -15,19 +15,19 @@ flint-arch-xtensa = { path = "../arch/xtensa" }
 flint-board = { path = "../board", default-features = false }
 
 # Physical drivers
-esp32-uart = { path = "../drivers/physical/esp32-uart" }
-esp32-gpio = { path = "../drivers/physical/esp32-gpio" }
-esp32-spi  = { path = "../drivers/physical/esp32-spi" }
-esp32-i2c  = { path = "../drivers/physical/esp32-i2c" }
+flint-esp32-uart = { path = "../drivers/physical/esp32-uart" }
+flint-esp32-gpio = { path = "../drivers/physical/esp32-gpio" }
+flint-esp32-spi  = { path = "../drivers/physical/esp32-spi" }
+flint-esp32-i2c  = { path = "../drivers/physical/esp32-i2c" }
 
 # Bus abstractions
-spi-bus   = { path = "../drivers/bus/spi-bus" }
-i2c-bus   = { path = "../drivers/bus/i2c-bus" }
-uart-bus  = { path = "../drivers/bus/uart-bus" }
+flint-spi-bus   = { path = "../drivers/bus/spi-bus" }
+flint-i2c-bus   = { path = "../drivers/bus/i2c-bus" }
+flint-uart-bus  = { path = "../drivers/bus/uart-bus" }
 
 # Logical drivers
-bme280  = { path = "../drivers/logical/bme280" }
-ssd1306 = { path = "../drivers/logical/ssd1306" }
+flint-driver-bme280  = { path = "../drivers/logical/bme280" }
+flint-driver-ssd1306 = { path = "../drivers/logical/ssd1306" }
 
 [features]
 # Board selection forwards straight through to flint-board (see

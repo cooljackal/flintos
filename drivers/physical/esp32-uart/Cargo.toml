@@ -1,5 +1,5 @@
 [package]
-name = "esp32-uart"
+name = "flint-esp32-uart"
 version.workspace = true
 edition.workspace = true
 description = "ESP32 UART physical driver"

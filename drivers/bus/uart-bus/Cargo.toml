@@ -1,5 +1,5 @@
 [package]
-name = "uart-bus"
+name = "flint-uart-bus"
 version.workspace = true
 edition.workspace = true
 description = "UART bus abstraction layer"

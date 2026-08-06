@@ -1,5 +1,5 @@
 [package]
-name = "esp32-i2c"
+name = "flint-esp32-i2c"
 version.workspace = true
 edition.workspace = true
 description = "ESP32 I2C physical driver"

@@ -41,8 +41,8 @@ jobs:
           RUSTFLAGS: -D warnings
         run: |
           for crate in flint-hal flint-api flint-soc-esp32 flint-board \
-                       esp32-uart esp32-spi esp32-i2c esp32-gpio \
-                       spi-bus i2c-bus uart-bus bme280 ssd1306 \
+                       flint-esp32-uart flint-esp32-spi flint-esp32-i2c flint-esp32-gpio \
+                       flint-spi-bus flint-i2c-bus flint-uart-bus flint-driver-bme280 flint-driver-ssd1306 \
                        flint-build flint-size; do
             echo "::group::cargo check -p $crate"
             cargo check -p "$crate" --target "$HOST_TARGET"
@@ -54,8 +54,8 @@ jobs:
           RUSTFLAGS: -D warnings
         run: |
           for crate in flint-hal flint-api flint-soc-esp32 flint-board \
-                       esp32-uart esp32-spi esp32-i2c esp32-gpio \
-                       spi-bus i2c-bus uart-bus bme280 ssd1306 \
+                       flint-esp32-uart flint-esp32-spi flint-esp32-i2c flint-esp32-gpio \
+                       flint-spi-bus flint-i2c-bus flint-uart-bus flint-driver-bme280 flint-driver-ssd1306 \
                        flint-build flint-size; do
             echo "::group::cargo test -p $crate"
             cargo test -p "$crate" --target "$HOST_TARGET"
@@ -67,8 +67,8 @@ jobs:
       - name: Clippy
         run: |
           for crate in flint-hal flint-api flint-soc-esp32 flint-board \
-                       esp32-uart esp32-spi esp32-i2c esp32-gpio \
-                       spi-bus i2c-bus uart-bus bme280 ssd1306 \
+                       flint-esp32-uart flint-esp32-spi flint-esp32-i2c flint-esp32-gpio \
+                       flint-spi-bus flint-i2c-bus flint-uart-bus flint-driver-bme280 flint-driver-ssd1306 \
                        flint-build flint-size; do
             echo "::group::cargo clippy -p $crate"
             cargo clippy -p "$crate" --target "$HOST_TARGET" --all-targets -- -D warnings

@@ -2,6 +2,8 @@
 
 [package]
 name = "hello"
+# Unprefixed by exception, not oversight -- see apps/demo/Cargo.toml.
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "Flint demo application — one task, logging on a timer"

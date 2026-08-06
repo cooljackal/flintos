@@ -70,7 +70,7 @@ const CLKDIV_FRAG_MASK: u32 = 0xF << CLKDIV_FRAG_SHIFT;
 //
 // Bases, native pads, and the IO_MUX offset table all live in
 // `flint-soc-esp32` now. They are chip facts, and this driver used to carry
-// its own copy of them -- as did `esp32_spi`, separately, with a table that had
+// its own copy of them -- as did `flint-esp32-spi`, separately, with a table that had
 // drifted from this one.
 
 /// Route TX and RX for controller `instance`.

@@ -1,5 +1,5 @@
 [package]
-name = "i2c-bus"
+name = "flint-i2c-bus"
 version.workspace = true
 edition.workspace = true
 description = "I2C bus abstraction layer"

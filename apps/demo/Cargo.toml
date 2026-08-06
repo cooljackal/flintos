@@ -2,6 +2,12 @@
 
 [package]
 name = "demo"
+# The only packages without a `flint-` prefix, and the reason the convention
+# can afford the exception: an application is a flashed binary, never a
+# published crate. The name is the interface -- `make APP=demo` and the ELF
+# filename are both this string -- so `publish = false` is what keeps the
+# short name honest rather than a claim on a crates.io name someone else owns.
+publish = false
 version.workspace = true
 edition.workspace = true
 description = "Flint demo application — three tasks at three priorities"

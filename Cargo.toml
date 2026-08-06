@@ -3,10 +3,48 @@ resolver = "2"
 # Directory names carry no `flint-` prefix; package names do.
 #
 # A package name is a global identifier -- it has to be unambiguous on
-# crates.io, hence `flint-hal` rather than `hal`. A directory is already scoped
-# by its path, so `hal/`, `arch/xtensa/` and `soc/esp32/` say everything the
-# longer names did. The rule is: directory = package name minus `flint-`,
-# hyphenated, under its category folder.
+# crates.io, hence `flint-hal` rather than `hal`, and `flint-driver-bme280`
+# rather than `bme280`, which is already a well-known third-party driver crate
+# (as is `ssd1306`). A directory is scoped by its path already, so `hal/`,
+# `arch/xtensa/` and `drivers/logical/bme280/` say everything the longer names
+# did.
+#
+# Each layer names itself after what it is portable across, which is the thing
+# a reader needs to know before depending on it:
+#
+#   Layer 3  flint-driver-<device>       flint-driver-bme280, flint-driver-ssd1306
+#   Layer 2  flint-<protocol>-bus        flint-spi-bus, flint-i2c-bus, flint-uart-bus
+#   Layer 1  flint-<chip>-<peripheral>   flint-esp32-uart, flint-esp32-spi
+#
+# `flint-driver-` is the namespace the community driver convention reserves
+# (see doc/internal/flint_rtos_plan_rev8.md, "Community Driver Convention"):
+# a third-party BME280 driver is `flint-driver-bme280` too, so the first-party
+# ones cannot sit in a different namespace without splitting it in two. Only
+# Layer 3 takes the prefix -- it names an external *device*, which is what the
+# convention is about. An ESP32 UART is an on-chip peripheral, not a device,
+# and a bus abstraction is not a driver at all.
+#
+# Stating the directory mapping precisely, because the short version
+# ("directory = package minus `flint-`") is not true of every crate here:
+#
+#   a package's directory leaf is its name minus `flint-`, minus a leading
+#   category word when the name repeats one
+#
+#     flint-hal            -> hal/                          no category
+#     flint-esp32-uart     -> drivers/physical/esp32-uart/   leaf is the whole slug
+#     flint-driver-bme280  -> drivers/logical/bme280/        slug repeats `driver`
+#     flint-arch-xtensa    -> arch/xtensa/                   slug repeats `arch`
+#     flint-soc-esp32      -> soc/esp32/                     slug repeats `soc`
+#     flint-build          -> tools/build/                   slug omits `tools`
+#
+# A category word appears in the name only where the bare leaf would be too
+# generic to publish: `xtensa`, `esp32` and `bme280` alone are not Flint's to
+# claim.
+#
+# The applications are the one exception, and they are marked rather than
+# assumed: `demo` and `hello` have no prefix and set `publish = false`, since
+# the package name is also `make APP=<name>` and the flashed ELF filename. An
+# unprefixed name is only honest if the crate is never published.
 members = [
     "hal",
     "api",

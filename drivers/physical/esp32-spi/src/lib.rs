@@ -70,7 +70,7 @@ const SPI_TIMEOUT_SPINS: u32 = 1_000_000;
 //
 // Bases, DPORT clock bits, native pads and the IO_MUX offset table all live in
 // `flint-soc-esp32`. This driver used to carry its own copy of that table with
-// a comment saying to keep it in sync with the one in `esp32_uart` by hand --
+// a comment saying to keep it in sync with the one in `flint-esp32-uart` by hand --
 // which is exactly the arrangement the SoC layer exists to end.
 
 /// Route MOSI, MISO and SCK for controller `instance`.

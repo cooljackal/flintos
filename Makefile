@@ -83,8 +83,8 @@ LD_SCRIPT      := arch/xtensa/flint32.ld
 # flint-soc-esp32 is here despite naming a chip: it is addresses and lookup
 # tables, and its tests are the only place the signal map gets checked at all.
 HOST_CRATES    := flint-hal flint-api flint-soc-esp32 flint-board \
-                  esp32-uart esp32-spi esp32-i2c esp32-gpio \
-                  spi-bus i2c-bus uart-bus bme280 ssd1306 \
+                  flint-esp32-uart flint-esp32-spi flint-esp32-i2c flint-esp32-gpio \
+                  flint-spi-bus flint-i2c-bus flint-uart-bus flint-driver-bme280 flint-driver-ssd1306 \
                   flint-build flint-size
 
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --

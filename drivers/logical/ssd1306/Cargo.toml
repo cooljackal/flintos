@@ -1,5 +1,5 @@
 [package]
-name = "ssd1306"
+name = "flint-driver-ssd1306"
 version.workspace = true
 edition.workspace = true
 description = "SSD1306 OLED display logical driver (Layer 3)"

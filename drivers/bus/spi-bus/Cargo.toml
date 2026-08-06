@@ -1,5 +1,5 @@
 [package]
-name = "spi-bus"
+name = "flint-spi-bus"
 version.workspace = true
 edition.workspace = true
 description = "SPI bus abstraction layer"
