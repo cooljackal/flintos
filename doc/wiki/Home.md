@@ -1,6 +1,6 @@
 # Flint RTOS
 
-A preemptive real-time OS for microcontrollers, in `no_std` Rust.
+A preemptive real-time OS for **32-bit** microcontrollers, in `no_std` Rust.
 
 ```bash
 git clone https://github.com/cooljackal/flintos
@@ -14,6 +14,8 @@ Three tasks running on an ESP32. No Kconfig, no CMake, no vendor SDK.
 
 Pre-alpha. Boots, schedules and preempts on real silicon (ESP32-PICO). Young,
 most drivers thin, API will change. Don't ship it.
+
+32-bit only — see [Architecture](Architecture#word-size).
 
 ## Start here
 

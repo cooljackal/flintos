@@ -2,6 +2,23 @@
 
 Two independent stacks: how hardware is described, and how drivers are layered.
 
+## Word size
+
+**32-bit only.** Not a limitation waiting to be lifted — an assumption the code
+is built on:
+
+| Where | What assumes it |
+|---|---|
+| `hal::types::TaskContext` | `#[repr(C)]` of `u32`s, indexed by fixed byte offset from `vectors.S`, size asserted at 96 |
+| `arch/xtensa/flint32.ld` | Every region origin and length |
+| `hal::bus::PhysicalBus` | Peripheral bases are `u32` |
+| `soc/esp32` | The whole peripheral map, IO_MUX table and signal indices |
+| `tools/size` | Parses ELF32 and rejects anything else |
+
+A 64-bit port would rewrite the trap frame, the context switch and the memory
+map rather than widen them. No microcontroller in this class needs it, so it is
+not planned.
+
 ## Hardware: arch / SoC / board
 
 Three things that vary independently, so three tiers.

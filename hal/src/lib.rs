@@ -6,6 +6,11 @@
 //! buses, tick timers, pin routing, MPU, and critical sections.
 //! This crate contains no implementations — only the contracts that
 //! architecture and driver crates must fulfil.
+//!
+//! **32-bit targets only.** This is where the assumption becomes concrete:
+//! [`types::TaskContext`] is a `#[repr(C)]` of `u32` fields that the trap entry
+//! indexes by fixed byte offset, and every peripheral address in the bus traits
+//! is a `u32`. A 64-bit port would rewrite both rather than widen them.
 
 #![no_std]
 

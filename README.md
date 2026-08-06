@@ -9,13 +9,14 @@
    ╚═╝     ╚══════╝╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚══════╝
 ```
 
-**A preemptive real-time OS for microcontrollers, in `no_std` Rust.**
+**A preemptive real-time OS for 32-bit microcontrollers, in `no_std` Rust.**
 
 No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` → `make flash`
 → three tasks running on an ESP32.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
+[![Word size](https://img.shields.io/badge/word%20size-32--bit%20only-lightgrey.svg)](#what-it-isnt)
 [![Target](https://img.shields.io/badge/target-ESP32%20(Xtensa%20LX6)-lightgrey.svg)](#supported-hardware)
 
 ---
@@ -77,6 +78,12 @@ Flint is a small preemptive RTOS built around three ideas:
   trusted. If you need hardware isolation between untrusted components, Flint is
   the wrong tool and may always be.
 - **Not multicore.** The ESP32's second core is currently unused.
+- **Not 64-bit, and not going to be.** Flint targets 32-bit parts. The
+  assumption runs deeper than a few type aliases: the trap frame is a
+  `#[repr(C)]` of `u32`s that `vectors.S` indexes by fixed byte offsets, the
+  memory map and linker script are 32-bit throughout, and every driver takes a
+  `u32` register base. Widening that is a rewrite of the context switch and the
+  memory map, and no part in this class needs it.
 
 ---
 
