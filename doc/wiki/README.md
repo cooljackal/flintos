@@ -11,13 +11,19 @@ made them wrong, and so a checkout carries its own documentation.
 
 ## Publishing
 
-```bash
-tools/publish-wiki.sh
-```
+Automatic. `.github/workflows/wiki.yml` pushes to the wiki on every merge to
+`main` that touches this directory. Nothing to run.
 
-Clones the wiki repo, copies these files in, commits and pushes. Needs the wiki
-to exist first — create any page once via the web UI, or GitHub has nothing to
-clone.
+It also deletes wiki pages that no longer exist here, so a renamed page doesn't
+linger.
+
+**One-time setup:** GitHub doesn't create a wiki until it has a page. Open
+[the wiki](https://github.com/cooljackal/flintos/wiki), save anything, and the
+workflow takes over from there — the placeholder gets overwritten. Until then
+the job fails with that instruction.
+
+To publish without waiting for a merge, run the **Wiki** workflow manually from
+the Actions tab.
 
 ## Adding a page
 

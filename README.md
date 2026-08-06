@@ -375,6 +375,8 @@ drivers/logical/       Layer 3 — device drivers, MCU-agnostic
 tools/build/           build-script helper that gives an app the linker script
 tools/size/            `make size` — where the image's bytes went, per region
 tools/check-layers.sh  enforces the Layer 3 → Layer 1 boundary
+doc/wiki/              the wiki's source; CI publishes it on merge
+doc/internal/          superseded planning documents, kept as history
 ```
 
 **arch / SoC / board are three separate tiers, deliberately.** The CPU core, the
