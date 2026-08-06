@@ -54,7 +54,34 @@ ifeq ($(RUSTUP_HOME_DIR),)
   RUSTUP_HOME_DIR := $(if $(WINDOWS),$(subst \,/,$(USERPROFILE)),$(HOME))/.rustup
 endif
 
+# The bash that runs tools/*.sh. Never bare `bash`.
+#
+# On Windows, C:\Windows\System32\bash.exe is the WSL launcher and sits ahead of
+# MSYS2 and Git Bash on a default PATH. A recipe saying `bash` therefore runs
+# the script inside a Linux distro that has no Rust toolchain, no espflash, and
+# no access to COM ports -- and the failure blames the toolchain rather than the
+# shell. Which bash wins also depends on the shell make was invoked from, so the
+# same target worked from Git Bash and failed from PowerShell on one machine.
+#
+# Prefer the bash that ships beside the make reading this file. `wildcard`
+# resolves /usr/bin/bash to bash.exe on MSYS2, and the path exists on Linux;
+# macOS has /bin/bash instead, where the PATH lookup is correct anyway.
+BASH := $(if $(wildcard /usr/bin/bash),/usr/bin/bash,bash)
+
 ESP_GCC_DIR    := $(RUSTUP_HOME_DIR)/toolchains/esp/xtensa-esp-elf/bin
+
+# Where cargo put its binaries -- cargo, rustup, espflash all live here.
+#
+# Needed because the PATH make hands to a recipe does not reliably contain it.
+# cargo adds ~/.cargo/bin to the *persisted* Windows PATH, so a shell opened
+# before the install does not have it; and MSYS2's make strips USERPROFILE, so
+# a recipe cannot reconstruct the path either -- $(HOME) there is the MSYS home
+# (/home/<user>), not the Windows profile where cargo actually installed.
+#
+# `rustup show home` is the one thing that reports the Windows profile
+# correctly, and .cargo is its sibling under a default install. CARGO_HOME wins
+# if it is set, for anyone who moved it.
+CARGO_BIN_DIR  := $(if $(CARGO_HOME),$(subst \,/,$(CARGO_HOME))/bin,$(patsubst %/.rustup,%/.cargo/bin,$(RUSTUP_HOME_DIR)))
 
 # Restore TMP/TEMP for the processes make runs.
 #
@@ -202,7 +229,13 @@ env-uninstall: ## Remove the Espressif toolchain
 
 # ─── Build — Xtensa target ─────────────────────────────────────────────────────
 
-export PATH := $(ESP_GCC_DIR):$(PATH)
+# Both directories go on the PATH every recipe sees. ESP_GCC_DIR supplies the
+# Xtensa gcc that cargo invokes as a linker; CARGO_BIN_DIR supplies cargo,
+# rustup and espflash themselves, which a terminal opened before the toolchain
+# was installed will not have. Without the latter, `make build` and
+# `make test-target` fail with "not found" in one terminal and work in another,
+# and the message blames this file rather than the session.
+export PATH := $(ESP_GCC_DIR):$(CARGO_BIN_DIR):$(PATH)
 
 ##@ Build and flash
 .PHONY: build
@@ -270,11 +303,11 @@ check-all: ## Full check including arch (requires Xtensa toolchain)
 
 .PHONY: check-layers
 check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)
-	bash tools/check-layers.sh
+	$(BASH) tools/check-layers.sh
 
 .PHONY: check-names
 check-names: ## Enforce the package naming and layout convention
-	bash tools/check-names.sh
+	$(BASH) tools/check-names.sh
 
 .PHONY: test-host
 test-host: ## Run host-side unit tests
@@ -296,14 +329,14 @@ test-target: ## Flash and run the on-target self-tests (needs a board attached)
 	APP="$(APP)" BOARD="$(BOARD)" DEBUG="$(DEBUG)" PORT="$(PORT)" \
 	FLASH_BAUD="$(FLASH_BAUD)" MONITOR_BAUD="$(MONITOR_BAUD)" \
 	ESPFLASH_CHIP="$(ESPFLASH_CHIP)" FLASH_MODE="$(FLASH_MODE)" \
-	bash tools/target-test.sh
+	$(BASH) tools/target-test.sh
 
 # The judging half of the harness, checked without hardware. It is the part
 # most likely to be wrong and the most expensive to exercise for real, and a
 # harness that calls a dropped serial line a pass is worse than none.
 .PHONY: test-harness
 test-harness: ## Test the on-target harness's judging logic (no board needed)
-	bash tools/target-test-selftest.sh
+	$(BASH) tools/target-test-selftest.sh
 
 # ─── Lint ───────────────────────────────────────────────────────────────────────
 

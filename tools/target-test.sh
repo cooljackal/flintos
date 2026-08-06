@@ -27,6 +27,32 @@
 
 set -uo pipefail
 
+# A caller-supplied log path is relative to *their* cwd, so make it absolute
+# before this script moves to the repo root.
+if [ "${1:-}" = "--parse-only" ] && [ -n "${2:-}" ]; then
+    case "$2" in
+        /* | [A-Za-z]:[\\/]*) ;;             # already absolute
+        *) set -- "$1" "$PWD/$2" ;;
+    esac
+fi
+
+cd "$(dirname "$0")/.."
+
+# Scratch files go in the repo, not /tmp.
+#
+# On Windows two MSYS-family runtimes are usually both installed -- MSYS2, which
+# provides make and bash, and Git for Windows, which often provides the first
+# mktemp on PATH -- and they map /tmp to different Windows directories. mktemp
+# creates the file under its own mapping and prints a bare POSIX path; the shell
+# then resolves that path somewhere else, and every write fails with "No such
+# file or directory" naming a file that visibly just got created.
+#
+# `target/` is already gitignored and means one thing to both runtimes. Set
+# before anything can use it -- `--parse-only` returns long before the rest of
+# the setup runs.
+WORK_ROOT="target/tmp"
+mkdir -p "$WORK_ROOT"
+
 MARK_BEGIN="[FLINT] SELFTEST BEGIN"
 MARK_END="[FLINT] SELFTEST END"
 MARK_TEST="[FLINT] TEST "
@@ -48,7 +74,7 @@ judge() {
     # place, the trailing CR sits between "PASS" and end-of-line and every
     # anchored match below silently fails — the harness would then report a
     # clean board as having run no tests at all. Strip it once, here.
-    log="$(mktemp -t flint-judge.XXXXXX)"
+    log="$(mktemp "$WORK_ROOT/flint-judge.XXXXXX")"
     tr -d '\r' <"$raw" >"$log"
     # shellcheck disable=SC2064
     trap "rm -f '$log'" RETURN
@@ -115,8 +141,6 @@ if [ "${1:-}" = "--parse-only" ]; then
     exit $?
 fi
 
-cd "$(dirname "$0")/.."
-
 APP="${APP:-demo}"
 BOARD="${BOARD:-board-esp32-wrover}"
 DEBUG="${DEBUG:-debug-level-1}"
@@ -135,10 +159,22 @@ BIN="target/xtensa-esp32-none-elf/debug/${APP}"
 # the places it is actually installed.
 ESPFLASH=""
 CANDIDATES=("espflash")
+
+# Passed down by the Makefile, which resolves it from `rustup show home`.
+[ -n "${CARGO_BIN_DIR:-}" ] && CANDIDATES+=("$CARGO_BIN_DIR/espflash")
 [ -n "${CARGO_HOME:-}" ] && CANDIDATES+=("$CARGO_HOME/bin/espflash")
+
+# Standalone fallback: ask rustup where it lives and take .cargo as its sibling.
+# This is the only reliable way to reach the Windows profile from a recipe --
+# MSYS2's make strips USERPROFILE, and $HOME there is the MSYS home
+# (/home/<user>), not the profile cargo installed into. An earlier version of
+# this list relied on those two and so searched exactly one wrong directory.
+if rustup_home="$(rustup show home 2>/dev/null)" && [ -n "$rustup_home" ]; then
+    rustup_home="${rustup_home//\\//}"
+    CANDIDATES+=("${rustup_home%/.rustup}/.cargo/bin/espflash")
+fi
+
 [ -n "${HOME:-}" ] && CANDIDATES+=("$HOME/.cargo/bin/espflash")
-# On MSYS2/Git Bash $HOME may be the MSYS home rather than the Windows profile,
-# which is where cargo actually installed.
 if [ -n "${USERPROFILE:-}" ] && command -v cygpath >/dev/null 2>&1; then
     CANDIDATES+=("$(cygpath -u "$USERPROFILE")/.cargo/bin/espflash")
 fi
@@ -163,15 +199,55 @@ for candidate in "${CANDIDATES[@]}"; do
     done
 done
 
+# Are we inside WSL? If so, nothing installed on Windows is reachable and no
+# COM port exists here, so no amount of PATH fixing will help. Worth detecting
+# because it is easy to land in by accident: C:\Windows\System32\bash.exe is the
+# WSL launcher and comes ahead of MSYS2 and Git Bash on a default PATH, so a
+# `bash tools/...` typed at a Windows prompt runs the script in a Linux distro.
+in_wsl() {
+    [ -n "${WSL_DISTRO_NAME:-}" ] && return 0
+    grep -qi microsoft /proc/version 2>/dev/null
+}
+
+wrong_shell_hint() {
+    if in_wsl; then
+        echo
+        echo "  This shell is WSL${WSL_DISTRO_NAME:+ ($WSL_DISTRO_NAME)}, and the toolchain is installed on"
+        echo "  Windows. WSL cannot see it, and cannot open a COM port either."
+        echo "  Run this from Git Bash, the MSYS2 shell, or PowerShell instead:"
+        echo "      make test-target BOARD=$BOARD PORT=$PORT"
+        echo
+        echo "  (On Windows, bare \`bash\` resolves to C:\\Windows\\System32\\bash.exe --"
+        echo "   the WSL launcher. The Makefile pins \$(BASH) to avoid exactly this.)"
+    fi
+}
+
 if [ -z "$ESPFLASH" ]; then
     {
         echo "espflash not found."
         echo "  Looked on PATH and in:"
         for candidate in "${CANDIDATES[@]:1}"; do echo "    $candidate"; done
-        echo
-        echo "  Install it with:  cargo install espflash"
-        echo "  If it IS installed, this shell's PATH predates the install."
-        echo "  Open a new terminal, or:  export PATH=\"\$HOME/.cargo/bin:\$PATH\""
+        wrong_shell_hint
+        if ! in_wsl; then
+            echo
+            echo "  Install it with:  cargo install espflash"
+            echo "  If it IS installed, this shell's PATH predates the install."
+            echo "  Open a new terminal, or:  export PATH=\"\$HOME/.cargo/bin:\$PATH\""
+        fi
+    } >&2
+    exit 2
+fi
+
+# The build needs cargo, which goes missing for the same reason espflash does.
+# Check before building rather than letting `cargo +esp build` fail with a bare
+# "command not found" that names neither the cause nor the fix.
+if ! command -v cargo >/dev/null 2>&1; then
+    {
+        echo "cargo not found."
+        wrong_shell_hint
+        if ! in_wsl; then
+            echo "  Install Rust, or add ~/.cargo/bin to PATH."
+        fi
     } >&2
     exit 2
 fi
@@ -183,7 +259,7 @@ cargo +esp build \
     -p "$APP" --no-default-features \
     --features "${BOARD},${DEBUG},self-test" || exit 1
 
-LOG="$(mktemp -t flint-target-test.XXXXXX)"
+LOG="$(mktemp "$WORK_ROOT/flint-target-test.XXXXXX")"
 trap 'rm -f "$LOG"' EXIT
 
 echo "==> Flashing and capturing (timeout ${TIMEOUT_SECS}s)"

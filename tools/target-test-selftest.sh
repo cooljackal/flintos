@@ -16,15 +16,33 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 HARNESS="tools/target-test.sh"
-TMP="$(mktemp -d -t flint-harness-tests.XXXXXX)"
-trap 'rm -rf "$TMP"' EXIT
+
+# An explicit directory inside the repo, not `mktemp -t`, which routes through
+# /tmp.
+#
+# On Windows two MSYS-family runtimes are usually both installed -- MSYS2, which
+# provides make and bash, and Git for Windows, which often provides the first
+# mktemp on PATH -- and they map /tmp to different Windows directories. mktemp
+# then creates the directory under its own mapping and prints a bare POSIX path;
+# the shell resolves that same path somewhere else, and every write fails with
+# "No such file or directory" naming a directory that visibly just got created.
+#
+# `target/` is already gitignored and means one thing to both runtimes.
+#
+# Not named TMP: make exports that as a native path so the linkers it invokes
+# can find a writable directory, and a bash assignment to an imported name stays
+# exported. Overwriting it here would hand every child a POSIX path it cannot use.
+WORK_ROOT="target/tmp"
+mkdir -p "$WORK_ROOT"
+WORK="$(mktemp -d "$WORK_ROOT/flint-harness-tests.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
 
 failures=0
 
 # expect <name> <expected-exit> <log-content>
 expect() {
     local name="$1" want="$2" body="$3"
-    local log="$TMP/$name.log"
+    local log="$WORK/$name.log"
     printf '%s' "$body" >"$log"
 
     local out rc
