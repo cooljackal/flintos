@@ -20,17 +20,58 @@ XTENSA_TARGET   := xtensa-esp32-none-elf
 ESP_TOOLCHAIN   := esp
 CARGO           := cargo +$(ESP_TOOLCHAIN)
 
-# OS-specific paths (Windows uses USERPROFILE, POSIX uses HOME).
+# Windows detection, which is not just `$(OS)`.
+#
+# `$(OS)` is set only when make inherits a native Windows environment. MSYS2's
+# make -- what Git Bash and the MSYS2 shell both provide -- strips OS,
+# USERPROFILE, TMP and TEMP from the environment it passes on. Testing OS alone
+# therefore takes the POSIX branch on a Windows box, silently -- the temp fix
+# below never runs, and every link fails for a reason that names no cause.
+# MSYSTEM is set by every MSYS2 shell.
+ifeq ($(OS),Windows_NT)
+  WINDOWS       := 1
+else ifneq ($(MSYSTEM),)
+  WINDOWS       := 1
+endif
+
+# Where the Xtensa gcc lives, asked rather than guessed.
+#
+# This used to be built from `$(USERPROFILE)` or `$(HOME)` plus `/.rustup`, and
+# it was wrong on both Windows shells: MSYS2 strips USERPROFILE, and its $(HOME)
+# is the MSYS home (/home/<user>), while rustup installs under the Windows
+# profile. `rustup show home` is the only thing that actually knows, and it
+# honours RUSTUP_HOME for anyone who has moved it.
 #
 # Forward slashes even on Windows: this ends up on PATH for a gcc invoked
 # through cargo, and the shells in between do not agree on backslashes.
-ifeq ($(OS),Windows_NT)
-  ESP_HOME      := $(subst \,/,$(USERPROFILE))
-else
-  ESP_HOME      := $(HOME)
+RUSTUP_HOME_DIR := $(subst \,/,$(shell rustup show home 2>/dev/null))
+ifeq ($(RUSTUP_HOME_DIR),)
+  RUSTUP_HOME_DIR := $(if $(WINDOWS),$(subst \,/,$(USERPROFILE)),$(HOME))/.rustup
 endif
 
-ESP_GCC_DIR    := $(ESP_HOME)/.rustup/toolchains/esp/xtensa-esp-elf/bin
+ESP_GCC_DIR    := $(RUSTUP_HOME_DIR)/toolchains/esp/xtensa-esp-elf/bin
+
+# Restore TMP/TEMP for the processes make runs.
+#
+# MSYS2's make drops both, so every linker reached from a recipe -- link.exe for
+# host tests, xtensa-esp32-elf-gcc for firmware -- falls back to C:\WINDOWS,
+# which is not writable. It surfaces as `LNK1104: cannot open file
+# C:\WINDOWS\lnk{...}.tmp` or `Cannot create temporary file in C:\WINDOWS\:
+# Permission denied`, neither of which names the environment as the cause.
+#
+# These are native tools, so they need a native path: `cygpath -w /tmp` gives
+# one (MSYS2 maps /tmp to the Windows temp directory). `?=` so a caller can
+# override, and so native-Windows make -- which does inherit TMP -- keeps its
+# own. Nothing here runs on POSIX, where the linker finds /tmp by itself.
+ifdef WINDOWS
+  WIN_TMP       := $(shell cygpath -w /tmp 2>/dev/null)
+  ifneq ($(WIN_TMP),)
+    TMP         ?= $(WIN_TMP)
+    TEMP        ?= $(TMP)
+    export TMP
+    export TEMP
+  endif
+endif
 
 # The memory map, read by `make size` to name and bound each region.
 LD_SCRIPT      := arch/xtensa/flint32.ld
