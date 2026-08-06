@@ -56,6 +56,29 @@ MONITOR_BAUD   ?= 115200
 # a value that could be wrong for one of the two boards.
 FLASH_MODE     := dio
 
+# ── Application selection ──────────────────────────────────────────────────────
+#
+# The kernel is a library; the binary that gets flashed is an application from
+# apps/. Pick one, a board, and how much debug output you want:
+#
+#   make flash                                    # apps/demo on a WROVER
+#   make flash APP=hello                          # apps/hello
+#   make flash APP=demo BOARD=board-m5-atom       # M5Stack Atom
+#   make flash APP=hello DEBUG=debug-level-0      # no logging at all
+#   make apps                                     # what is available
+#
+# --no-default-features is not optional. Cargo unions features, so without it
+# the default board stays enabled alongside the requested one and flint-board's
+# compile_error! rejects the build -- deliberately, because a binary with two
+# board manifests merged in is not a build for either board.
+APP            ?= demo
+BOARD          ?= board-esp32-wrover
+DEBUG          ?= debug-level-1
+
+APP_FLAGS      := --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
+                  -p $(APP) --no-default-features --features $(BOARD),$(DEBUG)
+APP_BIN        := target/$(XTENSA_TARGET)/debug/$(APP)
+
 # ── Environment Setup ──────────────────────────────────────────────────────────
 
 .PHONY: env
@@ -92,36 +115,41 @@ env-uninstall: ## Remove the Espressif toolchain
 export PATH := $(ESP_GCC_DIR):$(PATH)
 
 .PHONY: build
-build: ## Build for Xtensa ESP32 (requires Xtensa toolchain)
-	$(CARGO) build --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins
+build: ## Build the selected app (APP=demo BOARD=board-esp32-wrover DEBUG=debug-level-1)
+	$(CARGO) build $(APP_FLAGS)
 
 .PHONY: build-release
-build-release: ## Build release (all debug off, smallest binary)
-	$(CARGO) build --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins --release
+build-release: ## Build release (smallest binary)
+	$(CARGO) build $(APP_FLAGS) --release
 
 .PHONY: build-trace
-build-trace: ## Build with kernel event tracing (debug level 2)
-	$(CARGO) build --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins --features "debug-level-2"
+build-trace: ## Build with kernel event tracing
+	$(MAKE) build DEBUG=debug-level-2
 
 .PHONY: flash
-flash: build ## Build + flash via espflash (USB serial, ESP32-PICO-D4 or WROVER)
-	espflash flash target/$(XTENSA_TARGET)/debug/flint-kernel \
+flash: build ## Build + flash + monitor via espflash (USB serial)
+	espflash flash $(APP_BIN) \
 		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
 		--baud $(FLASH_BAUD) --monitor --monitor-baud $(MONITOR_BAUD)
-
-.PHONY: build-dev
-build-dev: ## Build with logging on (needed to SEE the demo task output at G1)
-	$(CARGO) build --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins --features debug-level-1
 
 .PHONY: flash-dev
-flash-dev: build-dev ## Flash + monitor the logging build (USB serial, ESP32-PICO-D4 or WROVER)
-	espflash flash target/$(XTENSA_TARGET)/debug/flint-kernel \
-		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
-		--baud $(FLASH_BAUD) --monitor --monitor-baud $(MONITOR_BAUD)
+flash-dev: flash ## Alias for `flash` (logging is on by default)
 
 .PHONY: flash-jtag
 flash-jtag: build ## Build + flash via probe-rs (JTAG)
-	probe-rs run --chip ESP32 target/$(XTENSA_TARGET)/debug/flint-kernel
+	probe-rs run --chip ESP32 $(APP_BIN)
+
+.PHONY: apps
+apps: ## List the applications in apps/
+	@echo "Applications (build with: make flash APP=<name>)"
+	@for d in apps/*/; do \
+		name=$$(basename $$d); \
+		desc=$$(sed -n 's/^description = "\(.*\)"/\1/p' $$d/Cargo.toml); \
+		printf "  %-12s %s\n" "$$name" "$$desc"; \
+	done
+	@echo ""
+	@echo "Boards: board-esp32-wrover (default), board-esp32-devkitc, board-m5-atom"
+	@echo "Debug:  debug-level-0 (silent) .. debug-level-3 (everything)"
 
 .PHONY: erase
 erase: ## Erase the entire flash (recover from a bad/stuck prior image)

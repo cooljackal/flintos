@@ -3,9 +3,15 @@ resolver = "2"
 members = [
     "flint-hal",
     "flint-api",
+    "flint-build",
     "arch/flint-arch-xtensa",
     "kernel",
     "board",
+
+    # Applications. The kernel is a library; an application is the binary that
+    # links it. Adding one here is all that is needed for `make APP=<name>`.
+    "apps/hello",
+    "apps/demo",
     "drivers/physical/esp32_uart",
     "drivers/physical/esp32_gpio",
     "drivers/physical/esp32_spi",

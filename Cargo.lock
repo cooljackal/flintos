@@ -10,6 +10,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo"
+version = "0.1.0"
+dependencies = [
+ "flint-api",
+ "flint-build",
+ "flint-hal",
+ "flint-kernel",
+]
+
+[[package]]
 name = "esp32-gpio"
 version = "0.1.0"
 dependencies = [
@@ -59,6 +69,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-build"
+version = "0.1.0"
+
+[[package]]
 name = "flint-hal"
 version = "0.1.0"
 
@@ -79,6 +93,16 @@ dependencies = [
  "spi-bus",
  "ssd1306",
  "uart-bus",
+]
+
+[[package]]
+name = "hello"
+version = "0.1.0"
+dependencies = [
+ "flint-api",
+ "flint-build",
+ "flint-hal",
+ "flint-kernel",
 ]
 
 [[package]]

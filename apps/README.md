@@ -1,0 +1,113 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Applications
+
+The Flint kernel is a library. The thing you flash is an **application**: a
+small `no_std` binary crate that links the kernel, names an entry point, and
+spawns its own tasks.
+
+| App | What it does |
+|---|---|
+| [`hello`](hello/) | One task, logging once a second. The minimal template. |
+| [`demo`](demo/) | Three tasks at three priorities on three periods. What the kernel is verified against. |
+
+```bash
+make apps                                  # list what's here
+make flash                                 # demo, on an ESP32-WROVER
+make flash APP=hello                       # hello instead
+make flash APP=demo BOARD=board-m5-atom    # different board
+make flash APP=hello DEBUG=debug-level-0   # no logging at all
+```
+
+`BOARD` and `DEBUG` default to `board-esp32-wrover` and `debug-level-1`.
+
+---
+
+## Starting your own
+
+Copy `hello/`, rename it, and add it to `members` in the workspace
+[`Cargo.toml`](../Cargo.toml). That is the whole setup — `make flash APP=<name>`
+works from there.
+
+An application is three files.
+
+**`src/main.rs`** — the entry point and your tasks:
+
+```rust
+#![no_std]
+#![no_main]
+
+use flint_api::task;
+use flint_hal::types::Priority;
+
+flint_kernel::flint_app!(main);
+
+fn main() {
+    task::spawn("worker", worker, Priority::Normal(1), 4096);
+}
+
+fn worker() {
+    loop {
+        flint_api::log_info!("tick");
+        task::sleep_ms(1000);
+    }
+}
+```
+
+`main` runs once, after the console, tick timer and idle task are up but
+*before* interrupts are unmasked. Spawn tasks and return; nothing is scheduled
+until you do. It is not a place to loop.
+
+**`build.rs`** — supplies the linker script, which Cargo will not inherit from a
+dependency:
+
+```rust
+fn main() {
+    flint_build::link();
+}
+```
+
+**`Cargo.toml`** — dependencies plus the feature pass-through. The application
+is the binary, so it is the only crate that can choose a board without the
+choice leaking into everything else that links the kernel:
+
+```toml
+[dependencies]
+flint-kernel = { path = "../../kernel", default-features = false }
+flint-api = { path = "../../flint-api" }
+flint-hal = { path = "../../flint-hal" }
+
+[build-dependencies]
+flint-build = { path = "../../flint-build" }
+
+[features]
+default = ["board-esp32-wrover", "debug-level-1"]
+board-esp32-wrover = ["flint-kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["flint-kernel/board-esp32-devkitc"]
+board-m5-atom = ["flint-kernel/board-m5-atom"]
+debug-level-0 = ["flint-kernel/debug-level-0"]
+debug-level-1 = ["flint-kernel/debug-level-1"]
+debug-level-2 = ["flint-kernel/debug-level-2"]
+debug-level-3 = ["flint-kernel/debug-level-3"]
+```
+
+Copy the feature block verbatim. Exactly one `board-*` feature must reach
+`flint-board`, which is why the app sets `default-features = false` on the
+kernel and why `make` passes `--no-default-features`: Cargo unions features, so
+without that the default board would stay enabled alongside the one you asked
+for, and a binary with two board manifests merged in is not a build for either
+board.
+
+---
+
+## Stack sizes
+
+`spawn` takes a stack size in bytes, and 4096 is a reasonable default. Traps run
+on the interrupted task's own stack, so the budget has to cover your deepest
+call chain *plus* a trap frame and the kernel's trap handler on top — and with
+logging on, `log_info!` → formatting → the UART driver is already several frames
+deep before a tick can land on it.
+
+Every stack is painted at spawn and its lowest word is a guard, so an overflow
+reports itself by name (`FATAL: stack overflow in task ...`) rather than
+corrupting whatever lies beneath.

@@ -69,23 +69,24 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             let now = XtensaTick::now();
 
             if TRAP_DIAGNOSTICS && now % 1000 == 0 {
-                let cur = scheduler::global().current;
+                let sched = scheduler::global();
+                let cur = sched.current;
                 debug::fault::raw_print("[FLINT] t=");
                 debug::fault::raw_dec(now as u32);
                 debug::fault::raw_print(" cur=");
                 debug::fault::raw_dec(cur);
+                debug::fault::raw_print(":");
+                debug::fault::raw_print(match &sched.tasks[cur as usize] {
+                    Some(tcb) => tcb.name,
+                    None => "?",
+                });
+                debug::fault::raw_print(" ready=");
+                debug::fault::raw_hex(sched.ready_mask as u32);
                 debug::fault::raw_print(" pc=");
                 debug::fault::raw_hex(unsafe { (*frame).pc });
                 debug::fault::raw_print(" ws=");
                 debug::fault::raw_hex(unsafe { (*frame).windowstart });
-                debug::fault::raw_print(" n=");
-                debug::fault::raw_dec(crate::counters::sensor());
-                debug::fault::raw_print("/");
-                debug::fault::raw_dec(crate::counters::consumer());
-                debug::fault::raw_print("/");
-                debug::fault::raw_dec(crate::counters::housekeep());
-                debug::fault::raw_print("
-");
+                debug::fault::raw_print("\r\n");
             }
 
             if scheduler::global().on_tick(now) {

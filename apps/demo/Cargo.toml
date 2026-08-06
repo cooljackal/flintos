@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "demo"
+version.workspace = true
+edition.workspace = true
+description = "Flint demo application — three tasks at three priorities"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+flint-kernel = { path = "../../kernel", default-features = false }
+flint-api = { path = "../../flint-api" }
+flint-hal = { path = "../../flint-hal" }
+
+[build-dependencies]
+flint-build = { path = "../../flint-build" }
+
+[features]
+default = ["board-esp32-wrover", "debug-level-1"]
+
+board-esp32-wrover = ["flint-kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["flint-kernel/board-esp32-devkitc"]
+board-m5-atom = ["flint-kernel/board-m5-atom"]
+
+debug-level-0 = ["flint-kernel/debug-level-0"]
+debug-level-1 = ["flint-kernel/debug-level-1"]
+debug-level-2 = ["flint-kernel/debug-level-2"]
+debug-level-3 = ["flint-kernel/debug-level-3"]

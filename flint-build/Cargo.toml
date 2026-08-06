@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "flint-build"
+version.workspace = true
+edition.workspace = true
+description = "Build-script helper for Flint applications — supplies the linker script"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

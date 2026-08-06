@@ -117,9 +117,18 @@ jobs:
           cargo install espup --locked
           espup install
 
-      - name: Build the kernel image
+      # Build every application, not just one. An app carries its own
+      # build.rs and feature pass-through, so a broken one is invisible to a
+      # build of any other.
+      - name: Build every application image
         run: |
           . "$HOME/export-esp.sh"
-          cargo +esp build \
-            --target xtensa-esp32-none-elf \
-            -Z build-std=core,compiler_builtins
+          for app in apps/*/; do
+            name=$(basename "$app")
+            echo "::group::$name"
+            cargo +esp build \
+              --target xtensa-esp32-none-elf \
+              -Z build-std=core,compiler_builtins \
+              -p "$name"
+            echo "::endgroup::"
+          done

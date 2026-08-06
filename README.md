@@ -135,23 +135,28 @@ Then activate the environment in your shell:
 ```bash
 git clone https://github.com/cooljackal/flintos
 cd flintos
-make flash-dev
+make flash
 ```
 
-`flash-dev` builds with `debug-level-1` and flashes over USB serial.
-**Use it rather than `make flash`** — logging is off by default, so `make flash`
-boots correctly but prints no task output, which looks exactly like a kernel
-that isn't scheduling.
+That builds `apps/demo`, flashes over USB serial, and opens a monitor.
 
-Building for a board other than the WROVER default:
+The kernel is a library; the thing you flash is an **application** from
+[`apps/`](apps/). Pick a different one, a different board, or a different amount
+of logging:
 
 ```bash
-cargo +esp build -p flint-kernel --target xtensa-esp32-none-elf -Z build-std=core,compiler_builtins --features debug-level-1 --no-default-features --features board-m5-atom
+make apps                                  # what's available
+make flash APP=hello                       # the minimal one-task template
+make flash APP=demo BOARD=board-m5-atom    # M5Stack Atom (ESP32-PICO-D4)
+make flash APP=hello DEBUG=debug-level-0   # no logging at all
 ```
 
 Board features: `board-esp32-wrover` (default), `board-esp32-devkitc`,
-`board-m5-atom` (ESP32-PICO-D4). Enabling two is a compile error, not a warning
-— a silently wrong pin map presents as the board being broken.
+`board-m5-atom`. Enabling two is a compile error, not a warning — a silently
+wrong pin map presents as the board being broken.
+
+Writing your own application is copying `apps/hello/` and adding a line to the
+workspace `Cargo.toml`. See [`apps/README.md`](apps/README.md).
 
 <details>
 <summary><b>If flashing fails</b></summary>
@@ -161,7 +166,7 @@ baud switch failed. This is the common one. Flashing defaults to 115200 for
 that reason; if you raised it, put it back:
 
 ```bash
-make flash-dev FLASH_BAUD=115200
+make flash FLASH_BAUD=115200
 ```
 
 **`Error while connecting to device`, before the stub** — the board isn't in
@@ -240,18 +245,31 @@ never schedules and one whose timer never ticks are otherwise indistinguishable.
 
 ## Writing a task
 
+A whole application, `apps/hello/src/main.rs`:
+
 ```rust
-use flint_api::{task, timer, Priority};
+#![no_std]
+#![no_main]
+
+use flint_api::task;
+use flint_hal::types::Priority;
+
+flint_kernel::flint_app!(main);
+
+fn main() {
+    task::spawn("blink", blink, Priority::Normal(1), 4096);
+}
 
 fn blink() {
     loop {
-        flint_api::log_info!("tick at {} ms", timer::now_ms());
+        flint_api::log_info!("tick at {} ms", flint_api::timer::now_ms());
         task::sleep_ms(500);
     }
 }
-
-task::spawn("blink", blink, Priority::Normal(1), 4096);
 ```
+
+`main` runs once, after the kernel is up but before interrupts are unmasked.
+Spawn your tasks and return.
 
 Priorities are banded — `Critical(0..15)`, `Normal(0..15)`, `Background(0..15)` —
 so you can slot a task in without renumbering everything else.
@@ -330,10 +348,12 @@ today (none exist yet); when you need something production-proven — use
 ## Project layout
 
 ```
+apps/                      applications — the binaries you actually flash
 flint-hal/                 traits + types every layer depends on (depends on nothing)
 flint-api/                 the API your application code uses
+flint-build/               build-script helper that gives an app the linker script
 arch/flint-arch-xtensa/    boot, vectors, context switch, tick for Xtensa LX6
-kernel/                    scheduler, IPC, timers, IRQ routing, debug
+kernel/                    scheduler, IPC, timers, IRQ routing, debug — a library
 board/                     per-board manifests (pins, base addresses, devices)
 drivers/physical/          Layer 1 — MCU register drivers
 drivers/bus/               Layer 2 — transport abstractions
@@ -341,16 +361,17 @@ drivers/logical/           Layer 3 — device drivers, MCU-agnostic
 tools/check-layers.sh      enforces the Layer 3 → Layer 1 boundary
 ```
 
-~5,400 lines of Rust and ~570 lines of Xtensa assembly across 14 crates.
+~5,400 lines of Rust and ~570 lines of Xtensa assembly.
 
 ## Development
 
 ```bash
 make check         # host-side compile check
-make test-host     # 49 host unit tests
+make test-host     # host unit tests
 make lint          # clippy, warnings denied
 make check-layers  # three-layer boundary enforcement
-make build         # Xtensa build (needs the esp toolchain)
+make apps          # list applications
+make build         # Xtensa build of APP (needs the esp toolchain)
 ```
 
 Debug features are additive and compile out entirely:
