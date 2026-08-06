@@ -13,15 +13,15 @@ use crate::types::*;
 /// Methods are called from the arch-specific exception entry stubs and
 /// from the scheduler during context switches.
 pub trait SyscallABI {
-    /// Extract syscall arguments from the raw trap frame.
+    /// Extract syscall arguments from the trap frame.
     ///
-    /// Called from the arch exception entry immediately after the
-    /// `_rust_exception_handler` receives the frame pointer.
-    fn enter(frame: &RawTrapFrame) -> SyscallArgs;
+    /// The frame is a [`TaskContext`] -- the same layout the trap entry builds
+    /// and the scheduler stores, not a separate "raw" one.
+    fn enter(frame: &TaskContext) -> SyscallArgs;
 
     /// Prepare the trap frame so that returning from the exception
     /// delivers the result to the caller in the correct register.
-    fn return_to_task(frame: &mut RawTrapFrame, result: SyscallResult);
+    fn return_to_task(frame: &mut TaskContext, result: SyscallResult);
 
     /// Save the current execution context into a `TaskContext` for
     /// later restoration by the scheduler.

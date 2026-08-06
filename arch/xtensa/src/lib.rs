@@ -29,6 +29,45 @@ pub mod tick;
 
 pub use critical_section::{with as cs_with, XtensaCriticalSection, XtensaCsToken};
 
+// ── Trap frame geometry ─────────────────────────────────────────────────────
+//
+// These describe what `_flint_trap_entry` in vectors.S does to the interrupted
+// task's stack. They exist to be asserted against: the assembly writes the
+// frame by fixed offset, and nothing in the compiler connects those offsets to
+// the Rust struct they are offsets *into*.
+
+/// Size of the frame the trap entry builds. This is `TaskContext` itself — the
+/// entry stores each field at its `#[repr(C)]` offset.
+pub const TRAP_FRAME_BYTES: usize = core::mem::size_of::<flint_hal::TaskContext>();
+
+/// Bytes below a frame's stack pointer that the Xtensa windowed ABI reserves
+/// for the caller's `a0`-`a3` when a window overflows.
+///
+/// The trap entry has to skip past this rather than write over it: the entry
+/// spills all live windows *before* it moves the stack pointer, so a caller's
+/// registers are already sitting there by the time the frame is allocated.
+pub const ABI_SAVE_AREA_BYTES: usize = 16;
+
+/// Total the trap entry subtracts from the interrupted task's stack pointer.
+pub const TRAP_STACK_BYTES: usize = TRAP_FRAME_BYTES + ABI_SAVE_AREA_BYTES;
+
+const _: () = {
+    // vectors.S spells this out as a literal in three places: the scratch frame
+    // pointer, the `addi a1, a1, -112`, and the `addi a0, a1, 112` that
+    // recovers the original stack pointer. If TaskContext grows, this fires and
+    // says where to look — which beats the alternative, where the trap entry
+    // silently writes two fields into the register save area it was supposed to
+    // leave alone.
+    assert!(
+        TRAP_STACK_BYTES == 112,
+        "TaskContext changed size: update the -112/+112 literals in vectors.S"
+    );
+    // Xtensa requires a 16-byte-aligned stack pointer. An unaligned frame makes
+    // every later `entry` misalign too, and the fault surfaces somewhere else
+    // entirely.
+    assert!(TRAP_STACK_BYTES % 16 == 0);
+};
+
 // Assembly function prototypes (provided by context.S / vectors.S).
 extern "C" {
     /// Spill all live register windows to their on-stack save areas.

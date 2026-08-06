@@ -216,6 +216,9 @@ _flint_trap_entry:
     wsr.excsave1 a2
     wsr.excsave2 a3
 
+    // -112 = size_of::<TaskContext>() + the 16-byte ABI save area. Asserted
+    // in lib.rs (TRAP_STACK_BYTES) so a change to TaskContext fails the build
+    // here rather than quietly writing two fields into the save area.
     addi a3, a1, -112           // frame base, 16 bytes clear of the ABI save area
 
     rsr.epc1   a2

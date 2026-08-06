@@ -10,18 +10,18 @@
 //! (no syscall mechanism exists to feed them).
 
 use flint_hal::syscall::{SyscallABI, SyscallArgs, SyscallResult};
-use flint_hal::types::{RawTrapFrame, TaskContext};
+use flint_hal::types::TaskContext;
 
 pub struct XtensaSyscallABI;
 
 impl SyscallABI for XtensaSyscallABI {
     /// No syscall instruction in Option A — kept inert for trait completeness.
-    fn enter(_frame: &RawTrapFrame) -> SyscallArgs {
+    fn enter(_frame: &TaskContext) -> SyscallArgs {
         SyscallArgs { number: 0, arg0: 0, arg1: 0, arg2: 0 }
     }
 
     /// No syscall instruction in Option A — kept inert for trait completeness.
-    fn return_to_task(_frame: &mut RawTrapFrame, _result: SyscallResult) {}
+    fn return_to_task(_frame: &mut TaskContext, _result: SyscallResult) {}
 
     /// Save the current execution context (cooperative path).
     ///

@@ -5,48 +5,22 @@
 //! These types are architecture-agnostic and form the common vocabulary
 //! for the scheduler, context switching, MPU management, and task model.
 
-use core::fmt;
-
-// ── Trap frame ─────────────────────────────────────────────────────────────
-
-/// Architecture-specific raw trap frame captured on exception / interrupt entry.
-///
-/// The layout is identical to [`TaskContext`] (96 bytes, `#[repr(C)]`) so the
-/// assembly trap entry in `vectors.S` can build a frame and the kernel handler
-/// can treat it directly as a resumable task context. Field offsets are
-/// load-bearing — keep them in lock-step with `asm/context.S` / `asm/vectors.S`.
-#[repr(C)]
-pub struct RawTrapFrame {
-    pub pc: u32,
-    pub ps: u32,
-    pub sar: u32,
-    pub lbeg: u32,
-    pub lend: u32,
-    pub lcount: u32,
-    /// 16 general-purpose registers at the point of trap.
-    pub a: [u32; 16],
-    pub windowbase: u32,
-    pub windowstart: u32,
-}
-
-impl fmt::Debug for RawTrapFrame {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RawTrapFrame")
-            .field("pc", &self.pc)
-            .field("ps", &self.ps)
-            .field("sar", &self.sar)
-            .finish()
-    }
-}
-
 // ── Task context ────────────────────────────────────────────────────────────
 
-/// Per-task saved context for scheduler context switches.
+/// A task's saved execution state.
 ///
-/// Captures all callee-saved registers plus Xtensa window state so the
-/// scheduler can suspend and resume tasks at arbitrary points.
-/// `#[repr(C)]` is required because the assembly save/restore routines
-/// access fields by fixed offset.
+/// This is the one definition of that layout. The assembly trap entry builds
+/// exactly this, by field offset, on the interrupted task's stack; `_flint_trap`
+/// receives a pointer to it and returns a pointer to whichever one should run
+/// next; the scheduler stores one per task. `#[repr(C)]` and the size assertion
+/// below are what make those three agree.
+///
+/// There used to be a second struct, `RawTrapFrame`, documented as the thing
+/// the assembly built and the handler consumed — a role it never actually
+/// played. It appeared only in an inert syscall stub, while the live path used
+/// this type throughout. Two identical layouts that must both track the
+/// assembly, with nothing checking either against the other, is a bug waiting
+/// for someone to edit the wrong one.
 #[repr(C)]
 pub struct TaskContext {
     pub pc: u32,
@@ -189,22 +163,4 @@ mod tests {
         assert_eq!(ctx.windowstart, 0);
     }
 
-    #[test]
-    fn raw_trap_frame_debug() {
-        let frame = RawTrapFrame {
-            pc: 0x4000_0000,
-            ps: 0x0001_0000,
-            sar: 0,
-            lbeg: 0,
-            lend: 0,
-            lcount: 0,
-            a: [0; 16],
-            windowbase: 0,
-            windowstart: 0,
-        };
-        let s = std::format!("{:?}", frame);
-        assert!(s.contains("pc"));
-        // Debug prints decimal: 0x4000_0000 = 1073741824
-        assert!(s.contains("1073741824"));
-    }
 }
