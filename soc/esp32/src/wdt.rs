@@ -43,16 +43,28 @@ const RTC_WDTWPROTECT: u32 = RTC_CNTL_BASE + 0xA4;
 const RTC_WDT_EN: u32 = 1 << 31;
 /// Stage 0 action, bits [30:28].
 const RTC_WDT_STG0_SHIFT: u32 = 28;
-/// Reset the whole system (both cores and the digital core).
-const RTC_WDT_ACTION_RESET_SYSTEM: u32 = 4;
-/// Keep counting while the CPU is in sleep, bit 10.
-const RTC_WDT_PAUSE_IN_SLEEP: u32 = 1 << 10;
-/// System reset pulse length, bits [10:8] of the length field group.
-const RTC_WDT_SYS_RESET_LENGTH_SHIFT: u32 = 8;
-const RTC_WDT_CPU_RESET_LENGTH_SHIFT: u32 = 5;
-/// 3 selects the longest documented pulse. A pulse too short for the power
-/// rails to settle produces a reset that half-works, which is harder to
-/// diagnose than no reset at all.
+/// Stage action 4: reset the RTC domain, which takes the whole chip with it.
+/// (3 is reset-system, which leaves the RTC domain alone.)
+const RTC_WDT_ACTION_RESET_RTC: u32 = 4;
+
+// Field positions, from esp-idf `soc/rtc_cntl_reg.h`. An earlier revision had
+// every one of these wrong, and the way it failed is worth recording: the
+// watchdog armed, counted and expired exactly as intended, and the board did
+// not reset. Both reset-pulse length fields had landed on bits that are not
+// them, so the lengths were zero -- and a zero-width reset pulse resets
+// nothing. Armed, firing, and doing nothing is the worst state a watchdog can
+// be in, because everything observable says it is working.
+const RTC_WDT_SYS_RESET_LENGTH_SHIFT: u32 = 11;
+const RTC_WDT_CPU_RESET_LENGTH_SHIFT: u32 = 14;
+/// Required for stage actions that reset a CPU: without it the action fires
+/// and the PRO CPU keeps running.
+const RTC_WDT_PROCPU_RESET_EN: u32 = 1 << 9;
+const RTC_WDT_APPCPU_RESET_EN: u32 = 1 << 8;
+/// Bit 7. Stop counting in sleep, so a deliberate sleep is not a reset.
+const RTC_WDT_PAUSE_IN_SLEEP: u32 = 1 << 7;
+/// 7 selects the longest documented pulse. A pulse too short for the rails to
+/// settle produces a reset that half-works, which is harder to diagnose than
+/// none at all.
 const RTC_WDT_RESET_LENGTH_MAX: u32 = 7;
 
 /// Nominal RTC slow-clock frequency, in Hz.
@@ -92,9 +104,11 @@ pub unsafe fn rwdt_arm(ms: u32) {
     (RTC_WDTCONFIG1 as *mut u32).write_volatile(rtc_cycles_for_ms(ms));
 
     let cfg = RTC_WDT_EN
-        | (RTC_WDT_ACTION_RESET_SYSTEM << RTC_WDT_STG0_SHIFT)
+        | (RTC_WDT_ACTION_RESET_RTC << RTC_WDT_STG0_SHIFT)
         | (RTC_WDT_RESET_LENGTH_MAX << RTC_WDT_SYS_RESET_LENGTH_SHIFT)
         | (RTC_WDT_RESET_LENGTH_MAX << RTC_WDT_CPU_RESET_LENGTH_SHIFT)
+        | RTC_WDT_PROCPU_RESET_EN
+        | RTC_WDT_APPCPU_RESET_EN
         | RTC_WDT_PAUSE_IN_SLEEP;
     (RTC_WDTCONFIG0 as *mut u32).write_volatile(cfg);
 
@@ -275,6 +289,40 @@ mod tests {
         assert_eq!(mwdt_ticks_for_ms(1_000), 2_000);
         assert_eq!(mwdt_ticks_for_ms(0), 1);
         assert_eq!(mwdt_ticks_for_ms(u32::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn rtc_config_fields_do_not_overlap() {
+        // The bug this exists for: reset-length fields written at the wrong
+        // shifts landed on bits that are not them, leaving both lengths zero.
+        // The watchdog then fired into a zero-width reset pulse and the board
+        // carried on -- armed, expiring, and doing nothing.
+        let stg0 = 0x7u32 << RTC_WDT_STG0_SHIFT;
+        let sys = 0x7u32 << RTC_WDT_SYS_RESET_LENGTH_SHIFT;
+        let cpu = 0x7u32 << RTC_WDT_CPU_RESET_LENGTH_SHIFT;
+        let flags = RTC_WDT_PROCPU_RESET_EN | RTC_WDT_APPCPU_RESET_EN | RTC_WDT_PAUSE_IN_SLEEP;
+
+        assert_eq!(stg0 & sys, 0, "stage 0 overlaps the system reset length");
+        assert_eq!(stg0 & cpu, 0, "stage 0 overlaps the CPU reset length");
+        assert_eq!(sys & cpu, 0, "the two reset lengths overlap");
+        assert_eq!((sys | cpu | stg0) & flags, 0, "a length field overlaps a flag");
+        assert_eq!(RTC_WDT_EN & (stg0 | sys | cpu | flags), 0, "enable overlaps a field");
+    }
+
+    #[test]
+    fn a_configured_rwdt_actually_requests_a_cpu_reset() {
+        // Without PROCPU_RESET_EN the action fires and the PRO CPU keeps
+        // running, which is indistinguishable from a watchdog that never
+        // expired.
+        let cfg = RTC_WDT_EN
+            | (RTC_WDT_ACTION_RESET_RTC << RTC_WDT_STG0_SHIFT)
+            | (RTC_WDT_RESET_LENGTH_MAX << RTC_WDT_SYS_RESET_LENGTH_SHIFT)
+            | (RTC_WDT_RESET_LENGTH_MAX << RTC_WDT_CPU_RESET_LENGTH_SHIFT)
+            | RTC_WDT_PROCPU_RESET_EN;
+        assert_ne!(cfg & RTC_WDT_PROCPU_RESET_EN, 0);
+        // And neither pulse length may be zero.
+        assert_ne!((cfg >> RTC_WDT_SYS_RESET_LENGTH_SHIFT) & 0x7, 0);
+        assert_ne!((cfg >> RTC_WDT_CPU_RESET_LENGTH_SHIFT) & 0x7, 0);
     }
 
     #[test]
