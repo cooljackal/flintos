@@ -3,6 +3,9 @@
 #![no_std]
 
 use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, SpiMode};
+use flint_hal::pinmux::{PinConfig, PinMux, Signal};
+use flint_soc_esp32::addr;
+use flint_soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
 /// ESP32 SPI2 (HSPI) / SPI3 (VSPI) physical driver (polled mode).
 ///
@@ -63,119 +66,38 @@ const SPI_MAX_BYTES: usize = SPI_DATA_BUF_WORDS * 4;
 /// forever.
 const SPI_TIMEOUT_SPINS: u32 = 1_000_000;
 
-// ── DPORT peripheral clock/reset ─────────────────────────────────────────────
+// ── Pin routing ──────────────────────────────────────────────────────────────
 //
-// SPI2 and SPI3 are clock-gated and held in reset at boot; every register
-// access above is a no-op on real hardware until these are cleared. Bit
-// positions confirmed against esp-idf `soc/dport_reg.h`
-// (`DPORT_SPI2_CLK_EN`/`DPORT_SPI3_CLK_EN` and their `_RST` counterparts).
+// Bases, DPORT clock bits, native pads and the IO_MUX offset table all live in
+// `flint-soc-esp32`. This driver used to carry its own copy of that table with
+// a comment saying to keep it in sync with the one in `esp32_uart` by hand --
+// which is exactly the arrangement the SoC layer exists to end.
 
-const DPORT_PERIP_CLK_EN_REG: u32 = 0x3FF0_00C0;
-const DPORT_PERIP_RST_EN_REG: u32 = 0x3FF0_00C4;
-const DPORT_SPI2_CLK_EN: u32 = 1 << 6;
-const DPORT_SPI3_CLK_EN: u32 = 1 << 16;
-
-const SPI2_BASE: u32 = 0x3FF6_4000;
-const SPI3_BASE: u32 = 0x3FF6_5000;
-
-/// DPORT clock/reset-enable bit for the SPI peripheral at `base`, if it is a
-/// recognised base.
-fn dport_clk_bit(base: u32) -> Option<u32> {
-    match base {
-        SPI2_BASE => Some(DPORT_SPI2_CLK_EN),
-        SPI3_BASE => Some(DPORT_SPI3_CLK_EN),
-        _ => None,
-    }
-}
-
-// ── IO_MUX ───────────────────────────────────────────────────────────────────
-//
-// Shared source with `drivers/physical/esp32_uart/src/lib.rs::io_mux_offset`
-// -- duplicated here rather than imported, per the layering rule that
-// physical drivers don't depend on one another. Keep the two tables in sync
-// if either is corrected.
-
-const IO_MUX_BASE: u32 = 0x3FF4_9000;
-const IO_MUX_MCU_SEL_SHIFT: u32 = 12; // [14:12] alternate-function select
-const IO_MUX_MCU_SEL_MASK: u32 = 0x7 << IO_MUX_MCU_SEL_SHIFT;
-const IO_MUX_FUN_IE: u32 = 1 << 9; // input enable
-
-fn io_mux_offset(pin: u8) -> Option<u32> {
-    let off: u32 = match pin {
-        0 => 0x44,
-        1 => 0x88,
-        2 => 0x40,
-        3 => 0x84,
-        4 => 0x48,
-        5 => 0x6C,
-        6 => 0x60,
-        7 => 0x64,
-        8 => 0x68,
-        9 => 0x54,
-        10 => 0x58,
-        11 => 0x5C,
-        12 => 0x34,
-        13 => 0x38,
-        14 => 0x30,
-        15 => 0x3C,
-        16 => 0x4C,
-        17 => 0x50,
-        18 => 0x70,
-        19 => 0x74,
-        20 => 0x78,
-        21 => 0x7C,
-        22 => 0x80,
-        23 => 0x8C,
-        24 => 0x90,
-        25 => 0x24,
-        26 => 0x28,
-        27 => 0x2C,
-        32 => 0x1C,
-        33 => 0x20,
-        34 => 0x14,
-        35 => 0x18,
-        36 => 0x04,
-        37 => 0x08,
-        38 => 0x0C,
-        39 => 0x10,
-        _ => return None, // 28-31 are not bonded out on the ESP32
-    };
-    Some(off)
-}
-
-/// IO_MUX-native (mosi, miso, sck) pins for each SPI controller. Driving SPI
-/// on any other pin requires GPIO-matrix routing, which this driver does not
-/// implement -- see `drivers/physical/esp32_uart` for the pattern this
-/// follows. Pin numbers confirmed against esp-idf `soc/io_mux_reg.h`
-/// (HSPI: GPIO12/13/14 = MTDI/MTCK/MTMS; VSPI: GPIO18/19/23).
-fn native_pins(base: u32) -> Option<(u8, u8, u8)> {
-    match base {
-        SPI2_BASE => Some((13, 12, 14)), // HSPI: MOSI=13, MISO=12, SCK=14
-        SPI3_BASE => Some((23, 19, 18)), // VSPI: MOSI=23, MISO=19, SCK=18
-        _ => None,
-    }
-}
-
-/// Alternate-function select value for the native HSPI/VSPI signal on a pin.
-/// Confirmed against esp-idf `soc/io_mux_reg.h`: e.g. `FUNC_MTDI_HSPIQ = 1`,
-/// `FUNC_GPIO18_VSPICLK = 1`. (Function 2 on these pins is plain GPIO, not
-/// SPI -- these pins double as JTAG signals and don't follow the "function 0
-/// = GPIO" convention most pins use.)
-const SPI_IO_MUX_FUNC: u32 = 1;
-
-/// Select a pad's IO_MUX alternate function, preserving other pad settings.
+/// Route MOSI, MISO and SCK for controller `instance`.
 ///
-/// # Safety
-/// `pin` must be a valid ESP32 GPIO and the caller must own that pad.
-unsafe fn io_mux_select(pin: u8, func: u32, input_enable: bool) -> BusResult<()> {
-    let off = io_mux_offset(pin).ok_or(BusError::InvalidConfig)?;
-    let reg = (IO_MUX_BASE + off) as *mut u32;
-    let mut val = reg.read_volatile();
-    val = (val & !IO_MUX_MCU_SEL_MASK) | ((func << IO_MUX_MCU_SEL_SHIFT) & IO_MUX_MCU_SEL_MASK);
-    if input_enable {
-        val |= IO_MUX_FUN_IE;
+/// Any pads will do; `PinMux` takes the IO_MUX direct path when the requested
+/// pad is native to the signal and the GPIO matrix otherwise. Before the SoC
+/// layer existed this driver accepted only the native triple.
+///
+/// Off-native routing costs a couple of cycles of latency, which matters at
+/// this bus's top speeds -- so it is reported, not silently accepted, once
+/// there is somewhere to report it to.
+fn route_pins(instance: u8, mosi: u8, miso: u8, sck: u8) -> BusResult<()> {
+    if mosi == miso || mosi == sck || miso == sck {
+        return Err(BusError::InvalidConfig);
     }
-    reg.write_volatile(val);
+    let mux = Esp32PinMux::new();
+    let sigs = [
+        (Signal::SpiMosi(instance), mosi),
+        (Signal::SpiMiso(instance), miso),
+        (Signal::SpiSck(instance), sck),
+    ];
+    for (sig, pin) in sigs {
+        mux.can_route(sig, pin)?;
+    }
+    for (sig, pin) in sigs {
+        mux.route(sig, pin, PinConfig::PUSH_PULL)?;
+    }
     Ok(())
 }
 
@@ -279,35 +201,18 @@ impl PhysicalBus for Esp32Spi {
     fn init(&mut self, config: &BusConfig) -> BusResult<()> {
         match config {
             BusConfig::Spi { mosi, miso, sck, max_speed, mode } => {
+                let instance = addr::spi_instance(self.base).ok_or(BusError::InvalidConfig)?;
+
                 // Clock and un-reset the peripheral before touching any of
                 // its registers -- SPI2/SPI3 are gated off and held in reset
                 // at boot, so every access below would otherwise be a no-op.
-                let clk_bit = dport_clk_bit(self.base).ok_or(BusError::InvalidConfig)?;
-                unsafe {
-                    let clk_en = DPORT_PERIP_CLK_EN_REG as *mut u32;
-                    clk_en.write_volatile(clk_en.read_volatile() | clk_bit);
-                    let rst_en = DPORT_PERIP_RST_EN_REG as *mut u32;
-                    rst_en.write_volatile(rst_en.read_volatile() & !clk_bit);
-                }
+                let clk_bit = dport::clock_bit(self.base).ok_or(BusError::InvalidConfig)?;
+                unsafe { dport::enable(clk_bit) };
 
-                // Route MOSI/MISO/SCK through IO_MUX. Only the native pin
-                // triple is supported -- anything else needs GPIO-matrix
-                // routing, and rejecting it honestly beats silently
-                // configuring a peripheral onto pins it will never reach.
-                let (native_mosi, native_miso, native_sck) =
-                    native_pins(self.base).ok_or(BusError::InvalidConfig)?;
-                if *mosi != native_mosi || *miso != native_miso || *sck != native_sck {
-                    return Err(BusError::InvalidConfig);
-                }
-                unsafe {
-                    io_mux_select(*mosi, SPI_IO_MUX_FUNC, false)?;
-                    io_mux_select(*miso, SPI_IO_MUX_FUNC, true)?;
-                    io_mux_select(*sck, SPI_IO_MUX_FUNC, false)?;
-                }
+                route_pins(instance, *mosi, *miso, *sck)?;
 
-                let apb_hz: u32 = 80_000_000;
                 let speed_hz = max_speed.hz();
-                let div = (apb_hz / speed_hz).max(2);
+                let div = (APB_HZ / speed_hz).max(2);
 
                 unsafe {
                     // Clock configuration.
@@ -401,24 +306,35 @@ mod tests {
 
     #[test]
     fn dport_clk_bits_are_distinct_and_match_known_bases() {
-        assert_eq!(dport_clk_bit(SPI2_BASE), Some(1 << 6));
-        assert_eq!(dport_clk_bit(SPI3_BASE), Some(1 << 16));
-        assert_ne!(dport_clk_bit(SPI2_BASE), dport_clk_bit(SPI3_BASE));
-        assert_eq!(dport_clk_bit(0xDEAD_BEEF), None);
+        use flint_soc_esp32::addr::{SPI2_BASE, SPI3_BASE};
+        assert_eq!(dport::clock_bit(SPI2_BASE), Some(dport::ClockBit::SPI2));
+        assert_eq!(dport::clock_bit(SPI3_BASE), Some(dport::ClockBit::SPI3));
+        assert_ne!(dport::clock_bit(SPI2_BASE), dport::clock_bit(SPI3_BASE));
+        assert_eq!(dport::clock_bit(0xDEAD_BEEF), None);
     }
 
     #[test]
-    fn native_pin_table_matches_known_bases() {
-        assert_eq!(native_pins(SPI2_BASE), Some((13, 12, 14)));
-        assert_eq!(native_pins(SPI3_BASE), Some((23, 19, 18)));
-        assert_eq!(native_pins(0xDEAD_BEEF), None);
+    fn spi1_is_not_addressable_as_a_general_purpose_controller() {
+        // SPI1 drives the boot flash; routing it anywhere bricks the running
+        // image.
+        use flint_soc_esp32::addr::SPI1_BASE;
+        assert_eq!(addr::spi_instance(SPI1_BASE), None);
     }
 
     #[test]
-    fn io_mux_offsets_are_not_linear_in_pin_number() {
-        assert_eq!(io_mux_offset(12), Some(0x34));
-        assert_eq!(io_mux_offset(13), Some(0x38));
-        assert_ne!(io_mux_offset(13), Some(13 * 4));
+    fn a_bus_may_not_reuse_one_pad_for_two_signals() {
+        assert!(route_pins(3, 23, 23, 18).is_err());
+        assert!(route_pins(3, 23, 19, 19).is_err());
+    }
+
+    #[test]
+    fn mosi_and_sck_cannot_land_on_input_only_pads() {
+        // GPIO34-39 have no output driver.
+        assert!(route_pins(3, 34, 19, 18).is_err());
+        assert!(route_pins(3, 23, 19, 35).is_err());
+        // MISO on one is fine -- it is an input.
+        let mux = Esp32PinMux::new();
+        assert!(mux.can_route(Signal::SpiMiso(3), 34).is_ok());
     }
 
     #[test]

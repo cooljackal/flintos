@@ -24,6 +24,7 @@ name = "esp32-gpio"
 version = "0.1.0"
 dependencies = [
  "flint-hal",
+ "flint-soc-esp32",
 ]
 
 [[package]]
@@ -31,6 +32,7 @@ name = "esp32-i2c"
 version = "0.1.0"
 dependencies = [
  "flint-hal",
+ "flint-soc-esp32",
 ]
 
 [[package]]
@@ -38,6 +40,7 @@ name = "esp32-spi"
 version = "0.1.0"
 dependencies = [
  "flint-hal",
+ "flint-soc-esp32",
 ]
 
 [[package]]
@@ -45,6 +48,7 @@ name = "esp32-uart"
 version = "0.1.0"
 dependencies = [
  "flint-hal",
+ "flint-soc-esp32",
 ]
 
 [[package]]
@@ -66,6 +70,7 @@ name = "flint-board"
 version = "0.1.0"
 dependencies = [
  "flint-hal",
+ "flint-soc-esp32",
 ]
 
 [[package]]
@@ -93,6 +98,13 @@ dependencies = [
  "spi-bus",
  "ssd1306",
  "uart-bus",
+]
+
+[[package]]
+name = "flint-soc-esp32"
+version = "0.1.0"
+dependencies = [
+ "flint-hal",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@ members = [
     "flint-api",
     "flint-build",
     "arch/flint-arch-xtensa",
+    "soc/flint-soc-esp32",
     "kernel",
     "board",
 

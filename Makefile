@@ -17,10 +17,16 @@ ESP_TOOLCHAIN   := esp
 CARGO           := cargo +$(ESP_TOOLCHAIN)
 
 # OS-specific paths (Windows uses USERPROFILE, POSIX uses HOME)
+#
+# XTENSA_SIZE is passed to tools/image-size.sh explicitly rather than left to
+# PATH. On Windows the toolchain goes on PATH as a native path, which the bash
+# that runs the script cannot use; forward slashes it can.
 ifeq ($(OS),Windows_NT)
   ESP_GCC_DIR   := $(USERPROFILE)\.rustup\toolchains\esp\xtensa-esp-elf\bin
+  export XTENSA_SIZE := $(subst \,/,$(USERPROFILE))/.rustup/toolchains/esp/xtensa-esp-elf/bin/xtensa-esp32-elf-size.exe
 else
   ESP_GCC_DIR   := $(HOME)/.rustup/toolchains/esp/xtensa-esp-elf/bin
+  export XTENSA_SIZE := $(ESP_GCC_DIR)/xtensa-esp32-elf-size
 endif
 
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --
@@ -117,10 +123,16 @@ export PATH := $(ESP_GCC_DIR):$(PATH)
 .PHONY: build
 build: ## Build the selected app (APP=demo BOARD=board-esp32-wrover DEBUG=debug-level-1)
 	$(CARGO) build $(APP_FLAGS)
+	@bash tools/image-size.sh $(APP_BIN) || true
 
 .PHONY: build-release
 build-release: ## Build release (smallest binary)
 	$(CARGO) build $(APP_FLAGS) --release
+	@bash tools/image-size.sh target/$(XTENSA_TARGET)/release/$(APP) || true
+
+.PHONY: size
+size: ## Report where the image's bytes went, per memory region
+	@bash tools/image-size.sh $(APP_BIN)
 
 .PHONY: build-trace
 build-trace: ## Build with kernel event tracing
@@ -165,7 +177,12 @@ monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
 check: ## Check all host-compatible crates (flint-hal, flint-api, board, drivers)
 	cargo check -p flint-hal --target $(HOST_TARGET)
 	cargo check -p flint-api --target $(HOST_TARGET)
+	cargo check -p flint-soc-esp32 --target $(HOST_TARGET)
 	cargo check -p flint-board --target $(HOST_TARGET)
+	cargo check -p esp32-uart --target $(HOST_TARGET)
+	cargo check -p esp32-spi --target $(HOST_TARGET)
+	cargo check -p esp32-i2c --target $(HOST_TARGET)
+	cargo check -p esp32-gpio --target $(HOST_TARGET)
 	cargo check -p spi-bus --target $(HOST_TARGET)
 	cargo check -p i2c-bus --target $(HOST_TARGET)
 	cargo check -p uart-bus --target $(HOST_TARGET)
@@ -184,6 +201,12 @@ check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)
 test-host: ## Run host-side tests (hal, api, drivers)
 	cargo test -p flint-hal --target $(HOST_TARGET)
 	cargo test -p flint-api --target $(HOST_TARGET)
+	cargo test -p flint-soc-esp32 --target $(HOST_TARGET)
+	cargo test -p flint-board --target $(HOST_TARGET)
+	cargo test -p esp32-uart --target $(HOST_TARGET)
+	cargo test -p esp32-spi --target $(HOST_TARGET)
+	cargo test -p esp32-i2c --target $(HOST_TARGET)
+	cargo test -p esp32-gpio --target $(HOST_TARGET)
 	cargo test -p spi-bus --target $(HOST_TARGET)
 	cargo test -p i2c-bus --target $(HOST_TARGET)
 	cargo test -p uart-bus --target $(HOST_TARGET)

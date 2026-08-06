@@ -3,14 +3,16 @@
 #![no_std]
 
 use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus};
+use flint_hal::pinmux::{PinConfig, PinMux, Signal};
+use flint_soc_esp32::addr;
+use flint_soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
 /// ESP32 I2C master driver (polled mode).
 ///
-/// Base: 0x3FF53000 (I2C0) or 0x3FF67000 (I2C1). A prior revision documented
-/// I2C1 as 0x3FF53020 -- a +0x20 offset from I2C0 -- but the two controllers
-/// are entirely separate register blocks, not adjacent register files;
-/// confirmed against esp-idf `soc/soc.h` (`DR_REG_I2C_EXT_BASE` /
-/// `DR_REG_I2C1_EXT_BASE`).
+/// Base: 0x3FF53000 (I2C0) or 0x3FF67000 (I2C1) -- see
+/// `flint_soc_esp32::addr`. A prior revision documented I2C1 as 0x3FF53020, a
+/// +0x20 offset from I2C0, but the two controllers are entirely separate
+/// register blocks.
 pub struct Esp32I2c {
     base: u32,
 }
@@ -98,57 +100,41 @@ const I2C_TRANS_START: u32 = 1 << 5;
 
 const I2C_TRANS_COMPLETE: u32 = 1 << 7;
 
-// ── DPORT peripheral clock/reset ─────────────────────────────────────────────
-//
-// I2C0 and I2C1 are clock-gated and held in reset at boot; every register
-// access above is a no-op on real hardware until these are cleared. Bit
-// positions confirmed against esp-idf `soc/dport_reg.h`
-// (`DPORT_I2C_EXT0_CLK_EN`/`DPORT_I2C_EXT1_CLK_EN` and their `_RST`
-// counterparts).
-
-const DPORT_PERIP_CLK_EN_REG: u32 = 0x3FF0_00C0;
-const DPORT_PERIP_RST_EN_REG: u32 = 0x3FF0_00C4;
-const DPORT_I2C_EXT0_CLK_EN: u32 = 1 << 7;
-const DPORT_I2C_EXT1_CLK_EN: u32 = 1 << 18;
-
-const I2C0_BASE: u32 = 0x3FF5_3000;
-const I2C1_BASE: u32 = 0x3FF6_7000;
-
-/// DPORT clock/reset-enable bit for the I2C peripheral at `base`, if it is a
-/// recognised base.
-fn dport_clk_bit(base: u32) -> Option<u32> {
-    match base {
-        I2C0_BASE => Some(DPORT_I2C_EXT0_CLK_EN),
-        I2C1_BASE => Some(DPORT_I2C_EXT1_CLK_EN),
-        _ => None,
-    }
-}
-
 // ── Pin routing ──────────────────────────────────────────────────────────────
 //
 // Unlike UART and HSPI/VSPI, the classic ESP32 I2C controllers have *no*
-// IO_MUX-native SDA/SCL pins at all -- confirmed against esp-idf
-// `soc/gpio_sig_map.h`: `I2CEXT0_SCL_IN_IDX`/`_OUT_IDX` = 29,
-// `I2CEXT0_SDA_IN_IDX`/`_OUT_IDX` = 30 (I2CEXT1: 95/96). Both signals are
-// *always* carried through the GPIO matrix (`GPIO_FUNCn_IN_SEL_CFG_REG` /
-// `GPIO_FUNCn_OUT_SEL_CFG_REG`), which is exactly the "full GPIO-matrix
-// routing" this pass was scoped to skip -- and getting the matrix
-// open-drain wiring wrong (the `OEN_SEL`/`OEN_INV_SEL` bits in
-// `GPIO_FUNCn_OUT_SEL_CFG_REG`, plus `GPIO_PIN_PAD_DRIVER`) would silently
-// misconfigure the pins rather than just fail to build, which is worse than
-// not implementing it. So: reject every configuration explicitly instead of
-// pretending an IO_MUX-native set exists.
-//
-// UNVERIFIED / TODO for whoever implements this: route
-// `GPIO_FUNCn_IN_SEL_CFG_REG(29)` / `(30)` to the chosen SDA/SCL GPIOs,
-// `GPIO_FUNCn_OUT_SEL_CFG_REG(pin)` to signals 29/30 with the correct
-// `OEN_SEL`/`OEN_INV_SEL` for peripheral-driven open-drain, set
-// `GPIO_PIN_PAD_DRIVER` on both pads, and select each pad's own "GPIO"
-// IO_MUX function (not 0 -- e.g. GPIO21/22 use function 2, confirmed
-// against `soc/io_mux_reg.h`; the per-pin GPIO function number is not
-// uniform).
-fn reject_unrouted_pins(_sda: u8, _scl: u8) -> BusResult<()> {
-    Err(BusError::InvalidConfig)
+// IO_MUX-native SDA/SCL pins. Both signals are always carried through the GPIO
+// matrix, which is why this driver rejected every configuration until the SoC
+// layer existed to do that routing. `flint_soc_esp32::Esp32PinMux` now owns it:
+// the signal indices, the per-pad GPIO function number (which is not uniform),
+// the open-drain pad driver bit, and leaving output-enable with the peripheral
+// so the controller can release the line.
+
+/// Route SDA and SCL for controller `instance` to the requested pads.
+///
+/// Open-drain with the internal pull-up, which is a convenience for a short
+/// bus with one device and not a substitute for real external pull-ups.
+fn route_pins(instance: u8, sda: u8, scl: u8) -> BusResult<()> {
+    if sda == scl {
+        // The hardware would accept this and the bus would never work: SDA and
+        // SCL both driven from the same pad is a permanent stuck condition,
+        // and it presents as "no device responds" rather than as a config
+        // error.
+        return Err(BusError::InvalidConfig);
+    }
+    let mux = Esp32PinMux::new();
+    let sda_sig = Signal::I2cSda(instance);
+    let scl_sig = Signal::I2cScl(instance);
+
+    // Check both before routing either. Routing is not transactional, and a
+    // bus with SDA connected and SCL dangling is harder to diagnose than one
+    // that refused to come up.
+    mux.can_route(sda_sig, sda)?;
+    mux.can_route(scl_sig, scl)?;
+
+    mux.route(sda_sig, sda, PinConfig::OPEN_DRAIN_PULLUP)?;
+    mux.route(scl_sig, scl, PinConfig::OPEN_DRAIN_PULLUP)?;
+    Ok(())
 }
 
 /// Bound on `wait_done` poll iterations before giving up. Generous relative
@@ -280,28 +266,23 @@ impl PhysicalBus for Esp32I2c {
     fn init(&mut self, config: &BusConfig) -> BusResult<()> {
         match config {
             BusConfig::I2c { sda, scl, speed } => {
+                let instance = addr::i2c_instance(self.base).ok_or(BusError::InvalidConfig)?;
+
                 // Clock and un-reset the peripheral before touching any of
                 // its registers -- I2C0/I2C1 are gated off and held in reset
                 // at boot, so every access below would otherwise be a no-op.
-                let clk_bit = dport_clk_bit(self.base).ok_or(BusError::InvalidConfig)?;
-                unsafe {
-                    let clk_en = DPORT_PERIP_CLK_EN_REG as *mut u32;
-                    clk_en.write_volatile(clk_en.read_volatile() | clk_bit);
-                    let rst_en = DPORT_PERIP_RST_EN_REG as *mut u32;
-                    rst_en.write_volatile(rst_en.read_volatile() & !clk_bit);
-                }
+                let clk_bit = dport::clock_bit(self.base).ok_or(BusError::InvalidConfig)?;
+                unsafe { dport::enable(clk_bit) };
 
-                // Route SDA/SCL. See `reject_unrouted_pins` doc comment:
-                // ESP32 I2C has no IO_MUX-native pin set to fall back on the
-                // way UART/SPI do, and implementing the GPIO-matrix routing
-                // this actually requires is out of scope for this pass. Fail
-                // loudly rather than silently configuring a peripheral onto
-                // pins it will never reach.
-                reject_unrouted_pins(*sda, *scl)?;
+                // Route SDA/SCL through the GPIO matrix. Do this before
+                // programming the timing registers: the pads come up as
+                // push-pull inputs, and connecting a configured, running
+                // controller to them is a window in which it can drive a bus
+                // another device is holding low.
+                route_pins(instance, *sda, *scl)?;
 
-                let apb_hz: u32 = 80_000_000;
                 let scl_hz = speed.hz();
-                let half_period = (apb_hz / scl_hz / 2).max(10);
+                let half_period = (APB_HZ / scl_hz / 2).max(10);
 
                 unsafe {
                     self.reg(I2C_SCL_LOW).write_volatile(half_period);
@@ -348,6 +329,7 @@ impl PhysicalBus for Esp32I2c {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_soc_esp32::addr::{I2C0_BASE, I2C1_BASE};
 
     #[test]
     fn register_offsets_match_trm_i2c_summary() {
@@ -435,19 +417,28 @@ mod tests {
 
     #[test]
     fn dport_clk_bits_are_distinct_and_match_known_bases() {
-        assert_eq!(dport_clk_bit(I2C0_BASE), Some(1 << 7));
-        assert_eq!(dport_clk_bit(I2C1_BASE), Some(1 << 18));
-        assert_ne!(dport_clk_bit(I2C0_BASE), dport_clk_bit(I2C1_BASE));
-        assert_eq!(dport_clk_bit(0xDEAD_BEEF), None);
+        assert_eq!(dport::clock_bit(I2C0_BASE), Some(dport::ClockBit::I2C0));
+        assert_eq!(dport::clock_bit(I2C1_BASE), Some(dport::ClockBit::I2C1));
+        assert_ne!(dport::clock_bit(I2C0_BASE), dport::clock_bit(I2C1_BASE));
+        assert_eq!(dport::clock_bit(0xDEAD_BEEF), None);
     }
 
     #[test]
-    fn unrouted_pins_are_rejected_rather_than_silently_accepted() {
-        // No IO_MUX-native SDA/SCL exist on classic ESP32 I2C (unlike
-        // UART/HSPI/VSPI) -- every configuration must fail explicitly until
-        // GPIO-matrix routing is implemented, including "plausible" pins
-        // like the commonly-used GPIO21/22 default.
-        assert!(reject_unrouted_pins(21, 22).is_err());
-        assert!(reject_unrouted_pins(0, 1).is_err());
+    fn sda_and_scl_may_not_share_a_pad() {
+        // The hardware accepts it and the bus then never works, presenting as
+        // "no device responds" rather than as a configuration error.
+        assert!(route_pins(0, 21, 21).is_err());
+    }
+
+    #[test]
+    fn unroutable_pads_are_rejected() {
+        // GPIO28-31 have no IO_MUX register at all.
+        assert!(route_pins(0, 28, 22).is_err());
+        // GPIO34-39 are input-only, and an I2C line has to be able to drive
+        // low. Both pins are validated before either is routed, so this
+        // rejects without having connected SDA first.
+        assert!(route_pins(0, 21, 34).is_err());
+        // A controller instance this chip does not have.
+        assert!(route_pins(2, 21, 22).is_err());
     }
 }

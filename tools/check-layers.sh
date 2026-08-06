@@ -3,10 +3,15 @@
 # Layer-boundary enforcement (plan W7.1).
 #
 # Layer-3 (drivers/logical/*) and Layer-2 (drivers/bus/*) crates may depend ONLY
-# on flint-api. Depending on flint-hal or any flint-arch-* crate is a layer
-# violation: it would give a device/bus driver access to hardware register
-# definitions, defeating the three-layer model. This is the structural boundary
-# the design promises — enforce it here so it cannot silently rot.
+# on flint-api. Depending on flint-hal, a flint-arch-* crate, or a flint-soc-*
+# crate is a layer violation: it would give a device/bus driver access to
+# hardware register definitions, defeating the three-layer model. This is the
+# structural boundary the design promises — enforce it here so it cannot
+# silently rot.
+#
+# flint-soc-* is the newest of these and the easiest to reach for by accident:
+# a bus driver that wants a peripheral base address or a pin routed is a bus
+# driver that has stopped being portable.
 #
 # Exit non-zero on any violation. Wire into CI and `make check-layers`.
 
@@ -24,6 +29,10 @@ for manifest in drivers/logical/*/Cargo.toml drivers/bus/*/Cargo.toml; do
     fi
     if grep -Eq '^\s*flint-arch' "$manifest"; then
         echo "LAYER VIOLATION: $crate_dir depends on a flint-arch-* crate (Layer-1 only)"
+        violations=$((violations + 1))
+    fi
+    if grep -Eq '^\s*flint-soc' "$manifest"; then
+        echo "LAYER VIOLATION: $crate_dir depends on a flint-soc-* crate (Layer-1 only)"
         violations=$((violations + 1))
     fi
 done

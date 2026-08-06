@@ -28,9 +28,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # Crates that contain no Xtensa assembly and so build for any host.
+      # flint-soc-esp32 is here despite naming a chip: it is register
+      # addresses and lookup tables, and its tests are the only place the
+      # signal map and IO_MUX offsets get checked at all.
       - name: Check host-compatible crates
         run: |
-          for crate in flint-hal flint-api flint-board \
+          for crate in flint-hal flint-api flint-soc-esp32 flint-board \
+                       esp32-uart esp32-spi esp32-i2c esp32-gpio \
                        spi-bus i2c-bus uart-bus bme280 ssd1306; do
             echo "::group::cargo check -p $crate"
             cargo check -p "$crate" --target "$HOST_TARGET"
@@ -39,7 +43,9 @@ jobs:
 
       - name: Run host unit tests
         run: |
-          for crate in flint-hal flint-api spi-bus i2c-bus uart-bus bme280 ssd1306; do
+          for crate in flint-hal flint-api flint-soc-esp32 flint-board \
+                       esp32-uart esp32-spi esp32-i2c esp32-gpio \
+                       spi-bus i2c-bus uart-bus bme280 ssd1306; do
             echo "::group::cargo test -p $crate"
             cargo test -p "$crate" --target "$HOST_TARGET"
             echo "::endgroup::"
@@ -47,7 +53,7 @@ jobs:
 
       - name: Clippy
         run: |
-          cargo clippy -p flint-hal -p flint-api --target "$HOST_TARGET" -- -D warnings
+          cargo clippy -p flint-hal -p flint-api -p flint-soc-esp32 --target "$HOST_TARGET" -- -D warnings
 
   layers:
     name: Three-layer boundary

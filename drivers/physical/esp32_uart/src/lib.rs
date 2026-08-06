@@ -3,6 +3,9 @@
 #![no_std]
 
 use flint_hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, UartDataBits, UartParity, UartStopBits};
+use flint_hal::pinmux::{PinConfig, PinMux, Signal};
+use flint_soc_esp32::addr;
+use flint_soc_esp32::{Esp32PinMux, APB_HZ};
 
 /// ESP32 UART physical driver.
 /// Registers at `base_addr` (0x3FF40000 for UART0).
@@ -62,97 +65,35 @@ const CLKDIV_INT_MASK: u32 = 0x000F_FFFF; // [19:0]  integer divisor
 const CLKDIV_FRAG_SHIFT: u32 = 20; // [23:20] fractional divisor, in 1/16ths
 const CLKDIV_FRAG_MASK: u32 = 0xF << CLKDIV_FRAG_SHIFT;
 
-/// APB clock feeding the UART divider. Fixed at 80 MHz whenever the SoC runs
-/// from the PLL, which is the only configuration Flint currently supports.
-const APB_HZ: u32 = 80_000_000;
 
-// ── Peripheral bases, used to identify which UART this instance drives ───────
+// ── Pin routing ──────────────────────────────────────────────────────────────
+//
+// Bases, native pads, and the IO_MUX offset table all live in
+// `flint-soc-esp32` now. They are chip facts, and this driver used to carry
+// its own copy of them -- as did `esp32_spi`, separately, with a table that had
+// drifted from this one.
 
-const UART0_BASE: u32 = 0x3FF4_0000;
-const UART1_BASE: u32 = 0x3FF5_0000;
-const UART2_BASE: u32 = 0x3FF6_E000;
-
-/// IO_MUX-native (tx, rx) pins for each UART. Driving a UART on any other pin
-/// requires GPIO-matrix routing, which this driver does not yet implement.
-fn native_pins(base: u32) -> Option<(u8, u8)> {
-    match base {
-        UART0_BASE => Some((1, 3)),
-        UART1_BASE => Some((10, 9)),
-        UART2_BASE => Some((17, 16)),
-        _ => None,
-    }
-}
-
-// ── IO_MUX ───────────────────────────────────────────────────────────────────
-
-const IO_MUX_BASE: u32 = 0x3FF4_9000;
-const IO_MUX_MCU_SEL_SHIFT: u32 = 12; // [14:12] alternate-function select
-const IO_MUX_MCU_SEL_MASK: u32 = 0x7 << IO_MUX_MCU_SEL_SHIFT;
-const IO_MUX_FUN_IE: u32 = 1 << 9; // input enable
-
-/// IO_MUX register offset for a GPIO number.
+/// Route TX and RX for controller `instance`.
 ///
-/// The mapping is deliberately irregular in hardware -- the registers are
-/// ordered by pad, not by GPIO number -- so a `pin * 4` computation lands on
-/// the wrong register for almost every pin. This table is from the ESP32 TRM
-/// IO_MUX register summary (matching `GPIO_PIN_MUX_REG` in esp-idf).
-fn io_mux_offset(pin: u8) -> Option<u32> {
-    let off: u32 = match pin {
-        0 => 0x44,
-        1 => 0x88,
-        2 => 0x40,
-        3 => 0x84,
-        4 => 0x48,
-        5 => 0x6C,
-        6 => 0x60,
-        7 => 0x64,
-        8 => 0x68,
-        9 => 0x54,
-        10 => 0x58,
-        11 => 0x5C,
-        12 => 0x34,
-        13 => 0x38,
-        14 => 0x30,
-        15 => 0x3C,
-        16 => 0x4C,
-        17 => 0x50,
-        18 => 0x70,
-        19 => 0x74,
-        20 => 0x78,
-        21 => 0x7C,
-        22 => 0x80,
-        23 => 0x8C,
-        24 => 0x90,
-        25 => 0x24,
-        26 => 0x28,
-        27 => 0x2C,
-        32 => 0x1C,
-        33 => 0x20,
-        34 => 0x14,
-        35 => 0x18,
-        36 => 0x04,
-        37 => 0x08,
-        38 => 0x0C,
-        39 => 0x10,
-        _ => return None, // 28-31 are not bonded out on the ESP32
-    };
-    Some(off)
-}
-
-/// Select a pad's IO_MUX alternate function, preserving the other pad settings
-/// (pull-ups, drive strength) that the bootloader may already have configured.
-///
-/// # Safety
-/// `pin` must be a valid ESP32 GPIO and the caller must own that pad.
-unsafe fn io_mux_select(pin: u8, func: u32, input_enable: bool) -> BusResult<()> {
-    let off = io_mux_offset(pin).ok_or(BusError::InvalidConfig)?;
-    let reg = (IO_MUX_BASE + off) as *mut u32;
-    let mut val = reg.read_volatile();
-    val = (val & !IO_MUX_MCU_SEL_MASK) | ((func << IO_MUX_MCU_SEL_SHIFT) & IO_MUX_MCU_SEL_MASK);
-    if input_enable {
-        val |= IO_MUX_FUN_IE;
+/// Any pad will do: the GPIO matrix reaches them all, and `PinMux` takes the
+/// IO_MUX direct path automatically when the requested pad happens to be the
+/// native one. Before the SoC layer existed this driver accepted only the
+/// native pair and rejected everything else.
+fn route_pins(instance: u8, tx: u8, rx: u8) -> BusResult<()> {
+    if tx == rx {
+        return Err(BusError::InvalidConfig);
     }
-    reg.write_volatile(val);
+    let mux = Esp32PinMux::new();
+    let tx_sig = Signal::UartTx(instance);
+    let rx_sig = Signal::UartRx(instance);
+
+    // Validate both before routing either, so a bad manifest cannot leave the
+    // console half-connected.
+    mux.can_route(tx_sig, tx)?;
+    mux.can_route(rx_sig, rx)?;
+
+    mux.route(tx_sig, tx, PinConfig::PUSH_PULL)?;
+    mux.route(rx_sig, rx, PinConfig::PUSH_PULL)?;
     Ok(())
 }
 
@@ -253,17 +194,8 @@ impl PhysicalBus for Esp32Uart {
             return Err(BusError::InvalidConfig);
         };
 
-        // Route the pads. Only the IO_MUX-native pins are supported; anything
-        // else needs GPIO-matrix routing, and reporting that honestly beats
-        // configuring the peripheral onto pins it will never reach.
-        match native_pins(self.base) {
-            Some((native_tx, native_rx)) if *tx == native_tx && *rx == native_rx => unsafe {
-                // MCU_SEL 0 selects the UART function on each of these pads.
-                io_mux_select(*tx, 0, false)?;
-                io_mux_select(*rx, 0, true)?;
-            },
-            _ => return Err(BusError::InvalidConfig),
-        }
+        let instance = addr::uart_instance(self.base).ok_or(BusError::InvalidConfig)?;
+        route_pins(instance, *tx, *rx)?;
 
         // Drain anything the bootloader left queued before re-framing the port,
         // so the last bytes of its output are not corrupted mid-character.
@@ -344,26 +276,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn io_mux_offsets_are_not_linear_in_pin_number() {
-        // The regression this guards: a `pin * 4` computation. GPIO1 lives at
-        // 0x88, not 0x04, so any linear formula routes the console to the
-        // wrong pad.
-        assert_eq!(io_mux_offset(0), Some(0x44));
-        assert_eq!(io_mux_offset(1), Some(0x88));
-        assert_eq!(io_mux_offset(3), Some(0x84));
-        assert_ne!(io_mux_offset(1), Some(1 * 4));
-        assert_ne!(io_mux_offset(3), Some(3 * 4));
-    }
-
-    #[test]
-    fn unbonded_pins_are_rejected() {
-        for pin in 28..=31 {
-            assert_eq!(io_mux_offset(pin), None, "GPIO{pin} is not bonded out");
-        }
-        assert_eq!(io_mux_offset(40), None);
-    }
-
-    #[test]
     fn conf0_fields_do_not_overlap() {
         // Data bits and stop bits occupy disjoint fields, and neither collides
         // with the parity bits. The original code wrote data bits into [1:0]
@@ -390,10 +302,26 @@ mod tests {
     }
 
     #[test]
-    fn native_pin_table_matches_the_uart_bases() {
-        assert_eq!(native_pins(UART0_BASE), Some((1, 3)));
-        assert_eq!(native_pins(UART1_BASE), Some((10, 9)));
-        assert_eq!(native_pins(UART2_BASE), Some((17, 16)));
-        assert_eq!(native_pins(0xDEAD_BEEF), None);
+    fn instance_lookup_covers_all_three_uarts() {
+        use flint_soc_esp32::addr::{UART0_BASE, UART1_BASE, UART2_BASE};
+        assert_eq!(addr::uart_instance(UART0_BASE), Some(0));
+        assert_eq!(addr::uart_instance(UART1_BASE), Some(1));
+        assert_eq!(addr::uart_instance(UART2_BASE), Some(2));
+        assert_eq!(addr::uart_instance(0xDEAD_BEEF), None);
+    }
+
+    #[test]
+    fn a_uart_may_not_share_one_pad_for_tx_and_rx() {
+        assert!(route_pins(0, 1, 1).is_err());
+    }
+
+    #[test]
+    fn tx_cannot_land_on_an_input_only_pad() {
+        // GPIO34-39 have no output driver, so the console would transmit into
+        // nothing and look like a baud mismatch.
+        assert!(route_pins(0, 34, 3).is_err());
+        // RX on one of them is fine.
+        let mux = Esp32PinMux::new();
+        assert!(mux.can_route(Signal::UartRx(0), 34).is_ok());
     }
 }

@@ -16,6 +16,7 @@
 // whoever wires one up next.
 
 use flint_hal::bus::*;
+use flint_soc_esp32::addr;
 
 pub const BOARD_NAME: &str = "M5Stack-ATOM (ESP32-PICO-D4)";
 pub const TICK_PERIOD_US: u32 = 1000;
@@ -55,8 +56,8 @@ pub const GROVE_SCL_GPIO: u8 = 32;
 pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
     name: "uart0",
     kind: BusKind::Uart,
-    base_addr: 0x3FF40000,
-    irq: 34, // ETS_UART0_INTR_SOURCE
+    base_addr: addr::UART0_BASE,
+    irq: addr::IRQ_UART0,
     dma_capable: true,
     dma_pool_bytes: 512,
     config: BusConfig::Uart {
@@ -79,8 +80,8 @@ pub const TARGET_DEVICES: &[BusDevice] = &[];
 
 /// Direct peripheral drivers (not bus-attached).
 pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[
-    PeripheralMapping { name: "gpio", base_addr: 0x3FF44000, irq: 22, dma_capable: false, dma_pool_bytes: 0 },
-    PeripheralMapping { name: "uart0", base_addr: 0x3FF40000, irq: 34, dma_capable: true, dma_pool_bytes: 512 },
+    PeripheralMapping { name: "gpio", base_addr: addr::GPIO_BASE, irq: addr::IRQ_GPIO, dma_capable: false, dma_pool_bytes: 0 },
+    PeripheralMapping { name: "uart0", base_addr: addr::UART0_BASE, irq: addr::IRQ_UART0, dma_capable: true, dma_pool_bytes: 512 },
 ];
 
 /// System service tasks.

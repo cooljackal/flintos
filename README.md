@@ -29,13 +29,14 @@ thin, and the API will change.
 | | |
 |---|---|
 | Builds for `xtensa-esp32-none-elf` | ✅ |
-| Host unit tests | ✅ 99/99 passing |
+| Host unit tests | ✅ 145 passing |
 | Three-layer boundary enforced in CI | ✅ |
 | UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |
 | Boots on real hardware | ✅ ESP32-PICO, 80 MHz measured |
 | Preemptive multitasking on silicon | ✅ three tasks, three priorities, timing exact |
 | Register-window spill on switch | ✅ |
-| I²C driver | ⛔ `init()` rejects all configs — pin routing not implemented |
+| GPIO-matrix pin routing | ✅ any signal to any pad, or a clear error |
+| I²C driver | ⚠️ routes and configures; untested against a real device |
 | Anything beyond ESP32 | ⛔ no Cortex-M port yet |
 
 Open work is tracked in
@@ -93,6 +94,9 @@ Flint is a small preemptive RTOS built around three ideas:
                      └────────────────┬────────────────────────┘
                      ┌────────────────┴────────────────────────┐
    kernel            │  scheduler · IPC · timers · IRQ router  │
+                     └────────────────┬────────────────────────┘
+                     ┌────────────────┴────────────────────────┐
+   soc               │  flint-soc-esp32  (pin mux, periph map) │
                      └────────────────┬────────────────────────┘
                      ┌────────────────┴────────────────────────┐
    arch              │  flint-arch-xtensa  (trap, tick, ctx)   │
@@ -355,16 +359,30 @@ apps/                      applications — the binaries you actually flash
 flint-hal/                 traits + types every layer depends on (depends on nothing)
 flint-api/                 the API your application code uses
 flint-build/               build-script helper that gives an app the linker script
-arch/flint-arch-xtensa/    boot, vectors, context switch, tick for Xtensa LX6
+arch/flint-arch-xtensa/    CPU — boot, vectors, context switch, tick
+soc/flint-soc-esp32/       chip — peripheral map, IO_MUX, GPIO matrix, clock gating
 kernel/                    scheduler, IPC, timers, IRQ routing, debug — a library
-board/                     per-board manifests (pins, base addresses, devices)
+board/                     PCB — which pin is wired to what
 drivers/physical/          Layer 1 — MCU register drivers
 drivers/bus/               Layer 2 — transport abstractions
 drivers/logical/           Layer 3 — device drivers, MCU-agnostic
 tools/check-layers.sh      enforces the Layer 3 → Layer 1 boundary
+tools/image-size.sh        where the image's bytes went, per memory region
 ```
 
-~5,400 lines of Rust and ~570 lines of Xtensa assembly.
+**arch / SoC / board are three separate tiers, deliberately.** The CPU core, the
+chip, and the circuit board are three different things that vary independently:
+ESP32 and ESP32-S3 share neither peripheral map nor core, while a WROVER and an
+M5Stack Atom share both and differ only in wiring. Keeping them apart is what
+makes adding a board one small file instead of a `cfg` tree.
+
+The sharpest case is pin routing, which has no portable implementation: the
+ESP32 has a GPIO matrix that reaches almost any pad, STM32 has fixed
+alternate-function lists per pad, NXP has IOMUXC. Drivers call
+`PinMux::route(signal, pin, config)` and each SoC crate implements it in its own
+idiom, returning an error where the silicon genuinely cannot comply.
+
+~6,400 lines of Rust and ~570 lines of Xtensa assembly.
 
 ## Development
 
@@ -375,7 +393,29 @@ make lint          # clippy, warnings denied
 make check-layers  # three-layer boundary enforcement
 make apps          # list applications
 make build         # Xtensa build of APP (needs the esp toolchain)
+make size          # where the image's bytes went, per memory region
 ```
+
+`make build` prints the size report itself. It reports per *region*, not per
+section, because a total says nothing useful: an ESP32 image is scattered across
+memories with wildly different budgets, and the one that runs out is IRAM or
+DRAM long before flash.
+
+```
+  REGION               USED       SIZE                         FULL
+  vectors_seg         963 B    1.0 KiB  ###################.  94.0%
+  iram_seg            678 B  127.0 KiB  ....................   0.5%
+  dram_seg         16.5 KiB   64.0 KiB  #####...............  25.8%
+  task_stacks      96.0 KiB   96.0 KiB  #################### 100.0%
+  drom_seg         17.8 KiB    4.0 MiB  ....................   0.4%
+  irom_seg         25.1 KiB    3.2 MiB  ....................   0.8%
+
+  flash image      42.9 KiB    3.9 MiB  ....................   1.1%
+```
+
+Region sizes come from the linker script, so the report cannot drift from the
+map the image was linked against. `task_stacks` at 100% is the reserved pool,
+not usage — see `debug::stack` for actual high-water marks.
 
 Debug features are additive and compile out entirely:
 `debug-level-0` (silent) through `debug-level-3` (full trace).
@@ -384,9 +424,9 @@ Debug features are additive and compile out entirely:
 
 - **Done** — ESP32 bring-up: trap handler, register-window spill, context
   switch, preemption and tick all proven on silicon.
-- **Now** — demo tasks out of the kernel binary; I²C pin routing; a panic
-  handler that actually halts.
-- **Next** — driver register audit against the TRM; M5Stack Atom board manifest.
+- **Now** — user documentation on the wiki; a panic handler that actually halts.
+- **Next** — I²C against a real device; driver register audit against the TRM;
+  M5Stack Atom board manifest.
 - **Later** — Layer-1 drivers as isolated tasks with one-IPC-hop request/reply;
   `nsh` shell; Cortex-M port for STM32F3/F4.
 

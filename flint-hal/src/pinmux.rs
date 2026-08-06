@@ -160,14 +160,27 @@ impl Default for PinConfig {
 /// Implemented once per SoC family (`flint-soc-esp32`, `flint-soc-stm32f4`,
 /// ...), never per board and never per driver.
 pub trait PinMux {
-    /// Route `signal` to `pin`, configuring the pad per `config`.
+    /// Whether this silicon could route `signal` to `pin`, without doing it.
+    ///
+    /// Pure — touches no registers. A driver that needs several pins should
+    /// check them all before routing any: routing is not transactional, and a
+    /// bus left with one line connected and the other not is a worse state than
+    /// one that never started. It is also the only part of routing that can be
+    /// tested off-target.
     ///
     /// # Errors
-    /// [`BusError::InvalidConfig`] if this silicon cannot connect that signal
-    /// to that pin — an unknown pin, a controller instance the chip does not
-    /// have, or a pad whose function list does not include the signal.
+    /// [`BusError::InvalidConfig`] if the silicon cannot connect that signal to
+    /// that pin — an unknown or unbonded pin, a controller instance the chip
+    /// does not have, an output signal on an input-only pad, or a pad whose
+    /// function list does not include the signal.
     ///
     /// [`BusError::InvalidConfig`]: crate::bus::BusError::InvalidConfig
+    fn can_route(&self, signal: Signal, pin: u8) -> BusResult<()>;
+
+    /// Route `signal` to `pin`, configuring the pad per `config`.
+    ///
+    /// Fails with the same errors as [`PinMux::can_route`], which it checks
+    /// before touching any register.
     fn route(&self, signal: Signal, pin: u8, config: PinConfig) -> BusResult<()>;
 
     /// Whether `pin` is the signal's IO_MUX-native pad — reachable without
