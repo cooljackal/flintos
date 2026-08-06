@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 
 /// Relative path of the linker script from the workspace root.
-const LD_SCRIPT: &str = "arch/flint-arch-xtensa/flint32.ld";
+const LD_SCRIPT: &str = "arch/xtensa/flint32.ld";
 
 /// Pass Flint's linker script to the final link of the calling binary.
 ///

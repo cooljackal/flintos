@@ -10,4 +10,4 @@ rust-version.workspace = true
 
 [dependencies]
 # Layer-3: depend ONLY on flint-api (plan W7.1).
-flint-api = { path = "../../../flint-api" }
+flint-api = { path = "../../../api" }

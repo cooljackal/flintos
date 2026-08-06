@@ -1,15 +1,13 @@
 [package]
-name = "flint-arch-xtensa"
+name = "uart-bus"
 version.workspace = true
 edition.workspace = true
-description = "Xtensa LX6 HAL implementation for Flint RTOS (ESP32 family)"
+description = "UART bus abstraction layer"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../../flint-hal" }
-
-[features]
-default = []
+# Layer-2: depend ONLY on flint-api (plan W7.1).
+flint-api = { path = "../../../api" }

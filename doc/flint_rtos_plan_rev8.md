@@ -1467,7 +1467,7 @@ flint/
 │           └── asm/
 │               └── vectors.S
 │
-├── flint-hal/                           # HAL trait definitions only — no impl
+├── hal/                           # HAL trait definitions only — no impl
 │   ├── Cargo.toml
 │   └── src/
 │       ├── lib.rs                       # all HAL traits re-exported
@@ -1511,7 +1511,7 @@ flint/
 │           ├── mount.rs
 │           └── littlefs.rs
 │
-├── flint-api/                          # The flint:: public API crate
+├── api/                          # The flint:: public API crate
 │   ├── Cargo.toml
 │   └── src/
 │       ├── lib.rs
@@ -1626,7 +1626,7 @@ flint/
 
 3. **Minimum SRAM floor:** Recommend 256KB. Document as minimum in `porting_guide.md`.
 
-4. **Async executor placement:** Recommend pure library executor in `flint-api/` first. Kernel-assisted wakers as a later optimization. Does not block any phase.
+4. **Async executor placement:** Recommend pure library executor in `api/` first. Kernel-assisted wakers as a later optimization. Does not block any phase.
 
 5. **`cargo run` tooling:** Recommend `probe-rs` as primary flash runner (supports ESP32 via JTAG + STM32 via SWD). `espflash` as ESP32-specific fallback for users without a JTAG probe. Wizard detects which is available.
 

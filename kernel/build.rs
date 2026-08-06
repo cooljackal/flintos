@@ -12,7 +12,7 @@ fn main() {
         .parent()
         .unwrap()
         .join("arch")
-        .join("flint-arch-xtensa")
+        .join("xtensa")
         .join("flint32.ld");
     println!("cargo:rerun-if-changed={}", ld_script.display());
 }

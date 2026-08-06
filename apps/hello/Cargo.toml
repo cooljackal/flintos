@@ -12,11 +12,11 @@ rust-version.workspace = true
 
 [dependencies]
 flint-kernel = { path = "../../kernel", default-features = false }
-flint-api = { path = "../../flint-api" }
-flint-hal = { path = "../../flint-hal" }
+flint-api = { path = "../../api" }
+flint-hal = { path = "../../hal" }
 
 [build-dependencies]
-flint-build = { path = "../../flint-build" }
+flint-build = { path = "../../tools/build" }
 
 # Board and debug selection are the application's, not the kernel's: the
 # application is the binary, so it is the only place a feature can be chosen

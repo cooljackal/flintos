@@ -1,13 +1,13 @@
 [package]
-name = "i2c-bus"
+name = "esp32-uart"
 version.workspace = true
 edition.workspace = true
-description = "I2C bus abstraction layer"
+description = "ESP32 UART physical driver"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# Layer-2: depend ONLY on flint-api (plan W7.1).
-flint-api = { path = "../../../flint-api" }
+flint-hal = { path = "../../../hal" }
+flint-soc-esp32 = { path = "../../../soc/esp32" }

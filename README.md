@@ -87,19 +87,19 @@ Flint is a small preemptive RTOS built around three ideas:
    logical drivers   │  bme280        ssd1306      your_device │  ← portable across MCUs
                      └────────────────┬────────────────────────┘
    Layer 2           ┌────────────────┴────────────────────────┐
-   bus abstraction   │  spi_bus       i2c_bus      uart_bus    │
+   bus abstraction   │  spi-bus       i2c-bus      uart-bus    │
                      └────────────────┬────────────────────────┘
    Layer 1           ┌────────────────┴────────────────────────┐
-   physical drivers  │  esp32_spi     esp32_i2c    esp32_uart  │  ← portable across devices
+   physical drivers  │  esp32-spi     esp32-i2c    esp32-uart  │  ← portable across devices
                      └────────────────┬────────────────────────┘
                      ┌────────────────┴────────────────────────┐
    kernel            │  scheduler · IPC · timers · IRQ router  │
                      └────────────────┬────────────────────────┘
                      ┌────────────────┴────────────────────────┐
-   soc               │  flint-soc-esp32  (pin mux, periph map) │
+   soc               │  soc/esp32   (pin mux, peripheral map)  │
                      └────────────────┬────────────────────────┘
                      ┌────────────────┴────────────────────────┐
-   arch              │  flint-arch-xtensa  (trap, tick, ctx)   │
+   arch              │  arch/xtensa (trap, tick, context)      │
                      └─────────────────────────────────────────┘
 ```
 
@@ -356,11 +356,11 @@ today (none exist yet); when you need something production-proven — use
 
 ```
 apps/                      applications — the binaries you actually flash
-flint-hal/                 traits + types every layer depends on (depends on nothing)
-flint-api/                 the API your application code uses
-flint-build/               build-script helper that gives an app the linker script
-arch/flint-arch-xtensa/    CPU — boot, vectors, context switch, tick
-soc/flint-soc-esp32/       chip — peripheral map, IO_MUX, GPIO matrix, clock gating
+hal/                 traits + types every layer depends on (depends on nothing)
+api/                 the API your application code uses
+tools/build/               build-script helper that gives an app the linker script
+arch/xtensa/    CPU — boot, vectors, context switch, tick
+soc/esp32/       chip — peripheral map, IO_MUX, GPIO matrix, clock gating
 kernel/                    scheduler, IPC, timers, IRQ routing, debug — a library
 board/                     PCB — which pin is wired to what
 drivers/physical/          Layer 1 — MCU register drivers

@@ -84,7 +84,7 @@ else is testable. Do this first.
 3. **W0.3 — Size the exception entry frame correctly.** *(Issue #8)*
    - `vectors.S` reserves `-64` but writes through offset 0x58. Reserve ≥ 96 bytes
      (round to 16-byte alignment) and keep the `RawTrapFrame` layout in lock-step with
-     `flint-hal/types.rs`.
+     `hal/types.rs`.
 
 4. **W0.4 — Disable the watchdogs properly.** *(minor — startup.S)*
    - Write the unlock key `0x50D83AA1` to `TIMG0_WDTWPROTECT` before clearing
@@ -168,7 +168,7 @@ context is a live data race. Land this immediately after W1.
 
 1. **W2.1 — Implement `CriticalSection` for Xtensa.** *(Issue #20)*
    - Provide a token type that masks interrupts up to `CRITICAL_SECTION_PRIORITY`
-     (`rsil`), restores prior `PS` on drop. Add to `arch/flint-arch-xtensa`.
+     (`rsil`), restores prior `PS` on drop. Add to `arch/xtensa`.
 
 2. **W2.2 — Wrap all kernel shared state.** *(Issue #20)*
    - Replace the `static mut` + `&'static mut` pattern (scheduler `global()` at
@@ -178,7 +178,7 @@ context is a live data race. Land this immediately after W1.
    - This also clears the `static_mut_refs` lint that newer toolchains deny.
 
 3. **W2.3 — Fix the lock-free queue or document SPSC.** *(Issue #21)*
-   - `flint-api/queue.rs` `try_send`/`try_recv` are only sound for single-producer/
+   - `api/queue.rs` `try_send`/`try_recv` are only sound for single-producer/
      single-consumer. Either (a) restrict to SPSC and document it loudly + add a
      `debug_assert` guard, or (b) make slot reservation atomic (`fetch_add` on a
      reservation index with a published/committed flag). Given `send_isr` exists,
@@ -222,7 +222,7 @@ With a sound, preempting scheduler, fix its decision logic.
 
 5. **W3.5 — No silent failures on exhaustion.** *(Issue #15)*
    - `mutex::lock` must not hand out a guard when the mutex table is full — return an
-     error / block correctly, never silently "succeed" (`mutex.rs:41`, `flint-api/mutex.rs:79`).
+     error / block correctly, never silently "succeed" (`mutex.rs:41`, `api/mutex.rs:79`).
    - `timer::once/every` must return `Option`/`Result` and the API must surface failure
      (`timer.rs:42`).
    - Replace the `panic!` in `QueueWaiters::find_or_create` (`kernel/queue.rs:109`) with a
@@ -243,7 +243,7 @@ already-written kernel waiter machinery and implement timeouts.
 **Tasks**
 
 1. **W4.1 — Wire blocking send/recv.** *(Issue #5)*
-   - `flint-api/queue.rs` `send`/`recv` must call into the kernel
+   - `api/queue.rs` `send`/`recv` must call into the kernel
      (`_flint_sys_queue_send/recv`) on the blocking path instead of falling back to
      `try_*`. Connect to `kernel/queue.rs` `block_send`/`block_recv`/`wake_*` (currently
      dead code). On wake, retry the operation and return the message.

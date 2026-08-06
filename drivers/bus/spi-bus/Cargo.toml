@@ -1,13 +1,13 @@
 [package]
-name = "esp32-uart"
+name = "spi-bus"
 version.workspace = true
 edition.workspace = true
-description = "ESP32 UART physical driver"
+description = "SPI bus abstraction layer"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../../../flint-hal" }
-flint-soc-esp32 = { path = "../../../soc/flint-soc-esp32" }
+# Layer-2: depend ONLY on flint-api (plan W7.1).
+flint-api = { path = "../../../api" }

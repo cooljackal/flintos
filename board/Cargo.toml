@@ -9,8 +9,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../flint-hal" }
-flint-soc-esp32 = { path = "../soc/flint-soc-esp32" }
+flint-hal = { path = "../hal" }
+flint-soc-esp32 = { path = "../soc/esp32" }
 
 # Board selection. Exactly one `board-*` feature must be enabled — see
 # `src/lib.rs` for the compile_error! that enforces this. Selection lives

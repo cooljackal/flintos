@@ -1,13 +1,15 @@
 [package]
-name = "esp32-gpio"
+name = "flint-arch-xtensa"
 version.workspace = true
 edition.workspace = true
-description = "ESP32 GPIO physical driver"
+description = "Xtensa LX6 HAL implementation for Flint RTOS (ESP32 family)"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../../../flint-hal" }
-flint-soc-esp32 = { path = "../../../soc/flint-soc-esp32" }
+flint-hal = { path = "../../hal" }
+
+[features]
+default = []

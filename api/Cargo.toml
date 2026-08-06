@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../flint-hal" }
+flint-hal = { path = "../hal" }
 
 [features]
 default = []

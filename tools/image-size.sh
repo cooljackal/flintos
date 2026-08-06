@@ -18,7 +18,7 @@
 set -eu
 
 ELF=${1:?usage: image-size.sh <elf> [linker-script]}
-LD=${2:-arch/flint-arch-xtensa/flint32.ld}
+LD=${2:-arch/xtensa/flint32.ld}
 
 SIZE=${XTENSA_SIZE:-xtensa-esp32-elf-size}
 

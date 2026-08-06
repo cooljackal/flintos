@@ -1,13 +1,13 @@
 [package]
-name = "esp32-spi"
+name = "esp32-gpio"
 version.workspace = true
 edition.workspace = true
-description = "ESP32 SPI physical driver"
+description = "ESP32 GPIO physical driver"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-flint-hal = { path = "../../../flint-hal" }
-flint-soc-esp32 = { path = "../../../soc/flint-soc-esp32" }
+flint-hal = { path = "../../../hal" }
+flint-soc-esp32 = { path = "../../../soc/esp32" }

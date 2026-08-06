@@ -74,11 +74,11 @@ choice leaking into everything else that links the kernel:
 ```toml
 [dependencies]
 flint-kernel = { path = "../../kernel", default-features = false }
-flint-api = { path = "../../flint-api" }
-flint-hal = { path = "../../flint-hal" }
+flint-api = { path = "../../api" }
+flint-hal = { path = "../../hal" }
 
 [build-dependencies]
-flint-build = { path = "../../flint-build" }
+flint-build = { path = "../../tools/build" }
 
 [features]
 default = ["board-esp32-wrover", "debug-level-1"]
