@@ -18,13 +18,16 @@ claim did not survive verification, it is recorded in
 > **Fixed:** P0 items 1, 2, 4, 5, 6 · P1 items 7–15 · P2 items 19–36.
 > Host tests went from 49 to 99 in the process.
 >
-> **Still open — tracked as GitHub issues, which are the source of truth.**
-> This document is the historical record of the review; it is not updated as
-> work lands.
+> **Open at the time of the review — tracked as GitHub issues, which are the
+> source of truth.** This document is the historical record of the review; it is
+> not updated as work lands, so check the
+> [issue list](https://github.com/cooljackal/flintos/issues) for what is
+> actually still open. Notably #1 and #15 are closed: Flint boots, schedules and
+> preempts on an ESP32-PICO.
 >
 > | Issue | Item |
 > |---|---|
-> | [#1](https://github.com/cooljackal/flintos/issues/1) | P0 — register-window spill on context switch (**the remaining blocker**) |
+> | [#1](https://github.com/cooljackal/flintos/issues/1) | P0 — register-window spill on context switch |
 > | [#2](https://github.com/cooljackal/flintos/issues/2) | P1 — I²C GPIO-matrix pin routing |
 > | [#3](https://github.com/cooljackal/flintos/issues/3) | P1 — demo tasks hardcoded in `FlintMain` |
 > | [#4](https://github.com/cooljackal/flintos/issues/4) | P1 — multi-board support; M5Stack Atom manifest |

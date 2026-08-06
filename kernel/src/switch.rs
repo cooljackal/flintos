@@ -20,16 +20,25 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::scheduler::{self, TaskState};
 use crate::{interrupt, timer, debug};
 
-// One-shot bring-up markers. Whether the timer interrupt fires at all, and
-// whether a context switch ever happens, are otherwise unobservable from the
-// console: a kernel that never schedules and a kernel whose timer never ticks
-// produce byte-identical silence.
+/// Emit the trap-path bring-up diagnostics: one-shot markers for the first
+/// trap, tick and context switch, plus a heartbeat every 1000 ticks.
+///
+/// Off by default, because on a working kernel it is pure noise. Turn it on
+/// when the console goes quiet: a kernel that never schedules and a kernel
+/// whose timer never ticks produce byte-identical silence, and truncated output
+/// looks the same whether the kernel died or the running task wedged. The
+/// heartbeat separates those and reports where the interrupted task actually
+/// is, so a hang can be located rather than guessed at.
+///
+/// This is what found the register-window fault in the trap entry (issue #1).
+pub const TRAP_DIAGNOSTICS: bool = false;
+
 static FIRST_TRAP: AtomicBool = AtomicBool::new(false);
 static FIRST_TICK: AtomicBool = AtomicBool::new(false);
 static FIRST_SWITCH: AtomicBool = AtomicBool::new(false);
 
 fn announce_once(flag: &AtomicBool, msg: &str) {
-    if !flag.swap(true, Ordering::Relaxed) {
+    if TRAP_DIAGNOSTICS && !flag.swap(true, Ordering::Relaxed) {
         debug::fault::raw_print(msg);
     }
 }
@@ -59,15 +68,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             announce_once(&FIRST_TICK, "[FLINT] first timer tick\r\n");
             let now = XtensaTick::now();
 
-            // Bring-up heartbeat. Truncated console output has two completely
-            // different causes that look identical from outside: the kernel
-            // died, or the kernel is fine and the running task is wedged. This
-            // separates them, and reports where the interrupted task actually
-            // is so a hang can be located rather than guessed at.
-            // The first few ticks are printed unconditionally: the failures
-            // seen so far all occur within the first two or three, so a
-            // heartbeat that only starts at 500 reports nothing at all.
-            if now % 1000 == 0 {
+            if TRAP_DIAGNOSTICS && now % 1000 == 0 {
                 let cur = scheduler::global().current;
                 debug::fault::raw_print("[FLINT] t=");
                 debug::fault::raw_dec(now as u32);

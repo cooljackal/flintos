@@ -22,9 +22,9 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` → `make fl
 
 ## Status
 
-**Pre-alpha. Do not put this in a product.** Flint builds, links a real Xtensa
-image, and passes its host test suite — but **nothing here has been run on
-silicon yet**, and one known defect in the context-switch path is still open.
+**Pre-alpha. Do not put this in a product.** Flint boots, schedules and preempts
+on real silicon — verified on an ESP32-PICO — but it is young, most drivers are
+thin, and the API will change.
 
 | | |
 |---|---|
@@ -32,18 +32,11 @@ silicon yet**, and one known defect in the context-switch path is still open.
 | Host unit tests | ✅ 99/99 passing |
 | Three-layer boundary enforced in CI | ✅ |
 | UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |
+| Boots on real hardware | ✅ ESP32-PICO, 80 MHz measured |
+| Preemptive multitasking on silicon | ✅ three tasks, three priorities, timing exact |
+| Register-window spill on switch | ✅ |
 | I²C driver | ⛔ `init()` rejects all configs — pin routing not implemented |
-| Register-window spill on switch | ⛔ **missing** — see below |
-| Boots on real hardware | ⚠️ **unverified** |
-| Preemption proven on silicon | ⚠️ **unverified** |
-
-**The one open blocker.** Xtensa keeps live call frames in a rotating register
-file. When the scheduler switches away from a task, that task's outer frames
-must be spilled to its stack, and Flint does not yet do this — the spill routine
-is a stub that no code calls. Expect corruption for any task interrupted more
-than one call deep. Everything else on the critical path (trap entry, register
-save/restore, boot window state, memory map, console) has been repaired and
-verified by disassembling the linked image.
+| Anything beyond ESP32 | ⛔ no Cortex-M port yet |
 
 Open work is tracked in
 [issues](https://github.com/cooljackal/flintos/issues) — that is the source of
@@ -52,9 +45,8 @@ checked and found sound, is in
 [`doc/review-findings.md`](doc/review-findings.md). Nothing is hidden: where a
 driver is a stub or a value is an assumption, it says so.
 
-**What we want from you right now:** flash it to a board, tell us what happens —
-[issue #15](https://github.com/cooljackal/flintos/issues/15) is the bring-up
-gate, and a garbled serial dump is a useful result.
+**What we want from you right now:** flash it to a board that isn't an
+ESP32-PICO and tell us what happens. A garbled serial dump is a useful result.
 
 ---
 
@@ -196,21 +188,28 @@ it is a *different* flag from `--baud`.
 
 ### 3. What a healthy boot looks like
 
+Real output from an ESP32-PICO, trimmed:
+
 ```
 [FLINT] FlintMain reached (_start -> Rust OK)
-[FLINT] VECBASE=0x40080000 _vector_table_start=0x40080000 MATCH
-[FLINT] PS=0x0004000f WOE=1
-[FLINT] SP=0x3ffb1f30 task_stack_pool=[0x3ffc0000, 0x3ffd8000)
+[FLINT] VECBASE=0x40080000 _vector_table_start=0x40080000 MATCH (vector table installed)
+[FLINT] PS=0x0006000f WOE=1 (window overflow/underflow enabled)
+[FLINT] SP=0x3ffb36e0 task_stack_pool=[0x3ffc0000, 0x3ffd8000)
 [FLINT] startup::init done
-[FLINT] cpu_hz=80000000 (measured)
+[FLINT] cpu_hz=80000000 (measured: CCOUNT timed against RTC slow clock)
 [FLINT] tick period=80000 CCOUNT ticks
-[FLINT] unmasking interrupts...
+[    0][task:0] INFO  [kernel] Flint RTOS boot complete, entering idle
 [FLINT] interrupts unmasked, entering idle
-[sensor    prio=Normal(1)]  n=1 tick=500
-[consumer  prio=Normal(5)]  n=1 tick=1000
-[sensor    prio=Normal(1)]  n=2 tick=1000
-[housekeep prio=Background(1)] n=1 tick=3000
+[    2][task:1] INFO  [sensor] prio=Normal(1) n=1
+[    5][task:2] INFO  [consumer] prio=Normal(5) n=1
+[  505][task:1] INFO  [sensor] prio=Normal(1) n=2
+[ 1005][task:1] INFO  [sensor] prio=Normal(1) n=3
+[ 1010][task:2] INFO  [consumer] prio=Normal(5) n=2
+[ 3010][task:3] INFO  [housekeep] prio=Background(1) n=1
 ```
+
+The bracketed number is the tick, so the periods are readable straight off:
+sensor every 500 ms, consumer every 1000 ms, housekeep every 3000 ms.
 
 Each banner line proves the step before it, so the **last line you see tells you
 where it died**:
@@ -222,17 +221,20 @@ where it died**:
 | `VECBASE ... MISMATCH` | Traps will go to ROM; nothing will schedule |
 | `WOE=0` | Register windows off; every windowed call is unreliable |
 | `cpu_hz=... (ASSUMED)` | Clock measurement failed; every timeout is scaled by a guess |
-| `unmasking interrupts...` | **It died in its first-ever interrupt** — trap entry or `_flint_trap` |
+| `entering idle`, then silence | It died in its first-ever interrupt — trap entry or `_flint_trap` |
+| `DBL <cause> <epc1> <depc> <vaddr>` | Double exception. Those four words locate it exactly — include them in the report |
 
 If tasks appear but the timing is off by a constant factor, that's the CPU clock
-([#6](https://github.com/cooljackal/flintos/issues/6)). If they run briefly and
-then misbehave, that's most likely the missing window spill
-([#1](https://github.com/cooljackal/flintos/issues/1)) — a genuine stack
-overflow reports itself by name instead.
+([#6](https://github.com/cooljackal/flintos/issues/6)). A genuine stack overflow
+reports itself by name.
+
+Set `TRAP_DIAGNOSTICS` in [`kernel/src/switch.rs`](kernel/src/switch.rs) to
+`true` for a per-tick heartbeat reporting the running task, the interrupted PC
+and `WINDOWSTART`. That is what a silent kernel needs, because a kernel that
+never schedules and one whose timer never ticks are otherwise indistinguishable.
 
 > **If it doesn't work, that is the single most useful thing you can report.**
-> [Issue #15](https://github.com/cooljackal/flintos/issues/15) is the bring-up
-> gate — post your board model and the raw serial output, garbled or not.
+> Open an issue with your board model and the raw serial output, garbled or not.
 
 ---
 
@@ -299,10 +301,11 @@ fn bump() {
 
 | Board | SoC | Status |
 |---|---|---|
-| ESP32-WROVER | ESP32 (Xtensa LX6) | Board manifest present, bring-up in progress |
+| ESP32-PICO | ESP32-PICO-D4 (Xtensa LX6) | ✅ Boots, schedules, preempts |
+| ESP32-WROVER | ESP32 | Manifest present, untested |
 | ESP32-DevKitC / WROOM-32 | ESP32 | Should work — same manifest, untested |
-| M5Stack Atom (Lite/Matrix) | ESP32-PICO-D4 | Manifest needed (different pin map) |
-| STM32F4 (Cortex-M4) | ARM32 | Planned, not started |
+| M5Stack Atom (Lite/Matrix) | ESP32-PICO-D4 | Same SoC; needs a manifest for its pin map |
+| STM32F3 / F4 (Cortex-M) | ARM32 | Planned — needs a whole `flint-arch-cortex-m` |
 
 Adding a board is one file. Copy `board/src/esp32_wrover.rs`, change the pin
 numbers and base addresses, and register it in `board/src/lib.rs`.
@@ -355,11 +358,13 @@ Debug features are additive and compile out entirely:
 
 ## Roadmap
 
-- **Now** — hardware bring-up on ESP32: prove the trap handler, context switch,
-  and tick on real silicon.
-- **Next** — driver register audit against the TRM; M5Stack Atom board support.
+- **Done** — ESP32 bring-up: trap handler, register-window spill, context
+  switch, preemption and tick all proven on silicon.
+- **Now** — demo tasks out of the kernel binary; I²C pin routing; a panic
+  handler that actually halts.
+- **Next** — driver register audit against the TRM; M5Stack Atom board manifest.
 - **Later** — Layer-1 drivers as isolated tasks with one-IPC-hop request/reply;
-  `nsh` shell; STM32F4 port.
+  `nsh` shell; Cortex-M port for STM32F3/F4.
 
 ## Contributing
 

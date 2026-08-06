@@ -115,10 +115,12 @@ fn idle_loop() -> ! {
 
 #[no_mangle]
 pub extern "C" fn FlintMain() -> ! {
-    // Bring-up marker: confirms _start + the asm→Rust windowed call worked,
-    // before we touch anything else. Raw UART0 (ROM-configured), so this
-    // works even if our own UART/console init is broken or never runs.
-    debug::fault::raw_print("\r\n[FLINT] FlintMain reached (_start -> Rust OK)\r\n");
+    if BOOT_DIAGNOSTICS {
+        // Confirms _start and the asm→Rust windowed call worked, before we
+        // touch anything else. Raw UART0 (ROM-configured), so this works even
+        // if our own UART/console init is broken or never runs.
+        debug::fault::raw_print("\r\n[FLINT] FlintMain reached (_start -> Rust OK)\r\n");
+    }
 
     if BOOT_DIAGNOSTICS {
         // VECBASE and PS were both set by startup.S before it ever called
@@ -162,7 +164,9 @@ pub extern "C" fn FlintMain() -> ! {
     // Step 1: board init (UART console).
     startup::init();
 
-    debug::fault::raw_print("[FLINT] startup::init done\r\n");
+    if BOOT_DIAGNOSTICS {
+        debug::fault::raw_print("[FLINT] startup::init done\r\n");
+    }
 
     // Step 2: tick timer (1 ms). Enables the Timer0 interrupt (still masked
     // until step 5). Also enable the software interrupt used by cooperative
