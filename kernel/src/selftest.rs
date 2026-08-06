@@ -33,9 +33,12 @@ use crate::arch::Tick;
 use crate::debug::fault::raw_print;
 use hal::tick::TickSource;
 
+#[path = "selftest_races.rs"]
+mod races;
+
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
-type Check = Result<(), &'static str>;
+pub(crate) type Check = Result<(), &'static str>;
 
 /// Run every on-target self-test and report.
 ///
@@ -53,6 +56,16 @@ pub fn run() {
     check("tick_advances", tick_advances(), &mut pass, &mut fail);
     check("tick_never_goes_backwards", tick_never_goes_backwards(), &mut pass, &mut fail);
     check("critical_section_masks_the_tick", critical_section_masks_the_tick(), &mut pass, &mut fail);
+
+    // Task-versus-ISR races. These are the reason an on-target suite exists at
+    // all: the host stand-ins mask nothing, so none of the properties below is
+    // even falsifiable there.
+    check("nested_critical_sections_stay_masked", races::nested_critical_sections_stay_masked(), &mut pass, &mut fail);
+    check("interrupt_depth_returns_to_zero", races::interrupt_depth_returns_to_zero(), &mut pass, &mut fail);
+    check("ready_mask_agrees_with_task_states", races::ready_mask_agrees_with_task_states(), &mut pass, &mut fail);
+    check("pending_switch_is_taken_once", races::pending_switch_is_taken_once(), &mut pass, &mut fail);
+    check("mutex_cycle_under_ticks_leaves_no_residue", races::mutex_cycle_under_ticks_leaves_no_residue(), &mut pass, &mut fail);
+    check("isr_queue_delivers_exactly_once", races::isr_queue_delivers_exactly_once(), &mut pass, &mut fail);
 
     raw_print("[FLINT] SELFTEST END pass=");
     print_u32(pass);
@@ -216,7 +229,7 @@ fn critical_section_masks_the_tick() -> Check {
 /// `CCOUNT` wraps at 2^32; `wrapping_sub` makes the comparison correct across
 /// that boundary, which a plain subtraction would get wrong roughly once every
 /// 18 seconds at 240 MHz.
-fn spin_cycles(cycles: u32) {
+pub(crate) fn spin_cycles(cycles: u32) {
     let start = unsafe { registers::read_ccount() };
     while unsafe { registers::read_ccount() }.wrapping_sub(start) < cycles {
         core::hint::spin_loop();

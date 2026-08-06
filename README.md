@@ -31,7 +31,7 @@ thin, and the API will change.
 |---|---|
 | Builds for `xtensa-esp32-none-elf` | ✅ |
 | Host unit tests | ✅ 176 passing, kernel included |
-| On-target self-tests | ✅ 5 passing on ESP32-PICO — `make test-target` |
+| On-target self-tests | 11 tests — 5 verified on ESP32-PICO, 6 race tests added and not yet run on hardware |
 | Layer boundary and package naming enforced in CI | ✅ |
 | UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |
 | Boots on real hardware | ✅ ESP32-PICO, 80 MHz measured |
@@ -41,7 +41,7 @@ thin, and the API will change.
 | I²C driver | ⚠️ routes and configures; untested against a real device |
 | Priority inversion | ✅ 11 host tests, including inheritance through a chain of blocked owners |
 | Queue concurrency | ✅ 5 host tests on real threads — exactly-once delivery, contended slots, torn publish |
-| Task-vs-ISR races | ⚠️ one on-target test; the host stubs mask nothing, so they cannot reach this ([#50](https://github.com/cooljackal/flintos/issues/50)) |
+| Task-vs-ISR races | ⚠️ 6 on-target tests written, awaiting a board run ([#50](https://github.com/cooljackal/flintos/issues/50)) |
 | Anything beyond ESP32 | ⛔ no Cortex-M port yet |
 
 **Documentation:** the [wiki](https://github.com/cooljackal/flintos/wiki).
