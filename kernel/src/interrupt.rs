@@ -12,8 +12,8 @@
 //! Handler-table access is guarded by a critical section.
 
 use core::sync::atomic::{AtomicU32, Ordering};
-use arch_xtensa::cs_with;
-use arch_xtensa::registers;
+use crate::arch::cs_with;
+use crate::arch::registers;
 
 const MAX_HANDLERS: usize = 32;
 
@@ -113,16 +113,14 @@ pub fn register(irq: u8, isr: fn()) -> bool {
 /// interrupts already masked, so no extra critical section is taken.
 pub fn dispatch(irq: u8) {
     let h = handlers();
-    for slot in h.iter() {
-        if let Some(handler) = slot {
-            if handler.irq == irq {
-                // Mark trap-context execution for the top-half's duration so
-                // blocking primitives it (mis)calls refuse instead of
-                // wedging whatever task this IRQ interrupted (item 11).
-                let _guard = InterruptGuard::enter();
-                (handler.isr)();
-                break;
-            }
+    for handler in h.iter().flatten() {
+        if handler.irq == irq {
+            // Mark trap-context execution for the top-half's duration so
+            // blocking primitives it (mis)calls refuse instead of
+            // wedging whatever task this IRQ interrupted (item 11).
+            let _guard = InterruptGuard::enter();
+            (handler.isr)();
+            break;
         }
     }
     clear_pending(irq);

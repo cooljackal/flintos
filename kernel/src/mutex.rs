@@ -8,7 +8,7 @@
 //! it still holds (so multiple held mutexes compose correctly), and ownership
 //! transfers to the next waiter.
 
-use arch_xtensa::cs_with;
+use crate::arch::cs_with;
 use crate::scheduler::{self};
 
 const MAX_MUTEXES: usize = 16;
@@ -36,16 +36,16 @@ fn table() -> &'static mut [MutexEntry; MAX_MUTEXES] {
 
 fn find_or_create(addr: usize) -> Option<usize> {
     let t = table();
-    for i in 0..MAX_MUTEXES {
-        if t[i].addr == addr {
+    for (i, entry) in t.iter().enumerate() {
+        if entry.addr == addr {
             return Some(i);
         }
     }
-    for i in 0..MAX_MUTEXES {
-        if t[i].addr == 0 {
-            t[i].addr = addr;
-            t[i].owner = NO_TASK;
-            t[i].waiter_count = 0;
+    for (i, entry) in t.iter_mut().enumerate() {
+        if entry.addr == 0 {
+            entry.addr = addr;
+            entry.owner = NO_TASK;
+            entry.waiter_count = 0;
             return Some(i);
         }
     }

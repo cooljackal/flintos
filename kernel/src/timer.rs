@@ -7,7 +7,7 @@
 //! whose callbacks fire from the trap handler. Software-timer state is guarded
 //! by a critical section against the trap handler.
 
-use arch_xtensa::cs_with;
+use crate::arch::cs_with;
 use crate::scheduler::{self, TaskState};
 
 /// Sleep the current task for `ms` milliseconds.

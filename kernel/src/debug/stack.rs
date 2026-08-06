@@ -68,8 +68,19 @@ pub fn update_hwm(task_id: u32) {
 /// of the *first* painted word, which is zero for any freshly painted stack, so
 /// the high-water mark never moved off zero.
 fn used_bytes(base: u32, size: u32) -> u32 {
+    // The `u32` address is a target fact — stacks live in the low 32 bits of
+    // the ESP32 map, and the TCB stores them as `u32`. The scan itself is just
+    // pointer arithmetic, so it is split out: a host test can hand it the
+    // address of a real array, which it cannot do through a `u32`. On a 64-bit
+    // host `array.as_ptr() as u32` truncates, and reconstructing a pointer from
+    // the truncated value dereferences somewhere unrelated.
+    used_bytes_at(base as *const u32, size)
+}
+
+/// # Safety
+/// `ptr` must be valid for reads of `size` bytes.
+fn used_bytes_at(ptr: *const u32, size: u32) -> u32 {
     let words = (size / 4) as usize;
-    let ptr = base as *const u32;
     let mut untouched = 0usize;
     // Word 0 is the guard, not paint, so start the scan above it.
     for i in 1..words {
@@ -79,7 +90,17 @@ fn used_bytes(base: u32, size: u32) -> u32 {
         }
         untouched += 1;
     }
-    size.saturating_sub((untouched * 4) as u32)
+    // Measure against the *usable* stack, which excludes the guard word.
+    //
+    // Subtracting from `size` counted the guard as used, so a task that had
+    // never run reported 4 bytes of usage and every high-water mark was one
+    // word high. Harmless at 4 KiB, but `update_hwm` divides by `size` to
+    // decide when to warn at 80%, and the smaller the stack the more the
+    // constant offset skews that. The unit test above asserted the correct
+    // values all along; it had simply never been compiled, because this crate
+    // could not be built for a host until `arch.rs` existed.
+    let usable = size.saturating_sub(4);
+    usable.saturating_sub((untouched * 4) as u32)
 }
 
 #[cfg(test)]
@@ -95,15 +116,19 @@ mod tests {
 
     #[test]
     fn used_bytes_counts_from_the_top_down() {
-        // A stack fully painted except the guard is entirely unused.
+        // Through `used_bytes_at`, not `used_bytes`: the latter takes a `u32`
+        // address, and on a 64-bit host `stack.as_ptr() as u32` truncates to an
+        // address that is not this array. This test never ran until the kernel
+        // became host-testable, and when it first did it dereferenced that
+        // truncated pointer and took the whole suite down with an access
+        // violation.
         let mut stack = [STACK_PAINT; 16];
         stack[0] = crate::spawn::STACK_GUARD;
-        let base = stack.as_ptr() as u32;
-        assert_eq!(used_bytes(base, 64), 0);
+        assert_eq!(used_bytes_at(stack.as_ptr(), 64), 0);
 
         // Writing the top two words marks 8 bytes used.
         stack[15] = 0x1234;
         stack[14] = 0x5678;
-        assert_eq!(used_bytes(base, 64), 8);
+        assert_eq!(used_bytes_at(stack.as_ptr(), 64), 8);
     }
 }

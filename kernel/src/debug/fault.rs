@@ -85,6 +85,6 @@ pub fn raw_uart_fault(tag: &str, cause: u32, epc: u32, ps: u32, vaddr: u32) -> !
         raw_puts("\r\n");
     }
     loop {
-        unsafe { core::arch::asm!("waiti 0") };
+        crate::arch::wait_for_interrupt();
     }
 }

@@ -7,22 +7,40 @@
 //! its own tasks. See `apps/` for worked examples and `apps/README.md` for how
 //! to start one of your own.
 
-#![no_std]
-#![feature(asm_experimental_arch)]
+// `std` only under `cfg(test)`, and only ever on a host: the test harness needs
+// it, the kernel does not. Without this the crate cannot host a `#[test]` at
+// all, which is why its unit tests never ran anywhere.
+#![cfg_attr(not(test), no_std)]
+// Xtensa inline assembly needs an unstable feature. Gating it on the target
+// keeps the host build on stable, where a bare `#![feature]` is E0554.
+#![cfg_attr(target_os = "none", feature(asm_experimental_arch))]
 
+pub mod arch;
 pub mod board;
-pub mod boot;
 pub mod debug;
 pub mod dma_broker;
 pub mod interrupt;
 pub mod mutex;
-#[cfg(feature = "phase0-tests")]
-pub mod phase0_test;
+
+// Target-only modules.
+//
+// These are not gated to keep the host build tidy — they genuinely cannot be
+// faked. `boot` reads VECBASE, the stack pointer and PS to set the machine up;
+// `switch` reads EXCCAUSE and the interrupt registers to dispatch a trap.
+// Standing in for those is not stubbing a call, it is inventing a CPU, and a
+// test against an invented CPU tells you about the invention. They are covered
+// on real silicon by the on-target suite instead — see `make test-target`.
+#[cfg(target_os = "none")]
+pub mod boot;
+#[cfg(target_os = "none")]
+pub mod switch;
+
+#[cfg(all(feature = "self-test", target_os = "none"))]
+pub mod selftest;
 pub mod queue;
 pub mod scheduler;
 pub mod spawn;
 pub mod startup;
-pub mod switch;
 pub mod syscall;
 pub mod timer;
 

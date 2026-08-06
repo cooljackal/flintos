@@ -81,19 +81,24 @@ endif
 # The memory map, read by `make size` to name and bound each region.
 LD_SCRIPT      := arch/xtensa/flint32.ld
 
-# Every workspace member builds and tests on the host EXCEPT these four, so name
-# the exceptions rather than listing the other fifteen. A crate added tomorrow is
+# Every workspace member builds and tests on the host EXCEPT these three, so name
+# the exceptions rather than listing the other sixteen. A crate added tomorrow is
 # covered the day it lands, instead of being silently skipped until someone
 # remembers to add it here; a crate that genuinely needs the Xtensa toolchain has
 # to declare itself, once, with a reason.
 #
 #   arch-xtensa        #![feature(asm_experimental_arch)] -- E0554 on stable
-#   kernel             depends on arch-xtensa
-#   hello, demo        depend on kernel
+#   hello, demo        binaries: they need the linker script and a memory map
+#
+# The kernel is deliberately NOT excluded any more. It reaches the machine only
+# through `kernel::arch`, which stands in for it on a host, and its dependency
+# on arch-xtensa is scoped to `cfg(target_os = "none")` -- so `cargo test -p
+# kernel` builds here and its unit tests run on every change, like any other
+# crate's. Before that seam existed they ran nowhere at all.
 #
 # This replaces a hand-kept list of fifteen names, which lived here and in three
 # more copies in ci.yml. Those copies had already drifted once.
-HOST_EXCLUDE   := arch-xtensa kernel hello demo
+HOST_EXCLUDE   := arch-xtensa hello demo
 HOST_SELECT    := --workspace $(addprefix --exclude ,$(HOST_EXCLUDE))
 
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --
@@ -149,7 +154,7 @@ BOARD          ?= board-esp32-wrover
 DEBUG          ?= debug-level-1
 
 # Anything else the app forwards, comma-separated. Currently just:
-#   make build EXTRA_FEATURES=phase0-tests   # boot-time register-window check
+#   make build EXTRA_FEATURES=self-test   # boot-time register-window check
 EXTRA_FEATURES ?=
 
 COMMA          := ,
@@ -266,6 +271,24 @@ check-names: ## Enforce the package naming and layout convention
 .PHONY: test-host
 test-host: ## Run host-side unit tests
 	cargo test $(HOST_SELECT) --target $(HOST_TARGET)
+
+# ── On-target tests ───────────────────────────────────────────────────────────
+#
+# These need a board, so they are asked for rather than run automatically. They
+# cover what no host test can: register windows spilled across a trap, a
+# critical section that genuinely masks the timer, a tick driven by silicon.
+# See kernel/src/selftest.rs.
+
+.PHONY: test-target
+test-target: ## Flash and run the on-target self-tests (needs a board attached)
+	bash tools/target-test.sh
+
+# The judging half of the harness, checked without hardware. It is the part
+# most likely to be wrong and the most expensive to exercise for real, and a
+# harness that calls a dropped serial line a pass is worse than none.
+.PHONY: test-harness
+test-harness: ## Test the on-target harness's judging logic (no board needed)
+	bash tools/target-test-selftest.sh
 
 # ─── Lint ───────────────────────────────────────────────────────────────────────
 

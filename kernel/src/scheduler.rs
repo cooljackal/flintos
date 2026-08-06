@@ -20,7 +20,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use hal::tick::TickSource;
 use hal::types::TaskContext;
-use arch_xtensa::tick::XtensaTick;
+use crate::arch::Tick;
 
 pub const MAX_TASKS: usize = 32;
 
@@ -127,6 +127,12 @@ pub struct Scheduler {
     last_run: [u32; NUM_PRIORITIES],
 }
 
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scheduler {
     pub const fn new() -> Self {
         Self {
@@ -202,7 +208,7 @@ impl Scheduler {
 
     /// The single authoritative tick count (owned by the tick source).
     pub fn ticks(&self) -> u64 {
-        XtensaTick::now()
+        Tick::now()
     }
 
     pub fn current_priority(&self) -> u8 {
@@ -460,12 +466,12 @@ pub fn global() -> &'static mut Scheduler {
 
 /// Run `f` with the scheduler under a critical section (task-context safe).
 pub fn with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
-    arch_xtensa::cs_with(|| f(global()))
+    crate::arch::cs_with(|| f(global()))
 }
 
 /// Request a context switch: set the flag and raise the software interrupt so
 /// the switch happens in the trap handler.
 pub fn request_switch() {
     set_pending_switch();
-    unsafe { arch_xtensa::registers::request_switch() }
+    unsafe { crate::arch::registers::request_switch() }
 }

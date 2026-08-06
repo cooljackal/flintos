@@ -22,7 +22,7 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use arch_xtensa::registers;
+use crate::arch::registers;
 
 use crate::scheduler::TaskState;
 
@@ -184,7 +184,7 @@ pub fn handle_at(
 /// on a bench while someone reads the console.
 fn halt() -> ! {
     loop {
-        unsafe { core::arch::asm!("waiti 15") };
+        crate::arch::wait_masked();
     }
 }
 

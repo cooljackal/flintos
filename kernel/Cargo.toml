@@ -12,7 +12,6 @@ rust-version.workspace = true
 [dependencies]
 hal = { path = "../hal" }
 api = { path = "../api" }
-arch-xtensa = { path = "../arch/xtensa" }
 board = { path = "../board", default-features = false }
 
 # The console UART is the one driver the kernel itself names: `startup::init`
@@ -30,6 +29,18 @@ board = { path = "../board", default-features = false }
 # workspace -- now called from the Xtensa CI job, because being pulled in here
 # is what used to give them that coverage.
 esp32-uart = { path = "../drivers/physical/esp32-uart" }
+
+# Xtensa support is target-only, and that is what lets this crate be built —
+# and therefore tested — on a host at all.
+#
+# `arch-xtensa` carries `#![feature(asm_experimental_arch)]`, so it needs
+# nightly; CI runs stable, where that is E0554. As a plain dependency it would
+# be built for every host target even though `src/arch.rs` never names it
+# there, and the kernel's own unit tests would go on running nowhere. Scoped to
+# `target_os = "none"`, Cargo simply does not build it for the host, and the
+# stand-ins in `arch::host` take its place.
+[target.'cfg(target_os = "none")'.dependencies]
+arch-xtensa = { path = "../arch/xtensa" }
 
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs
@@ -65,5 +76,5 @@ flint-cpu-util = ["api/flint-cpu-util"]
 # Boot-time self-test: drives a deep windowed recursion after interrupts are
 # unmasked and checks the result, so a trap that corrupts the interrupted
 # task's register windows fails the boot loudly. Off by default; turn it on
-# with `make build DEBUG=debug-level-1 EXTRA_FEATURES=phase0-tests`.
-phase0-tests = []
+# with `make build DEBUG=debug-level-1 EXTRA_FEATURES=self-test`.
+self-test = []

@@ -9,8 +9,8 @@
 //! Everything above that line is the kernel's business — console, tick timer,
 //! idle task, interrupt unmasking. Everything below it is the application's.
 
-use arch_xtensa::registers;
-use arch_xtensa::tick::XtensaTick;
+use crate::arch::registers;
+use crate::arch::Tick;
 use hal::tick::TickSource;
 
 use crate::{board, debug, scheduler};
@@ -98,10 +98,10 @@ pub extern "C" fn FlintMain() -> ! {
     // (sleep/yield/block raise it via `scheduler::request_switch`).
     //
     // The period comes from the board manifest, which has always declared
-    // `TICK_PERIOD_US`. `XtensaTick::init` measures the real CPU frequency
+    // `TICK_PERIOD_US`. `Tick::init` measures the real CPU frequency
     // against the RTC slow clock rather than assuming one, so report what it
     // found before anything whose timing depends on it runs.
-    XtensaTick::init(board::active::TICK_PERIOD_US);
+    Tick::init(board::active::TICK_PERIOD_US);
 
     if BOOT_DIAGNOSTICS {
         report_clock();
@@ -144,7 +144,7 @@ pub extern "C" fn FlintMain() -> ! {
         debug::fault::raw_print("[FLINT] interrupts unmasked, entering idle\r\n");
     }
 
-    // Boot-time self-test, off unless the `phase0-tests` feature is on.
+    // Boot-time self-test, off unless the `self-test` feature is on.
     //
     // It runs here, after unmasking and before idle, because that is the only
     // point where it means anything: it drives a deep windowed recursion and
@@ -152,8 +152,8 @@ pub extern "C" fn FlintMain() -> ! {
     // mid-computation. That is precisely the failure that cost this kernel its
     // longest bring-up bug -- a trap corrupting the interrupted task's register
     // windows -- and this is the regression test for it.
-    #[cfg(feature = "phase0-tests")]
-    crate::phase0_test::run();
+    #[cfg(feature = "self-test")]
+    crate::selftest::run();
 
     // Step 6: become the idle task.
     idle_loop();
@@ -203,15 +203,15 @@ fn report_boot_state() {
 /// value produces a kernel whose delays are all wrong by the same factor.
 fn report_clock() {
     debug::fault::raw_print("[FLINT] cpu_hz=");
-    debug::fault::raw_dec(XtensaTick::cpu_hz());
-    debug::fault::raw_print(if XtensaTick::freq_measured() {
+    debug::fault::raw_dec(Tick::cpu_hz());
+    debug::fault::raw_print(if Tick::freq_measured() {
         " (measured: CCOUNT timed against RTC slow clock)\r\n"
     } else {
         " (ASSUMED -- RTC measurement failed or was implausible; \
           falling back to the hardcoded constant, which may be WRONG)\r\n"
     });
     debug::fault::raw_print("[FLINT] tick period=");
-    debug::fault::raw_dec(XtensaTick::ticks_per_period());
+    debug::fault::raw_dec(Tick::ticks_per_period());
     debug::fault::raw_print(" CCOUNT ticks\r\n");
 }
 
@@ -243,7 +243,7 @@ fn install_idle_task() {
 /// `waiti 0` parks the CPU until the next interrupt, which drives scheduling.
 fn idle_loop() -> ! {
     loop {
-        unsafe { core::arch::asm!("waiti 0") };
+        crate::arch::wait_for_interrupt();
     }
 }
 

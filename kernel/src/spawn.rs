@@ -8,7 +8,7 @@
 //! handler) lands at the entry point with a clean single register window.
 
 use hal::types::{Priority, TaskId};
-use arch_xtensa::registers::PS_WOE;
+use crate::arch::registers::PS_WOE;
 
 use crate::scheduler::{self, TaskState};
 
@@ -205,6 +205,6 @@ extern "C" fn flint_task_exit() -> ! {
     scheduler::request_switch();
     // Wait to be switched away.
     loop {
-        unsafe { core::arch::asm!("waiti 0") };
+        crate::arch::wait_for_interrupt();
     }
 }

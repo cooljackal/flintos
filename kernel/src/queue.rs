@@ -11,7 +11,7 @@
 //!
 //! All waiter-table access happens inside a critical section.
 
-use arch_xtensa::cs_with;
+use crate::arch::cs_with;
 use crate::scheduler::{self, TaskState};
 
 const MAX_WAITERS: usize = 16;

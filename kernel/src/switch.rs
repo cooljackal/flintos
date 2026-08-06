@@ -13,8 +13,8 @@
 
 use hal::tick::TickSource;
 use hal::types::TaskContext;
-use arch_xtensa::registers;
-use arch_xtensa::tick::XtensaTick;
+use crate::arch::registers;
+use crate::arch::Tick;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::scheduler::{self, TaskState};
@@ -64,9 +64,9 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
 
         // Timer tick.
         if pending & registers::INT_TIMER0_MASK != 0 {
-            XtensaTick::tick(); // ack + re-arm + advance counter
+            Tick::tick(); // ack + re-arm + advance counter
             announce_once(&FIRST_TICK, "[FLINT] first timer tick\r\n");
-            let now = XtensaTick::now();
+            let now = Tick::now();
 
             if TRAP_DIAGNOSTICS && now % 1000 == 0 {
                 let sched = scheduler::global();
