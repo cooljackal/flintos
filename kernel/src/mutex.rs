@@ -133,7 +133,7 @@ pub fn lock(addr: usize) -> bool {
         let cur_prio = scheduler::global().tasks[cur as usize]
             .as_ref()
             .map_or(scheduler::IDLE_PRIORITY, |x| x.priority);
-        scheduler::global().boost_priority(owner, cur_prio);
+        boost_chain(owner, cur_prio);
         let wc = t[idx].waiter_count as usize;
         t[idx].waiters[wc] = cur;
         t[idx].waiter_count += 1;
@@ -216,6 +216,41 @@ pub fn unlock(addr: usize) {
     }
 }
 
+/// Boost `owner` to `target`, and follow the chain if `owner` is itself blocked
+/// on a mutex someone else holds.
+///
+/// Boosting only the immediate owner leaves the inversion in place one link
+/// further down. H (prio 5) blocks on M1 held by M (20); M is already blocked on
+/// M2 held by L (40). Raising M to 5 changes nothing about what runs, because M
+/// is not runnable — L is, and L is still at 40, so anything between 5 and 40
+/// preempts the task that is actually holding H up. That is unbounded
+/// inversion, which is the entire thing priority inheritance exists to prevent.
+///
+/// The walk is bounded by the table size. A cycle in the chain means the tasks
+/// have deadlocked on each other, and this is not the place to discover that —
+/// but it is a place that would otherwise spin forever, so it stops.
+fn boost_chain(owner: u32, target: u8) {
+    let mut id = owner;
+    for _ in 0..MAX_MUTEXES {
+        scheduler::global().boost_priority(id, target);
+
+        // Is this one waiting on a mutex of its own?
+        let waiting_on = match &scheduler::global().tasks[id as usize] {
+            Some(t) => t.blocked_on_mutex,
+            None => return,
+        };
+        let Some(addr) = waiting_on else { return };
+        let next = match table().iter().find(|e| e.addr == addr) {
+            Some(e) if e.owner != NO_TASK => e.owner,
+            _ => return,
+        };
+        if next == id {
+            return;
+        }
+        id = next;
+    }
+}
+
 /// Remove and return the highest-priority (lowest numeric) waiter of mutex
 /// `idx`, preserving FIFO order for the rest.
 fn pop_best_waiter(idx: usize) -> u32 {
@@ -262,3 +297,18 @@ fn recompute_owner_priority(owner: u32) {
     }
     scheduler::global().set_inherited_priority(owner, effective);
 }
+
+/// Clear the table between host tests. See `crate::testsupport`.
+#[cfg(test)]
+pub(crate) fn reset_for_test() {
+    for e in table().iter_mut() {
+        e.addr = 0;
+        e.owner = NO_TASK;
+        e.waiter_count = 0;
+        e.waiters = [NO_TASK; MAX_WAITERS];
+    }
+}
+
+#[cfg(test)]
+#[path = "mutex_tests.rs"]
+mod tests;

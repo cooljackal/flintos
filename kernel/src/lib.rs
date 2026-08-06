@@ -39,6 +39,9 @@ pub mod switch;
 pub mod selftest;
 pub mod queue;
 pub mod scheduler;
+
+#[cfg(test)]
+mod testsupport;
 pub mod spawn;
 pub mod startup;
 pub mod syscall;

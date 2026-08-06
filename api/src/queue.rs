@@ -567,3 +567,7 @@ mod tests {
         assert_eq!(d.remaining_ms(u64::MAX), None);
     }
 }
+
+#[cfg(test)]
+#[path = "queue_race_tests.rs"]
+mod race_tests;
