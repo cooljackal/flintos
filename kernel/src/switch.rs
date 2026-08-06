@@ -48,6 +48,19 @@ fn announce_once(flag: &AtomicBool, msg: &str) {
 /// save area. Once every frame is in memory, the restore path can mark only the
 /// current window live and let underflow refill the rest from the stack.
 ///
+/// This must run on *every* trap, not only on the ones that switch. The restore
+/// path unconditionally rebuilds WINDOWSTART as `1 << WINDOWBASE`, so if a trap
+/// returns to the same task without having spilled, the caller frames still sat
+/// in the register file while their WINDOWSTART bits were being cleared. The
+/// task's next `retw` then underflowed and refilled from a stack save area
+/// nothing had ever written. Seen on hardware as a stack pointer of 0x3f401da7
+/// -- a rodata address -- which faulted the trap entry itself and produced a
+/// double exception.
+///
+/// `callx8` advances WINDOWBASE two slots per call, so twelve levels rotates
+/// 24 slots through a 16-slot ring: everything is evicted, with margin. Costs
+/// ~600 bytes of the interrupted task's stack.
+///
 /// `black_box` keeps the recursion from being flattened; the whole point is the
 /// call depth, which an optimiser would otherwise remove.
 #[inline(never)]
@@ -66,6 +79,10 @@ fn spill_windows(depth: u32) -> u32 {
 /// entry stub.
 #[no_mangle]
 pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
+    // Before anything else, and before this handler's own call depth starts
+    // evicting windows we have no record of. See spill_windows.
+    core::hint::black_box(spill_windows(12));
+
     let cause = unsafe { registers::read_exccause() };
     announce_once(&FIRST_TRAP, "[FLINT] first trap serviced\r\n");
 
@@ -146,11 +163,6 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
         let next = sched.schedule();
         if next != cur {
             announce_once(&FIRST_SWITCH, "[FLINT] first context switch\r\n");
-            // Flush the outgoing task's register windows to its stack before
-            // its context is captured, so the incoming task cannot inherit
-            // them. See spill_windows.
-            core::hint::black_box(spill_windows(20));
-
             // Save the interrupted context into the current task's TCB, unless
             // it has been torn down.
             if let Some(tcb) = &mut sched.tasks[cur as usize] {
