@@ -35,3 +35,9 @@ debug-level-3 = ["kernel/debug-level-3"]
 
 # Boot-time register-window self-test. Off by default; `make ... EXTRA_FEATURES=self-test`.
 self-test = ["kernel/self-test"]
+
+# Watchdog verification. Each spawns a task that deliberately hangs, one way
+# per watchdog, so the reset can be observed rather than assumed. `make
+# test-watchdog WDT=kernel` / `WDT=idle`.
+watchdog-test-kernel = []
+watchdog-test-idle = []

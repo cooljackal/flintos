@@ -335,6 +335,29 @@ test-target: ## Flash and run the on-target self-tests (needs a board attached)
 	$(BASH) tools/target-test.sh
 
 # The judging half of the harness, checked without hardware. It is the part
+# ── Watchdog verification ─────────────────────────────────────────────────────
+#
+# A watchdog that is armed but does not fire is worse than none: it reports
+# protection nobody has. The only way to know is to break the board on purpose
+# and watch it come back.
+#
+#   make test-watchdog WDT=kernel   # mask interrupts and hang -> RTC WDT, ~5 s
+#   make test-watchdog WDT=idle     # spin without yielding    -> idle WDT, ~10 s
+#
+# PASS is the board rebooting: the ROM banner and `FlintMain reached` appear a
+# second time, a few seconds after the [wdt-test] line. FAIL is the console
+# going quiet and staying quiet -- that means armed-but-not-firing, which is
+# the outcome worth finding.
+WDT ?= kernel
+
+.PHONY: test-watchdog
+test-watchdog: ## Prove a watchdog actually resets the board (WDT=kernel|idle)
+	@echo "Flashing demo with watchdog-test-$(WDT)."
+	@echo "PASS = the board reboots a few seconds after the [wdt-test] line."
+	@echo "FAIL = the console goes quiet and stays quiet."
+	@echo
+	$(MAKE) flash EXTRA_FEATURES=watchdog-test-$(WDT)
+
 # ── Upgrading ─────────────────────────────────────────────────────────────────
 #
 # Applications are separate crates, so a pull never touches apps/<yours>/. What

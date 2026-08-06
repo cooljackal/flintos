@@ -37,6 +37,35 @@ const HOUSEKEEP_PRIORITY: Priority = Priority::Background(1);
 // use 12 KiB of it, so the headroom is free.
 const STACK: usize = 4096;
 
+/// Deliberately hang so the RTC watchdog has to reset the board.
+///
+/// Masks interrupts and never returns, which is exactly the failure the RTC
+/// watchdog exists for: the tick stops, so nothing feeds it. A board that does
+/// **not** reset within a few seconds means the watchdog is not really armed.
+#[cfg(feature = "watchdog-test-kernel")]
+fn hang_with_interrupts_masked() {
+    task::sleep_ms(3_000); // let a few normal log lines out first
+    api::log_info!("[wdt-test] masking interrupts and hanging -- expect a reset in ~5 s");
+    kernel::arch::cs_with(|| loop {
+        core::hint::spin_loop();
+    });
+}
+
+/// Deliberately spin *without* masking, so only the idle-fed watchdog notices.
+///
+/// The tick keeps running and keeps feeding the RTC watchdog, so from its point
+/// of view the system is perfectly healthy. Idle never runs again, which is the
+/// only observable difference -- and the timer-group watchdog is the only thing
+/// watching for it.
+#[cfg(feature = "watchdog-test-idle")]
+fn spin_without_yielding() {
+    task::sleep_ms(3_000);
+    api::log_info!("[wdt-test] spinning without yielding -- expect a reset in ~10 s");
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
 fn main() {
     // Opt in to the watchdogs. Off unless an application asks, because a board
     // that resets itself for reasons its author never requested is a very
@@ -49,6 +78,13 @@ fn main() {
     // yielding. A spinning task keeps the tick alive, so only the second
     // notices it.
     unsafe { kernel::watchdog::arm() };
+
+    // Watchdog verification, off unless asked for. Highest normal priority so
+    // it is unambiguously the thing holding the system up.
+    #[cfg(feature = "watchdog-test-kernel")]
+    task::spawn("wdt-hang", hang_with_interrupts_masked, Priority::Normal(0), STACK);
+    #[cfg(feature = "watchdog-test-idle")]
+    task::spawn("wdt-spin", spin_without_yielding, Priority::Normal(0), STACK);
 
     task::spawn("sensor", task_sensor, SENSOR_PRIORITY, STACK);
     task::spawn("consumer", task_consumer, CONSUMER_PRIORITY, STACK);

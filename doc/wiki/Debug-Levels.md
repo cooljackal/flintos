@@ -93,6 +93,28 @@ want to watch the console yourself:
 make flash EXTRA_FEATURES=self-test
 ```
 
+## Verifying the watchdogs
+
+`kernel::watchdog::arm()` is opt-in and `apps/demo` calls it — but a board that
+runs normally only proves the watchdogs are being *fed*. Proving one *fires*
+means breaking the board on purpose:
+
+```bash
+make test-watchdog WDT=kernel   # masks interrupts and hangs -> RTC WDT, ~5 s
+make test-watchdog WDT=idle     # spins without yielding     -> idle WDT, ~10 s
+```
+
+**PASS** is the board rebooting a few seconds after the `[wdt-test]` line — the
+ROM banner and `FlintMain reached` appear a second time.
+
+**FAIL** is the console going quiet and staying quiet. That means armed but not
+firing, which is worse than no watchdog: it reports protection nobody has.
+
+The two modes are not interchangeable. Masking interrupts stops the tick, so
+only the RTC watchdog can notice. Spinning *without* masking keeps the tick
+running and keeps the RTC watchdog fed — the system looks perfectly healthy to
+it — and only the idle-fed one sees that idle stopped running.
+
 ## Cost
 
 Measure it, don't guess:
