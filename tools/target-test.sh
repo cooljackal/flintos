@@ -126,10 +126,55 @@ FLASH_BAUD="${FLASH_BAUD:-115200}"
 MONITOR_BAUD="${MONITOR_BAUD:-115200}"
 BIN="target/xtensa-esp32-none-elf/debug/${APP}"
 
-command -v espflash >/dev/null 2>&1 || {
-    echo "espflash not found. Install it with: cargo install espflash" >&2
+# Locate espflash without trusting PATH alone.
+#
+# cargo installs it to ~/.cargo/bin and adds that to the *persisted* PATH — but
+# a shell opened before the install keeps the PATH it inherited. The result is
+# `make test-target` failing with "not found" in one terminal and working in
+# another, which reads as a broken Makefile rather than a stale session. Look in
+# the places it is actually installed.
+ESPFLASH=""
+CANDIDATES=("espflash")
+[ -n "${CARGO_HOME:-}" ] && CANDIDATES+=("$CARGO_HOME/bin/espflash")
+[ -n "${HOME:-}" ] && CANDIDATES+=("$HOME/.cargo/bin/espflash")
+# On MSYS2/Git Bash $HOME may be the MSYS home rather than the Windows profile,
+# which is where cargo actually installed.
+if [ -n "${USERPROFILE:-}" ] && command -v cygpath >/dev/null 2>&1; then
+    CANDIDATES+=("$(cygpath -u "$USERPROFILE")/.cargo/bin/espflash")
+fi
+
+for candidate in "${CANDIDATES[@]}"; do
+    if [ "$candidate" = "espflash" ]; then
+        # Bare name: a PATH lookup, which on Windows resolves the .exe itself.
+        if resolved="$(command -v espflash 2>/dev/null)" && [ -n "$resolved" ]; then
+            ESPFLASH="$resolved"
+            break
+        fi
+        continue
+    fi
+    # Explicit path: `command -v` does NOT apply the .exe suffix here, so the
+    # file must be probed both ways or the fallback silently finds nothing —
+    # which is the whole failure this block exists to prevent.
+    for path in "$candidate" "$candidate.exe"; do
+        if [ -x "$path" ]; then
+            ESPFLASH="$path"
+            break 2
+        fi
+    done
+done
+
+if [ -z "$ESPFLASH" ]; then
+    {
+        echo "espflash not found."
+        echo "  Looked on PATH and in:"
+        for candidate in "${CANDIDATES[@]:1}"; do echo "    $candidate"; done
+        echo
+        echo "  Install it with:  cargo install espflash"
+        echo "  If it IS installed, this shell's PATH predates the install."
+        echo "  Open a new terminal, or:  export PATH=\"\$HOME/.cargo/bin:\$PATH\""
+    } >&2
     exit 2
-}
+fi
 
 echo "==> Building ${APP} with the self-test suite"
 cargo +esp build \
@@ -152,7 +197,7 @@ if [ -n "${PORT:-}" ]; then
     PORT_ARGS=(--port "$PORT")
 fi
 
-espflash flash "$BIN" \
+"$ESPFLASH" flash "$BIN" \
     --chip "$ESPFLASH_CHIP" --flash-mode "$FLASH_MODE" \
     --baud "$FLASH_BAUD" --monitor --monitor-baud "$MONITOR_BAUD" \
     "${PORT_ARGS[@]}" \

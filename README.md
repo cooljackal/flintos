@@ -397,14 +397,50 @@ idiom, returning an error where the silicon genuinely cannot comply.
 ## Development
 
 ```bash
+make               # list every target, with what it does
 make check         # host-side compile check
-make test-host     # host unit tests
 make lint          # clippy, warnings denied
 make check-layers  # three-layer boundary enforcement
+make check-names   # package naming and layout convention
 make apps          # list applications
 make build         # Xtensa build of APP (needs the esp toolchain)
 make size          # where the image's bytes went, per memory region
 ```
+
+### Tests
+
+Two tiers, because they catch different things.
+
+```bash
+make test-host                                   # every change, no hardware
+make test-target BOARD=board-m5-atom PORT=COM5   # when you have a board
+```
+
+**`make test-host`** runs the unit tests for every crate, kernel included — 160
+of them, and CI runs them on every push. The kernel reaches the machine only
+through `kernel::arch`, which substitutes stand-ins on a host, so its logic is
+testable without an ESP32 at all.
+
+Those stand-ins are honest about what they are. `cs_with` masks nothing on a
+host, because there is nothing to mask — so races, priority inversion and
+register-window corruption are not merely untested there, they are unreachable.
+A green host run means the logic is consistent, not that the kernel works.
+
+**`make test-target`** is the other half: five checks that run on real silicon,
+each picked because a host cannot fail it — a trap corrupting the interrupted
+task's register windows, a window spilled past the physical register file, and
+whether a critical section genuinely masks the timer. It flashes the board,
+reads the serial output and exits non-zero if anything failed, so it is usable
+from a script rather than only by eye.
+
+Set `PORT` when more than one serial device is attached, or espflash will stop
+to ask which one and the harness has no terminal to answer with. `BOARD` must
+match your hardware — the default is `board-esp32-wrover`, so an ESP32-PICO
+board such as the M5Stack Atom needs `BOARD=board-m5-atom`.
+
+`make test-harness` checks the parsing logic that decides whether a board
+passed, without needing a board. It runs in CI, because a harness that reports
+green when the serial line dropped half the output is worse than no harness.
 
 `make build` prints the size report itself. It reports per *region*, not per
 section, because a total says nothing useful: an ESP32 image is scattered across

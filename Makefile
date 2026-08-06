@@ -170,6 +170,7 @@ APP_BIN        := target/$(XTENSA_TARGET)/debug/$(APP)
 
 # ── Environment Setup ──────────────────────────────────────────────────────────
 
+##@ Environment
 .PHONY: env
 env: ## Install the Espressif Rust Xtensa toolchain (esp-rs/rust-build)
 	cargo install espup
@@ -203,6 +204,7 @@ env-uninstall: ## Remove the Espressif toolchain
 
 export PATH := $(ESP_GCC_DIR):$(PATH)
 
+##@ Build and flash
 .PHONY: build
 build: ## Build the selected app (APP=demo BOARD=board-esp32-wrover DEBUG=debug-level-1)
 	$(CARGO) build $(APP_FLAGS)
@@ -256,6 +258,7 @@ monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
 
 # ─── Check (host target — pure Rust only, no Xtensa asm) ───────────────────────
 
+##@ Check and test
 .PHONY: check
 check: ## Check every host-compatible crate
 	cargo check $(HOST_SELECT) --target $(HOST_TARGET)
@@ -304,6 +307,7 @@ test-harness: ## Test the on-target harness's judging logic (no board needed)
 
 # ─── Lint ───────────────────────────────────────────────────────────────────────
 
+##@ Quality
 .PHONY: lint
 lint: ## Run clippy on every host crate, tests included, warnings denied
 	cargo clippy $(HOST_SELECT) --target $(HOST_TARGET) \
@@ -311,6 +315,7 @@ lint: ## Run clippy on every host crate, tests included, warnings denied
 
 # ─── Info ───────────────────────────────────────────────────────────────────────
 
+##@ Misc
 .PHONY: info
 info: ## Show tracked files and total size
 	@echo "Tracked files (excluding target/):"; git ls-files | grep -v target/ | wc -l; echo "Total workspace size:"; du -sh .
@@ -323,36 +328,21 @@ clean: ## Remove all build artifacts
 
 # ─── Help ───────────────────────────────────────────────────────────────────────
 
+# Derived from the `## ` docstring on each target, not written out by hand.
+#
+# The hand-written version had already drifted: it listed neither test-target,
+# test-harness nor check-names, so the three newest targets were undiscoverable
+# from the one place people look for them. A list kept in lock-step by hand with
+# the thing it describes eventually describes something else.
+#
+# The `##@ Group` lines elsewhere in this file set the section headings.
 .PHONY: help
 help: ## Show this help message
-	$(info Flint RTOS — Make targets:)
-	$(info )
-	$(info   Environment)
-	$(info     make env            Install Xtensa toolchain via espup)
-	$(info     make env-activate   Source the Espressif environment)
-	$(info     make env-check      Show installed toolchains)
-	$(info     make env-uninstall  Remove Espressif toolchain)
-	$(info )
-	$(info   Build)
-	$(info     make build          Debug build for ESP32)
-	$(info     make build-release  Release build (minimal binary))
-	$(info     make build-trace    Build with kernel event tracing)
-	$(info     make size           Image size per memory region)
-	$(info     make flash          Build + flash via espflash (USB serial))
-	$(info     make apps           List applications in apps/)
-	$(info     make flash-jtag     Build + flash via probe-rs (JTAG))
-	$(info     make erase          Erase entire flash (recover from bad image))
-	$(info     make monitor        Open serial monitor)
-	$(info )
-	$(info   Check / Test)
-	$(info     make check          Check every host crate)
-	$(info     make check-all      Full check including arch)
-	$(info     make test-host      Run host-side unit tests)
-	$(info     make check-layers   Enforce the three-layer driver boundary)
-	$(info )
-	$(info   Quality)
-	$(info     make lint           Clippy on host crates, warnings denied)
-	$(info     make info           Show project file tree)
-	$(info     make clean          Remove build artifacts)
-	$(info )
-	$(info   Quick start:  make env  ->  make check  ->  make build)
+	@printf 'Flint RTOS — Make targets:\n'
+	@awk 'BEGIN { FS = ":.*## " } \
+	     /^##@ / { printf "\n  %s\n", substr($$0, 5); next } \
+	     /^[a-zA-Z0-9_-]+:.*## / { printf "    make %-16s %s\n", $$1, $$2 }' \
+	     $(MAKEFILE_LIST)
+	@printf '\n  Quick start:   make env  ->  make check  ->  make build\n'
+	@printf '  Host tests:    make test-host    (no hardware; runs in CI)\n'
+	@printf '  Board tests:   make test-target BOARD=board-m5-atom PORT=COM5\n\n'
