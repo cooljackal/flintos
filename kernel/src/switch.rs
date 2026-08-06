@@ -73,9 +73,9 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
                 debug::fault::raw_dec(now as u32);
                 debug::fault::raw_print(" cur=");
                 debug::fault::raw_dec(cur);
-                debug::fault::raw_print(" pc=0x");
+                debug::fault::raw_print(" pc=");
                 debug::fault::raw_hex(unsafe { (*frame).pc });
-                debug::fault::raw_print(" ws=0x");
+                debug::fault::raw_print(" ws=");
                 debug::fault::raw_hex(unsafe { (*frame).windowstart });
                 debug::fault::raw_print(" n=");
                 debug::fault::raw_dec(crate::counters::sensor());

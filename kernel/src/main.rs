@@ -72,24 +72,25 @@ const SENSOR_PRIORITY: Priority = Priority::Normal(1);
 const CONSUMER_PRIORITY: Priority = Priority::Normal(5);
 const HOUSEKEEP_PRIORITY: Priority = Priority::Background(1);
 
-// Bring-up form: counters, not log lines.
-//
-// The logging path is several calls deep and writes to the same UART the trap
-// handler's diagnostics use, so a task dying inside it cannot be told apart
-// from a task that was never scheduled. A counter each proves scheduling on its
-// own, with no shared resource and no call depth.
+// Each task keeps a counter as well as logging. The counters were the only
+// signal during bring-up -- the logging path is several calls deep and writes
+// to the same UART the trap handler uses, so a task dying inside it could not
+// be told apart from one that was never scheduled. They stay because they are
+// still the cheapest way to see all three tasks at once, in the tick heartbeat.
 use core::sync::atomic::Ordering as O;
 
 fn task_sensor() {
     loop {
-        counters::SENSOR.fetch_add(1, O::Relaxed);
+        let n = counters::SENSOR.fetch_add(1, O::Relaxed) + 1;
+        flint_api::log_info!("[sensor] prio={:?} n={}", SENSOR_PRIORITY, n);
         flint_api::task::sleep_ms(500);
     }
 }
 
 fn task_consumer() {
     loop {
-        counters::CONSUMER.fetch_add(1, O::Relaxed);
+        let n = counters::CONSUMER.fetch_add(1, O::Relaxed) + 1;
+        flint_api::log_info!("[consumer] prio={:?} n={}", CONSUMER_PRIORITY, n);
         flint_api::task::sleep_ms(1000);
     }
 }
@@ -97,7 +98,8 @@ fn task_consumer() {
 fn task_housekeep() {
     loop {
         flint_api::task::sleep_ms(3000);
-        counters::HOUSEKEEP.fetch_add(1, O::Relaxed);
+        let n = counters::HOUSEKEEP.fetch_add(1, O::Relaxed) + 1;
+        flint_api::log_info!("[housekeep] prio={:?} n={}", HOUSEKEEP_PRIORITY, n);
     }
 }
 
