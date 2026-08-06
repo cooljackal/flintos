@@ -13,39 +13,77 @@
 # Region sizes are parsed out of the linker script rather than duplicated here,
 # so this cannot drift from the map the image was actually linked against.
 #
-# Usage: tools/image-size.sh <elf> [linker-script]
+# Usage: tools/image-size.sh <elf> [linker-script] [size-tool]
 
 set -eu
 
-ELF=${1:?usage: image-size.sh <elf> [linker-script]}
+ELF=${1:?usage: image-size.sh <elf> [linker-script] [size-tool]}
 LD=${2:-arch/xtensa/flint32.ld}
+# The Makefile passes the tool path here as an argument rather than in the
+# environment: on Windows, make may run recipes through WSL bash, and a variable
+# exported from make does not survive that hop. An argument does.
+SIZE_ARG=${3:-}
 
-SIZE=${XTENSA_SIZE:-xtensa-esp32-elf-size}
+# Finding the toolchain is more work than it should be, because this script can
+# be run by three different shells on Windows -- Git Bash, MSYS make's shell,
+# and WSL bash -- and they disagree about what a path even looks like. Git Bash
+# reads `C:/Users/x`, WSL reads `/mnt/c/Users/x`, neither reads `C:\Users\x`.
+# So: collect every plausible spelling and try them all.
+#
+# The alternative is a report that silently does not appear on someone's
+# machine, which is worse than a few lines of path juggling.
 
-# The Makefile puts the toolchain on PATH, but on Windows it does so as a
-# native path, which this shell cannot use. Fall back to the standard espup
-# install locations before giving up.
-if ! command -v "$SIZE" >/dev/null 2>&1; then
-    home_win=""
-    if [ -n "${USERPROFILE:-}" ]; then
-        home_win=$(cygpath -u "$USERPROFILE" 2>/dev/null || printf '%s' "$USERPROFILE")
-    fi
-    for dir in \
-        "${HOME:-}/.rustup/toolchains/esp/xtensa-esp-elf/bin" \
-        "$home_win/.rustup/toolchains/esp/xtensa-esp-elf/bin"
-    do
-        [ -n "$dir" ] || continue
-        for ext in "" ".exe"; do
-            if [ -x "$dir/xtensa-esp32-elf-size$ext" ]; then
-                SIZE="$dir/xtensa-esp32-elf-size$ext"
-                break 2
-            fi
+# Emit POSIX spellings of a Windows path, one per line.
+posix_forms() {
+    win=$1
+    [ -n "$win" ] || return 0
+    cygpath -u "$win" 2>/dev/null
+    # C:\Users\x -> /c/Users/x (Git Bash) and /mnt/c/Users/x (WSL)
+    slashed=$(printf '%s' "$win" | tr '\\' '/')
+    case $slashed in
+        [A-Za-z]:/*)
+            drive=$(printf '%s' "$slashed" | cut -c1 | tr 'A-Z' 'a-z')
+            rest=${slashed#?:}
+            printf '/%s%s\n' "$drive" "$rest"
+            printf '/mnt/%s%s\n' "$drive" "$rest"
+            ;;
+    esac
+}
+
+TOOL=xtensa-esp32-elf-size
+SUBPATH=.rustup/toolchains/esp/xtensa-esp-elf/bin
+
+# Every place the tool might be, most specific first. XTENSA_SIZE comes from the
+# Makefile and is a native Windows path there, so it gets translated too --
+# under WSL that is the difference between finding the tool and not.
+candidates=$(
+    {
+        printf '%s\n' "${XTENSA_SIZE:-}"
+        posix_forms "${XTENSA_SIZE:-}"
+        printf '%s\n' "$TOOL"
+        for home in "${HOME:-}" $(posix_forms "${USERPROFILE:-}"); do
+            [ -n "$home" ] || continue
+            printf '%s/%s/%s\n' "$home" "$SUBPATH" "$TOOL"
+            printf '%s/%s/%s.exe\n' "$home" "$SUBPATH" "$TOOL"
         done
-    done
-fi
+    } | grep -v '^$'
+)
 
-if ! command -v "$SIZE" >/dev/null 2>&1; then
-    echo "image-size: xtensa-esp32-elf-size not found; skipping size report" >&2
+SIZE=""
+for candidate in $candidates; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        SIZE=$candidate
+        break
+    fi
+done
+
+if [ -z "$SIZE" ]; then
+    # Not fatal. The report is a convenience, and there is one setup it cannot
+    # be made to work in: Windows `make` routing recipes through WSL bash, where
+    # the Windows toolchain is reachable only through interop that may be off.
+    # A build that stops because it could not print a table would be worse.
+    echo "image-size: $TOOL not found; skipping size report" >&2
+    echo "  (set XTENSA_SIZE, or run make from a shell that has the esp toolchain)" >&2
     exit 0
 fi
 

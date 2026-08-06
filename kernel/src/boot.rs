@@ -87,6 +87,12 @@ pub extern "C" fn FlintMain() -> ! {
         debug::fault::raw_print("[FLINT] startup::init done\r\n");
     }
 
+    // If the last boot panicked, say so now that there is a console to say it
+    // on. The snapshot lives in a region the linker keeps out of .bss, so it
+    // survives a soft reset -- which is the only reason writing it was ever
+    // worth doing. Nothing read it until this call existed.
+    debug::panic::report_previous();
+
     // Step 2: tick timer. Enables the Timer0 interrupt (still masked until step
     // 5). Also enable the software interrupt used by cooperative switches
     // (sleep/yield/block raise it via `scheduler::request_switch`).

@@ -16,18 +16,20 @@ XTENSA_TARGET   := xtensa-esp32-none-elf
 ESP_TOOLCHAIN   := esp
 CARGO           := cargo +$(ESP_TOOLCHAIN)
 
-# OS-specific paths (Windows uses USERPROFILE, POSIX uses HOME)
+# OS-specific paths (Windows uses USERPROFILE, POSIX uses HOME).
 #
-# XTENSA_SIZE is passed to tools/image-size.sh explicitly rather than left to
-# PATH. On Windows the toolchain goes on PATH as a native path, which the bash
-# that runs the script cannot use; forward slashes it can.
+# Forward slashes even on Windows: the same string is handed to bash, which
+# reads `C:/Users/x` but not `C:\Users\x`.
 ifeq ($(OS),Windows_NT)
-  ESP_GCC_DIR   := $(USERPROFILE)\.rustup\toolchains\esp\xtensa-esp-elf\bin
-  export XTENSA_SIZE := $(subst \,/,$(USERPROFILE))/.rustup/toolchains/esp/xtensa-esp-elf/bin/xtensa-esp32-elf-size.exe
+  ESP_HOME      := $(subst \,/,$(USERPROFILE))
+  TOOL_EXE      := .exe
 else
-  ESP_GCC_DIR   := $(HOME)/.rustup/toolchains/esp/xtensa-esp-elf/bin
-  export XTENSA_SIZE := $(ESP_GCC_DIR)/xtensa-esp32-elf-size
+  ESP_HOME      := $(HOME)
+  TOOL_EXE      :=
 endif
+
+ESP_GCC_DIR    := $(ESP_HOME)/.rustup/toolchains/esp/xtensa-esp-elf/bin
+XTENSA_SIZE    := $(ESP_GCC_DIR)/xtensa-esp32-elf-size$(TOOL_EXE)
 
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --
 # both are esp-idf-format images on the same silicon, so one set of flags
@@ -123,16 +125,16 @@ export PATH := $(ESP_GCC_DIR):$(PATH)
 .PHONY: build
 build: ## Build the selected app (APP=demo BOARD=board-esp32-wrover DEBUG=debug-level-1)
 	$(CARGO) build $(APP_FLAGS)
-	@bash tools/image-size.sh $(APP_BIN) || true
+	@bash tools/image-size.sh $(APP_BIN) '' '$(XTENSA_SIZE)' || true
 
 .PHONY: build-release
 build-release: ## Build release (smallest binary)
 	$(CARGO) build $(APP_FLAGS) --release
-	@bash tools/image-size.sh target/$(XTENSA_TARGET)/release/$(APP) || true
+	@bash tools/image-size.sh target/$(XTENSA_TARGET)/release/$(APP) '' '$(XTENSA_SIZE)' || true
 
 .PHONY: size
 size: ## Report where the image's bytes went, per memory region
-	@bash tools/image-size.sh $(APP_BIN)
+	@bash tools/image-size.sh $(APP_BIN) '' '$(XTENSA_SIZE)'
 
 .PHONY: build-trace
 build-trace: ## Build with kernel event tracing

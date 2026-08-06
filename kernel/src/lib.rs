@@ -38,6 +38,9 @@ pub use scheduler::{Scheduler, TaskState, MAX_TASKS};
 #[cfg(all(target_os = "none", not(test)))]
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
+    // Pass the location through. For a `panic!` in application code the file
+    // and line are the whole diagnosis, and they go into the postmortem
+    // snapshot so the *next* boot can report them too.
     let msg = format_args!("{}", info.message());
-    crate::debug::panic::handle(&msg)
+    crate::debug::panic::handle_at(&msg, info.location())
 }

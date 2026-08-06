@@ -64,6 +64,13 @@ pub enum TaskState {
     BlockedMutex,
     BlockedSleep,
     Suspended,
+    /// The task panicked. Terminal: nothing moves a task out of this state.
+    ///
+    /// A panic halts the whole system (see `debug::panic`), so no scheduling
+    /// happens after one is set. The state exists so a TCB read through a
+    /// debugger says what actually happened rather than still claiming to be
+    /// Running.
+    Faulted,
 }
 
 /// Per-task control block.
@@ -146,6 +153,19 @@ impl Scheduler {
 
     fn set_ready_bit(&mut self, prio: u8) {
         self.ready_mask |= 1u64 << prio;
+    }
+
+    /// Rebuild the whole ready mask from the tasks' states.
+    ///
+    /// The per-priority version below is what the hot paths use. This one is
+    /// for the case where a task left the run set in a way that does not fit
+    /// the usual transitions -- currently only a panic -- and the cost of
+    /// scanning every TCB does not matter because the system is about to stop.
+    pub fn recompute_ready_mask(&mut self) {
+        self.ready_mask = 0;
+        for prio in 0..NUM_PRIORITIES as u8 {
+            self.recompute_ready_bit(prio);
+        }
     }
 
     /// Recompute the ready bit for a priority level by scanning for any Ready
