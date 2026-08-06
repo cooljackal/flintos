@@ -144,6 +144,17 @@ pub extern "C" fn FlintMain() -> ! {
         debug::fault::raw_print("[FLINT] interrupts unmasked, entering idle\r\n");
     }
 
+    // Boot-time self-test, off unless the `phase0-tests` feature is on.
+    //
+    // It runs here, after unmasking and before idle, because that is the only
+    // point where it means anything: it drives a deep windowed recursion and
+    // checks the result, so the timer ISR has to be able to interrupt it
+    // mid-computation. That is precisely the failure that cost this kernel its
+    // longest bring-up bug -- a trap corrupting the interrupted task's register
+    // windows -- and this is the regression test for it.
+    #[cfg(feature = "phase0-tests")]
+    crate::phase0_test::run();
+
     // Step 6: become the idle task.
     idle_loop();
 }

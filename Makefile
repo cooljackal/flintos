@@ -98,8 +98,14 @@ APP            ?= demo
 BOARD          ?= board-esp32-wrover
 DEBUG          ?= debug-level-1
 
+# Anything else the app forwards, comma-separated. Currently just:
+#   make build EXTRA_FEATURES=phase0-tests   # boot-time register-window check
+EXTRA_FEATURES ?=
+
+COMMA          := ,
+APP_FEATURES   := $(BOARD),$(DEBUG)$(if $(EXTRA_FEATURES),$(COMMA)$(EXTRA_FEATURES))
 APP_FLAGS      := --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
-                  -p $(APP) --no-default-features --features $(BOARD),$(DEBUG)
+                  -p $(APP) --no-default-features --features $(APP_FEATURES)
 APP_BIN        := target/$(XTENSA_TARGET)/debug/$(APP)
 
 # ── Environment Setup ──────────────────────────────────────────────────────────

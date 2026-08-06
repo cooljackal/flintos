@@ -60,5 +60,8 @@ flint-trace = ["flint-api/flint-trace"]
 flint-timing = ["flint-api/flint-timing"]
 flint-cpu-util = ["flint-api/flint-cpu-util"]
 
-# Phase 0 boot-time self-tests
+# Boot-time self-test: drives a deep windowed recursion after interrupts are
+# unmasked and checks the result, so a trap that corrupts the interrupted
+# task's register windows fails the boot loudly. Off by default; turn it on
+# with `make build DEBUG=debug-level-1 EXTRA_FEATURES=phase0-tests`.
 phase0-tests = []

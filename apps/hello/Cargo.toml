@@ -36,3 +36,6 @@ debug-level-0 = ["flint-kernel/debug-level-0"]
 debug-level-1 = ["flint-kernel/debug-level-1"]
 debug-level-2 = ["flint-kernel/debug-level-2"]
 debug-level-3 = ["flint-kernel/debug-level-3"]
+
+# Boot-time register-window self-test. Off by default; `make ... EXTRA_FEATURES=phase0-tests`.
+phase0-tests = ["flint-kernel/phase0-tests"]

@@ -67,7 +67,14 @@ fn level_str(level: Level) -> &'static str {
     }
 }
 
-/// Dump the ring buffer to the console for the `dmesg` shell command.
+/// Dump the ring buffer to the console.
+///
+/// Nothing calls this yet -- it is waiting on a shell -- but it is the only
+/// read path out of `RING_BUF`, which every log line writes to. Delete it and
+/// the ring buffer becomes write-only storage that costs RAM and returns
+/// nothing, so the honest cleanup would be to delete the ring as well. It earns
+/// its place the first time a panic handler or a `dmesg` command needs the last
+/// N lines that did *not* make it out of the UART.
 pub fn dump() {
     let mut console = crate::debug::console::Console;
     flint_arch_xtensa::cs_with(|| unsafe {

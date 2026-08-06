@@ -427,10 +427,6 @@ impl Scheduler {
     pub fn base_priority(&self, id: u32) -> u8 {
         self.tasks[id as usize].as_ref().map_or(IDLE_PRIORITY, |t| t.base_prio)
     }
-
-    pub fn dump(&self) -> &[Option<TaskControlBlock>; MAX_TASKS] {
-        &self.tasks
-    }
 }
 
 /// Set when a context switch is owed, consumed by the trap handler.
