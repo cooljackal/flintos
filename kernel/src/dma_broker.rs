@@ -28,6 +28,16 @@ pub struct DmaHandle {
 }
 
 impl DmaHandle {
+    /// The buffer's address, for programming into a DMA engine.
+    ///
+    /// Guaranteed to be inside the linker's `dma_pool` and 4-byte aligned:
+    /// the pool is placed in DRAM the engines can reach, and a descriptor or
+    /// buffer that is neither is the failure this type exists to prevent.
+    /// A misaligned address does not fault — the engine transfers the wrong
+    /// bytes.
+    pub fn addr(&self) -> u32 {
+        pool_start().wrapping_add(self.pool_offset)
+    }
     /// Byte offset of this buffer within the DMA pool.
     pub fn pool_offset(&self) -> u32 {
         self.pool_offset
@@ -64,12 +74,30 @@ pub enum DmaError {
 static NEXT_TRANSFER_ID: AtomicU32 = AtomicU32::new(1);
 static mut DMA_OFFSET: u32 = 0;
 
+/// Base address of the pool.
+fn pool_start() -> u32 {
+    core::ptr::addr_of!(_dma_pool_start) as u32
+}
+
+#[cfg(not(test))]
 fn pool_size() -> u32 {
     // Taking the address of a static is safe; only reading through it is not,
     // and nothing here does.
     let start = core::ptr::addr_of!(_dma_pool_start) as u32;
     let end = core::ptr::addr_of!(_dma_pool_end) as u32;
     end.saturating_sub(start)
+}
+
+/// The stub pool's size, stated rather than derived.
+///
+/// On the target these come from the linker script and the distance between
+/// them is the region. The host stubs are two unrelated statics whose relative
+/// placement Rust does not define, so subtracting their addresses gives a
+/// meaningless number — zero, as it happens, which made every allocation fail
+/// with `PoolExhausted`. Matching `arch::host::linker_stubs::DMA_POOL_WORDS`.
+#[cfg(test)]
+fn pool_size() -> u32 {
+    2048 * 4
 }
 
 /// Allocate a DMA-safe buffer (bump allocator over the linker `dma_pool`).
@@ -129,3 +157,109 @@ pub fn await_transfer(id: DmaTransferId) -> Result<(), DmaError> {
     let _ = id;
     Err(DmaError::NotImplemented)
 }
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testsupport;
+
+    /// The bump pointer is process-global, so a test that wants a known amount
+    /// of pool has to start from a known state.
+    fn rewind() {
+        unsafe { DMA_OFFSET = 0 };
+    }
+
+    #[test]
+    fn a_buffer_is_word_aligned() {
+        // A misaligned DMA address does not fault -- the engine transfers the
+        // wrong bytes, which looks like a driver bug for a long time.
+        let _k = testsupport::lock();
+        rewind();
+        for size in [1u32, 2, 3, 4, 5, 17, 63] {
+            let h = alloc(size).expect("pool should have room");
+            assert_eq!(h.addr() % 4, 0, "size {size} gave a misaligned buffer");
+            assert!(h.size() >= size, "size {size} came back short");
+            assert_eq!(h.size() % 4, 0, "size {size} left the pointer misaligned");
+        }
+    }
+
+    #[test]
+    fn a_buffer_lies_inside_the_pool() {
+        // The region guarantee. A buffer outside it is memory the DMA engines
+        // may not reach at all -- flash-mapped or RTC -- and the transfer
+        // silently moves nothing.
+        let _k = testsupport::lock();
+        rewind();
+        let start = pool_start();
+        let end = start + pool_size();
+        let h = alloc(256).unwrap();
+        assert!(h.addr() >= start, "before the pool");
+        assert!(h.addr() + h.size() <= end, "runs past the end of the pool");
+    }
+
+    #[test]
+    fn two_buffers_do_not_overlap() {
+        let _k = testsupport::lock();
+        rewind();
+        let a = alloc(100).unwrap();
+        let b = alloc(100).unwrap();
+        assert!(
+            a.addr() + a.size() <= b.addr(),
+            "the second buffer starts inside the first"
+        );
+    }
+
+    #[test]
+    fn a_request_larger_than_the_pool_is_refused() {
+        let _k = testsupport::lock();
+        rewind();
+        assert_eq!(alloc(pool_size() + 1).unwrap_err(), DmaError::PoolExhausted);
+    }
+
+    #[test]
+    fn a_size_near_the_top_of_u32_does_not_wrap_into_a_small_buffer() {
+        // `(size + 3) & !3` wraps for a size within 3 of u32::MAX, and the
+        // wrapped value looks small enough to pass the pool-size check --
+        // returning Ok for a buffer that does not exist.
+        let _k = testsupport::lock();
+        rewind();
+        for size in [u32::MAX, u32::MAX - 1, u32::MAX - 2, u32::MAX - 3] {
+            assert_eq!(
+                alloc(size).unwrap_err(),
+                DmaError::PoolExhausted,
+                "size {size} wrapped"
+            );
+        }
+    }
+
+    #[test]
+    fn the_pool_runs_out_rather_than_handing_out_memory_past_it() {
+        let _k = testsupport::lock();
+        rewind();
+        let chunk = 1024;
+        let mut last_end = pool_start();
+        while let Ok(h) = alloc(chunk) {
+            assert!(h.addr() >= last_end, "handed out overlapping memory");
+            last_end = h.addr() + h.size();
+            assert!(last_end <= pool_start() + pool_size(), "past the end of the pool");
+        }
+        // And it stays refused rather than wrapping round.
+        assert_eq!(alloc(chunk).unwrap_err(), DmaError::PoolExhausted);
+    }
+
+    #[test]
+    fn a_transfer_is_refused_for_a_handle_the_caller_does_not_own() {
+        let _k = testsupport::lock();
+        rewind();
+        let mut h = alloc(32).unwrap();
+        h.owner_task = h.owner_task.wrapping_add(1);
+        assert_eq!(
+            submit(&h, DmaDirection::Read, 0).unwrap_err(),
+            DmaError::NotOwner,
+            "ownership is not checked"
+        );
+    }
+}
+

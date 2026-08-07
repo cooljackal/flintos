@@ -284,6 +284,20 @@ pub mod host {
         #[no_mangle]
         static _task_stack_end: u32 = 0;
 
+        /// Matches the 8 KiB `dma_pool` in `arch/xtensa/flint32.ld`.
+        ///
+        /// A real array rather than two bare symbols, so a host test can check
+        /// that a handed-out buffer really lands inside the pool. Two unrelated
+        /// `static u32`s would give a "pool" whose size is whatever the linker
+        /// happened to put between them.
+        const DMA_POOL_WORDS: usize = 2048;
+
+        #[no_mangle]
+        static mut _dma_pool_start: [u32; DMA_POOL_WORDS] = [0; DMA_POOL_WORDS];
+
+        #[no_mangle]
+        static _dma_pool_end: u32 = 0;
+
         /// The trap-assembly entry a new task's PC is set to. Its address is
         /// stored in a task frame and jumped to by the context switcher; on a
         /// host nothing jumps anywhere, and reaching it means a test strayed

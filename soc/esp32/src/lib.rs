@@ -39,6 +39,7 @@
 pub mod app_desc;
 pub mod addr;
 pub mod appcpu;
+pub mod dma;
 pub mod dport;
 pub mod gpio_matrix;
 pub mod intr_map;
@@ -59,3 +60,21 @@ pub const MAX_GPIO: u8 = 39;
 /// low-power mode this kernel does not use. Baud-rate and I2C divisors derive
 /// from this, not from the measured CPU frequency.
 pub const APB_HZ: u32 = 80_000_000;
+
+/// Serialises tests that share this crate's global hardware bookkeeping.
+///
+/// The DMA channel table is one set of state for the whole process, so the
+/// default thread-per-test would have several tests claiming channels at once
+/// and blaming each other's failures.
+#[cfg(test)]
+extern crate std;
+
+#[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
