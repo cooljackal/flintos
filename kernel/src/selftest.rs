@@ -36,6 +36,9 @@ use hal::tick::TickSource;
 #[path = "selftest_races.rs"]
 mod races;
 
+#[path = "selftest_dport.rs"]
+mod dport;
+
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
 pub(crate) type Check = Result<(), &'static str>;
@@ -66,6 +69,10 @@ pub fn run() {
     check("pending_switch_is_taken_once", races::pending_switch_is_taken_once(), &mut pass, &mut fail);
     check("mutex_cycle_under_ticks_leaves_no_residue", races::mutex_cycle_under_ticks_leaves_no_residue(), &mut pass, &mut fail);
     check("isr_queue_delivers_exactly_once", races::isr_queue_delivers_exactly_once(), &mut pass, &mut fail);
+
+    check("dport_read_agrees_with_a_plain_read", dport::dport_read_agrees_with_a_plain_read(), &mut pass, &mut fail);
+    check("dport_read_leaves_the_tick_running", dport::dport_read_leaves_the_tick_running(), &mut pass, &mut fail);
+    check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
 
     raw_print("[FLINT] SELFTEST END pass=");
     print_u32(pass);

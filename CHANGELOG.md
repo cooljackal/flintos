@@ -21,6 +21,21 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Fixed
 
+- **DPORT was accessed unsafely from both cores.** Two independent hazards, and
+  neither was reachable until the scheduler started running on core 1.
+
+  The ESP32 has a silicon erratum: a DPORT read taken while the other CPU
+  accesses APB can return the APB value. Nothing faults — the caller just gets
+  the wrong number. `soc_esp32::dport::read` now applies Espressif's
+  workaround (an APB pre-read immediately before the DPORT load, interrupts
+  masked, the two loads adjacent), and every DPORT access in the tree goes
+  through it. Writes are a plain store, which esp-idf's own header documents as
+  needing no protection.
+
+  Separately, `enable`/`disable` read-modify-write two shared registers, so two
+  cores gating different peripherals could lose each other's bits. Those now
+  hold a lock across the whole sequence, both registers under one acquisition.
+
 - **`make test-target` failed a passing board.** The judge shelled out to `sed`
   to read the summary counts, and under `make` the PATH picks up a different
   toolchain's `sed` that did not match the pattern. It parses with a bash

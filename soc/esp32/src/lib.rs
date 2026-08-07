@@ -32,6 +32,16 @@
 //! C3's case, a different core entirely; they get their own crates.
 
 #![no_std]
+// Xtensa inline asm is unstable, and `soc-esp32` is one of the crates that
+// builds *both* ways: for the chip on the Espressif nightly, and for the host
+// on stable so its unit tests run in ordinary CI. An unconditional
+// `feature(asm_experimental_arch)` would be E0554 on the stable host build and
+// take those tests with it.
+//
+// `arch-xtensa` declares the feature unconditionally and gets away with it
+// because the kernel scopes that crate to `target_os = "none"`. This one has
+// no such luxury.
+#![cfg_attr(target_arch = "xtensa", feature(asm_experimental_arch))]
 
 /// The ESP-IDF application image header. A chip-boot artifact, not a CPU
 /// one -- the second-stage bootloader reads it, and the Xtensa core knows

@@ -141,7 +141,7 @@ pub unsafe fn route(source: u8, cpu_int: u8) -> Result<(), RouteError> {
     if !can_serve_peripheral(cpu_int) {
         return Err(RouteError::Unusable);
     }
-    (reg as *mut u32).write_volatile(cpu_int as u32);
+    crate::dport::write(reg, cpu_int as u32);
     Ok(())
 }
 
@@ -151,7 +151,7 @@ pub unsafe fn route(source: u8, cpu_int: u8) -> Result<(), RouteError> {
 /// Writes a DPORT crossbar register.
 pub unsafe fn park(source: u8) -> Result<(), RouteError> {
     let reg = map_reg(source).ok_or(RouteError::NoSuchSource)?;
-    (reg as *mut u32).write_volatile(PARKED as u32);
+    crate::dport::write(reg, PARKED as u32);
     Ok(())
 }
 
@@ -161,7 +161,7 @@ pub unsafe fn park(source: u8) -> Result<(), RouteError> {
 /// Reads a DPORT register. No side effects.
 pub unsafe fn routed_to(source: u8) -> Option<u8> {
     let reg = map_reg(source)?;
-    Some(((reg as *const u32).read_volatile() & 0x1F) as u8)
+    Some((crate::dport::read(reg) & 0x1F) as u8)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

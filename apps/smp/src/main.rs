@@ -33,6 +33,22 @@ const FLOATING: usize = 2;
 /// Set once the second core has joined, so the report waits for it.
 static SECOND_CORE_UP: AtomicU32 = AtomicU32::new(0);
 
+/// Times a core set its own DPORT clock bit and then found it already gone.
+///
+/// Only the other core can have cleared it, and only by writing back a value
+/// it read before our write landed. That is the lost update issue #56 is
+/// about, and this counter is direct evidence of one. It must stay at zero.
+static DPORT_LOST: AtomicU32 = AtomicU32::new(0);
+/// Read-modify-writes each core completed, so a zero above means "hammered
+/// and survived" rather than "never ran".
+static DPORT_OPS: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
+/// Two peripherals neither the console nor any driver in this image uses.
+/// Toggling UART0's would take the console out, which is a memorable way to
+/// learn that these have to be unused.
+const BIT_CORE0: soc_esp32::dport::ClockBit = soc_esp32::dport::ClockBit::UART1;
+const BIT_CORE1: soc_esp32::dport::ClockBit = soc_esp32::dport::ClockBit::UART2;
+
 fn main() {
     // The second core, brought into the scheduler rather than given a private
     // loop. From here it takes traps, ticks and runs tasks like core 0.
@@ -40,6 +56,9 @@ fn main() {
         arch_xtensa::appcpu::prepare(second_core);
         soc_esp32::appcpu::start(arch_xtensa::appcpu::_flint_appcpu_entry);
     }
+
+    task::spawn_on(0, "dport0", dport_core0, Priority::Background(0), 4096);
+    task::spawn_on(1, "dport1", dport_core1, Priority::Background(0), 4096);
 
     task::spawn_on(0, "pin0", pinned_0, Priority::Normal(2), 4096);
     task::spawn_on(1, "pin1", pinned_1, Priority::Normal(2), 4096);
@@ -55,6 +74,46 @@ fn main() {
 extern "C" fn second_core() -> ! {
     SECOND_CORE_UP.store(1, Ordering::SeqCst);
     unsafe { kernel::boot::join_scheduler() }
+}
+
+/// Hammer DPORT from core 0: set our bit, then check it survived.
+///
+/// The check is the test. Core 1 is doing its own read-modify-writes on the
+/// same register at the same time, and if either implementation reads a stale
+/// value it writes our bit away — which we see on the very next read.
+///
+/// **No yield in the loop, and Background priority.** The first version
+/// yielded every iteration and detected nothing: a lost update needs both
+/// cores inside the few-instruction read-write window at once, and a task that
+/// spends most of its time in the scheduler is almost never there. Verified by
+/// deleting the lock and confirming this reports losses — a concurrency test
+/// that has never been seen to fail is not evidence of anything.
+fn dport_core0() {
+    hammer(BIT_CORE0, 0)
+}
+
+fn dport_core1() {
+    hammer(BIT_CORE1, 1)
+}
+
+/// Clear, set, then check the bit is still set.
+///
+/// The clear is what makes this detect anything. The first version only ever
+/// *set* its bit, so the bit was set in every read either core could take —
+/// a stale value still had it set, and there was nothing to lose. Clearing
+/// first opens a window where the other core can read the bit clear and write
+/// that back after we set it, which is exactly a lost update.
+fn hammer(bit: soc_esp32::dport::ClockBit, core: usize) -> ! {
+    loop {
+        unsafe {
+            soc_esp32::dport::disable(bit);
+            soc_esp32::dport::enable(bit);
+            if soc_esp32::dport::read(soc_esp32::dport::PERIP_CLK_EN) & bit.mask() == 0 {
+                DPORT_LOST.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        DPORT_OPS[core].fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 fn record(which: usize) {
@@ -117,6 +176,24 @@ fn report() {
         }
         if seen[FLOATING][0] != 0 && seen[FLOATING][1] != 0 {
             api::log_info!("[smp] float ran on both cores");
+        }
+
+        // Issue #56: the same DPORT register, read-modify-written from both
+        // cores at once.
+        let (ops0, ops1) = (
+            DPORT_OPS[0].load(Ordering::Relaxed),
+            DPORT_OPS[1].load(Ordering::Relaxed),
+        );
+        let lost = DPORT_LOST.load(Ordering::Relaxed);
+        api::log_info!(
+            "[smp] dport round {}: core0 {} ops, core1 {} ops, lost {}",
+            round, ops0, ops1, lost
+        );
+        if lost != 0 {
+            api::log_error!("[smp] dport lost {} updates — the lock is not holding", lost);
+        }
+        if ops0 == 0 || ops1 == 0 {
+            api::log_error!("[smp] dport was not hammered from both cores; result means nothing");
         }
     }
     loop {

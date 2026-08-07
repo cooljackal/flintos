@@ -130,23 +130,20 @@ pub unsafe fn start(entry: unsafe extern "C" fn() -> !) {
     // Order matters. Address first, so the core has somewhere to go the
     // instant it is released; a core released with CTRL_D still zero fetches
     // from 0 and takes an exception with no handler installed.
-    (APPCPU_CTRL_D as *mut u32).write_volatile(entry as usize as u32);
+    crate::dport::write(APPCPU_CTRL_D, entry as usize as u32);
 
     // Ungate the clock.
-    let b = APPCPU_CTRL_B as *mut u32;
-    b.write_volatile(b.read_volatile() | APPCPU_CLKGATE_EN);
+    crate::dport::modify(APPCPU_CTRL_B, 0, APPCPU_CLKGATE_EN);
 
     // Release DPORT's stall.
-    let c = APPCPU_CTRL_C as *mut u32;
-    c.write_volatile(c.read_volatile() & !APPCPU_RUNSTALL);
+    crate::dport::modify(APPCPU_CTRL_C, APPCPU_RUNSTALL, 0);
 
     // And the RTC's, which is a different mechanism in a different domain.
     unstall();
 
     // Pulse reset. The core begins fetching from CTRL_D on the falling edge.
-    let a = APPCPU_CTRL_A as *mut u32;
-    a.write_volatile(a.read_volatile() | APPCPU_RESETTING);
-    a.write_volatile(a.read_volatile() & !APPCPU_RESETTING);
+    crate::dport::modify(APPCPU_CTRL_A, 0, APPCPU_RESETTING);
+    crate::dport::modify(APPCPU_CTRL_A, APPCPU_RESETTING, 0);
 }
 
 /// Put the APP CPU back in reset.
@@ -155,8 +152,7 @@ pub unsafe fn start(entry: unsafe extern "C" fn() -> !) {
 /// Whatever it was executing stops mid-instruction. Anything it was holding —
 /// a lock, a half-written buffer — stays in that state.
 pub unsafe fn stop() {
-    let a = APPCPU_CTRL_A as *mut u32;
-    a.write_volatile(a.read_volatile() | APPCPU_RESETTING);
+    crate::dport::modify(APPCPU_CTRL_A, 0, APPCPU_RESETTING);
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

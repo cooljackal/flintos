@@ -172,10 +172,15 @@ pub unsafe fn release(channel: Channel) {
 /// # Safety
 /// Read-modify-write of a DPORT register shared with the other hosts' fields.
 unsafe fn set_selector(host: Host, channel: u8) {
-    let reg = SPI_DMA_CHAN_SEL as *mut u32;
     let shift = host.shift();
-    let v = reg.read_volatile() & !(SEL_MASK << shift);
-    reg.write_volatile(v | ((channel as u32 & SEL_MASK) << shift));
+    // Through `dport::modify`, not a bare read-modify-write: this register
+    // holds all three hosts' selectors, so two cores claiming different
+    // channels race on it, and the read half is subject to the DPORT erratum.
+    crate::dport::modify(
+        SPI_DMA_CHAN_SEL,
+        SEL_MASK << shift,
+        (channel as u32 & SEL_MASK) << shift,
+    );
 }
 
 /// How many channels are unclaimed.
