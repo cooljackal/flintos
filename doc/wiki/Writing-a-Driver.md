@@ -7,10 +7,21 @@ catch for you.
 |---|---|---|---|---|
 | A sensor, display, radio | 3 — logical | `drivers/logical/<device>/` | `<device>` | `api` **only** |
 | A protocol wrapper | 2 — bus | `drivers/bus/<proto>-bus/` | `<proto>-bus` | `api` **only** |
-| A peripheral register driver | 1 — physical | `drivers/physical/<chip>-<periph>/` | `<chip>-<periph>` | `hal`, `soc-*` |
+| A peripheral register driver | 1 — physical | `drivers/physical/<chip>/<periph>/` | `<chip>-<periph>` | `hal`, `soc-*` |
 
 The package name is the directory leaf, with no prefix — `drivers/logical/bme280/`
-is `bme280`, `drivers/physical/esp32-i2c/` is `esp32-i2c`.
+is `bme280`.
+
+Layer 1 is the exception, and deliberately. Those crates are grouped by the SoC
+they are bound to, so `drivers/physical/esp32/i2c/` is `esp32-i2c` — directory
+`esp32` plus leaf `i2c`. The chip stays in the *name* because a dependency line
+shows the name without the path, and a bare `i2c` would claim a great deal more
+than one chip's controller.
+
+The SoC is the unit of portability down here: every crate under `esp32/`
+depends on `soc-esp32` and none of them run anywhere else. Grouping by chip
+makes "what does supporting a new SoC involve" answerable by listing one
+directory.
 
 Nothing in this tree is published: every package sets `publish = false`, so there
 is no global namespace to be unambiguous in. Unrelated crates named `bme280` and

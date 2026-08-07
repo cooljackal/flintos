@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "esp32-rng"
+name = "esp32-wdt"
 publish = false
 version.workspace = true
 edition.workspace = true
-description = "ESP32 hardware RNG physical driver"
+description = "ESP32 watchdog physical driver - RWDT and MWDT"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -14,4 +14,4 @@ rust-version.workspace = true
 # A peripheral driver names the chip's infrastructure -- the address map, clock
 # gating, pin routing -- and nothing above it. That is what Layer 1 is allowed.
 [dependencies]
-soc-esp32 = { path = "../../../soc/esp32" }
+soc-esp32 = { path = "../../../../soc/esp32" }

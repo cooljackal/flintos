@@ -17,8 +17,8 @@ api = { path = "../../api" }
 hal = { path = "../../hal" }
 
 soc-esp32 = { path = "../../soc/esp32" }
-esp32-ledc = { path = "../../drivers/physical/esp32-ledc" }
-esp32-gpio = { path = "../../drivers/physical/esp32-gpio" }
+esp32-ledc = { path = "../../drivers/physical/esp32/ledc" }
+esp32-gpio = { path = "../../drivers/physical/esp32/gpio" }
 
 [build-dependencies]
 build = { path = "../../tools/build" }

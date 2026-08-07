@@ -42,7 +42,7 @@ peripheral is a driver, however chip-specific it is.
 > A pulse generator, no — that is `drivers/physical/`.
 
 RMT, the watchdogs and the RNG were modules of `soc-esp32` until this rule was
-written down; they are `drivers/physical/esp32-*` now. The ESP32 interrupt
+written down; they are `drivers/physical/esp32/*` now. The ESP32 interrupt
 crossbar was sitting in `arch/xtensa`, duplicated and dead, and was deleted.
 
 ESP32 and ESP32-S3 share neither peripheral map nor core. A WROVER and an
@@ -194,7 +194,7 @@ arch/xtensa/           CPU
 soc/esp32/             chip
 kernel/                scheduler, IPC, timers, IRQ routing, debug — a library
 board/                 PCB
-drivers/physical/      Layer 1 — one peripheral's registers each
+drivers/physical/<soc>/  Layer 1 — one peripheral's registers each, by chip
 drivers/bus/           Layer 2
 drivers/logical/       Layer 3 — one part number each
 lib/                   portable code — no registers, no part numbers

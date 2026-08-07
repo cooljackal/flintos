@@ -1,14 +1,14 @@
 [package]
-name = "esp32-gpio"
+name = "esp32-uart"
 publish = false
 version.workspace = true
 edition.workspace = true
-description = "ESP32 GPIO physical driver"
+description = "ESP32 UART physical driver"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-hal = { path = "../../../hal" }
-soc-esp32 = { path = "../../../soc/esp32" }
+hal = { path = "../../../../hal" }
+soc-esp32 = { path = "../../../../soc/esp32" }

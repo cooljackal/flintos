@@ -24,8 +24,8 @@ hal = { path = "../../hal" }
 #   esp32-gpio  layer 1  the pad's output enable
 #   ws2812      layer 3  the wire protocol, which knows about no chip at all
 soc-esp32 = { path = "../../soc/esp32" }
-esp32-gpio = { path = "../../drivers/physical/esp32-gpio" }
-esp32-rmt = { path = "../../drivers/physical/esp32-rmt" }
+esp32-gpio = { path = "../../drivers/physical/esp32/gpio" }
+esp32-rmt = { path = "../../drivers/physical/esp32/rmt" }
 ws2812 = { path = "../../drivers/logical/ws2812" }
 led-matrix = { path = "../../lib/led-matrix" }
 

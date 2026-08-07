@@ -1,14 +1,14 @@
 [package]
-name = "esp32-i2c"
+name = "esp32-gpio"
 publish = false
 version.workspace = true
 edition.workspace = true
-description = "ESP32 I2C physical driver"
+description = "ESP32 GPIO physical driver"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-hal = { path = "../../../hal" }
-soc-esp32 = { path = "../../../soc/esp32" }
+hal = { path = "../../../../hal" }
+soc-esp32 = { path = "../../../../soc/esp32" }

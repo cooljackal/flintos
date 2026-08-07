@@ -22,7 +22,7 @@ hal = { path = "../../hal" }
 #   i2c-bus     Layer 2   addressing and framing
 #   bmi270      Layer 3   the part number
 soc-esp32 = { path = "../../soc/esp32" }
-esp32-i2c = { path = "../../drivers/physical/esp32-i2c" }
+esp32-i2c = { path = "../../drivers/physical/esp32/i2c" }
 i2c-bus = { path = "../../drivers/bus/i2c-bus" }
 bmi270 = { path = "../../drivers/logical/bmi270" }
 mpu6886 = { path = "../../drivers/logical/mpu6886" }

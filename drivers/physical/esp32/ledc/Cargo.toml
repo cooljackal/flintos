@@ -12,4 +12,4 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-soc-esp32 = { path = "../../../soc/esp32" }
+soc-esp32 = { path = "../../../../soc/esp32" }

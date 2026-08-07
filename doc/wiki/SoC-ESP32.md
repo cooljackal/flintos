@@ -10,7 +10,7 @@ Crate: `soc/esp32` (`soc-esp32`). Everything below is in code — `addr.rs`,
 **Infrastructure only.** This crate holds what every peripheral driver needs
 underneath it — the address map, pin routing, clock gating, the interrupt
 crossbar. A peripheral itself is a driver: RMT, the watchdogs and the RNG were
-modules here and are now `drivers/physical/esp32-rmt`, `-wdt` and `-rng`. The
+modules here and are now `drivers/physical/esp32/rmt`, `/wdt` and `/rng`. The
 test is whether a *second* peripheral driver would want it.
 
 ## Pins

@@ -520,7 +520,7 @@ arch/xtensa/           CPU — boot, vectors, context switch, tick
 soc/esp32/             chip — address map, IO_MUX, GPIO matrix, clock gating, IRQ crossbar
 kernel/                scheduler, IPC, timers, IRQ routing, debug — a library
 board/                 PCB — which pin is wired to what
-drivers/physical/      Layer 1 — one peripheral's registers each
+drivers/physical/<soc>/  Layer 1 — one peripheral's registers each, grouped by chip
 drivers/bus/           Layer 2 — transport abstractions
 drivers/logical/       Layer 3 — one part number each, MCU-agnostic
 lib/                   portable libraries — no registers, no part numbers

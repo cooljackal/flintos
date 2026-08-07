@@ -14,7 +14,7 @@
 //!   [`hal::PinMux`]
 //!
 //! What is deliberately *not* here: peripherals. RMT, the watchdogs and the
-//! RNG were modules of this crate and are now `drivers/physical/esp32-*`,
+//! RNG were modules of this crate and are now `drivers/physical/esp32/*`,
 //! because a peripheral is something you write a driver for, while this crate
 //! holds what every one of those drivers needs underneath it. The test is
 //! whether a second peripheral would want it: an address map and a pin router

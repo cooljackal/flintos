@@ -72,6 +72,22 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Breaking
 
+- **Layer-1 drivers are grouped by SoC.** `drivers/physical/esp32-uart/` is now
+  `drivers/physical/esp32/uart/`, and the same for the other seven. Package
+  names are unchanged — `esp32-uart` is still `esp32-uart` — so only a `path =`
+  in an out-of-tree application needs editing:
+
+  ```toml
+  esp32-gpio = { path = "../../drivers/physical/esp32/gpio" }
+  # was:       path = "../../drivers/physical/esp32-gpio"
+  ```
+
+  The SoC is the unit of portability at Layer 1: every crate under `esp32/`
+  depends on `soc-esp32` and none of them run anywhere else. A flat directory
+  sorted `esp32-rmt` next to `esp32-rng` while a second chip's SPI driver would
+  land nowhere near this one's — grouping by peripheral name rather than by the
+  thing that decides whether two crates share anything.
+
 - **RMT, the watchdogs and the RNG moved out of `soc-esp32` into their own
   physical drivers.** A peripheral is something you write a driver for; the SoC
   crate holds what every driver needs underneath it.
@@ -81,7 +97,7 @@ A kernel that provides a different one refuses to build and points here.
   ```
 
   ```toml
-  esp32-rmt = { path = "../../drivers/physical/esp32-rmt" }
+  esp32-rmt = { path = "../../drivers/physical/esp32/rmt" }
   ```
 
   `kernel::rng` and `kernel::watchdog` are unchanged — the kernel re-exports
