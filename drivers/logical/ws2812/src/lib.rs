@@ -132,13 +132,29 @@ pub fn encode(
 /// This is the seam between the chip and the board. On an ESP32 it is the RMT
 /// peripheral; on another part it might be SPI or a timer. The driver states
 /// what it needs emitted and stays ignorant of what emits it.
+/// A frame is staged and then sent, rather than sent piece by piece. That
+/// split is not an implementation detail: a chained strip is one continuous
+/// pulse train, and a pause long enough to latch ends the frame. Emitting
+/// per-pixel would send N separate one-pixel frames and light only the first
+/// LED. The first version of this trait had exactly that bug, and it survived
+/// until something tried to drive a real panel with it.
+///
+/// Staging in the emitter rather than the driver is also what keeps the frame
+/// buffer out of the caller's stack -- 25 pixels is 600 entries, and a
+/// whole-frame scratch array is what overflowed a 4 KiB task stack once
+/// already.
 pub trait PulseEmitter {
-    /// Emit `pulses` as (high ticks, low ticks) pairs, then hold the line low
-    /// long enough to latch.
-    fn emit(&mut self, pulses: &[(u16, u16)]) -> Result<(), StripError>;
-
     /// Nanoseconds per tick, so the driver can convert its pulse widths.
     fn ns_per_tick(&self) -> u32;
+
+    /// Begin a frame, discarding anything staged before.
+    fn begin(&mut self) -> Result<(), StripError>;
+
+    /// Append `pulses` as (high ticks, low ticks) pairs to the staged frame.
+    fn emit(&mut self, pulses: &[(u16, u16)]) -> Result<(), StripError>;
+
+    /// Send the staged frame and hold the line low long enough to latch.
+    fn finish(&mut self) -> Result<(), StripError>;
 }
 
 /// A WS2812/SK6812 strip of `N` pixels, driven through `E`.
@@ -176,14 +192,15 @@ impl<E: PulseEmitter, const N: usize> LedStrip for Ws2812<E, N> {
     fn show(&mut self) -> Result<(), StripError> {
         let mut bits = [(0u16, 0u16); 24];
         let ns = self.emitter.ns_per_tick();
-        // One LED at a time: a whole-frame scratch buffer would be 24 * N
-        // pairs on the stack, which is how `apps/blink` first overflowed a
-        // 4 KiB task stack on a 25-pixel panel.
+        self.emitter.begin()?;
+        // One LED at a time into a 24-pair scratch: a whole-frame buffer would
+        // be 24 * N pairs on the stack. The emitter accumulates, so the wire
+        // still sees one continuous frame.
         for pixel in self.pixels {
             encode(&[pixel], Timing::WS2812, ns, &mut bits).ok_or(StripError::Transport)?;
             self.emitter.emit(&bits)?;
         }
-        Ok(())
+        self.emitter.finish()
     }
 }
 
@@ -305,22 +322,33 @@ mod tests {
     /// without a peripheral.
     struct FakeEmitter {
         frames: usize,
-        last: [(u16, u16); 24],
+        staged: usize,
+        first: (u16, u16),
     }
 
     impl PulseEmitter for FakeEmitter {
-        fn emit(&mut self, pulses: &[(u16, u16)]) -> Result<(), StripError> {
-            self.frames += 1;
-            self.last.copy_from_slice(pulses);
-            Ok(())
-        }
         fn ns_per_tick(&self) -> u32 {
             NS
+        }
+        fn begin(&mut self) -> Result<(), StripError> {
+            self.staged = 0;
+            Ok(())
+        }
+        fn emit(&mut self, pulses: &[(u16, u16)]) -> Result<(), StripError> {
+            if self.staged == 0 {
+                self.first = pulses[0];
+            }
+            self.staged += pulses.len();
+            Ok(())
+        }
+        fn finish(&mut self) -> Result<(), StripError> {
+            self.frames += 1;
+            Ok(())
         }
     }
 
     fn strip() -> Ws2812<FakeEmitter, 4> {
-        Ws2812::new(FakeEmitter { frames: 0, last: [(0, 0); 24] })
+        Ws2812::new(FakeEmitter { frames: 0, staged: 0, first: (0, 0) })
     }
 
     #[test]
@@ -340,7 +368,22 @@ mod tests {
         s.fill(Rgb::BLUE).unwrap();
         assert_eq!(s.emitter.frames, 0);
         s.show().unwrap();
-        assert_eq!(s.emitter.frames, 4, "one emit per pixel on the strip");
+        assert_eq!(s.emitter.frames, 1, "one frame, not one per pixel");
+        assert_eq!(s.emitter.staged, 4 * 24, "every pixel's bits in that frame");
+    }
+
+    #[test]
+    fn a_strip_is_sent_as_one_continuous_frame() {
+        // The bug the first version of PulseEmitter had. A chained strip
+        // latches on a gap, so N one-pixel frames light only the first LED --
+        // which looks like 24 dead pixels, not a driver bug.
+        let mut s = strip();
+        s.fill(Rgb::BLUE).unwrap();
+        s.show().unwrap();
+        assert_eq!(s.emitter.frames, 1);
+        s.show().unwrap();
+        assert_eq!(s.emitter.frames, 2, "a second show is a second frame");
+        assert_eq!(s.emitter.staged, 4 * 24, "begin() rewound the staging");
     }
 
     #[test]
@@ -351,11 +394,11 @@ mod tests {
         let mut s = strip();
         s.fill(Rgb::GREEN).unwrap();
         s.show().unwrap();
-        assert_eq!(s.emitter.last[0], bit_ticks(true, Timing::WS2812, NS));
+        assert_eq!(s.emitter.first, bit_ticks(true, Timing::WS2812, NS));
 
         s.fill(Rgb::RED).unwrap();
         s.show().unwrap();
-        assert_eq!(s.emitter.last[0], bit_ticks(false, Timing::WS2812, NS));
+        assert_eq!(s.emitter.first, bit_ticks(false, Timing::WS2812, NS));
     }
 
     #[test]
@@ -364,11 +407,17 @@ mod tests {
         // the difference, and the LED would show something arbitrary.
         struct Slow;
         impl PulseEmitter for Slow {
+            fn ns_per_tick(&self) -> u32 {
+                250
+            }
+            fn begin(&mut self) -> Result<(), StripError> {
+                Ok(())
+            }
             fn emit(&mut self, _: &[(u16, u16)]) -> Result<(), StripError> {
                 Ok(())
             }
-            fn ns_per_tick(&self) -> u32 {
-                250
+            fn finish(&mut self) -> Result<(), StripError> {
+                Ok(())
             }
         }
         // At 250 ns a 350 ns pulse rounds to 1 tick, not the 3 it takes at 125.

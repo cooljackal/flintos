@@ -54,7 +54,7 @@ use soc_esp32::pinmux::Esp32PinMux;
 use esp32_rmt::{self as rmt, Entry, Refill, Rmt};
 use soc_esp32::{addr, intr_map};
 use led_matrix::Layout;
-use ws2812::{Rgb, Timing};
+use ws2812::{LedStrip, PulseEmitter, Rgb, StripError, Ws2812};
 
 // Only the Atom boards declare an addressable LED. Say which board is missing
 // rather than letting the build fail on an unresolved `RGB_LED_GPIO` deep
@@ -100,6 +100,9 @@ const LED_COUNT: usize = kernel::board::active::RGB_LED_COUNT;
 /// The panel, if this board has one. `None` on a board with a single LED.
 const PANEL: Option<Layout> = kernel::board::active::RGB_LED_LAYOUT;
 
+/// This board's strip: the panel's pixel count, driven through the RMT.
+type Strip = Ws2812<RmtEmitter, LED_COUNT>;
+
 /// RMT entries in a full frame: one per bit, 24 bits per LED.
 const FRAME_ENTRIES: usize = LED_COUNT * 24;
 
@@ -116,6 +119,50 @@ static mut STREAM: Option<Stream> = None;
 /// Whether the "it streamed" line has been printed. Once is enough; a stall
 /// reports every time.
 static mut REPORTED: bool = false;
+
+/// How many entries the emitter has staged into `FRAME` for this frame.
+static mut STAGED: usize = 0;
+
+/// Bridges `ws2812` to this board's RMT channel.
+///
+/// Zero-sized on purpose: the channel and the refill state have to be
+/// reachable from the interrupt, so they stay in `STREAM` rather than being
+/// owned by the strip. This type is just the name the driver calls them by.
+struct RmtEmitter;
+
+impl PulseEmitter for RmtEmitter {
+    fn ns_per_tick(&self) -> u32 {
+        NS_PER_TICK
+    }
+
+    fn begin(&mut self) -> Result<(), StripError> {
+        unsafe { STAGED = 0 };
+        Ok(())
+    }
+
+    fn emit(&mut self, pulses: &[(u16, u16)]) -> Result<(), StripError> {
+        unsafe {
+            let frame = &mut *addr_of_mut!(FRAME);
+            for (high, low) in pulses {
+                if STAGED >= FRAME_ENTRIES {
+                    // Refusing beats overwriting: a truncated frame lights some
+                    // pixels and leaves the rest as they were, which reads as a
+                    // broken wire.
+                    return Err(StripError::OutOfRange);
+                }
+                // Both pulses of a bit in one entry, so a bit is never split
+                // across a refill boundary and cannot be half-sent.
+                frame[STAGED] = Entry::new(true, *high, false, *low);
+                STAGED += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), StripError> {
+        send_staged_frame().map_err(|()| StripError::Transport)
+    }
+}
 
 struct Stream {
     rmt: Rmt,
@@ -144,14 +191,15 @@ fn blink() {
         FRAME_ENTRIES
     );
 
+    let mut strip: Strip = Ws2812::new(RmtEmitter);
     match PANEL {
-        Some(panel) => panel_demo(panel),
-        None => colour_cycle(),
+        Some(panel) => panel_demo(&mut strip, panel),
+        None => colour_cycle(&mut strip),
     }
 }
 
 /// One LED: red, green, blue, off.
-fn colour_cycle() -> ! {
+fn colour_cycle(strip: &mut Strip) -> ! {
     let sequence = [
         ("red", Rgb::RED.dim(10)),
         ("green", Rgb::GREEN.dim(10)),
@@ -160,9 +208,9 @@ fn colour_cycle() -> ! {
     ];
     loop {
         for (name, colour) in sequence {
-            let mut frame = [Rgb::OFF; LED_COUNT];
-            frame[0] = colour;
-            show(&frame);
+            let _ = strip.clear();
+            let _ = strip.set(0, colour);
+            show(strip);
             api::log_info!("[blink] {}", name);
             task::sleep_ms(1000);
         }
@@ -176,17 +224,17 @@ fn colour_cycle() -> ! {
 /// runs in rows or columns, from which corner, and whether alternate lines
 /// reverse. Guessing any of that is how #52 would ship a driver that lights
 /// the wrong pixel.
-fn panel_demo(panel: Layout) -> ! {
+fn panel_demo(strip: &mut Strip, panel: Layout) -> ! {
     loop {
         // Shapes first: the layout is measured now, so the interesting
         // question is whether it is right, not what it is.
-        draw_by_coordinates(panel);
+        draw_by_coordinates(strip, panel);
         for i in 0..LED_COUNT {
-            let mut frame = [Rgb::OFF; LED_COUNT];
+            let _ = strip.clear();
             // Dim: at full scale a panel this close is genuinely painful, and
             // a washed-out photo is harder to read the position off.
-            frame[i] = Rgb::new(0, 0, 255).dim(8);
-            show(&frame);
+            let _ = strip.set(i, Rgb::new(0, 0, 255).dim(8));
+            show(strip);
             api::log_info!("[blink] index {}", i);
             task::sleep_ms(600);
         }
@@ -199,27 +247,27 @@ fn panel_demo(panel: Layout) -> ! {
 /// straight line moving in the direction named in the log; a wrong one
 /// scatters the same number of lit cells across the panel, which is obvious at
 /// a glance and impossible to talk yourself out of.
-fn draw_by_coordinates(panel: Layout) {
+fn draw_by_coordinates(strip: &mut Strip, panel: Layout) {
     let (w, h) = (panel.width, panel.height);
 
     for x in 0..w {
         api::log_info!("[blink] column x={} (expect a vertical line, moving right)", x);
-        paint(panel, |cx, cy| cx == x && cy < h);
+        paint(strip, panel, |cx, cy| cx == x && cy < h);
         task::sleep_ms(500);
     }
     for y in 0..h {
         api::log_info!("[blink] row y={} (expect a horizontal line, moving down)", y);
-        paint(panel, |cx, cy| cy == y && cx < w);
+        paint(strip, panel, |cx, cy| cy == y && cx < w);
         task::sleep_ms(500);
     }
     api::log_info!("[blink] diagonal (expect top-left to bottom-right)");
-    paint(panel, |cx, cy| cx == cy);
+    paint(strip, panel, |cx, cy| cx == cy);
     task::sleep_ms(1500);
 }
 
 /// Light every cell the predicate accepts, addressing them through the layout.
-fn paint(panel: Layout, lit: impl Fn(usize, usize) -> bool) {
-    let mut frame = [Rgb::OFF; LED_COUNT];
+fn paint(strip: &mut Strip, panel: Layout, lit: impl Fn(usize, usize) -> bool) {
+    let _ = strip.clear();
     for y in 0..panel.height {
         for x in 0..panel.width {
             if !lit(x, y) {
@@ -228,49 +276,28 @@ fn paint(panel: Layout, lit: impl Fn(usize, usize) -> bool) {
             // `index` refuses a cell off the panel rather than wrapping, so a
             // bad coordinate cannot quietly light the wrong LED.
             match panel.index(x, y) {
-                Some(i) => frame[i] = Rgb::new(0, 255, 0).dim(8),
+                Some(i) => {
+                    let _ = strip.set(i, Rgb::new(0, 255, 0).dim(8));
+                }
                 None => api::log_error!("[blink] ({}, {}) is off the panel", x, y),
             }
         }
     }
-    show(&frame);
+    show(strip);
 }
 
-/// Encode `colours` and stream them, waiting for the transmission to finish.
-fn show(colours: &[Rgb; LED_COUNT]) {
-    // One LED at a time. Encoding the whole frame at once would want a
-    // 600-entry scratch buffer -- 2400 bytes, on a 4 KiB stack the trap
-    // handler also runs on, which is exactly why FRAME is static. A stack
-    // overflow here is caught, but only after it has already scribbled.
-    const BITS_PER_LED: usize = 24;
-    for (i, colour) in colours.iter().enumerate() {
-        let mut bits = [(0u16, 0u16); BITS_PER_LED];
-        if ws2812::encode(&[*colour], Timing::WS2812, NS_PER_TICK, &mut bits).is_none() {
-            api::log_error!("[blink] encode refused a {}-entry buffer", BITS_PER_LED);
-            return;
-        }
-        // One RMT entry per bit: high for the value's high time, then low.
-        // Both pulses are in the same entry, so a bit is never split across a
-        // refill boundary and cannot be half-sent.
-        unsafe {
-            let frame = &mut *addr_of_mut!(FRAME);
-            for (j, (high, low)) in bits.iter().enumerate() {
-                frame[i * BITS_PER_LED + j] = Entry::new(true, *high, false, *low);
-            }
-        }
-    }
-
+/// Stream whatever the emitter staged into `FRAME`, and wait for it to finish.
+///
+/// Unchanged from the version verified on hardware -- only its caller moved.
+fn send_staged_frame() -> Result<(), ()> {
     unsafe {
         let Some(stream) = &mut *addr_of_mut!(STREAM) else {
-            return;
+            return Err(());
         };
         stream.done = false;
         stream.refill = stream.rmt.start_stream(&*addr_of!(FRAME));
     }
 
-    // The frame is ~1.25 µs per bit, so 600 bits is about 750 µs. Sleeping
-    // rather than spinning is the point of refilling from an interrupt: the
-    // scheduler runs everything else while the panel clocks out.
     // Completion is TX_END, which the channel sets when it stops. The
     // interrupt's own "nothing left to feed" is a weaker statement: it needs
     // one more threshold after the terminator is written, and the channel
@@ -287,10 +314,9 @@ fn show(colours: &[Rgb; LED_COUNT]) {
     }
 
     // Whether the interrupt actually fed the whole frame. Without it the
-    // channel emits its first 64 entries and stops, and on a panel that is
-    // two lit LEDs and 23 dark ones -- which looks like a wiring fault, not a
-    // missed refill. Reported once so the log says which happened, and on
-    // every failure after that.
+    // channel emits its first 64 entries and stops, and on a panel that is two
+    // lit LEDs and 23 dark ones -- which looks like a wiring fault, not a
+    // missed refill.
     unsafe {
         if let Some(s) = (*addr_of!(STREAM)).as_ref() {
             let fed = s.refill.written();
@@ -302,7 +328,9 @@ fn show(colours: &[Rgb; LED_COUNT]) {
                     if finished { "set" } else { "NOT set" },
                     waited
                 );
-            } else if !REPORTED {
+                return Err(());
+            }
+            if !REPORTED {
                 REPORTED = true;
                 api::log_info!(
                     "[blink] streamed {} entries via {} refills in {} ms",
@@ -314,9 +342,17 @@ fn show(colours: &[Rgb; LED_COUNT]) {
         }
     }
 
-    // Latch. The datasheet wants the line idle at least 50 µs; a tick is far
+    // Latch. The datasheet wants the line idle at least 50 us; a tick is far
     // more, and costs nothing here.
     task::sleep_ms(1);
+    Ok(())
+}
+
+/// Push a frame, logging rather than swallowing a failure.
+fn show(strip: &mut Strip) {
+    if let Err(e) = strip.show() {
+        api::log_error!("[blink] show failed: {:?}", e);
+    }
 }
 
 /// Called from the trap handler when the channel wants its next half block.
