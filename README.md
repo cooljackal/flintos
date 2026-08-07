@@ -211,8 +211,8 @@ of logging:
 ```bash
 make apps                                  # what's available
 make flash APP=hello                       # the minimal one-task template
-make flash APP=demo BOARD=board-m5-atom    # M5Stack Atom (ESP32-PICO-D4)
-make flash APP=blink BOARD=board-m5-atom   # the Atom's onboard LED, red/green/blue
+make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
+make flash APP=blink BOARD=board-m5-atom-matrix  # the Atom Matrix's 5x5 panel
 ```
 
 `DEBUG` defaults to `debug-level-1`, which is what you want while developing.
@@ -220,7 +220,8 @@ make flash APP=blink BOARD=board-m5-atom   # the Atom's onboard LED, red/green/b
 print nothing, so leave it alone until you are shipping.
 
 Board features: `board-esp32-wrover` (default), `board-esp32-devkitc`,
-`board-m5-atom`. Enabling two is a compile error, not a warning — a silently
+`board-m5-atom-lite`, `board-m5-atom-matrix`. Enabling two is a compile error,
+not a warning — a silently
 wrong pin map presents as the board being broken.
 
 Writing your own application is copying `apps/hello/` and adding a line to the
@@ -430,12 +431,22 @@ board/                 PCB — which pin is wired to what
 drivers/physical/      Layer 1 — MCU register drivers
 drivers/bus/           Layer 2 — transport abstractions
 drivers/logical/       Layer 3 — device drivers, MCU-agnostic
+lib/                   portable libraries — no registers, no part numbers
 tools/build/           build-script helper that gives an app the linker script
 tools/size/            `make size` — where the image's bytes went, per region
-tools/check-layers.sh  enforces the Layer 3 → Layer 1 boundary
+tools/check-layers.sh  enforces the driver and lib/ dependency whitelists
 doc/wiki/              the wiki's source; CI publishes it on merge
 doc/internal/          superseded planning documents, kept as history
 ```
+
+**`lib/` is not `drivers/`, and the distinction is whether it touches hardware
+at all.** A driver knows a part number and its output is destined for a pin:
+`ws2812` knows GRB order and 350 ns pulses. `led-matrix` knows no chip, no bus
+and no pin — it turns `(x, y)` into an integer and depends on nothing, not even
+`api`. Filing that under `drivers/` would be a false statement, and the Layer 3
+naming convention would have made the claim out loud by calling it
+`driver-led-matrix`. Font rendering, framebuffers and colour conversion belong
+in the same bucket when they arrive.
 
 **arch / SoC / board are three separate tiers, deliberately.** The CPU core, the
 chip, and the circuit board are three different things that vary independently:
@@ -470,7 +481,7 @@ Two tiers, because they catch different things.
 
 ```bash
 make test-host                                   # every change, no hardware
-make test-target BOARD=board-m5-atom PORT=COM5   # when you have a board
+make test-target BOARD=board-m5-atom-matrix PORT=COM5   # when you have a board
 ```
 
 **`make test-host`** runs the unit tests for every crate, kernel included — 160
@@ -493,7 +504,7 @@ from a script rather than only by eye.
 Set `PORT` when more than one serial device is attached, or espflash will stop
 to ask which one and the harness has no terminal to answer with. `BOARD` must
 match your hardware — the default is `board-esp32-wrover`, so an ESP32-PICO
-board such as the M5Stack Atom needs `BOARD=board-m5-atom`.
+board such as the M5Stack Atom Matrix needs `BOARD=board-m5-atom-matrix`.
 
 `make test-harness` checks the parsing logic that decides whether a board
 passed, without needing a board. It runs in CI, because a harness that reports

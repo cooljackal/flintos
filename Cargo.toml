@@ -19,6 +19,7 @@ resolver = "2"
 #     apps/demo/                    -> demo
 #     drivers/physical/esp32-uart/  -> esp32-uart
 #     drivers/logical/bme280/       -> bme280
+#     lib/led-matrix/               -> led-matrix
 #
 # Two packages fold their category word into the name, because the bare leaf
 # names something far larger than the crate -- `xtensa` is an instruction set
@@ -57,7 +58,14 @@ members = [
     "drivers/logical/bme280",
     "drivers/logical/ssd1306",
     "drivers/logical/ws2812",
-    "drivers/logical/led-matrix",
+
+    # Portable libraries. Not drivers: they touch no register, name no part
+    # number, and their output is a value rather than something destined for a
+    # pin. `led-matrix` turns (x, y) into an integer and depends on nothing at
+    # all. Filing that under `drivers/` would have been a false statement, and
+    # the Layer-3 naming convention would have handed it the name
+    # `driver-led-matrix` to make the claim out loud.
+    "lib/led-matrix",
 ]
 
 # Shared metadata. Every member inherits these with `field.workspace = true`

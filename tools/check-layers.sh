@@ -2,10 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Layer-boundary enforcement (plan W7.1).
 #
-# Layer-3 (drivers/logical/*) and Layer-2 (drivers/bus/*) crates may depend ONLY
-# on api. Any other dependency gives a device or bus driver a route to hardware
-# register definitions, defeating the three-layer model. This is the structural
-# boundary the design promises -- enforce it here so it cannot silently rot.
+# Two rules, both whitelists:
+#
+#   drivers/logical/*, drivers/bus/*   may depend only on api
+#   lib/*                              may depend only on api and other lib/*
+#
+# A driver knows a specific part number and its output is destined for a pin.
+# Letting one reach hardware register definitions defeats the three-layer
+# model, so api is all it gets.
+#
+# `lib/*` is not drivers. These are portable libraries that touch no register,
+# name no part number, and return values rather than driving anything --
+# geometry, framebuffers, colour conversion. They may build on each other,
+# because composing them creates no route to hardware: none of them has one to
+# begin with. If a lib/ crate ever needs hal or a soc, it was misfiled.
 #
 # This is a WHITELIST: everything except api is a violation. It used to be a
 # blacklist of three prefixes (hal, arch-*, soc-*), which missed the most
@@ -51,27 +61,45 @@ ALLOWED = {"api"}
 LAYERS = {
     "drivers/logical": "Layer-3 logical driver",
     "drivers/bus":     "Layer-2 bus abstraction",
+    "lib":             "portable library",
 }
 
 meta = json.load(sys.stdin)
+
+def category(path):
+    for d, l in LAYERS.items():
+        if "/%s/" % d in path + "/":
+            return d, l
+    return None, None
+
+# Every lib/ crate, so lib/ crates can be allowed to name each other. Collected
+# from the workspace rather than hardcoded: a new one should not need this file
+# edited to be usable by its neighbours.
+LIBS = {
+    pkg["name"]
+    for pkg in meta["packages"]
+    if category(os.path.dirname(pkg["manifest_path"]).replace("\\", "/"))[0] == "lib"
+}
 violations = []
 checked = 0
 
 for pkg in meta["packages"]:
     path = os.path.dirname(pkg["manifest_path"]).replace("\\", "/")
-    layer = next((l for d, l in LAYERS.items() if "/%s/" % d in path + "/"), None)
+    directory, layer = category(path)
     if layer is None:
         continue
     checked += 1
+    allowed = ALLOWED | LIBS if directory == "lib" else ALLOWED
+    rule = ("api and other lib/ crates" if directory == "lib" else "api")
     for dep in pkg["dependencies"]:
         # dev-dependencies are test scaffolding; they never ship in the image
         # and so cannot leak hardware access into a driver's public surface.
         if dep["kind"] == "dev":
             continue
-        if dep["name"] not in ALLOWED:
+        if dep["name"] not in allowed:
             violations.append(
-                "LAYER VIOLATION: %s (%s) depends on %s -- may depend only on api"
-                % (pkg["name"], layer, dep["name"])
+                "LAYER VIOLATION: %s (%s) depends on %s -- may depend only on %s"
+                % (pkg["name"], layer, dep["name"], rule)
             )
 
 for v in violations:
@@ -79,15 +107,16 @@ for v in violations:
 
 if violations:
     print("")
-    print("%d layer violation(s) found. Logical and bus drivers must depend "
-          "only on api." % len(violations))
+    print("%d layer violation(s) found. Drivers may depend only on api; "
+          "lib/ crates only on api and each other." % len(violations))
     sys.exit(1)
 
 if checked == 0:
-    print("check-layers: matched no logical/bus crates -- has the layout moved?")
+    print("check-layers: matched no driver or lib crates -- has the layout moved?")
     sys.exit(1)
 
-print("Layer boundary OK: %d logical/bus crates depend only on api." % checked)
+print("Layer boundary OK: %d driver/lib crates within their dependency whitelist "
+      "(%d lib)." % (checked, len(LIBS)))
 EOF
 )
 

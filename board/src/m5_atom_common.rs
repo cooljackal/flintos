@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// M5Stack ATOM (ESP32-PICO-D4) Board Manifest
+// M5Stack ATOM (ESP32-PICO-D4) -- manifest shared by both variants
+//
+// The Lite and the Matrix are the same board with a different LED count, so
+// the pin map, buses and peripherals live here once and each variant module
+// re-exports them alongside its own panel declaration. Duplicating this file
+// would mean a pin fixed in one copy and left wrong in the other.
+//
+// BOARD_NAME, RGB_LED_COUNT and RGB_LED_LAYOUT are deliberately absent: they
+// are what the variants disagree about.
 //
 // Target: M5Stack ATOM Lite / ATOM Matrix, both built on the ESP32-PICO-D4
 // SiP. Same Xtensa LX6 core and same peripheral register map as the
@@ -18,7 +26,6 @@
 use hal::bus::*;
 use soc_esp32::addr;
 
-pub const BOARD_NAME: &str = "M5Stack-ATOM (ESP32-PICO-D4)";
 pub const TICK_PERIOD_US: u32 = 1000;
 pub const DMA_POOL_BYTES: usize = 8192;
 
@@ -36,6 +43,12 @@ pub const PSRAM_FREE_GPIOS: [u8; 2] = [16, 17];
 
 /// Onboard addressable RGB LED (SK6812/WS2812-style, single-wire).
 pub const RGB_LED_GPIO: u8 = 27;
+//
+// How many LEDs hang off that pin, and how they are folded, is the one thing
+// the two Atom variants disagree about -- see `m5_atom_lite.rs` and
+// `m5_atom_matrix.rs`. A pin without a count is half a fact: an application
+// told only the pin drives the first LED and leaves the other 24 dark, which
+// looks like a wiring fault.
 
 /// Onboard programmable button.
 pub const BUTTON_GPIO: u8 = 39;

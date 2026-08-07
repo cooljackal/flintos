@@ -26,7 +26,7 @@ hal = { path = "../../hal" }
 soc-esp32 = { path = "../../soc/esp32" }
 esp32-gpio = { path = "../../drivers/physical/esp32-gpio" }
 ws2812 = { path = "../../drivers/logical/ws2812" }
-led-matrix = { path = "../../drivers/logical/led-matrix" }
+led-matrix = { path = "../../lib/led-matrix" }
 
 [build-dependencies]
 build = { path = "../../tools/build" }
@@ -38,15 +38,13 @@ build = { path = "../../tools/build" }
 # -p blink` into a confusing failure; with no default it is an explicit one.
 default = ["debug-level-1"]
 
+# The LED count and panel layout come from the manifest now, so there is
+# nothing to select here beyond the board itself. `atom-matrix` used to be a
+# feature of this application, which meant the application carried a fact
+# about someone else's hardware.
+board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
 board-m5-atom = ["kernel/board-m5-atom"]
-
-# The Atom Matrix's 5x5 panel. Same board, same pin, 25 LEDs instead of one --
-# which the manifest cannot currently express, so it is a feature here until
-# #53 splits the two products into their own manifests.
-#
-# 25 LEDs is 600 RMT entries against a 64-entry block, so this is also what
-# exercises the streaming path.
-atom-matrix = []
 
 # The other boards are accepted and then rejected by a `compile_error!` in
 # `main.rs` that says which board is needed and why. Omitting them would leave

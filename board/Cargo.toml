@@ -13,6 +13,11 @@ rust-version.workspace = true
 hal = { path = "../hal" }
 soc-esp32 = { path = "../soc/esp32" }
 
+# Panel geometry, so a board with an LED panel can declare its shape the same
+# way it declares a pin. `led-matrix` is a portable library, not a driver: it
+# touches no register and its output is an integer.
+led-matrix = { path = "../lib/led-matrix" }
+
 # Board selection. Exactly one `board-*` feature must be enabled — see
 # `src/lib.rs` for the compile_error! that enforces this. Selection lives
 # here (Cargo features) rather than in an env var: features are visible to
@@ -23,4 +28,9 @@ soc-esp32 = { path = "../soc/esp32" }
 default = ["board-esp32-wrover"]
 board-esp32-wrover = []
 board-esp32-devkitc = []
+board-m5-atom-lite = []
+board-m5-atom-matrix = []
+
+# Retired. Accepted only so `src/lib.rs` can explain which of the two Atoms to
+# choose instead of leaving cargo to say "does not contain this feature".
 board-m5-atom = []

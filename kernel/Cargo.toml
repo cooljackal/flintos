@@ -60,6 +60,9 @@ soc-esp32 = { path = "../soc/esp32" }
 default = ["board-esp32-wrover"]
 board-esp32-wrover = ["board/board-esp32-wrover"]
 board-esp32-devkitc = ["board/board-esp32-devkitc"]
+board-m5-atom-lite = ["board/board-m5-atom-lite"]
+board-m5-atom-matrix = ["board/board-m5-atom-matrix"]
+# Retired; forwards so `board` can print which of the two to use.
 board-m5-atom = ["board/board-m5-atom"]
 
 debug-level-0 = []

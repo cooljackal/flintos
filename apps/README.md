@@ -15,7 +15,7 @@ spawns its own tasks.
 make apps                                  # list what's here
 make flash                                 # demo, on an ESP32-WROVER
 make flash APP=hello                       # hello instead
-make flash APP=demo BOARD=board-m5-atom    # different board
+make flash APP=demo BOARD=board-m5-atom-lite   # different board
 make flash APP=hello DEBUG=debug-level-0   # no logging at all
 ```
 
@@ -84,7 +84,7 @@ build = { path = "../../tools/build" }
 default = ["board-esp32-wrover", "debug-level-1"]
 board-esp32-wrover = ["kernel/board-esp32-wrover"]
 board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
-board-m5-atom = ["kernel/board-m5-atom"]
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
 debug-level-0 = ["kernel/debug-level-0"]
 debug-level-1 = ["kernel/debug-level-1"]
 debug-level-2 = ["kernel/debug-level-2"]

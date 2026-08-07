@@ -7,11 +7,17 @@
 //! line doubles back. Vendors fold them differently, so that knowledge is the
 //! whole content of this crate.
 //!
-//! Layer 3, and deliberately not part of `ws2812`: the folding has nothing to
-//! do with any wire protocol. The same layouts describe APA102, SK9822 and
-//! anything else driven as a chain. This crate has no dependencies and no
-//! notion of colour — it is integer arithmetic, which is also why all of it is
-//! host-tested.
+//! # Not a driver
+//!
+//! This lives in `lib/`, not `drivers/`. A driver knows a part number and its
+//! output is destined for a pin: `ws2812` knows GRB order and 350 ns pulses,
+//! `bme280` knows a humidity register. This knows no chip, no bus and no pin,
+//! and its output is an integer. The same layouts describe APA102, SK9822 and
+//! anything else wired as a chain.
+//!
+//! It depends on nothing — not even `api`. Calling it a driver would have been
+//! a false statement, and the Layer-3 naming convention would have made the
+//! claim out loud by handing it the name `driver-led-matrix`.
 //!
 //! # Coordinates
 //!
@@ -32,10 +38,17 @@
 //! - whether index 1 is beside or below it → [`Axis`]
 //! - whether each line restarts at the same edge or reverses → [`Order`]
 //!
-//! Only [`Layout::M5_ATOM_MATRIX`] ships as a preset, because it is the only
-//! one that has been on a bench. Vendor documentation for the others exists,
-//! but a constant that has never been checked against hardware is exactly the
-//! kind of thing that has been wrong repeatedly in this codebase.
+//! # Where a measured layout belongs
+//!
+//! Not here. A panel's geometry is a fact about a *board*, in the same way a
+//! pin number is, and the board manifest is the single place those live so
+//! that applications do not carry datasheet knowledge. `board::active`
+//! declares the layout for a board that physically has a panel — see
+//! `board/src/m5_atom_matrix.rs`.
+//!
+//! For a panel that is not part of any board, a strip you wired up yourself,
+//! the application declares it. That is honest: nobody has measured it for
+//! you.
 
 #![no_std]
 
@@ -92,22 +105,6 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// M5Stack Atom Matrix: 5×5 SK6812.
-    ///
-    /// **Measured**, not taken from a datasheet. The chain starts at the
-    /// bottom-right, runs right-to-left along the bottom row, then jumps back
-    /// to the right edge one row up — so it is progressive, not zigzag, which
-    /// is the less common of the two and would have been the wrong guess.
-    ///
-    /// Equivalently: an ordinary top-left row-major panel rotated 180°.
-    pub const M5_ATOM_MATRIX: Self = Self {
-        width: 5,
-        height: 5,
-        origin: Origin::BottomRight,
-        axis: Axis::Rows,
-        order: Order::Progressive,
-    };
-
     pub const fn new(
         width: usize,
         height: usize,
@@ -165,6 +162,15 @@ impl Layout {
 mod tests {
     use super::*;
 
+    /// Bottom-right origin, row-major, progressive.
+    ///
+    /// Named here as a shape rather than as a board: the claim that a
+    /// particular panel *is* this shape is a fact about that board, and lives
+    /// with the board. What belongs here is that the shape maps the way the
+    /// name says.
+    const BR_ROWS_PROGRESSIVE: Layout =
+        Layout::new(5, 5, Origin::BottomRight, Axis::Rows, Order::Progressive);
+
     const ORIGINS: [Origin; 4] = [
         Origin::TopLeft,
         Origin::TopRight,
@@ -186,11 +192,8 @@ mod tests {
     }
 
     #[test]
-    fn the_atom_matrix_matches_what_the_panel_actually_did() {
-        // Measured by walking the chain: index 0 bottom-right, running
-        // right-to-left along the bottom row, then the next row up starting
-        // from the right again.
-        let m = Layout::M5_ATOM_MATRIX;
+    fn a_bottom_right_progressive_panel_runs_leftward_then_upward() {
+        let m = BR_ROWS_PROGRESSIVE;
         assert_eq!(m.index(4, 4), Some(0), "index 0 is bottom-right");
         assert_eq!(m.index(3, 4), Some(1), "runs leftward along the bottom");
         assert_eq!(m.index(0, 4), Some(4), "bottom-left ends the first row");
@@ -199,11 +202,11 @@ mod tests {
     }
 
     #[test]
-    fn the_atom_matrix_is_a_top_left_panel_rotated_by_half_a_turn() {
+    fn a_bottom_right_progressive_panel_is_a_top_left_one_rotated_half_a_turn() {
         // A second, independent expression of the same mapping. If the
         // rotation identity and the corner checks ever disagree, one of them
-        // encodes a misreading of the hardware.
-        let m = Layout::M5_ATOM_MATRIX;
+        // is wrong, and the test says which pair to look at.
+        let m = BR_ROWS_PROGRESSIVE;
         for y in 0..5 {
             for x in 0..5 {
                 assert_eq!(m.index(x, y), Some(24 - (y * 5 + x)), "at ({x},{y})");
@@ -212,12 +215,13 @@ mod tests {
     }
 
     #[test]
-    fn the_atom_matrix_is_progressive_not_zigzag() {
-        // The likelier guess, and the wrong one. Under zigzag the second row
-        // would reverse and index 5 would sit at the left edge instead.
+    fn progressive_and_zigzag_are_distinguishable_from_the_second_line_on() {
+        // The two are identical on line 0, which is why guessing between them
+        // from a single lit LED does not work.
         let zig = Layout::new(5, 5, Origin::BottomRight, Axis::Rows, Order::Zigzag);
-        assert_eq!(zig.index(0, 3), Some(5));
-        assert_ne!(zig.index(4, 3), Layout::M5_ATOM_MATRIX.index(4, 3));
+        assert_eq!(zig.index(4, 4), BR_ROWS_PROGRESSIVE.index(4, 4), "line 0 agrees");
+        assert_eq!(zig.index(0, 3), Some(5), "zigzag comes back the other way");
+        assert_ne!(zig.index(4, 3), BR_ROWS_PROGRESSIVE.index(4, 3));
     }
 
     #[test]
@@ -246,7 +250,7 @@ mod tests {
     fn a_cell_off_the_panel_is_refused_not_wrapped() {
         // Wrapping would light a real LED elsewhere, which hides the caller's
         // off-by-one behind something that looks like a layout bug.
-        let m = Layout::M5_ATOM_MATRIX;
+        let m = BR_ROWS_PROGRESSIVE;
         assert_eq!(m.index(5, 0), None);
         assert_eq!(m.index(0, 5), None);
         assert_eq!(m.index(usize::MAX, 0), None);

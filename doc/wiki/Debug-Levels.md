@@ -60,8 +60,8 @@ than the kernel's logic:
 
 ```bash
 make test-target                                   # auto-detect the port
-make test-target BOARD=board-m5-atom PORT=COM5     # ESP32-PICO on Windows
-make test-target BOARD=board-m5-atom PORT=/dev/ttyUSB0
+make test-target BOARD=board-m5-atom-matrix PORT=COM5     # ESP32-PICO on Windows
+make test-target BOARD=board-m5-atom-matrix PORT=/dev/ttyUSB0
 ```
 
 Flashes the board, captures the serial output, and exits non-zero if anything

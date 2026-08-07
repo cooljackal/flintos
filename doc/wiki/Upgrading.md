@@ -37,7 +37,7 @@ Exits non-zero if anything broke, so it works in a script.
 | Option | Effect |
 |---|---|
 | `make upgrade PULL=0` | Check what's already checked out — no pull |
-| `make upgrade BOARD=board-m5-atom` | Rebuild against a different board |
+| `make upgrade BOARD=board-m5-atom-matrix` | Rebuild against a different board |
 
 It refuses to pull with uncommitted changes. An upgrade merged into dirty state
 is hard to unpick when it goes wrong.

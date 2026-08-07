@@ -8,22 +8,28 @@
 //! - `TARGET_PERIPHERALS` — direct peripheral mappings
 //! - `TARGET_SERVICES` — system service tasks
 //!
+//! ## What belongs in a manifest
+//!
+//! Every fact about the board that an application would otherwise have to
+//! look up in a datasheet: pins, base addresses, IRQ numbers, and the shape of
+//! anything attached. A pin without the count of what is on it is half a fact
+//! — `RGB_LED_GPIO` alone let an application drive one LED of a 25-LED panel
+//! and look correct while 24 stayed dark.
+//!
 //! ## Board selection
 //!
 //! The active board is chosen at compile time via Cargo features, one per
-//! supported board (`board-esp32-wrover`, `board-esp32-devkitc`,
-//! `board-m5-atom`, ...). Exactly one must be enabled — the `compile_error!`s
-//! below turn "zero selected" and "more than one selected" into build
-//! failures instead of a silently wrong manifest, which on real hardware
-//! shows up as a very confusing bring-up bug (wrong pins, wrong IRQ, etc).
+//! supported board. Exactly one must be enabled — the `compile_error!`s below
+//! turn "zero selected" and "more than one selected" into build failures
+//! instead of a silently wrong manifest, which on real hardware shows up as a
+//! very confusing bring-up bug (wrong pins, wrong IRQ, etc).
 //!
-//! Downstream crates (namely `kernel`) never name a board module
-//! directly; they use `board::active`, which this crate re-exports
-//! to whichever board module was selected.
+//! Downstream crates (namely `kernel`) never name a board module directly;
+//! they use `board::active`, which this crate re-exports to whichever board
+//! module was selected.
 //!
-//! Selecting a board from the kernel crate, which is what gets built:
 //! ```text
-//! cargo build -p kernel --no-default-features --features board-m5-atom
+//! cargo build -p kernel --no-default-features --features board-m5-atom-matrix
 //! cargo build -p kernel --no-default-features --features board-esp32-devkitc
 //! cargo build -p kernel   # default: board-esp32-wrover
 //! ```
@@ -41,33 +47,62 @@ pub mod esp32_wrover;
 #[cfg(feature = "board-esp32-devkitc")]
 pub mod esp32_devkitc;
 
-#[cfg(feature = "board-m5-atom")]
-pub mod m5_atom;
+#[cfg(feature = "board-m5-atom-lite")]
+pub mod m5_atom_lite;
+
+#[cfg(feature = "board-m5-atom-matrix")]
+pub mod m5_atom_matrix;
+
+/// Pin map shared by both Atom variants. Not selectable on its own: it declares
+/// no LED count, because that is the only thing the two disagree about.
+#[cfg(any(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix"))]
+mod m5_atom_common;
 
 // ── Exactly-one-board enforcement ───────────────────────────────────────────
 
-#[cfg(not(any(
-    feature = "board-esp32-wrover",
-    feature = "board-esp32-devkitc",
-    feature = "board-m5-atom",
-)))]
+// `board-m5-atom` is excluded here because it has its own message below, and
+// two compile errors for one mistake buries the one that says what to do.
+#[cfg(all(
+    not(any(
+        feature = "board-esp32-wrover",
+        feature = "board-esp32-devkitc",
+        feature = "board-m5-atom-lite",
+        feature = "board-m5-atom-matrix",
+    )),
+    not(feature = "board-m5-atom")
+))]
 compile_error!(
-    "board: no board selected. Enable exactly one `board-*` feature, e.g.\n\
-     \n\
-     \tcargo build -p kernel --features board-m5-atom\n\
-     \n\
-     Available boards: board-esp32-wrover (default), board-esp32-devkitc, board-m5-atom."
+    "board: no board selected. Enable exactly one `board-*` feature, e.g.
+     
+     	cargo build -p kernel --features board-m5-atom-matrix
+     
+     Available boards: board-esp32-wrover (default), board-esp32-devkitc,
+     board-m5-atom-lite, board-m5-atom-matrix."
 );
 
 #[cfg(any(
     all(feature = "board-esp32-wrover", feature = "board-esp32-devkitc"),
-    all(feature = "board-esp32-wrover", feature = "board-m5-atom"),
-    all(feature = "board-esp32-devkitc", feature = "board-m5-atom"),
+    all(feature = "board-esp32-wrover", feature = "board-m5-atom-lite"),
+    all(feature = "board-esp32-wrover", feature = "board-m5-atom-matrix"),
+    all(feature = "board-esp32-devkitc", feature = "board-m5-atom-lite"),
+    all(feature = "board-esp32-devkitc", feature = "board-m5-atom-matrix"),
+    all(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix"),
 ))]
 compile_error!(
-    "board: more than one `board-*` feature is enabled. A build with two \
-     board manifests merged in is not a real board — it silently produces the \
-     wrong pin/IRQ/bus map. Build with `--no-default-features --features <one-board>`."
+    "board: more than one `board-*` feature is enabled. A build with two      board manifests merged in is not a real board — it silently produces the      wrong pin/IRQ/bus map. Build with `--no-default-features --features <one-board>`."
+);
+
+// The name the Atom shipped under before the Lite and the Matrix were told
+// apart. Kept as a feature purely so this message can be printed: dropping it
+// outright leaves cargo saying "does not contain this feature", which is true
+// and says nothing about which of the two to pick.
+#[cfg(feature = "board-m5-atom")]
+compile_error!(
+    "board: `board-m5-atom` no longer names a board. The Atom Lite has one LED      and the Atom Matrix has a 5×5 panel on the same pin, and a manifest that      cannot tell them apart lets an application light one pixel of a panel and      look correct.
+     
+     	board-m5-atom-lite     one SK6812
+     	board-m5-atom-matrix   5×5 panel, 25 LEDs
+"
 );
 
 // ── Active board re-export ──────────────────────────────────────────────────
@@ -75,23 +110,34 @@ compile_error!(
 #[cfg(all(
     feature = "board-esp32-wrover",
     not(feature = "board-esp32-devkitc"),
-    not(feature = "board-m5-atom"),
+    not(feature = "board-m5-atom-lite"),
+    not(feature = "board-m5-atom-matrix"),
 ))]
 pub use esp32_wrover as active;
 
 #[cfg(all(
     feature = "board-esp32-devkitc",
     not(feature = "board-esp32-wrover"),
-    not(feature = "board-m5-atom"),
+    not(feature = "board-m5-atom-lite"),
+    not(feature = "board-m5-atom-matrix"),
 ))]
 pub use esp32_devkitc as active;
 
 #[cfg(all(
-    feature = "board-m5-atom",
+    feature = "board-m5-atom-lite",
     not(feature = "board-esp32-wrover"),
     not(feature = "board-esp32-devkitc"),
+    not(feature = "board-m5-atom-matrix"),
 ))]
-pub use m5_atom as active;
+pub use m5_atom_lite as active;
+
+#[cfg(all(
+    feature = "board-m5-atom-matrix",
+    not(feature = "board-esp32-wrover"),
+    not(feature = "board-esp32-devkitc"),
+    not(feature = "board-m5-atom-lite"),
+))]
+pub use m5_atom_matrix as active;
 
 // ── Manifest invariant tests ────────────────────────────────────────────────
 //

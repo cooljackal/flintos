@@ -58,7 +58,7 @@ build = { path = "../../tools/build" }
 default = ["board-esp32-wrover", "debug-level-1"]
 board-esp32-wrover = ["kernel/board-esp32-wrover"]
 board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
-board-m5-atom = ["kernel/board-m5-atom"]
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
 debug-level-0 = ["kernel/debug-level-0"]
 debug-level-1 = ["kernel/debug-level-1"]
 debug-level-2 = ["kernel/debug-level-2"]

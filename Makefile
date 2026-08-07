@@ -173,8 +173,8 @@ FLASH_MODE     := dio
 #
 #   make flash                                    # apps/demo on a WROVER
 #   make flash APP=hello                          # apps/hello
-#   make flash APP=blink BOARD=board-m5-atom      # apps/blink (Atom only)
-#   make flash APP=demo BOARD=board-m5-atom       # M5Stack Atom
+#   make flash APP=blink BOARD=board-m5-atom-matrix  # apps/blink, 5x5 panel
+#   make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
 #   make flash APP=hello DEBUG=debug-level-0      # no logging at all
 #   make apps                                     # what is available
 #
@@ -282,7 +282,7 @@ apps: ## List the applications in apps/
 		printf "  %-12s %s\n" "$$name" "$$desc"; \
 	done
 	@echo ""
-	@echo "Boards: board-esp32-wrover (default), board-esp32-devkitc, board-m5-atom"
+	@echo "Boards: board-esp32-wrover (default), board-esp32-devkitc, board-m5-atom-lite, board-m5-atom-matrix"
 	@echo "Debug:  debug-level-0 (silent) .. debug-level-3 (everything)"
 
 .PHONY: erase
@@ -314,8 +314,18 @@ check-names: ## Enforce the package naming and layout convention
 	$(BASH) tools/check-names.sh
 
 .PHONY: test-host
-test-host: ## Run host-side unit tests
+test-host: test-boards ## Run host-side unit tests (every board manifest included)
 	cargo test $(HOST_SELECT) --target $(HOST_TARGET)
+
+# Every board this tree can build for. A manifest's invariant tests only run
+# for the board that is selected, so testing the default board alone leaves
+# every other manifest unchecked -- which is how a pin or a panel layout stays
+# wrong until someone flashes it.
+BOARDS := board-esp32-wrover board-esp32-devkitc board-m5-atom-lite board-m5-atom-matrix
+
+.PHONY: test-boards
+test-boards: ## Run each board manifest's invariant tests, one board at a time
+	@for b in $(BOARDS); do echo "== $$b"; cargo test -p board --target $(HOST_TARGET) --no-default-features --features "$$b" || exit 1; done
 
 # ── On-target tests ───────────────────────────────────────────────────────────
 #
@@ -324,7 +334,7 @@ test-host: ## Run host-side unit tests
 # critical section that genuinely masks the timer, a tick driven by silicon.
 # See kernel/src/selftest.rs.
 
-#   make test-target BOARD=board-m5-atom PORT=COM5
+#   make test-target BOARD=board-m5-atom-matrix PORT=COM5
 #
 # PORT matters as soon as a second serial device is attached: espflash prompts
 # for a choice, and the harness has no terminal to answer with.
@@ -418,4 +428,4 @@ help: ## Show this help message
 	     $(MAKEFILE_LIST)
 	@printf '\n  Quick start:   make env  ->  make check  ->  make build\n'
 	@printf '  Host tests:    make test-host    (no hardware; runs in CI)\n'
-	@printf '  Board tests:   make test-target BOARD=board-m5-atom PORT=COM5\n\n'
+	@printf '  Board tests:   make test-target BOARD=board-m5-atom-matrix PORT=COM5\n\n'

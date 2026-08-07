@@ -28,11 +28,16 @@
 //! Flicker or the wrong colour at random means pulse widths outside the
 //! ±150 ns window. Nothing at all means the signal never reached the pad.
 //!
-//! With `--features atom-matrix` (Atom Matrix, 25 LEDs): one LED lit at a
-//! time, walking the chain from index 0, logging each index as it goes. That
-//! is a 600-entry frame against a 64-entry block, so it exercises the
-//! streaming path — and it is how the panel's physical layout gets *measured*
-//! rather than guessed, which is what #52 needs before it can name a layout.
+//! On a board with a panel (Atom Matrix, 25 LEDs): shapes drawn by `(x, y)`
+//! through the board's declared layout — a column sweeping right, a row
+//! sweeping down, a diagonal — then a walk along the chain logging each index.
+//! A correct layout draws straight lines; a wrong one scatters the same lit
+//! cells, which is obvious at a glance.
+//!
+//! Which of the two it does is decided by the board manifest, not by a flag
+//! here. `RGB_LED_COUNT` and `RGB_LED_LAYOUT` are facts about the board, and
+//! an application that carried them would be carrying someone else's
+//! datasheet.
 
 #![no_std]
 #![no_main]
@@ -51,15 +56,17 @@ use soc_esp32::{addr, intr_map};
 use led_matrix::Layout;
 use ws2812::{Rgb, Timing};
 
-// Only the Atom declares an addressable LED, so only the Atom can run this.
-// Say which board is missing rather than letting the build fail on an
-// unresolved `RGB_LED_GPIO` deep inside `led_init`.
-#[cfg(not(feature = "board-m5-atom"))]
+// Only the Atom boards declare an addressable LED. Say which board is missing
+// rather than letting the build fail on an unresolved `RGB_LED_GPIO` deep
+// inside `led_init`.
+#[cfg(not(any(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix")))]
 compile_error!(
-    "`blink` drives an onboard addressable LED, and the M5Stack Atom is the only \
-     board whose manifest declares one.\n\n    make flash APP=blink BOARD=board-m5-atom\n\n\
-     To run it on another board, add an `RGB_LED_GPIO` to that board's manifest \
-     and a feature here."
+    "`blink` drives an onboard addressable LED, and only the M5Stack Atom boards \
+     declare one.\n\n\
+     \tmake flash APP=blink BOARD=board-m5-atom-matrix   5x5 panel, 25 LEDs\n\
+     \tmake flash APP=blink BOARD=board-m5-atom-lite     one LED\n\n\
+     To run it on another board, give that board's manifest an `RGB_LED_GPIO`, an \
+     `RGB_LED_COUNT` and an `RGB_LED_LAYOUT`, and add a feature here."
 );
 
 kernel::flint_app!(main, abi = 1);
@@ -83,15 +90,15 @@ const LED_CPU_INT: u8 = 13;
 /// from the clock itself.
 const NS_PER_TICK: u32 = 125;
 
-/// How many LEDs are on the pin.
+/// How many LEDs are on the pin, from the manifest.
 ///
-/// A feature rather than a manifest constant because `RGB_LED_GPIO` is all the
-/// Atom manifest says, and a Lite and a Matrix are the same pin on the same
-/// board name — see #53.
-#[cfg(feature = "atom-matrix")]
-const LED_COUNT: usize = 25;
-#[cfg(not(feature = "atom-matrix"))]
-const LED_COUNT: usize = 1;
+/// This used to be a feature of this application, which meant `blink` carried
+/// a fact about someone else's hardware and the two Atoms were told apart by a
+/// build flag rather than by the board they are.
+const LED_COUNT: usize = kernel::board::active::RGB_LED_COUNT;
+
+/// The panel, if this board has one. `None` on a board with a single LED.
+const PANEL: Option<Layout> = kernel::board::active::RGB_LED_LAYOUT;
 
 /// RMT entries in a full frame: one per bit, 24 bits per LED.
 const FRAME_ENTRIES: usize = LED_COUNT * 24;
@@ -137,10 +144,9 @@ fn blink() {
         FRAME_ENTRIES
     );
 
-    if LED_COUNT == 1 {
-        colour_cycle()
-    } else {
-        walk_the_chain()
+    match PANEL {
+        Some(panel) => panel_demo(panel),
+        None => colour_cycle(),
     }
 }
 
@@ -170,11 +176,11 @@ fn colour_cycle() -> ! {
 /// runs in rows or columns, from which corner, and whether alternate lines
 /// reverse. Guessing any of that is how #52 would ship a driver that lights
 /// the wrong pixel.
-fn walk_the_chain() -> ! {
+fn panel_demo(panel: Layout) -> ! {
     loop {
         // Shapes first: the layout is measured now, so the interesting
         // question is whether it is right, not what it is.
-        draw_by_coordinates();
+        draw_by_coordinates(panel);
         for i in 0..LED_COUNT {
             let mut frame = [Rgb::OFF; LED_COUNT];
             // Dim: at full scale a panel this close is genuinely painful, and
@@ -187,49 +193,41 @@ fn walk_the_chain() -> ! {
     }
 }
 
-/// The panel this build believes it is driving.
-///
-/// Measured with the walk above, not read off a datasheet — the Atom Matrix is
-/// progressive rather than zigzag, which is the less common arrangement and
-/// would have been the wrong guess.
-const PANEL: Layout = Layout::M5_ATOM_MATRIX;
-
 /// Sweep a column, then a row, then a diagonal, addressing cells by `(x, y)`.
 ///
 /// This checks the layout rather than the chain. A correct mapping draws a
 /// straight line moving in the direction named in the log; a wrong one
 /// scatters the same number of lit cells across the panel, which is obvious at
 /// a glance and impossible to talk yourself out of.
-fn draw_by_coordinates() {
-    const W: usize = PANEL.width;
-    const H: usize = PANEL.height;
+fn draw_by_coordinates(panel: Layout) {
+    let (w, h) = (panel.width, panel.height);
 
-    for x in 0..W {
+    for x in 0..w {
         api::log_info!("[blink] column x={} (expect a vertical line, moving right)", x);
-        paint(|cx, cy| cx == x && cy < H);
+        paint(panel, |cx, cy| cx == x && cy < h);
         task::sleep_ms(500);
     }
-    for y in 0..H {
+    for y in 0..h {
         api::log_info!("[blink] row y={} (expect a horizontal line, moving down)", y);
-        paint(|cx, cy| cy == y && cx < W);
+        paint(panel, |cx, cy| cy == y && cx < w);
         task::sleep_ms(500);
     }
     api::log_info!("[blink] diagonal (expect top-left to bottom-right)");
-    paint(|cx, cy| cx == cy);
+    paint(panel, |cx, cy| cx == cy);
     task::sleep_ms(1500);
 }
 
 /// Light every cell the predicate accepts, addressing them through the layout.
-fn paint(lit: impl Fn(usize, usize) -> bool) {
+fn paint(panel: Layout, lit: impl Fn(usize, usize) -> bool) {
     let mut frame = [Rgb::OFF; LED_COUNT];
-    for y in 0..PANEL.height {
-        for x in 0..PANEL.width {
+    for y in 0..panel.height {
+        for x in 0..panel.width {
             if !lit(x, y) {
                 continue;
             }
             // `index` refuses a cell off the panel rather than wrapping, so a
             // bad coordinate cannot quietly light the wrong LED.
-            match PANEL.index(x, y) {
+            match panel.index(x, y) {
                 Some(i) => frame[i] = Rgb::new(0, 255, 0).dim(8),
                 None => api::log_error!("[blink] ({}, {}) is off the panel", x, y),
             }

@@ -21,6 +21,25 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Breaking
 
+- **`board-m5-atom` split into `board-m5-atom-lite` and
+  `board-m5-atom-matrix`.** The Atom Lite has one LED and the Atom Matrix has a
+  5×5 panel on the same pin, and one feature could not tell them apart — an
+  application told only `RGB_LED_GPIO` drove the first LED of a panel and
+  looked correct while 24 stayed dark.
+
+  ```sh
+  make flash APP=demo BOARD=board-m5-atom-matrix   # was: BOARD=board-m5-atom
+  ```
+
+  ```toml
+  # in your application's Cargo.toml
+  board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
+  ```
+
+  The old name is still accepted and fails with a message naming the two
+  replacements, rather than leaving cargo to say "does not contain this
+  feature".
+
 - **Applications must declare an ABI version.** `flint_app!(main)` no longer
   compiles.
 
@@ -67,9 +86,18 @@ A kernel that provides a different one refuses to build and points here.
 - **`apps/blink`**, which drives the M5Stack Atom's onboard LED. It is also
   the on-hardware test for the RMT register map — no host test can tell you
   whether a register is where you think it is.
-- **`led-matrix`**, a logical driver for chained LED panels: `(x, y)` to a
-  position along the chain, with the fold described as data. Ships one preset,
-  the M5Stack Atom Matrix, because it is the only one measured on hardware.
+- **`lib/`**, a home for portable libraries that are not drivers: no
+  registers, no part numbers, output is a value rather than something bound for
+  a pin. `tools/check-layers.sh` enforces that they depend only on `api` and on
+  each other.
+- **`led-matrix`** (in `lib/`): chained LED panel geometry, `(x, y)` to a
+  position along the chain, with the fold described as data. It ships no board
+  constants — a panel's layout is a fact about a board, so `board::active`
+  declares it alongside the pin.
+- **Board manifests declare their LEDs**: `RGB_LED_COUNT` and `RGB_LED_LAYOUT`
+  join `RGB_LED_GPIO`, so an application no longer carries the count.
+- **`make test-boards`** runs every board manifest's invariant tests. Only the
+  selected board's tests ran before, leaving every other manifest unchecked.
 - **Peripheral interrupt routing** (`soc_esp32::intr_map`). The DPORT crossbar
   that decides which of the CPU's 32 interrupt inputs a peripheral fires on.
   Nothing routed one before, so every driver's interrupt was unreachable.

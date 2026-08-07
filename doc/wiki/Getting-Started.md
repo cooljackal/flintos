@@ -27,7 +27,7 @@ Builds `apps/demo`, flashes over USB serial, opens a monitor.
 ```bash
 make apps                                  # what's available
 make flash APP=hello                       # one task instead of three
-make flash APP=demo BOARD=board-m5-atom    # different board
+make flash APP=demo BOARD=board-m5-atom-lite   # different board
 ```
 
 Defaults: `APP=demo`, `BOARD=board-esp32-wrover`, `DEBUG=debug-level-1`.

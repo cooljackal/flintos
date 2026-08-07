@@ -3,10 +3,16 @@
 ATOM Lite and ATOM Matrix. Both are ESP32-PICO-D4.
 
 ```bash
-make flash BOARD=board-m5-atom
+make flash BOARD=board-m5-atom-matrix   # or board-m5-atom-lite
 ```
 
-Feature: `board-m5-atom`. Manifest: `board/src/m5_atom.rs`.
+Features: `board-m5-atom-lite` (1 LED) and `board-m5-atom-matrix` (5x5 panel).
+Manifests: `board/src/m5_atom_lite.rs`, `board/src/m5_atom_matrix.rs`, sharing
+`board/src/m5_atom_common.rs`.
+
+The two are the same board with a different LED count, and one feature could not
+tell them apart -- an application told only the pin drove the first LED of the
+panel and left 24 dark.
 
 SoC: ESP32 — see [ESP32](SoC-ESP32) for the full pin table and peripheral map.
 Tick: 1 ms.
