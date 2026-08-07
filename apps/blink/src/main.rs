@@ -105,6 +105,10 @@ static mut FRAME: [Entry; FRAME_ENTRIES] = [Entry::END; FRAME_ENTRIES];
 /// Everything the interrupt needs. `None` until the channel is claimed.
 static mut STREAM: Option<Stream> = None;
 
+/// Whether the "it streamed" line has been printed. Once is enough; a stall
+/// reports every time.
+static mut REPORTED: bool = false;
+
 struct Stream {
     rmt: Rmt,
     refill: Refill,
@@ -181,19 +185,25 @@ fn walk_the_chain() -> ! {
 
 /// Encode `colours` and stream them, waiting for the transmission to finish.
 fn show(colours: &[Rgb; LED_COUNT]) {
-    let mut bits = [(0u16, 0u16); FRAME_ENTRIES];
-    if ws2812::encode(colours, Timing::WS2812, NS_PER_TICK, &mut bits).is_none() {
-        api::log_error!("[blink] encode refused a {}-entry buffer", FRAME_ENTRIES);
-        return;
-    }
-
-    // One RMT entry per bit: high for the value's high time, then low. Both
-    // pulses are in the same entry, so a bit is never split across a refill
-    // boundary and cannot be half-sent.
-    unsafe {
-        let frame = &mut *addr_of_mut!(FRAME);
-        for (entry, (high, low)) in frame.iter_mut().zip(bits) {
-            *entry = Entry::new(true, high, false, low);
+    // One LED at a time. Encoding the whole frame at once would want a
+    // 600-entry scratch buffer -- 2400 bytes, on a 4 KiB stack the trap
+    // handler also runs on, which is exactly why FRAME is static. A stack
+    // overflow here is caught, but only after it has already scribbled.
+    const BITS_PER_LED: usize = 24;
+    for (i, colour) in colours.iter().enumerate() {
+        let mut bits = [(0u16, 0u16); BITS_PER_LED];
+        if ws2812::encode(&[*colour], Timing::WS2812, NS_PER_TICK, &mut bits).is_none() {
+            api::log_error!("[blink] encode refused a {}-entry buffer", BITS_PER_LED);
+            return;
+        }
+        // One RMT entry per bit: high for the value's high time, then low.
+        // Both pulses are in the same entry, so a bit is never split across a
+        // refill boundary and cannot be half-sent.
+        unsafe {
+            let frame = &mut *addr_of_mut!(FRAME);
+            for (j, (high, low)) in bits.iter().enumerate() {
+                frame[i * BITS_PER_LED + j] = Entry::new(true, *high, false, *low);
+            }
         }
     }
 
@@ -208,10 +218,39 @@ fn show(colours: &[Rgb; LED_COUNT]) {
     // The frame is ~1.25 µs per bit, so 600 bits is about 750 µs. Sleeping
     // rather than spinning is the point of refilling from an interrupt: the
     // scheduler runs everything else while the panel clocks out.
+    let mut waited = 0;
     for _ in 0..10 {
         task::sleep_ms(1);
+        waited += 1;
         if unsafe { (*addr_of!(STREAM)).as_ref().is_some_and(|s| s.done) } {
             break;
+        }
+    }
+
+    // Whether the interrupt actually fed the whole frame. Without it the
+    // channel emits its first 64 entries and stops, and on a panel that is
+    // two lit LEDs and 23 dark ones -- which looks like a wiring fault, not a
+    // missed refill. Reported once so the log says which happened, and on
+    // every failure after that.
+    unsafe {
+        if let Some(s) = (*addr_of!(STREAM)).as_ref() {
+            let fed = s.refill.written();
+            if !s.done || fed != FRAME_ENTRIES {
+                api::log_error!(
+                    "[blink] stream stalled: {} of {} entries fed after {} ms",
+                    fed,
+                    FRAME_ENTRIES,
+                    waited
+                );
+            } else if !REPORTED {
+                REPORTED = true;
+                api::log_info!(
+                    "[blink] streamed {} entries via {} refills in {} ms",
+                    fed,
+                    fed.div_ceil(rmt::HALF_BLOCK),
+                    waited
+                );
+            }
         }
     }
     // Latch. The datasheet wants the line idle at least 50 µs; a tick is far
