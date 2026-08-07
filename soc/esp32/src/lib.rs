@@ -32,6 +32,7 @@ pub mod gpio_matrix;
 pub mod io_mux;
 pub mod pinmux;
 pub mod reset;
+pub mod rmt;
 pub mod rng;
 pub mod wdt;
 

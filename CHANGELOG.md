@@ -64,6 +64,10 @@ A kernel that provides a different one refuses to build and points here.
   timer-group watchdog is fed from the idle task and catches a task that never
   yields. Neither catches the other's failure — a spinning task keeps the tick
   alive, so only the idle-fed one notices.
+- **RMT driver** (`soc_esp32::rmt`) and a **WS2812/SK6812 logical driver**
+  (`ws2812`), so an addressable LED can be driven with the sub-microsecond
+  pulse timing it needs. One shot, one channel's memory block — about two LEDs;
+  longer strings need refill-on-interrupt.
 - **Hardware RNG** as `kernel::rng`. Suitable for backoffs, jitter and test
   seeds; **not** for keys or tokens — the generator is only cryptographically
   useful with the radio running, and Flint does not bring the radio up. Said

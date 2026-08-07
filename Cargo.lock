@@ -141,3 +141,10 @@ version = "0.1.0"
 dependencies = [
  "api",
 ]
+
+[[package]]
+name = "ws2812"
+version = "0.1.0"
+dependencies = [
+ "api",
+]

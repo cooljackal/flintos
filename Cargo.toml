@@ -55,6 +55,7 @@ members = [
     "drivers/bus/uart-bus",
     "drivers/logical/bme280",
     "drivers/logical/ssd1306",
+    "drivers/logical/ws2812",
 ]
 
 # Shared metadata. Every member inherits these with `field.workspace = true`

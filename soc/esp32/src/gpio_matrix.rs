@@ -118,6 +118,9 @@ pub fn signal_index(signal: Signal) -> Option<u32> {
         Signal::SpiMosi(3) => 65,
         Signal::SpiCs(3) => 68,
 
+        // RMT channel n output. Eight consecutive indices from 87.
+        Signal::RmtOut(n) if n < 8 => 87 + n as u32,
+
         _ => return None,
     })
 }

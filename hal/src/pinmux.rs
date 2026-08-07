@@ -52,6 +52,8 @@ pub enum Signal {
     SpiSck(u8),
     /// SPI chip select, output.
     SpiCs(u8),
+    /// RMT channel output — pulse trains, e.g. addressable LEDs.
+    RmtOut(u8),
 }
 
 impl Signal {
@@ -67,7 +69,8 @@ impl Signal {
             | Signal::SpiMosi(n)
             | Signal::SpiMiso(n)
             | Signal::SpiSck(n)
-            | Signal::SpiCs(n) => *n,
+            | Signal::SpiCs(n)
+            | Signal::RmtOut(n) => *n,
         }
     }
 
@@ -82,7 +85,8 @@ impl Signal {
             | Signal::UartRts(_)
             | Signal::SpiMosi(_)
             | Signal::SpiSck(_)
-            | Signal::SpiCs(_) => SignalDirection::Output,
+            | Signal::SpiCs(_)
+            | Signal::RmtOut(_) => SignalDirection::Output,
             Signal::UartRx(_) | Signal::UartCts(_) | Signal::SpiMiso(_) => SignalDirection::Input,
             Signal::I2cSda(_) | Signal::I2cScl(_) => SignalDirection::Bidirectional,
         }

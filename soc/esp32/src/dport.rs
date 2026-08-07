@@ -9,7 +9,7 @@
 //!
 //! Bit positions confirmed against esp-idf `soc/dport_reg.h`.
 
-use crate::addr::{DPORT_BASE, I2C0_BASE, I2C1_BASE, SPI2_BASE, SPI3_BASE, UART0_BASE, UART1_BASE, UART2_BASE};
+use crate::addr::{DPORT_BASE, RMT_BASE, I2C0_BASE, I2C1_BASE, SPI2_BASE, SPI3_BASE, UART0_BASE, UART1_BASE, UART2_BASE};
 
 const PERIP_CLK_EN: u32 = DPORT_BASE + 0xC0;
 const PERIP_RST_EN: u32 = DPORT_BASE + 0xC4;
@@ -27,6 +27,7 @@ impl ClockBit {
     pub const SPI3: Self = Self(1 << 16);
     pub const I2C0: Self = Self(1 << 7);
     pub const I2C1: Self = Self(1 << 18);
+    pub const RMT: Self = Self(1 << 9);
 
     pub const fn mask(self) -> u32 {
         self.0
@@ -43,6 +44,7 @@ pub fn clock_bit(base: u32) -> Option<ClockBit> {
         SPI3_BASE => ClockBit::SPI3,
         I2C0_BASE => ClockBit::I2C0,
         I2C1_BASE => ClockBit::I2C1,
+        RMT_BASE => ClockBit::RMT,
         _ => return None,
     })
 }
