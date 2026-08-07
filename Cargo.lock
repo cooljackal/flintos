@@ -153,6 +153,7 @@ dependencies = [
  "hal",
  "i2c-bus",
  "kernel",
+ "mpu6886",
  "soc-esp32",
 ]
 
@@ -177,6 +178,13 @@ version = "0.1.0"
 [[package]]
 name = "led-strip"
 version = "0.1.0"
+
+[[package]]
+name = "mpu6886"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
 
 [[package]]
 name = "size"
