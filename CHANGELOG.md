@@ -176,6 +176,12 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **DMA descriptors** (`soc_esp32::dma::Descriptor`, `build_chain`). The
+  12-byte linked-list descriptor the engine actually walks, laid out from the
+  ROM header, with the buffer's reachability and alignment checked before an
+  address can reach one. No transfer engine yet — this is the piece the
+  register programming will need, not the programming.
+
 - **[Multicore](https://github.com/cooljackal/flintos/wiki/Multicore) in the
   wiki.** Starting the second core, why its entry has to be in `.iram1`, what
   is shared and what is per-core, when to pin a task, and why asymmetric cores

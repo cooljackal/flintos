@@ -1,0 +1,393 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! DMA descriptors. Included by [`crate::dma`].
+//!
+//! The engine does not take an address and a length. It walks a linked list of
+//! 12-byte descriptors, each pointing at one chunk of a buffer, and the list
+//! itself has to live where the engine can reach it — the `next` pointers are
+//! followed by hardware, so the chain is as much a DMA buffer as the data is.
+//!
+//! Layout is from the ROM header `esp32/rom/lldesc.h`, whose bitfield starts
+//! at the LSB:
+//!
+//! ```c
+//! volatile uint32_t size  :12,   // capacity of the buffer
+//!                   length:12,   // valid bytes: TX in, RX out
+//!                   offset: 5,
+//!                   sosf  : 1,   // start of sub-frame
+//!                   eof   : 1,   // last descriptor of the transfer
+//!                   owner : 1;   // 1 = engine, 0 = CPU
+//! volatile uint8_t *buf;
+//! union { volatile uint32_t empty; STAILQ_ENTRY(lldesc_s) qe; };
+//! ```
+//!
+//! The two 12-bit fields are worth stating plainly, because swapping them
+//! produces a transfer that runs, reports success, and moves nothing. `size`
+//! is how big the buffer is; `length` is how much of it matters. On transmit
+//! the CPU sets both and the engine reads `length`. On receive the CPU sets
+//! `size` and the **engine writes** `length` with what it actually got.
+
+use super::DmaError;
+
+/// Bit positions in the first descriptor word.
+const SIZE_SHIFT: u32 = 0;
+const LENGTH_SHIFT: u32 = 12;
+const FIELD_MASK: u32 = 0xFFF;
+const EOF_BIT: u32 = 1 << 30;
+const OWNER_BIT: u32 = 1 << 31;
+
+/// One DMA descriptor.
+///
+/// `repr(C)` and word-aligned because the engine reads this out of memory. The
+/// field order is a hardware contract, not a Rust detail.
+#[repr(C, align(4))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Descriptor {
+    flags: u32,
+    buf: u32,
+    next: u32,
+}
+
+impl Descriptor {
+    /// Most bytes one descriptor may carry.
+    ///
+    /// The `size` field is 12 bits, so 4095 would fit. esp-idf uses 4096-4 and
+    /// so do we: a chunk that is not a multiple of 4 leaves the *next* chunk's
+    /// buffer address misaligned, and a misaligned DMA address does not fault.
+    /// It transfers the wrong bytes.
+    pub const MAX_LEN: u32 = 4096 - 4;
+
+    /// An empty descriptor owned by the CPU. What a freshly reserved slot
+    /// should look like before a chain is laid over it.
+    pub const fn zeroed() -> Self {
+        Self { flags: 0, buf: 0, next: 0 }
+    }
+
+    /// A transmit descriptor: `len` bytes at `buf`, engine-owned.
+    ///
+    /// `size` and `length` both get `len`. The engine only reads `length` on
+    /// transmit, but leaving `size` at zero describes a buffer too small to
+    /// hold what the descriptor claims to send, and costs nothing to get right.
+    pub fn tx(buf: u32, len: u32, eof: bool, next: u32) -> Result<Self, DmaError> {
+        Self::build(buf, len, len, eof, next)
+    }
+
+    /// A receive descriptor: room for `capacity` bytes at `buf`.
+    ///
+    /// `length` starts at zero because the engine writes it. A receive
+    /// descriptor that pre-sets `length` reads back as though it had already
+    /// received that much.
+    pub fn rx(buf: u32, capacity: u32, next: u32) -> Result<Self, DmaError> {
+        Self::build(buf, capacity, 0, true, next)
+    }
+
+    fn build(buf: u32, size: u32, length: u32, eof: bool, next: u32) -> Result<Self, DmaError> {
+        if size > Self::MAX_LEN || length > Self::MAX_LEN {
+            return Err(DmaError::ChunkTooLong);
+        }
+        if buf % 4 != 0 || !reachable(buf) {
+            return Err(DmaError::UnreachableAddress);
+        }
+        if next != 0 && (next % 4 != 0 || !reachable(next)) {
+            return Err(DmaError::UnreachableAddress);
+        }
+        Ok(Self {
+            flags: ((size & FIELD_MASK) << SIZE_SHIFT)
+                | ((length & FIELD_MASK) << LENGTH_SHIFT)
+                | if eof { EOF_BIT } else { 0 }
+                | OWNER_BIT,
+            buf,
+            next,
+        })
+    }
+
+    /// Buffer capacity this descriptor describes.
+    pub const fn size(&self) -> u32 {
+        (self.flags >> SIZE_SHIFT) & FIELD_MASK
+    }
+
+    /// Valid bytes: what the CPU asked to send, or what the engine received.
+    pub const fn length(&self) -> u32 {
+        (self.flags >> LENGTH_SHIFT) & FIELD_MASK
+    }
+
+    /// Last descriptor of a transfer.
+    pub const fn is_eof(&self) -> bool {
+        self.flags & EOF_BIT != 0
+    }
+
+    /// Still owned by the engine.
+    ///
+    /// Hardware clears this when it is finished with the descriptor, which is
+    /// how a completed transfer is recognised without an interrupt.
+    pub const fn owned_by_engine(&self) -> bool {
+        self.flags & OWNER_BIT != 0
+    }
+
+    /// Address of the next descriptor, or 0 at the end of the chain.
+    pub const fn next(&self) -> u32 {
+        self.next
+    }
+
+    /// Address of this descriptor's buffer.
+    pub const fn buffer(&self) -> u32 {
+        self.buf
+    }
+
+    /// The raw first word, for tests that need to see the encoding.
+    #[cfg(test)]
+    pub(crate) const fn raw_flags(&self) -> u32 {
+        self.flags
+    }
+}
+
+/// SRAM the DMA engines can reach: SRAM2, `0x3FFAE000`–`0x3FFDFFFF`.
+///
+/// A buffer outside this does not fault. The transfer completes, reports
+/// success, and moves nothing — so every address goes through here before it
+/// reaches a descriptor.
+pub const fn reachable(addr: u32) -> bool {
+    addr >= 0x3FFA_E000 && addr <= 0x3FFD_FFFF
+}
+
+/// The link registers hold 20 bits of descriptor address.
+///
+/// `SPI_OUTLINK_ADDR` and `SPI_INLINK_ADDR` are both `[19:0]`; the top bits
+/// are implied. Every address in the reachable region shares them, so this can
+/// only fail for an address that had no business being a descriptor.
+pub const fn link_addr(addr: u32) -> u32 {
+    addr & 0x000F_FFFF
+}
+
+/// How many descriptors a buffer of `len` bytes needs.
+///
+/// Zero-length is one descriptor, not none: the engine still needs something
+/// to mark end-of-frame with.
+pub const fn descriptors_needed(len: u32) -> u32 {
+    if len == 0 {
+        1
+    } else {
+        len.div_ceil(Descriptor::MAX_LEN)
+    }
+}
+
+/// Which way a chain moves data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// Memory to peripheral. The engine reads `length` bytes out.
+    Transmit,
+    /// Peripheral to memory. The engine fills the buffer and writes `length`.
+    Receive,
+}
+
+/// Lay a chain over `buf`, writing into `descs`.
+///
+/// `descs` must itself live in DMA-reachable memory — the engine follows the
+/// `next` pointers. Callers get that from `kernel::dma_broker`.
+///
+/// Returns the address to program into the link register.
+///
+/// # Safety
+/// `descs` must not be in use by a running transfer, and `buf` must stay valid
+/// and untouched until this one completes.
+pub unsafe fn build_chain(
+    descs: &mut [Descriptor],
+    buf: u32,
+    len: u32,
+    direction: Direction,
+) -> Result<u32, DmaError> {
+    let needed = descriptors_needed(len) as usize;
+    if descs.len() < needed {
+        return Err(DmaError::NotEnoughDescriptors);
+    }
+    let head = descs.as_ptr() as u32;
+    if head % 4 != 0 || !reachable(head) {
+        return Err(DmaError::UnreachableAddress);
+    }
+
+    let stride = core::mem::size_of::<Descriptor>() as u32;
+    let mut remaining = len;
+    for i in 0..needed {
+        let chunk = remaining.min(Descriptor::MAX_LEN);
+        let last = i + 1 == needed;
+        // Zero terminates the chain; otherwise point at the following slot.
+        let next = if last { 0 } else { head + (i as u32 + 1) * stride };
+        let offset = len - remaining;
+        descs[i] = match direction {
+            Direction::Transmit => Descriptor::tx(buf + offset, chunk, last, next)?,
+            Direction::Receive => Descriptor::rx(buf + offset, chunk, next)?,
+        };
+        remaining -= chunk;
+    }
+    Ok(head)
+}
+
+/// Total bytes the engine reported receiving, stopping at end-of-frame.
+///
+/// Reads the `length` hardware wrote, not the capacity the CPU asked for. A
+/// short read is normal and is the number the caller wants.
+pub fn received_len(descs: &[Descriptor]) -> u32 {
+    let mut total = 0;
+    for d in descs {
+        total += d.length();
+        if d.is_eof() {
+            break;
+        }
+    }
+    total
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A word-aligned address inside the reachable region, for tests that only
+    /// need somewhere plausible to point.
+    const BUF: u32 = 0x3FFD_9000;
+    const DESCS: u32 = 0x3FFD_A000;
+
+    #[test]
+    fn the_descriptor_is_twelve_bytes_and_word_aligned() {
+        // The engine indexes these by stride. A padded struct walks the chain
+        // into the gaps between descriptors.
+        assert_eq!(core::mem::size_of::<Descriptor>(), 12);
+        assert_eq!(core::mem::align_of::<Descriptor>(), 4);
+    }
+
+    #[test]
+    fn size_and_length_occupy_the_bits_the_rom_header_says() {
+        let d = Descriptor::tx(BUF, 0x123, true, 0).unwrap();
+        let raw = d.raw_flags();
+        assert_eq!(raw & 0xFFF, 0x123, "size is not in bits 0..12");
+        assert_eq!((raw >> 12) & 0xFFF, 0x123, "length is not in bits 12..24");
+        assert_eq!(raw & (1 << 30), 1 << 30, "eof is not bit 30");
+        assert_eq!(raw & (1 << 31), 1 << 31, "owner is not bit 31");
+    }
+
+    #[test]
+    fn a_receive_descriptor_starts_with_no_received_bytes() {
+        // The engine writes `length`. Pre-setting it reads back as though the
+        // transfer had already delivered that much.
+        let d = Descriptor::rx(BUF, 256, 0).unwrap();
+        assert_eq!(d.size(), 256, "capacity was not recorded");
+        assert_eq!(d.length(), 0, "a fresh rx descriptor claims received bytes");
+        assert!(d.owned_by_engine());
+    }
+
+    #[test]
+    fn a_transmit_descriptor_carries_its_length() {
+        let d = Descriptor::tx(BUF, 64, true, 0).unwrap();
+        assert_eq!(d.length(), 64);
+        assert_eq!(d.size(), 64, "size left short of the length it claims to send");
+    }
+
+    #[test]
+    fn a_chunk_longer_than_the_field_is_refused() {
+        // 4095 fits in 12 bits but breaks word alignment for the next chunk.
+        assert_eq!(
+            Descriptor::tx(BUF, Descriptor::MAX_LEN + 1, true, 0).unwrap_err(),
+            DmaError::ChunkTooLong
+        );
+        assert!(Descriptor::tx(BUF, Descriptor::MAX_LEN, true, 0).is_ok());
+    }
+
+    #[test]
+    fn an_unreachable_buffer_is_refused() {
+        // The failure this check exists for is silent: the transfer completes
+        // and moves nothing. Flash-mapped, RTC, and just past the end.
+        for addr in [0x4008_0000, 0x3FF4_0000, 0x3FFA_DFFC, 0x3FFE_0000] {
+            assert_eq!(
+                Descriptor::tx(addr, 16, true, 0).unwrap_err(),
+                DmaError::UnreachableAddress,
+                "{addr:#x} was accepted"
+            );
+        }
+        assert!(Descriptor::tx(0x3FFA_E000, 16, true, 0).is_ok(), "start of SRAM2 rejected");
+        assert!(Descriptor::tx(0x3FFD_FFFC, 16, true, 0).is_ok(), "end of SRAM2 rejected");
+    }
+
+    #[test]
+    fn a_misaligned_buffer_is_refused() {
+        for addr in [BUF + 1, BUF + 2, BUF + 3] {
+            assert_eq!(
+                Descriptor::tx(addr, 16, true, 0).unwrap_err(),
+                DmaError::UnreachableAddress,
+                "{addr:#x} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreachable_next_pointer_is_refused() {
+        // A bad `next` is worse than a bad buffer: the engine follows it and
+        // reads whatever is there as a descriptor.
+        assert_eq!(
+            Descriptor::tx(BUF, 16, false, 0x4008_0000).unwrap_err(),
+            DmaError::UnreachableAddress
+        );
+        // Zero is the terminator, not an address, and must stay legal.
+        assert!(Descriptor::tx(BUF, 16, true, 0).is_ok());
+    }
+
+    #[test]
+    fn descriptor_counts_cover_the_boundaries() {
+        assert_eq!(descriptors_needed(0), 1, "zero length still needs an eof");
+        assert_eq!(descriptors_needed(1), 1);
+        assert_eq!(descriptors_needed(Descriptor::MAX_LEN), 1);
+        assert_eq!(descriptors_needed(Descriptor::MAX_LEN + 1), 2);
+        assert_eq!(descriptors_needed(2 * Descriptor::MAX_LEN), 2);
+        assert_eq!(descriptors_needed(2 * Descriptor::MAX_LEN + 1), 3);
+    }
+
+    /// Build a chain in a real (host) array and check the shape.
+    ///
+    /// The addresses are host addresses, so `build_chain`'s reachability check
+    /// would reject them. These tests drive the per-descriptor constructors
+    /// with target-shaped addresses instead, which is what the encoding
+    /// actually depends on.
+    #[test]
+    fn a_chain_links_each_descriptor_to_the_next_and_ends_at_zero() {
+        let stride = core::mem::size_of::<Descriptor>() as u32;
+        let n = 3u32;
+        let mut chain = [Descriptor::zeroed(); 3];
+        for i in 0..n {
+            let last = i + 1 == n;
+            let next = if last { 0 } else { DESCS + (i + 1) * stride };
+            chain[i as usize] =
+                Descriptor::tx(BUF + i * Descriptor::MAX_LEN, Descriptor::MAX_LEN, last, next)
+                    .unwrap();
+        }
+        assert_eq!(chain[0].next(), DESCS + stride);
+        assert_eq!(chain[1].next(), DESCS + 2 * stride);
+        assert_eq!(chain[2].next(), 0, "the chain does not terminate");
+        assert!(!chain[0].is_eof());
+        assert!(!chain[1].is_eof());
+        assert!(chain[2].is_eof(), "the last descriptor is not marked eof");
+    }
+
+    #[test]
+    fn received_length_sums_to_the_end_of_frame_and_no_further() {
+        // Descriptors past eof belong to no transfer. Counting them inflates
+        // the reported length by whatever the previous transfer left behind.
+        let a = Descriptor::rx(BUF, 100, DESCS).unwrap();
+        let mut b = Descriptor::rx(BUF + 100, 100, 0).unwrap();
+        let stale = Descriptor::tx(BUF + 200, 999, true, 0).unwrap();
+
+        // Hardware would write these; forge them by rebuilding with a length.
+        let a = Descriptor::tx(a.buffer(), 100, false, a.next()).unwrap();
+        b = Descriptor::tx(b.buffer(), 40, true, 0).unwrap();
+        assert_eq!(received_len(&[a, b, stale]), 140);
+    }
+
+    #[test]
+    fn the_link_register_keeps_twenty_bits_of_the_address() {
+        // SPI_OUTLINK_ADDR is [19:0]; the top bits are implied. Programming
+        // the full address instead sets the start/stop bits that share the
+        // register, which starts a transfer nobody asked for.
+        assert_eq!(link_addr(0x3FFD_9000), 0xD9000);
+        assert_eq!(link_addr(0x3FFA_E000), 0xAE000);
+        assert!(link_addr(0x3FFD_9000) & !0x000F_FFFF == 0);
+    }
+}

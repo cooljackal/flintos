@@ -48,6 +48,16 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::addr::DPORT_BASE;
 
+// The descriptor layer. Its own file because it is a separate concern from
+// owning the crossbar -- one says who may use a channel, the other says what
+// the engine reads once they have it -- and together they would bury both.
+#[path = "dma_desc.rs"]
+mod desc;
+
+pub use desc::{
+    build_chain, descriptors_needed, link_addr, reachable, received_len, Descriptor, Direction,
+};
+
 /// `DPORT_SPI_DMA_CHAN_SEL_REG`.
 const SPI_DMA_CHAN_SEL: u32 = DPORT_BASE + 0x5A8;
 
@@ -109,6 +119,14 @@ pub enum DmaError {
     /// job — silently handing out a second would leave the first leaked and
     /// the crossbar pointing at only one of them.
     HostAlreadyHasChannel,
+    /// A descriptor was asked to carry more than [`Descriptor::MAX_LEN`].
+    ChunkTooLong,
+    /// A buffer or descriptor address the engine cannot use: outside the
+    /// DMA-reachable region, not word-aligned, or beyond the 20 bits the link
+    /// register can hold.
+    UnreachableAddress,
+    /// The caller supplied too few descriptors for the buffer.
+    NotEnoughDescriptors,
 }
 
 /// Which host owns each channel, indexed by `channel - 1`. `0` means free.
