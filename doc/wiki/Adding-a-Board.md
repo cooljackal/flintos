@@ -4,6 +4,14 @@ One file, plus three lines of registration. If your board uses a chip Flint
 already supports, that's the whole job — the SoC crate already knows the
 peripheral addresses, the IRQ numbers and how to route pins.
 
+> **What belongs in a manifest:** every fact an application would otherwise
+> look up in a datasheet — pins, base addresses, IRQs, and the *shape* of
+> whatever is attached. If your board has a panel, measure its layout and
+> declare it here; `apps/blink` walks a chain one LED at a time so you can see
+> which cell lights for which index. Do not guess it — there are 16 plausible
+> layouts and the wrong one lights the wrong pixel, which reads as a broken
+> panel.
+
 ## 1. Copy a manifest
 
 ```bash
@@ -46,6 +54,14 @@ Onboard hardware with no driver yet goes in as a plain constant:
 
 ```rust
 pub const RGB_LED_GPIO: u8 = 27;
+
+// A pin without the count of what is on it is half a fact. Declaring only the
+// pin let an application drive the first LED of a 25-LED panel and look
+// correct while 24 stayed dark -- which is why the Atom is two boards.
+pub const RGB_LED_COUNT: usize = 25;
+pub const RGB_LED_LAYOUT: Option<led_matrix::Layout> = Some(Layout::new(
+    5, 5, Origin::BottomRight, Axis::Rows, Order::Progressive,
+));
 ```
 
 ## 2. Register it
@@ -64,6 +80,13 @@ pub mod my_board;
 ```
 
 Add an arm to the `active` re-export, and extend both `compile_error!` guards.
+The "more than one board" guard is pairwise, so it grows with each board.
+
+Registering a board touches more than one file — the manifest, `board/Cargo.toml`,
+three places in `board/src/lib.rs`, `kernel/Cargo.toml`, each app's `Cargo.toml`,
+and the `BOARDS` list in the `Makefile`. That last one matters: `make test-boards`
+runs each manifest's invariant tests, and a board missing from the list is a
+board whose tests never run.
 The "more than one" guard is pairwise across every board feature, so it grows
 by one line per existing board.
 

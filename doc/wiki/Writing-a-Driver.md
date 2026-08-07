@@ -17,17 +17,30 @@ is no global namespace to be unambiguous in. Unrelated crates named `bme280` and
 `ssd1306` exist on crates.io and it costs us nothing, because these never go
 there. A prefix would buy no clarity and make every path-dependency longer.
 
-Two checks run in CI and fail the build:
+Two checks run in CI and fail the build, and a third reports:
 
-- `tools/check-layers.sh` — a Layer 2 or 3 crate may name **only** `api`.
-  Anything else is a violation, including a Layer 1 driver.
+- `tools/check-layers.sh` — a whitelist per tier. Layer 2 and 3 may name `api`
+  and `lib/*`; Layer 1 may name `hal` and `soc/*`; `soc/*` and `arch/*` may name
+  only `hal`; `lib/*` may name only other `lib/*`. Anything else is a violation.
 - `tools/check-names.sh` — every package must set `publish = false`, must not
   carry a `flint-` prefix, and its name must match its directory as in the table
   above.
+- `make device-matrix` — which drivers keep which device-class promise. Reports
+  only; a chip that cannot do a thing must not break the build for saying so.
+
+**The layer check reads the dependency graph, so it cannot stop you writing to a
+register directly** — raw MMIO needs no dependency. That is why every logical
+driver carries `#![cfg_attr(not(test), forbid(unsafe_code))]`. Put it in yours.
 
 ## Layer 3 — a device
 
-Knows a device, not a chip. Works on any MCU Flint supports, unchanged.
+Knows a part number, not a chip. Works on any MCU Flint supports, unchanged.
+
+If a device class already exists in `lib/` — `LedStrip`, and more later —
+implement it rather than inventing an interface. That is what lets an
+application swap your chip for another one by changing a single line. Implement
+only the traits your hardware genuinely keeps: leaving one out is a statement,
+and `make device-matrix` shows it.
 
 ```rust
 #![no_std]

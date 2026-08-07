@@ -3,8 +3,15 @@
 Classic ESP32 (and the PICO-D4 SiP built on it). Xtensa LX6 dual-core; Flint
 uses core 0 only.
 
-Crate: `soc/esp32` (`soc-esp32`). Everything below is in code —
-`addr.rs`, `io_mux.rs`, `gpio_matrix.rs`, `dport.rs`, `pinmux.rs`.
+Crate: `soc/esp32` (`soc-esp32`). Everything below is in code — `addr.rs`,
+`io_mux.rs`, `gpio_matrix.rs`, `dport.rs`, `pinmux.rs`, `intr_map.rs`,
+`reset.rs`, `app_desc.rs`.
+
+**Infrastructure only.** This crate holds what every peripheral driver needs
+underneath it — the address map, pin routing, clock gating, the interrupt
+crossbar. A peripheral itself is a driver: RMT, the watchdogs and the RNG were
+modules here and are now `drivers/physical/esp32-rmt`, `-wdt` and `-rng`. The
+test is whether a *second* peripheral driver would want it.
 
 ## Pins
 

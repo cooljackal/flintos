@@ -1,5 +1,17 @@
 # Xtensa LX6
 
+
+**CPU core only.** Traps, the context switch, register windows and the core
+timer. Chip registers do not belong here even when this is the only chip that
+uses the core: the ESP32 interrupt crossbar was sitting in `registers.rs`,
+duplicated by `soc_esp32::intr_map` and dead, and the ESP-IDF image header has
+moved to `soc-esp32`.
+
+One violation is left and is marked in the source: `registers::rtc_cntl` is an
+ESP32 register block, still here because `tick.rs` measures the CPU frequency
+against the RTC slow clock. Fixing it means this crate stops owning that
+measurement and takes `cpu_hz` from its caller.
+
 The CPU core in the ESP32. Crate: `arch/xtensa` (`arch-xtensa`).
 
 You only need this page if you're touching the trap path, the tick, or a new

@@ -17,6 +17,33 @@ panel and left 24 dark.
 SoC: ESP32 — see [ESP32](SoC-ESP32) for the full pin table and peripheral map.
 Tick: 1 ms.
 
+## The Matrix panel
+
+25 SK6812 on GPIO 27, driven over RMT. **Measured, not read off a datasheet:**
+
+| | |
+|---|---|
+| Index 0 | bottom-right corner |
+| Direction | right to left along a row |
+| Rows | bottom to top |
+| Order | progressive — each row restarts at the right, *not* a zigzag |
+
+Progressive is the less common arrangement, so guessing would have got it
+wrong. Equivalently the panel is an ordinary top-left row-major layout rotated
+180°, and `board/src/m5_atom_matrix.rs` asserts both formulations.
+
+25 LEDs is 600 RMT entries against a 64-entry memory block, so this board
+cannot be driven without `Rmt::start_stream` — refill-on-interrupt. One channel
+block would reach two LEDs.
+
+```bash
+make flash APP=blink BOARD=board-m5-atom-matrix
+```
+
+Draws a column sweeping right, a row sweeping down, then a diagonal, then walks
+the chain logging each index. A correct layout draws straight lines; a wrong one
+scatters the same lit cells.
+
 **This is the board Flint's bring-up was done on.** Boot, scheduling,
 preemption, timed wakeup and the register-window fix were all verified here.
 
