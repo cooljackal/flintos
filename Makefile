@@ -309,6 +309,10 @@ check-all: ## Full check including arch (requires Xtensa toolchain)
 check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)
 	$(BASH) tools/check-layers.sh
 
+.PHONY: device-matrix
+device-matrix: ## Which drivers keep which device-class promises
+	@$(BASH) tools/check-devices.sh
+
 .PHONY: check-names
 check-names: ## Enforce the package naming and layout convention
 	$(BASH) tools/check-names.sh

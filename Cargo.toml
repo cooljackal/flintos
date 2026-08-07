@@ -69,6 +69,7 @@ members = [
     # the Layer-3 naming convention would have handed it the name
     # `driver-led-matrix` to make the claim out loud.
     "lib/led-matrix",
+    "lib/led-strip",
 ]
 
 # Shared metadata. Every member inherits these with `field.workspace = true`

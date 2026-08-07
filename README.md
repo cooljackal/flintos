@@ -91,7 +91,7 @@ produces one. That is the whole point of the layer check.
 
 | | |
 |---|---|
-| Host unit tests | ✅ 291 passing, kernel included |
+| Host unit tests | ✅ 303 passing, kernel included |
 | On-target self-tests | ✅ 11 passing on an ESP32-PICO — `make test-target` |
 | Layer boundary and package naming | ✅ enforced in CI |
 | Image size reporting | ✅ `make size` |
@@ -448,6 +448,7 @@ tools/build/           build-script helper that gives an app the linker script
 tools/size/            `make size` — where the image's bytes went, per region
 tools/check-layers.sh  enforces every tier's dependency whitelist
 tools/check-names.sh   enforces the package naming and layout convention
+tools/check-devices.sh `make device-matrix` — who keeps which device promise
 doc/wiki/              the wiki's source; CI publishes it on merge
 doc/internal/          superseded planning documents, kept as history
 ```

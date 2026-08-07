@@ -16,3 +16,7 @@ rust-version.workspace = true
 # because the layer check treats it as the one permitted dependency, and
 # a driver that needs a queue or a log later will want it.
 api = { path = "../../../api" }
+
+# The device class this chip belongs to. A logical driver may depend on
+# lib/ crates, which is what lets the contract live above the part number.
+led-strip = { path = "../../../lib/led-strip" }

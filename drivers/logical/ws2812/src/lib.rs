@@ -39,44 +39,17 @@
 // use `unsafe` to extend a stack borrow to 'static. That is test scaffolding
 // and never ships; the shipping code in all three crates has no `unsafe`.
 
-/// A colour, as the LED wants it.
+/// Colour comes from the device class, not from this chip. Re-exported so
+/// callers need not name two crates to set a pixel red.
+pub use led_strip::{Dimmable, LedStrip, Rgb, StripError};
+
+/// Wire order for this family: green, red, blue.
 ///
-/// Named by what it is rather than by the wire order, so callers do not have
-/// to think about GRB. [`Rgb::to_grb`] does that once, here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Rgb {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-impl Rgb {
-    pub const OFF: Self = Self { r: 0, g: 0, b: 0 };
-    pub const RED: Self = Self { r: 255, g: 0, b: 0 };
-    pub const GREEN: Self = Self { r: 0, g: 255, b: 0 };
-    pub const BLUE: Self = Self { r: 0, g: 0, b: 255 };
-
-    pub const fn new(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
-    }
-
-    /// Wire order: green, red, blue.
-    pub const fn to_grb(self) -> [u8; 3] {
-        [self.g, self.r, self.b]
-    }
-
-    /// Scale all three channels by `pct` percent.
-    ///
-    /// These LEDs are uncomfortably bright at full scale, and an onboard one a
-    /// few centimetres from someone's eyes especially so.
-    pub const fn dim(self, pct: u8) -> Self {
-        let p = if pct > 100 { 100 } else { pct } as u16;
-        Self {
-            r: ((self.r as u16 * p) / 100) as u8,
-            g: ((self.g as u16 * p) / 100) as u8,
-            b: ((self.b as u16 * p) / 100) as u8,
-        }
-    }
+/// The single most common way to get these parts wrong, and it fails by
+/// showing the right brightness in the wrong colour, which reads like a
+/// hardware fault.
+pub const fn to_grb(c: Rgb) -> [u8; 3] {
+    [c.g, c.r, c.b]
 }
 
 /// Nanosecond timings for one bit, either value.
@@ -142,8 +115,8 @@ pub fn encode(
         return None;
     }
     let mut i = 0;
-    for c in colours {
-        for byte in c.to_grb() {
+    for c in colours.iter() {
+        for byte in to_grb(*c) {
             for bit in (0..8).rev() {
                 out[i] = bit_ticks(byte & (1 << bit) != 0, timing, ns_per_tick);
                 i += 1;
@@ -152,6 +125,72 @@ pub fn encode(
     }
     Some(i)
 }
+
+/// Something that can emit (high, low) pulse pairs with the timing this
+/// protocol needs.
+///
+/// This is the seam between the chip and the board. On an ESP32 it is the RMT
+/// peripheral; on another part it might be SPI or a timer. The driver states
+/// what it needs emitted and stays ignorant of what emits it.
+pub trait PulseEmitter {
+    /// Emit `pulses` as (high ticks, low ticks) pairs, then hold the line low
+    /// long enough to latch.
+    fn emit(&mut self, pulses: &[(u16, u16)]) -> Result<(), StripError>;
+
+    /// Nanoseconds per tick, so the driver can convert its pulse widths.
+    fn ns_per_tick(&self) -> u32;
+}
+
+/// A WS2812/SK6812 strip of `N` pixels, driven through `E`.
+///
+/// This is the type that keeps the [`LedStrip`] promise. It stages pixels and
+/// encodes the whole frame on [`LedStrip::show`], because these parts are
+/// clocked as one frame -- there is no way to update a single pixel on the
+/// wire.
+pub struct Ws2812<E: PulseEmitter, const N: usize> {
+    pixels: [Rgb; N],
+    emitter: E,
+}
+
+impl<E: PulseEmitter, const N: usize> Ws2812<E, N> {
+    pub const fn new(emitter: E) -> Self {
+        Self { pixels: [Rgb::OFF; N], emitter }
+    }
+
+    /// The emitter back, for a caller that needs it after the strip is done.
+    pub fn release(self) -> E {
+        self.emitter
+    }
+}
+
+impl<E: PulseEmitter, const N: usize> LedStrip for Ws2812<E, N> {
+    fn len(&self) -> usize {
+        N
+    }
+
+    fn set(&mut self, index: usize, colour: Rgb) -> Result<(), StripError> {
+        *self.pixels.get_mut(index).ok_or(StripError::OutOfRange)? = colour;
+        Ok(())
+    }
+
+    fn show(&mut self) -> Result<(), StripError> {
+        let mut bits = [(0u16, 0u16); 24];
+        let ns = self.emitter.ns_per_tick();
+        // One LED at a time: a whole-frame scratch buffer would be 24 * N
+        // pairs on the stack, which is how `apps/blink` first overflowed a
+        // 4 KiB task stack on a 25-pixel panel.
+        for pixel in self.pixels {
+            encode(&[pixel], Timing::WS2812, ns, &mut bits).ok_or(StripError::Transport)?;
+            self.emitter.emit(&bits)?;
+        }
+        Ok(())
+    }
+}
+
+// No `impl Dimmable`. These parts have no brightness register -- dimming means
+// scaling the colour with `Rgb::dim`, which costs depth. Saying nothing here is
+// the honest statement, and `make device-matrix` shows it as a gap rather than
+// leaving a caller to guess.
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -166,9 +205,9 @@ mod tests {
         // The most common way to get these wrong, and it fails by showing the
         // right brightness in the wrong colour -- which reads as a hardware
         // fault rather than a byte-order bug.
-        assert_eq!(Rgb::new(1, 2, 3).to_grb(), [2, 1, 3]);
-        assert_eq!(Rgb::RED.to_grb(), [0, 255, 0], "red is the middle byte");
-        assert_eq!(Rgb::GREEN.to_grb(), [255, 0, 0], "green is first");
+        assert_eq!(to_grb(Rgb::new(1, 2, 3)), [2, 1, 3]);
+        assert_eq!(to_grb(Rgb::RED), [0, 255, 0], "red is the middle byte");
+        assert_eq!(to_grb(Rgb::GREEN), [255, 0, 0], "green is first");
     }
 
     #[test]
@@ -260,5 +299,81 @@ mod tests {
         assert_eq!(Rgb::RED.dim(0), Rgb::OFF);
         // Over 100% must not brighten past full scale or wrap.
         assert_eq!(Rgb::new(200, 0, 0).dim(200), Rgb::new(200, 0, 0));
+    }
+
+    /// Records every emitted frame, so the strip's behaviour is observable
+    /// without a peripheral.
+    struct FakeEmitter {
+        frames: usize,
+        last: [(u16, u16); 24],
+    }
+
+    impl PulseEmitter for FakeEmitter {
+        fn emit(&mut self, pulses: &[(u16, u16)]) -> Result<(), StripError> {
+            self.frames += 1;
+            self.last.copy_from_slice(pulses);
+            Ok(())
+        }
+        fn ns_per_tick(&self) -> u32 {
+            NS
+        }
+    }
+
+    fn strip() -> Ws2812<FakeEmitter, 4> {
+        Ws2812::new(FakeEmitter { frames: 0, last: [(0, 0); 24] })
+    }
+
+    #[test]
+    fn the_strip_keeps_the_led_strip_promise() {
+        let mut s = strip();
+        assert_eq!(s.len(), 4);
+        assert!(!s.is_empty());
+        assert_eq!(s.set(0, Rgb::RED), Ok(()));
+        assert_eq!(s.set(4, Rgb::RED), Err(StripError::OutOfRange), "past the end");
+    }
+
+    #[test]
+    fn staging_a_pixel_emits_nothing_until_show() {
+        // One frame per `set` would clock the whole strip once per pixel.
+        let mut s = strip();
+        s.set(0, Rgb::RED).unwrap();
+        s.fill(Rgb::BLUE).unwrap();
+        assert_eq!(s.emitter.frames, 0);
+        s.show().unwrap();
+        assert_eq!(s.emitter.frames, 4, "one emit per pixel on the strip");
+    }
+
+    #[test]
+    fn show_sends_the_colour_that_was_staged() {
+        // Green is the first byte on the wire, so a green pixel starts with a
+        // one bit; red starts with a zero bit. That difference is the check
+        // that staging and encoding are connected at all.
+        let mut s = strip();
+        s.fill(Rgb::GREEN).unwrap();
+        s.show().unwrap();
+        assert_eq!(s.emitter.last[0], bit_ticks(true, Timing::WS2812, NS));
+
+        s.fill(Rgb::RED).unwrap();
+        s.show().unwrap();
+        assert_eq!(s.emitter.last[0], bit_ticks(false, Timing::WS2812, NS));
+    }
+
+    #[test]
+    fn the_emitters_tick_is_what_the_encoding_uses() {
+        // A driver that assumed its own tick would produce pulses scaled by
+        // the difference, and the LED would show something arbitrary.
+        struct Slow;
+        impl PulseEmitter for Slow {
+            fn emit(&mut self, _: &[(u16, u16)]) -> Result<(), StripError> {
+                Ok(())
+            }
+            fn ns_per_tick(&self) -> u32 {
+                250
+            }
+        }
+        // At 250 ns a 350 ns pulse rounds to 1 tick, not the 3 it takes at 125.
+        assert_eq!(bit_ticks(false, Timing::WS2812, 250).0, 1);
+        let mut s: Ws2812<Slow, 1> = Ws2812::new(Slow);
+        assert_eq!(s.show(), Ok(()));
     }
 }

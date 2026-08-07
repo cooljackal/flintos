@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "led-strip"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "What an addressable LED strip promises, and effects written against it"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No dependencies. This is a contract and some integer colour maths; it names
+# no chip and touches no register.
+[dependencies]

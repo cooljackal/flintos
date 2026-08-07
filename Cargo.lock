@@ -154,6 +154,10 @@ name = "led-matrix"
 version = "0.1.0"
 
 [[package]]
+name = "led-strip"
+version = "0.1.0"
+
+[[package]]
 name = "size"
 version = "0.1.0"
 
@@ -190,4 +194,5 @@ name = "ws2812"
 version = "0.1.0"
 dependencies = [
  "api",
+ "led-strip",
 ]

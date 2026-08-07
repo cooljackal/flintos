@@ -126,6 +126,13 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **`lib/led-strip`**: what an addressable LED strip promises, and effects
+  written once against it rather than once per chip. `ws2812` implements
+  `LedStrip`; it deliberately does not implement `Dimmable`, because these
+  parts have no brightness register.
+- **`make device-matrix`** prints which drivers keep which device-class
+  promise, so "this chip cannot do it" and "nobody got round to it" stop
+  looking identical.
 - **`lib/`**, a home for portable libraries that are not drivers: no
   registers, no part numbers, output is a value rather than something bound for
   a pin. `tools/check-layers.sh` enforces that they depend only on `api` and on
