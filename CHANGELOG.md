@@ -67,6 +67,9 @@ A kernel that provides a different one refuses to build and points here.
 - **`apps/blink`**, which drives the M5Stack Atom's onboard LED. It is also
   the on-hardware test for the RMT register map — no host test can tell you
   whether a register is where you think it is.
+- **`led-matrix`**, a logical driver for chained LED panels: `(x, y)` to a
+  position along the chain, with the fold described as data. Ships one preset,
+  the M5Stack Atom Matrix, because it is the only one measured on hardware.
 - **Peripheral interrupt routing** (`soc_esp32::intr_map`). The DPORT crossbar
   that decides which of the CPU's 32 interrupt inputs a peripheral fires on.
   Nothing routed one before, so every driver's interrupt was unreachable.

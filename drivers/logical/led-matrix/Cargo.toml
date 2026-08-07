@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "led-matrix"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Chained LED panel geometry — (x, y) to a position along the chain"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No dependencies at all, not even api: this is integer arithmetic over a
+# folded strip. It knows nothing about colour, wire protocols or chips, which
+# is what lets the same layouts describe WS2812, APA102 and SK9822 panels
+# alike.
+[dependencies]

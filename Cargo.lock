@@ -25,6 +25,7 @@ dependencies = [
  "esp32-gpio",
  "hal",
  "kernel",
+ "led-matrix",
  "soc-esp32",
  "ws2812",
 ]
@@ -122,6 +123,10 @@ dependencies = [
  "hal",
  "soc-esp32",
 ]
+
+[[package]]
+name = "led-matrix"
+version = "0.1.0"
 
 [[package]]
 name = "size"

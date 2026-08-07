@@ -68,7 +68,7 @@ AVR32 and MIPS columns get added when someone starts one.
 | RMT pulse generator | ✅ one shot · ✅ streaming, 600 entries on a panel | — Xtensa-only peripheral |
 | Addressable LED (WS2812/SK6812) [^1] | ✅ driven on an Atom | 🧪 |
 | Hardware RNG | ✅ | ⛔ |
-| LED matrix geometry | ⛔ [#52](https://github.com/cooljackal/flintos/issues/52) | ⛔ |
+| LED matrix geometry [^1] | ✅ Atom Matrix layout measured | 🧪 |
 | PWM / LEDC | ⛔ [#22](https://github.com/cooljackal/flintos/issues/22) | ⛔ |
 | ADC, DAC, touch | ⛔ | ⛔ |
 | Wi-Fi | ⛔ | — no radio |

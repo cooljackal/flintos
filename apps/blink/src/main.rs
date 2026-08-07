@@ -48,6 +48,7 @@ use soc_esp32::dport::{self, ClockBit};
 use soc_esp32::pinmux::Esp32PinMux;
 use soc_esp32::rmt::{self, Entry, Refill, Rmt};
 use soc_esp32::{addr, intr_map};
+use led_matrix::Layout;
 use ws2812::{Rgb, Timing};
 
 // Only the Atom declares an addressable LED, so only the Atom can run this.
@@ -171,6 +172,9 @@ fn colour_cycle() -> ! {
 /// the wrong pixel.
 fn walk_the_chain() -> ! {
     loop {
+        // Shapes first: the layout is measured now, so the interesting
+        // question is whether it is right, not what it is.
+        draw_by_coordinates();
         for i in 0..LED_COUNT {
             let mut frame = [Rgb::OFF; LED_COUNT];
             // Dim: at full scale a panel this close is genuinely painful, and
@@ -181,6 +185,57 @@ fn walk_the_chain() -> ! {
             task::sleep_ms(600);
         }
     }
+}
+
+/// The panel this build believes it is driving.
+///
+/// Measured with the walk above, not read off a datasheet — the Atom Matrix is
+/// progressive rather than zigzag, which is the less common arrangement and
+/// would have been the wrong guess.
+const PANEL: Layout = Layout::M5_ATOM_MATRIX;
+
+/// Sweep a column, then a row, then a diagonal, addressing cells by `(x, y)`.
+///
+/// This checks the layout rather than the chain. A correct mapping draws a
+/// straight line moving in the direction named in the log; a wrong one
+/// scatters the same number of lit cells across the panel, which is obvious at
+/// a glance and impossible to talk yourself out of.
+fn draw_by_coordinates() {
+    const W: usize = PANEL.width;
+    const H: usize = PANEL.height;
+
+    for x in 0..W {
+        api::log_info!("[blink] column x={} (expect a vertical line, moving right)", x);
+        paint(|cx, cy| cx == x && cy < H);
+        task::sleep_ms(500);
+    }
+    for y in 0..H {
+        api::log_info!("[blink] row y={} (expect a horizontal line, moving down)", y);
+        paint(|cx, cy| cy == y && cx < W);
+        task::sleep_ms(500);
+    }
+    api::log_info!("[blink] diagonal (expect top-left to bottom-right)");
+    paint(|cx, cy| cx == cy);
+    task::sleep_ms(1500);
+}
+
+/// Light every cell the predicate accepts, addressing them through the layout.
+fn paint(lit: impl Fn(usize, usize) -> bool) {
+    let mut frame = [Rgb::OFF; LED_COUNT];
+    for y in 0..PANEL.height {
+        for x in 0..PANEL.width {
+            if !lit(x, y) {
+                continue;
+            }
+            // `index` refuses a cell off the panel rather than wrapping, so a
+            // bad coordinate cannot quietly light the wrong LED.
+            match PANEL.index(x, y) {
+                Some(i) => frame[i] = Rgb::new(0, 255, 0).dim(8),
+                None => api::log_error!("[blink] ({}, {}) is off the panel", x, y),
+            }
+        }
+    }
+    show(&frame);
 }
 
 /// Encode `colours` and stream them, waiting for the transmission to finish.
@@ -218,11 +273,17 @@ fn show(colours: &[Rgb; LED_COUNT]) {
     // The frame is ~1.25 µs per bit, so 600 bits is about 750 µs. Sleeping
     // rather than spinning is the point of refilling from an interrupt: the
     // scheduler runs everything else while the panel clocks out.
+    // Completion is TX_END, which the channel sets when it stops. The
+    // interrupt's own "nothing left to feed" is a weaker statement: it needs
+    // one more threshold after the terminator is written, and the channel
+    // stops at the terminator, so that threshold often never comes.
     let mut waited = 0;
+    let mut finished = false;
     for _ in 0..10 {
         task::sleep_ms(1);
         waited += 1;
-        if unsafe { (*addr_of!(STREAM)).as_ref().is_some_and(|s| s.done) } {
+        if unsafe { (*addr_of!(STREAM)).as_ref().is_some_and(|s| s.rmt.stream_done()) } {
+            finished = true;
             break;
         }
     }
@@ -235,11 +296,12 @@ fn show(colours: &[Rgb; LED_COUNT]) {
     unsafe {
         if let Some(s) = (*addr_of!(STREAM)).as_ref() {
             let fed = s.refill.written();
-            if !s.done || fed != FRAME_ENTRIES {
+            if !finished || fed != FRAME_ENTRIES {
                 api::log_error!(
-                    "[blink] stream stalled: {} of {} entries fed after {} ms",
+                    "[blink] stream stalled: {} of {} entries fed, TX_END {} after {} ms",
                     fed,
                     FRAME_ENTRIES,
+                    if finished { "set" } else { "NOT set" },
                     waited
                 );
             } else if !REPORTED {
@@ -253,6 +315,7 @@ fn show(colours: &[Rgb; LED_COUNT]) {
             }
         }
     }
+
     // Latch. The datasheet wants the line idle at least 50 µs; a tick is far
     // more, and costs nothing here.
     task::sleep_ms(1);

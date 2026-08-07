@@ -26,6 +26,7 @@ hal = { path = "../../hal" }
 soc-esp32 = { path = "../../soc/esp32" }
 esp32-gpio = { path = "../../drivers/physical/esp32-gpio" }
 ws2812 = { path = "../../drivers/logical/ws2812" }
+led-matrix = { path = "../../drivers/logical/led-matrix" }
 
 [build-dependencies]
 build = { path = "../../tools/build" }

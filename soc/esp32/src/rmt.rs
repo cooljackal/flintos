@@ -449,7 +449,18 @@ impl Rmt {
     }
 
     /// Refill the half the transmitter has just finished. Returns `true` when
-    /// nothing further is needed.
+    /// there is nothing left to feed.
+    ///
+    /// **That is not the same as the transmission being over**, and treating
+    /// it as such is a mistake this driver made first time out. `true` is
+    /// returned on the threshold *after* the terminator was written -- and
+    /// once the channel reaches a terminator it stops, so it may never consume
+    /// another half block and that threshold may never arrive. Whether it does
+    /// depends on how long the tail is, which makes it a race that mostly
+    /// works.
+    ///
+    /// For "has the frame finished", ask the hardware: [`Rmt::stream_done`]
+    /// reads `TX_END`, which the channel sets when it actually stops.
     ///
     /// Call from the channel's interrupt handler. Clearing the threshold flag
     /// happens here, so the handler does not have to know which bit that is.
@@ -479,6 +490,10 @@ impl Rmt {
     }
 
     /// Whether the channel has reached the terminator and stopped.
+    ///
+    /// This is the completion signal. `TX_END` is set by the hardware when the
+    /// channel stops, and [`Rmt::start_stream`] clears it, so a set bit always
+    /// refers to the frame in progress.
     ///
     /// # Safety
     /// Reads an interrupt status register.
