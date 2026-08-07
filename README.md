@@ -64,9 +64,10 @@ AVR32 and MIPS columns get added when someone starts one.
 | Pin routing | ✅ GPIO matrix, any signal to any pad | — direct AF |
 | SPI | 🚧 register map audited, no device driven | ⛔ |
 | I²C | 🚧 routes and configures, no device driven | ⛔ |
-| RMT pulse generator | 🧪 [#23](https://github.com/cooljackal/flintos/issues/23) | — Xtensa-only peripheral |
-| Addressable LED (WS2812/SK6812) [^1] | 🧪 | 🧪 |
+| RMT pulse generator | ✅ one shot, 2 LEDs — longer needs [#51](https://github.com/cooljackal/flintos/issues/51) | — Xtensa-only peripheral |
+| Addressable LED (WS2812/SK6812) [^1] | ✅ driven on an Atom | 🧪 |
 | Hardware RNG | ✅ | ⛔ |
+| LED matrix geometry | ⛔ [#52](https://github.com/cooljackal/flintos/issues/52) | ⛔ |
 | PWM / LEDC | ⛔ [#22](https://github.com/cooljackal/flintos/issues/22) | ⛔ |
 | ADC, DAC, touch | ⛔ | ⛔ |
 | Wi-Fi | ⛔ | — no radio |

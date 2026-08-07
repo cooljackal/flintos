@@ -14,9 +14,11 @@
 //! One shot, one channel's worth of entries, polled to completion. No
 //! interrupts, no DMA, no continuous streaming. That is enough to drive the
 //! onboard LED on a board like the M5Stack Atom, which is what motivated it,
-//! and it is bounded by the channel's 64-entry memory block — about two
-//! WS2812 LEDs. Longer strings need refill-on-interrupt, which is a different
-//! and much larger job (see the follow-up issue).
+//! and it is bounded by the channel's 64-entry memory block — 63 usable, and
+//! a WS2812 bit is one entry, so **two LEDs**. `MEM_SIZE` can give one channel
+//! all eight blocks (512 entries, 21 LEDs) at the cost of every other channel,
+//! and that is still short of a 5×5 panel's 600. Longer strings need
+//! refill-on-interrupt, which is issue #51.
 //!
 //! Rejecting an over-long sequence is deliberate. Silently truncating it
 //! would light some LEDs and leave others at whatever they held before, which
