@@ -39,6 +39,14 @@ default = ["debug-level-1"]
 
 board-m5-atom = ["kernel/board-m5-atom"]
 
+# The Atom Matrix's 5x5 panel. Same board, same pin, 25 LEDs instead of one --
+# which the manifest cannot currently express, so it is a feature here until
+# #53 splits the two products into their own manifests.
+#
+# 25 LEDs is 600 RMT entries against a 64-entry block, so this is also what
+# exercises the streaming path.
+atom-matrix = []
+
 # The other boards are accepted and then rejected by a `compile_error!` in
 # `main.rs` that says which board is needed and why. Omitting them would leave
 # cargo to report "the package 'blink' does not contain this feature", which is

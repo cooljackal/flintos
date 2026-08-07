@@ -29,6 +29,7 @@
 pub mod addr;
 pub mod dport;
 pub mod gpio_matrix;
+pub mod intr_map;
 pub mod io_mux;
 pub mod pinmux;
 pub mod reset;

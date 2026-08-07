@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Drives the M5Stack Atom's onboard SK6812 LED.
+//! Drives the M5Stack Atom's onboard addressable LED, or its 5×5 panel.
 //!
 //! The Atom's board manifest has declared `RGB_LED_GPIO = 27` since the board
 //! was added, with nothing able to drive it. This is what makes that constant
@@ -21,15 +21,23 @@
 //! no driver but the console UART, so an application wanting a peripheral
 //! names it in its own `Cargo.toml`.
 //!
-//! # Reading the result
+//! # Two modes
 //!
-//! Red, green, blue, off, one second each. Wrong *colour* in the right order
-//! means the byte order is wrong — GRB, not RGB. Flicker or the wrong colour
-//! at random means pulse widths outside the ±150 ns window. Nothing at all
-//! means the signal never reached the pad.
+//! Default (Atom Lite, one LED): red, green, blue, off, one second each. Wrong
+//! *colour* in the right order means the byte order is wrong — GRB, not RGB.
+//! Flicker or the wrong colour at random means pulse widths outside the
+//! ±150 ns window. Nothing at all means the signal never reached the pad.
+//!
+//! With `--features atom-matrix` (Atom Matrix, 25 LEDs): one LED lit at a
+//! time, walking the chain from index 0, logging each index as it goes. That
+//! is a 600-entry frame against a 64-entry block, so it exercises the
+//! streaming path — and it is how the panel's physical layout gets *measured*
+//! rather than guessed, which is what #52 needs before it can name a layout.
 
 #![no_std]
 #![no_main]
+
+use core::ptr::{addr_of, addr_of_mut};
 
 use api::task;
 use hal::types::Priority;
@@ -38,7 +46,8 @@ use hal::{PinConfig, PinMux, Signal};
 use esp32_gpio::{Esp32Gpio, PinMode};
 use soc_esp32::dport::{self, ClockBit};
 use soc_esp32::pinmux::Esp32PinMux;
-use soc_esp32::rmt::{self, Entry, Rmt};
+use soc_esp32::rmt::{self, Entry, Refill, Rmt};
+use soc_esp32::{addr, intr_map};
 use ws2812::{Rgb, Timing};
 
 // Only the Atom declares an addressable LED, so only the Atom can run this.
@@ -61,66 +70,175 @@ const LED_PIN: u8 = kernel::board::active::RGB_LED_GPIO;
 /// RMT channel 0. Nothing else in this build claims one.
 const LED_CHANNEL: u8 = 0;
 
+/// CPU interrupt for the RMT source.
+///
+/// 13 is external, level 1 and otherwise unused. `intr_map::route` rejects
+/// anything the kernel could not service, so a bad choice here is a build-time
+/// `Result`, not a board that dies at its first interrupt.
+const LED_CPU_INT: u8 = 13;
+
 /// 125 ns per tick. The WS2812's pulse widths are near-multiples of it, and it
 /// divides the 80 MHz APB exactly (divider 10), so no timing error accumulates
 /// from the clock itself.
 const NS_PER_TICK: u32 = 125;
 
-/// Bits in one LED's frame.
-const BITS: usize = 24;
+/// How many LEDs are on the pin.
+///
+/// A feature rather than a manifest constant because `RGB_LED_GPIO` is all the
+/// Atom manifest says, and a Lite and a Matrix are the same pin on the same
+/// board name — see #53.
+#[cfg(feature = "atom-matrix")]
+const LED_COUNT: usize = 25;
+#[cfg(not(feature = "atom-matrix"))]
+const LED_COUNT: usize = 1;
 
-/// Time to leave the line idle so the LED latches the frame. The datasheet
-/// says at least 50 µs; `Timing::WS2812` uses 80 µs for margin.
-const LATCH_US: u32 = Timing::WS2812.reset_us;
+/// RMT entries in a full frame: one per bit, 24 bits per LED.
+const FRAME_ENTRIES: usize = LED_COUNT * 24;
+
+/// The frame being transmitted.
+///
+/// Static rather than on the stack: 25 LEDs is 2400 bytes and the task stack is
+/// 4 KiB, which the trap handler also runs on. It has to outlive the call that
+/// starts the stream in any case — the interrupt reads it long afterwards.
+static mut FRAME: [Entry; FRAME_ENTRIES] = [Entry::END; FRAME_ENTRIES];
+
+/// Everything the interrupt needs. `None` until the channel is claimed.
+static mut STREAM: Option<Stream> = None;
+
+struct Stream {
+    rmt: Rmt,
+    refill: Refill,
+    done: bool,
+}
 
 fn main() {
     task::spawn("blink", blink, Priority::Normal(1), 4096);
 }
 
 fn blink() {
-    let Some(mut led) = (unsafe { led_init() }) else {
-        // Returning would leave a task that spins doing nothing while the
-        // board looks alive. Say what failed and stop.
+    if unsafe { led_init() }.is_none() {
+        // Returning would leave a board that looks alive and does nothing.
         api::log_error!("[blink] could not claim RMT channel {} on GPIO {}", LED_CHANNEL, LED_PIN);
         loop {
             task::sleep_ms(1000);
         }
-    };
+    }
 
     api::log_info!(
-        "[blink] SK6812 on GPIO {} via RMT channel {}, {} ns/tick",
+        "[blink] {} LED(s) on GPIO {} via RMT channel {}, {} entries per frame",
+        LED_COUNT,
         LED_PIN,
         LED_CHANNEL,
-        NS_PER_TICK
+        FRAME_ENTRIES
     );
 
-    // Dimmed hard on purpose. These LEDs are unpleasant at full scale and this
-    // one is a few centimetres from whoever is holding the board.
+    if LED_COUNT == 1 {
+        colour_cycle()
+    } else {
+        walk_the_chain()
+    }
+}
+
+/// One LED: red, green, blue, off.
+fn colour_cycle() -> ! {
     let sequence = [
         ("red", Rgb::RED.dim(10)),
         ("green", Rgb::GREEN.dim(10)),
         ("blue", Rgb::BLUE.dim(10)),
         ("off", Rgb::OFF),
     ];
-
     loop {
         for (name, colour) in sequence {
-            match show(&mut led, colour) {
-                true => api::log_info!("[blink] {}", name),
-                // A refused frame is a programming error, not a hardware
-                // fault, and silently skipping it would look like a dead LED.
-                false => api::log_error!("[blink] frame refused for {}", name),
-            }
+            let mut frame = [Rgb::OFF; LED_COUNT];
+            frame[0] = colour;
+            show(&frame);
+            api::log_info!("[blink] {}", name);
             task::sleep_ms(1000);
         }
     }
 }
 
-/// Bring up the clock, the pad and the channel.
+/// A panel: one LED at a time along the chain, index logged as it goes.
+///
+/// This is a measuring instrument, not a demo. Watching which physical cell
+/// lights for each index is what establishes the panel's layout — whether it
+/// runs in rows or columns, from which corner, and whether alternate lines
+/// reverse. Guessing any of that is how #52 would ship a driver that lights
+/// the wrong pixel.
+fn walk_the_chain() -> ! {
+    loop {
+        for i in 0..LED_COUNT {
+            let mut frame = [Rgb::OFF; LED_COUNT];
+            // Dim: at full scale a panel this close is genuinely painful, and
+            // a washed-out photo is harder to read the position off.
+            frame[i] = Rgb::new(0, 0, 255).dim(8);
+            show(&frame);
+            api::log_info!("[blink] index {}", i);
+            task::sleep_ms(600);
+        }
+    }
+}
+
+/// Encode `colours` and stream them, waiting for the transmission to finish.
+fn show(colours: &[Rgb; LED_COUNT]) {
+    let mut bits = [(0u16, 0u16); FRAME_ENTRIES];
+    if ws2812::encode(colours, Timing::WS2812, NS_PER_TICK, &mut bits).is_none() {
+        api::log_error!("[blink] encode refused a {}-entry buffer", FRAME_ENTRIES);
+        return;
+    }
+
+    // One RMT entry per bit: high for the value's high time, then low. Both
+    // pulses are in the same entry, so a bit is never split across a refill
+    // boundary and cannot be half-sent.
+    unsafe {
+        let frame = &mut *addr_of_mut!(FRAME);
+        for (entry, (high, low)) in frame.iter_mut().zip(bits) {
+            *entry = Entry::new(true, high, false, low);
+        }
+    }
+
+    unsafe {
+        let Some(stream) = &mut *addr_of_mut!(STREAM) else {
+            return;
+        };
+        stream.done = false;
+        stream.refill = stream.rmt.start_stream(&*addr_of!(FRAME));
+    }
+
+    // The frame is ~1.25 µs per bit, so 600 bits is about 750 µs. Sleeping
+    // rather than spinning is the point of refilling from an interrupt: the
+    // scheduler runs everything else while the panel clocks out.
+    for _ in 0..10 {
+        task::sleep_ms(1);
+        if unsafe { (*addr_of!(STREAM)).as_ref().is_some_and(|s| s.done) } {
+            break;
+        }
+    }
+    // Latch. The datasheet wants the line idle at least 50 µs; a tick is far
+    // more, and costs nothing here.
+    task::sleep_ms(1);
+}
+
+/// Called from the trap handler when the channel wants its next half block.
+///
+/// Deliberately tiny. The deadline is about 40 µs and it runs with the
+/// scheduler's own interrupt masked.
+fn rmt_isr() {
+    unsafe {
+        if let Some(stream) = &mut *addr_of_mut!(STREAM) {
+            if !stream.done {
+                stream.done = stream.rmt.service(&*addr_of!(FRAME), &mut stream.refill);
+            }
+        }
+    }
+}
+
+/// Bring up the clock, the pad, the channel and the interrupt.
 ///
 /// # Safety
-/// Claims RMT channel 0 and GPIO `LED_PIN` for the life of the program.
-unsafe fn led_init() -> Option<Rmt> {
+/// Claims RMT channel 0, GPIO `LED_PIN` and CPU interrupt `LED_CPU_INT` for
+/// the life of the program.
+unsafe fn led_init() -> Option<()> {
     // The peripheral answers reads with plausible garbage while its clock is
     // gated, so this has to come before anything else touches its registers.
     dport::enable(ClockBit::RMT);
@@ -129,7 +247,7 @@ unsafe fn led_init() -> Option<Rmt> {
     // peripheral, but esp-idf sets the direction here too and this is not the
     // place to find out whether that is load-bearing -- an unenabled pad is a
     // dark LED with nothing to say about why.
-    let gpio = Esp32Gpio::new(soc_esp32::addr::GPIO_BASE);
+    let gpio = Esp32Gpio::new(addr::GPIO_BASE);
     gpio.set_mode(LED_PIN, PinMode::Output).ok()?;
 
     // Push-pull: one driver, one LED, no bus to share. `route` handles IO_MUX
@@ -143,36 +261,25 @@ unsafe fn led_init() -> Option<Rmt> {
     // If the divider could not deliver the tick asked for, every pulse below is
     // scaled by the difference and the LED shows something arbitrary.
     debug_assert_eq!(actual_ns, NS_PER_TICK);
+    let rmt = Rmt::new(LED_CHANNEL, divider)?;
 
-    Rmt::new(LED_CHANNEL, divider)
-}
-
-/// Encode one colour and send it. Returns false if the frame was refused.
-fn show(led: &mut Rmt, colour: Rgb) -> bool {
-    let mut bits = [(0u16, 0u16); BITS];
-    if ws2812::encode(&[colour], Timing::WS2812, NS_PER_TICK, &mut bits).is_none() {
-        return false;
+    // Point the peripheral at a CPU interrupt. Without this the RMT's own
+    // interrupt enables set happily and nothing is ever delivered -- there was
+    // no crossbar routing in this kernel at all before streaming needed one.
+    if let Err(e) = intr_map::route(addr::IRQ_RMT, LED_CPU_INT) {
+        api::log_error!("[blink] cannot route RMT to CPU interrupt {}: {:?}", LED_CPU_INT, e);
+        return None;
     }
-
-    // One RMT entry per bit: high for the value's high time, then low. Both
-    // pulses are in the same entry, so a bit is never split across a FIFO
-    // write and cannot be half-sent.
-    let mut entries = [Entry::END; BITS];
-    let mut ticks = 0u32;
-    for (entry, (high, low)) in entries.iter_mut().zip(bits) {
-        *entry = Entry::new(true, high, false, low);
-        ticks += high as u32 + low as u32;
+    if !kernel::interrupt::register(LED_CPU_INT, rmt_isr) {
+        api::log_error!("[blink] CPU interrupt {} already has a handler", LED_CPU_INT);
+        return None;
     }
+    kernel::arch::registers::enable_interrupt(LED_CPU_INT as u32);
 
-    if !unsafe { led.transmit(&entries) } {
-        return false;
-    }
-
-    // `transmit` returns as soon as the channel is started, so the wait is
-    // ours. It is about 30 µs of frame plus the latch -- during which the
-    // scheduler runs everything else, which is the entire reason the SoC layer
-    // does not busy-wait on our behalf.
-    let frame_us = rmt::frame_ns(ticks, NS_PER_TICK).div_ceil(1000);
-    task::sleep_ms((frame_us + LATCH_US).div_ceil(1000).max(1));
-    true
+    STREAM = Some(Stream {
+        rmt,
+        refill: Refill::new(0),
+        done: true,
+    });
+    Some(())
 }

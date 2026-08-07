@@ -11,14 +11,24 @@
 //!
 //! # What this does and does not do
 //!
-//! One shot, one channel's worth of entries, polled to completion. No
-//! interrupts, no DMA, no continuous streaming. That is enough to drive the
-//! onboard LED on a board like the M5Stack Atom, which is what motivated it,
-//! and it is bounded by the channel's 64-entry memory block — 63 usable, and
-//! a WS2812 bit is one entry, so **two LEDs**. `MEM_SIZE` can give one channel
-//! all eight blocks (512 entries, 21 LEDs) at the cost of every other channel,
-//! and that is still short of a 5×5 panel's 600. Longer strings need
-//! refill-on-interrupt, which is issue #51.
+//! Two modes.
+//!
+//! [`Rmt::transmit`] is one shot: write the entries, start, done. It is
+//! bounded by the channel's 64-entry block — 63 usable, and a WS2812 bit is
+//! one entry, so **two LEDs**. Simple, and enough for a board with a single
+//! onboard LED.
+//!
+//! [`Rmt::start_stream`] is for anything longer. The channel wraps around its
+//! block while an interrupt refills the half just played, so frame length is
+//! bounded by nothing but the caller's buffer. A 5×5 panel is 600 entries and
+//! needs this: `MEM_SIZE` maxed gives one channel all eight blocks, 512
+//! entries, at the cost of every other channel, and 512 < 600.
+//!
+//! Streaming buys that at the price of a deadline. A refill has one half-block
+//! — about 40 µs at WS2812 rates — before the transmitter reaches what it is
+//! writing, and there is no underrun flag, so being late is silent and looks
+//! like corrupt pixels. [`Refill`] holds the bookkeeping and is pure, so the
+//! ping-pong can be tested on a host rather than by watching an LED.
 //!
 //! Rejecting an over-long sequence is deliberate. Silently truncating it
 //! would light some LEDs and leave others at whatever they held before, which
@@ -123,6 +133,37 @@ const CONF1_REF_CNT_RST: u32 = 1 << 16;
 const CONF1_REF_ALWAYS_ON: u32 = 1 << 17;
 const CONF1_IDLE_OUT_LV: u32 = 1 << 18;
 const CONF1_IDLE_OUT_EN: u32 = 1 << 19;
+
+/// `RMT_MEM_TX_WRAP_EN`, in `APB_CONF` alongside `APB_FIFO_MASK`. Without it
+/// the channel stops at the end of the block instead of wrapping to the start,
+/// which is the difference between a stream and a one-shot.
+const APB_MEM_TX_WRAP_EN: u32 = 1 << 1;
+
+/// `RMT_CHn_TX_LIM_REG`: how many entries the transmitter consumes before
+/// raising `TX_THR_EVENT`. 9 bits, so a full block fits comfortably.
+const fn ch_tx_lim(ch: u8) -> u32 {
+    RMT_BASE + 0xD0 + 4 * ch as u32
+}
+
+const INT_RAW: u32 = RMT_BASE + 0xA0;
+const INT_ENA: u32 = RMT_BASE + 0xA8;
+const INT_CLR: u32 = RMT_BASE + 0xAC;
+
+/// `RMT_CHn_TX_THR_EVENT_INT`: bits 24..31, one per channel.
+const fn tx_thr_bit(ch: u8) -> u32 {
+    1 << (24 + ch as u32)
+}
+
+/// `RMT_CHn_TX_END_INT`. The per-channel interrupts are grouped in threes --
+/// TX_END, RX_END, ERR -- so channel n's TX_END is bit 3n, not bit n.
+const fn tx_end_bit(ch: u8) -> u32 {
+    1 << (3 * ch as u32)
+}
+
+/// Entries in half a block. The transmitter plays one half while the other is
+/// being refilled, which is what bounds the memory a stream needs to 64
+/// entries however long the frame is.
+pub const HALF_BLOCK: usize = ENTRIES_PER_BLOCK / 2;
 
 /// One RMT entry: two consecutive pulses, each a level and a 15-bit duration
 /// in divided clock ticks.
@@ -270,11 +311,340 @@ pub const fn frame_ns(total_ticks: u32, ns_per_tick: u32) -> u32 {
     total_ticks.saturating_mul(ns_per_tick)
 }
 
+
+/// One refill: copy `len` entries from `src` in the source into the block at
+/// `dest`, and append a terminator if this is the last of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Chunk {
+    /// Entry index within the channel's 64-entry block.
+    pub dest: usize,
+    /// Entry index within the caller's source sequence.
+    pub src: usize,
+    /// How many entries to copy. Zero is normal on the final chunk, when the
+    /// source ended exactly on a half boundary and only the terminator is left.
+    pub len: usize,
+    /// Write [`Entry::END`] at `dest + len` after copying.
+    pub terminator: bool,
+}
+
+/// Bookkeeping for a frame longer than the block it is played from.
+///
+/// Deliberately pure: no registers, no channel, nothing target-specific. The
+/// half-block ping-pong is the part with the off-by-ones in it, and keeping it
+/// separate is what lets it be tested on a host instead of by watching an LED.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Refill {
+    total: usize,
+    written: usize,
+    next_half: usize,
+    terminated: bool,
+}
+
+impl Refill {
+    /// Prepare to send `total` entries.
+    pub const fn new(total: usize) -> Self {
+        Self {
+            total,
+            written: 0,
+            next_half: 0,
+            terminated: false,
+        }
+    }
+
+    /// The next half-block to fill, or `None` once the terminator is placed.
+    ///
+    /// Called twice before starting -- filling both halves -- and once per
+    /// threshold event after that.
+    pub fn next_chunk(&mut self) -> Option<Chunk> {
+        if self.terminated {
+            return None;
+        }
+        let remaining = self.total - self.written;
+        let len = if remaining < HALF_BLOCK {
+            remaining
+        } else {
+            HALF_BLOCK
+        };
+        // A terminator needs a slot, so it only goes in a half that the source
+        // did not fill. When the source ends exactly on the boundary this
+        // yields one more chunk with len 0, which is the whole reason `len` is
+        // allowed to be zero.
+        let terminator = len < HALF_BLOCK;
+        let chunk = Chunk {
+            dest: self.next_half * HALF_BLOCK,
+            src: self.written,
+            len,
+            terminator,
+        };
+        self.written += len;
+        self.next_half ^= 1;
+        self.terminated = terminator;
+        Some(chunk)
+    }
+
+    /// Whether the terminator has been placed and nothing more needs writing.
+    pub const fn finished(&self) -> bool {
+        self.terminated
+    }
+
+    /// Entries handed over so far. For diagnostics; a stalled stream shows up
+    /// as this not advancing.
+    pub const fn written(&self) -> usize {
+        self.written
+    }
+}
+
+impl Rmt {
+    /// Begin a transmission of any length, refilled half a block at a time.
+    ///
+    /// Fills both halves, arms the threshold interrupt and starts the channel.
+    /// The caller must keep `entries` alive and unchanged until the stream
+    /// finishes, and must call [`Rmt::service`] on every `TX_THR_EVENT`.
+    ///
+    /// # The deadline this creates
+    ///
+    /// A refill has until the transmitter finishes the other half. At WS2812
+    /// rates a half block is 32 bits, about **40 µs**. Miss it and the channel
+    /// plays the stale half as data — on an LED string, a burst of wrong
+    /// colours partway along. There is no hardware underrun flag to notice it
+    /// with, so a late refill is silent.
+    ///
+    /// # Safety
+    /// Writes the channel's registers and the global `APB_CONF`.
+    pub unsafe fn start_stream(&mut self, entries: &[Entry]) -> Refill {
+        // Wrap at the end of the block rather than stopping. Global, like
+        // FIFO_MASK; harmless for one-shot users because a terminator stops
+        // them before the end of the block is ever reached.
+        let apb = APB_CONF as *mut u32;
+        apb.write_volatile(apb.read_volatile() | APB_MEM_TX_WRAP_EN);
+
+        // Fire the threshold once per half consumed.
+        (ch_tx_lim(self.ch) as *mut u32).write_volatile(HALF_BLOCK as u32);
+
+        let mut refill = Refill::new(entries.len());
+        // Prime both halves before starting: the first threshold does not
+        // arrive until half the block is already gone.
+        let mem = ch_mem(self.ch) as *mut u32;
+        for _ in 0..2 {
+            match refill.next_chunk() {
+                Some(c) => self.write_chunk(mem, entries, c),
+                None => break,
+            }
+        }
+
+        let c1 = ch_conf1(self.ch) as *mut u32;
+        let base = c1.read_volatile() & !(CONF1_TX_START | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
+        c1.write_volatile(base | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
+        c1.write_volatile(base);
+
+        // Clear a stale threshold from the previous frame before enabling, or
+        // the first interrupt arrives immediately and refills a half the
+        // transmitter has not reached.
+        (INT_CLR as *mut u32).write_volatile(tx_thr_bit(self.ch) | tx_end_bit(self.ch));
+        let ena = INT_ENA as *mut u32;
+        ena.write_volatile(ena.read_volatile() | tx_thr_bit(self.ch));
+
+        c1.write_volatile(base | CONF1_TX_START);
+        refill
+    }
+
+    /// Refill the half the transmitter has just finished. Returns `true` when
+    /// nothing further is needed.
+    ///
+    /// Call from the channel's interrupt handler. Clearing the threshold flag
+    /// happens here, so the handler does not have to know which bit that is.
+    ///
+    /// # Safety
+    /// Writes the channel's block and interrupt registers. `entries` must be
+    /// the same sequence passed to [`Rmt::start_stream`].
+    pub unsafe fn service(&mut self, entries: &[Entry], refill: &mut Refill) -> bool {
+        // Clear before refilling. The other order loses an event that arrives
+        // while the copy is in progress, and a lost threshold stalls the
+        // stream permanently.
+        (INT_CLR as *mut u32).write_volatile(tx_thr_bit(self.ch));
+
+        match refill.next_chunk() {
+            Some(c) => {
+                self.write_chunk(ch_mem(self.ch) as *mut u32, entries, c);
+                false
+            }
+            None => {
+                // Nothing left to feed. Stop the interrupt, or it repeats for
+                // as long as the tail plays out.
+                let ena = INT_ENA as *mut u32;
+                ena.write_volatile(ena.read_volatile() & !tx_thr_bit(self.ch));
+                true
+            }
+        }
+    }
+
+    /// Whether the channel has reached the terminator and stopped.
+    ///
+    /// # Safety
+    /// Reads an interrupt status register.
+    pub unsafe fn stream_done(&self) -> bool {
+        (INT_RAW as *const u32).read_volatile() & tx_end_bit(self.ch) != 0
+    }
+
+    /// Copy one chunk into the block.
+    ///
+    /// # Safety
+    /// `mem` must be the channel's block and `chunk` must fit it.
+    unsafe fn write_chunk(&self, mem: *mut u32, entries: &[Entry], chunk: Chunk) {
+        for i in 0..chunk.len {
+            mem.add(chunk.dest + i).write_volatile(entries[chunk.src + i].0);
+        }
+        if chunk.terminator {
+            mem.add(chunk.dest + chunk.len).write_volatile(Entry::END.0);
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    /// Drive a `Refill` to completion, returning every chunk it asked for.
+    fn drain(total: usize) -> ([Chunk; 64], usize) {
+        let mut out = [Chunk { dest: 0, src: 0, len: 0, terminator: false }; 64];
+        let mut r = Refill::new(total);
+        let mut n = 0;
+        while let Some(c) = r.next_chunk() {
+            out[n] = c;
+            n += 1;
+            assert!(n < 64, "refill did not terminate for total={total}");
+        }
+        assert!(r.finished());
+        (out, n)
+    }
+
+    #[test]
+    fn a_stream_covers_its_source_exactly_once_and_in_order() {
+        // The property that matters: every entry sent, none twice, none
+        // skipped. A duplicated chunk shows on an LED string as a repeated
+        // colour and a truncated tail, which is easy to misread as a bad wire.
+        for total in [0, 1, 31, 32, 33, 63, 64, 65, 600] {
+            let (chunks, n) = drain(total);
+            let mut next_src = 0;
+            for c in &chunks[..n] {
+                assert_eq!(c.src, next_src, "total={total}: gap or overlap");
+                next_src += c.len;
+            }
+            assert_eq!(next_src, total, "total={total}: source not fully sent");
+        }
+    }
+
+    #[test]
+    fn halves_alternate_so_a_refill_never_lands_on_the_playing_half() {
+        // Writing the half currently being transmitted corrupts the frame in
+        // flight. Alternating is the entire safety argument for the scheme.
+        let (chunks, n) = drain(600);
+        for (i, c) in chunks[..n].iter().enumerate() {
+            let want = if i % 2 == 0 { 0 } else { HALF_BLOCK };
+            assert_eq!(c.dest, want, "chunk {i} landed in the wrong half");
+        }
+    }
+
+    #[test]
+    fn every_chunk_fits_inside_the_block() {
+        // Including the terminator, which is written at dest+len and is the
+        // one most likely to run off the end.
+        for total in [0, 1, 31, 32, 33, 64, 65, 600] {
+            let (chunks, n) = drain(total);
+            for c in &chunks[..n] {
+                let end = c.dest + c.len + usize::from(c.terminator);
+                assert!(end <= ENTRIES_PER_BLOCK, "total={total}: chunk overruns the block");
+            }
+        }
+    }
+
+    #[test]
+    fn exactly_one_terminator_is_written_and_it_is_last() {
+        for total in [0, 1, 32, 64, 600] {
+            let (chunks, n) = drain(total);
+            let count = chunks[..n].iter().filter(|c| c.terminator).count();
+            assert_eq!(count, 1, "total={total}: needs exactly one terminator");
+            assert!(chunks[n - 1].terminator, "total={total}: terminator must be last");
+        }
+    }
+
+    #[test]
+    fn a_source_ending_on_the_boundary_gets_an_empty_final_chunk() {
+        // The case that motivates allowing len == 0. With 64 entries both
+        // halves are full, so there is nowhere to put the terminator until a
+        // third chunk comes back empty. Dropping that chunk would leave the
+        // channel wrapping forever and the LED string held at its last colour.
+        let (chunks, n) = drain(64);
+        assert_eq!(n, 3);
+        assert_eq!(chunks[0].len, HALF_BLOCK);
+        assert_eq!(chunks[1].len, HALF_BLOCK);
+        assert_eq!(chunks[2].len, 0);
+        assert!(chunks[2].terminator);
+        assert_eq!(chunks[2].dest, 0, "wraps back to the first half");
+    }
+
+    #[test]
+    fn a_frame_that_fits_one_half_needs_no_second_chunk() {
+        let (chunks, n) = drain(10);
+        assert_eq!(n, 1);
+        assert_eq!(chunks[0], Chunk { dest: 0, src: 0, len: 10, terminator: true });
+    }
+
+    #[test]
+    fn a_five_by_five_panel_is_the_case_that_needed_streaming() {
+        // 25 LEDs x 24 bits = 600 entries against a 512-entry ceiling even with
+        // every block given to one channel. This is the number that made #51
+        // exist, so it is pinned here rather than left in a commit message.
+        const PANEL: usize = 25 * 24;
+        // Compile-time, because both sides are constants and the point is the
+        // relationship, not a runtime check.
+        const _: () = assert!(PANEL == 600);
+        const _: () = assert!(
+            PANEL > ENTRIES_PER_BLOCK * 8,
+            "a 5x5 panel would have fit without streaming"
+        );
+        // 600 = 18 full halves plus 24, so the 19th chunk is short and carries
+        // the terminator itself. No extra chunk -- that only happens when the
+        // source ends exactly on a boundary, which the 64-entry case covers.
+        let (chunks, n) = drain(PANEL);
+        assert_eq!(n, PANEL.div_ceil(HALF_BLOCK));
+        assert_eq!(n, 19);
+        assert_eq!(chunks[18].len, 24);
+        assert!(chunks[18].terminator);
+    }
+
+    #[test]
+    fn the_streaming_registers_are_where_the_header_says() {
+        assert_eq!(ch_tx_lim(0), RMT_BASE + 0xD0, "RMT_CH0_TX_LIM_REG");
+        assert_eq!(ch_tx_lim(1), RMT_BASE + 0xD4);
+        assert_eq!(INT_RAW, RMT_BASE + 0xA0);
+        assert_eq!(INT_ENA, RMT_BASE + 0xA8);
+        assert_eq!(INT_CLR, RMT_BASE + 0xAC);
+        assert_eq!(APB_MEM_TX_WRAP_EN, 1 << 1);
+    }
+
+    #[test]
+    fn the_per_channel_interrupt_bits_do_not_alias() {
+        // TX_END is bit 3n because the per-channel flags are grouped in threes
+        // (TX_END, RX_END, ERR); TX_THR_EVENT is bit 24+n in the same word.
+        // Using n for either would have channel 1 clearing channel 0's flag.
+        assert_eq!(tx_end_bit(0), 1 << 0);
+        assert_eq!(tx_end_bit(1), 1 << 3);
+        assert_eq!(tx_thr_bit(0), 1 << 24);
+        assert_eq!(tx_thr_bit(7), 1 << 31);
+        for a in 0..8u8 {
+            for b in 0..8u8 {
+                if a != b {
+                    assert_eq!(tx_end_bit(a) & tx_end_bit(b), 0);
+                    assert_eq!(tx_thr_bit(a) & tx_thr_bit(b), 0);
+                }
+                assert_eq!(tx_end_bit(a) & tx_thr_bit(b), 0, "TX_END overlaps TX_THR");
+            }
+        }
+    }
 
     #[test]
     fn the_entry_blocks_are_where_the_linker_script_puts_rmtmem() {

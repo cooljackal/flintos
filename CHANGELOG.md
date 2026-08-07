@@ -67,6 +67,11 @@ A kernel that provides a different one refuses to build and points here.
 - **`apps/blink`**, which drives the M5Stack Atom's onboard LED. It is also
   the on-hardware test for the RMT register map — no host test can tell you
   whether a register is where you think it is.
+- **Peripheral interrupt routing** (`soc_esp32::intr_map`). The DPORT crossbar
+  that decides which of the CPU's 32 interrupt inputs a peripheral fires on.
+  Nothing routed one before, so every driver's interrupt was unreachable.
+- **RMT streaming** (`Rmt::start_stream`): frames longer than the 64-entry
+  block, refilled half at a time from the channel's interrupt.
 - **RMT feeds the channel through `RMTMEM` rather than the APB FIFO.** Via the
   FIFO, only the first frame transmitted: the write pointer is rewound by
   `APB_MEM_RST`, a different bit from the `MEM_RD_RST` that rewinds the read
