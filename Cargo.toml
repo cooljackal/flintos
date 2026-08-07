@@ -47,6 +47,7 @@ members = [
     "apps/hello",
     "apps/demo",
     "apps/blink",
+    "apps/imu",
 
     "drivers/physical/esp32-uart",
     "drivers/physical/esp32-gpio",
@@ -59,6 +60,7 @@ members = [
     "drivers/bus/i2c-bus",
     "drivers/bus/uart-bus",
     "drivers/logical/bme280",
+    "drivers/logical/bmi270",
     "drivers/logical/ssd1306",
     "drivers/logical/ws2812",
 

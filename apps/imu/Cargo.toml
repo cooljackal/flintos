@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "imu"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Reads the Atom Matrix's onboard IMU — the first Layer 1-2-3 assembly"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../kernel", default-features = false }
+api = { path = "../../api" }
+hal = { path = "../../hal" }
+
+# All three layers, named here because composing them is the point.
+#
+#   esp32-i2c   Layer 1   the controller's registers
+#   i2c-bus     Layer 2   addressing and framing
+#   bmi270      Layer 3   the part number
+soc-esp32 = { path = "../../soc/esp32" }
+esp32-i2c = { path = "../../drivers/physical/esp32-i2c" }
+i2c-bus = { path = "../../drivers/bus/i2c-bus" }
+bmi270 = { path = "../../drivers/logical/bmi270" }
+
+[build-dependencies]
+build = { path = "../../tools/build" }
+
+[features]
+default = ["debug-level-1"]
+
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
+# Accepted so the compile_error in main.rs can explain, rather than leaving
+# cargo to say "does not contain this feature".
+board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
+board-esp32-wrover = ["kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
+
+debug-level-0 = ["kernel/debug-level-0"]
+debug-level-1 = ["kernel/debug-level-1"]
+debug-level-2 = ["kernel/debug-level-2"]
+debug-level-3 = ["kernel/debug-level-3"]

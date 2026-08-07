@@ -70,7 +70,7 @@ starts one.
 | GPIO | ✅ | ⛔ |
 | Pin routing | ✅ GPIO matrix, any signal to any pad | — direct AF |
 | SPI | 🚧 register map audited, no device driven | ⛔ |
-| I²C | 🚧 reads now return data; still no device driven | ⛔ |
+| I²C | ✅ reads a real device — MPU6886 identified on an Atom Matrix | ⛔ |
 | RMT pulse generator | ✅ one shot · ✅ streaming, 600 entries on a panel | — Xtensa-only peripheral |
 | Addressable LED (WS2812/SK6812) [^1] | ✅ driven on an Atom | 🧪 |
 | Hardware RNG | ✅ | ⛔ |
@@ -93,7 +93,7 @@ the Xtensa build they were driven on, not for anything either crate contains.
 
 | | |
 |---|---|
-| Host unit tests | ✅ 304 passing, kernel included |
+| Host unit tests | ✅ 317 passing, kernel included |
 | On-target self-tests | ✅ 11 passing on an ESP32-PICO — `make test-target` |
 | Layer boundary and package naming | ✅ enforced in CI |
 | Image size reporting | ✅ `make size` |

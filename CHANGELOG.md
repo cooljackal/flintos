@@ -21,6 +21,20 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Fixed
 
+- **The ESP32 I²C controller was never correctly initialised.** `init` wrote
+  `I2C_FIFO_CONF` with bit 13 set, commented as an interrupt enable; bit 13 is
+  `I2C_TX_FIFO_RST`, so the transmit FIFO was pinned in reset and no byte could
+  leave the controller. It also never set `SCL_FORCE_OUT`/`SDA_FORCE_OUT`, left
+  every START/STOP shaping register at its reset value, and set the bus timeout
+  to 0 — the *shortest* timeout, not none.
+- **NAKs were invisible.** Command words never set `ack_check_en`, so a NAKed
+  address completed like a real one and a bus scan reported all 112 addresses
+  present.
+- **A failed transaction wedged the controller.** The ESP32 does not unwind a
+  NAK: it stops without issuing STOP and the next transaction inherits the
+  state. Failures now cycle the peripheral through DPORT and reprogram, as
+  esp-idf's `i2c_hw_fsm_reset` does.
+
 - **The ESP32 I²C driver never returned the bytes it read.** `read` programmed
   the READ commands, waited for completion and left the data in the RX FIFO,
   returning `Ok(())`. Every I²C read this driver has ever done returned

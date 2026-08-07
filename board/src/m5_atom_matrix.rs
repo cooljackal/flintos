@@ -38,6 +38,24 @@ pub const RGB_LED_LAYOUT: Option<Layout> = Some(Layout::new(
     Order::Progressive,
 ));
 
+/// The onboard IMU's I2C pins.
+///
+/// A *private* bus: these pins go nowhere but the IMU, and are not the Grove
+/// port (`GROVE_SDA_GPIO` / `GROVE_SCL_GPIO`, GPIO 26/32).
+///
+/// Declared on the Matrix and not in the shared manifest because the ATOM Lite
+/// has no IMU. Putting them in `m5_atom_common.rs` would say the Lite has one,
+/// which is the same class of mistake as declaring an LED pin without a count.
+pub const IMU_SDA_GPIO: u8 = 25;
+pub const IMU_SCL_GPIO: u8 = 21;
+
+/// The IMU's I2C address.
+///
+/// **The address identifies the socket, not the part.** M5Stack shipped this
+/// board with an MPU6886 and later revisions with a BMI270, and both answer
+/// here. Only the chip ID register tells them apart -- see `drivers/logical/bmi270`.
+pub const IMU_I2C_ADDR: u8 = 0x68;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,6 +71,26 @@ mod tests {
         assert_eq!(p.index(0, 4), Some(4), "bottom-left ends the first row");
         assert_eq!(p.index(4, 3), Some(5), "next row up restarts at the right");
         assert_eq!(p.index(0, 0), Some(24), "top-left is the far end");
+    }
+
+    #[test]
+    fn the_imu_is_not_on_the_grove_pins() {
+        // The IMU sits on a private bus. Wiring a Grove device onto the same
+        // controller as the IMU would be a real design decision; sharing the
+        // pin numbers by accident would be a bug.
+        assert_ne!(IMU_SDA_GPIO, GROVE_SDA_GPIO);
+        assert_ne!(IMU_SCL_GPIO, GROVE_SCL_GPIO);
+        assert_ne!(IMU_SDA_GPIO, IMU_SCL_GPIO);
+    }
+
+    #[test]
+    fn the_imu_pins_do_not_collide_with_anything_else_onboard() {
+        for pin in [IMU_SDA_GPIO, IMU_SCL_GPIO] {
+            assert_ne!(pin, RGB_LED_GPIO, "GPIO{pin} is the LED");
+            assert_ne!(pin, BUTTON_GPIO, "GPIO{pin} is the button");
+            // 6-11 are the SPI flash the chip executes from.
+            assert!(!(6..=11).contains(&pin), "GPIO{pin} is SPI flash");
+        }
     }
 
     #[test]

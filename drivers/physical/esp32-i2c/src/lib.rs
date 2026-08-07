@@ -15,6 +15,9 @@ use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 /// register blocks.
 pub struct Esp32I2c {
     base: u32,
+    /// Half an SCL period in APB cycles, kept so the controller can be
+    /// reprogrammed after a NAK without the caller's `BusConfig`.
+    half: u32,
 }
 
 // ── Register map ─────────────────────────────────────────────────────────────
@@ -44,6 +47,32 @@ const I2C_INT_ENA: u32 = 0x28;
 #[allow(dead_code)]
 const I2C_INT_STATUS: u32 = 0x2C;
 const I2C_SDA_HOLD: u32 = 0x30;
+const I2C_SDA_SAMPLE_REG: u32 = 0x34;
+const I2C_SCL_START_HOLD: u32 = 0x40;
+const I2C_SCL_RSTART_SETUP: u32 = 0x44;
+const I2C_SCL_STOP_HOLD: u32 = 0x48;
+const I2C_SCL_STOP_SETUP: u32 = 0x4C;
+const I2C_SCL_FILTER_CFG: u32 = 0x50;
+const I2C_SDA_FILTER_CFG: u32 = 0x54;
+
+/// `I2C_SCL_FORCE_OUT` and `I2C_SDA_FORCE_OUT`, bits 1 and 0 of `I2C_CTR_REG`.
+///
+/// Both are required for master mode. esp-idf's `i2c_ll_master_init` sets them
+/// alongside `MS_MODE`, and without them the controller does not drive the
+/// lines -- nothing on the bus ever answers.
+const I2C_SCL_FORCE_OUT: u32 = 1 << 1;
+const I2C_SDA_FORCE_OUT: u32 = 1 << 0;
+
+/// `I2C_SCL_FILTER_EN` / `I2C_SDA_FILTER_EN`, bit 3, with the threshold in
+/// bits 0..2. Filters glitches shorter than `thres` APB cycles.
+const I2C_FILTER_EN: u32 = 1 << 3;
+
+/// Bus-timeout field, `I2C_TO_REG` bits 0..19.
+///
+/// Set near maximum, not zero. Zero does not mean "no timeout" -- it means the
+/// shortest possible one, and the controller aborts before a transaction can
+/// finish.
+const I2C_TOUT_MAX: u32 = 0xF_FFFF;
 #[allow(dead_code)]
 const I2C_SDA_SAMPLE: u32 = 0x34;
 const I2C_SCL_HIGH: u32 = 0x38;
@@ -80,6 +109,15 @@ const I2C_CMD_OP_STOP: u32 = 3 << 11;
 #[allow(dead_code)] // Documented for completeness of the opcode map; this driver terminates transfers with STOP, not END.
 const I2C_CMD_OP_END: u32 = 4 << 11;
 const I2C_CMD_ACK_VALUE_NAK: u32 = 1 << 10;
+/// `ack_check_en`, bit 8 of a command word.
+///
+/// Without it the controller does not look at the slave's ACK, so `ACK_ERR`
+/// never asserts and a NAKed address completes exactly like a real one. The
+/// visible symptom is a bus scan reporting all 112 addresses present.
+///
+/// Field order from esp-idf `i2c_struct.h`: `byte_num:8, ack_en:1, ack_exp:1,
+/// ack_val:1, op_code:3`.
+const I2C_CMD_ACK_CHECK_EN: u32 = 1 << 8;
 
 // ── Address byte ─────────────────────────────────────────────────────────────
 //
@@ -108,6 +146,28 @@ const I2C_TRANS_START: u32 = 1 << 5;
 // return at all, depending on what bit 0 happens to reflect.
 
 const I2C_TRANS_COMPLETE: u32 = 1 << 7;
+/// `I2C_ACK_ERR_INT_RAW`, bit 10. Set when a byte was NAKed.
+///
+/// A NAK still completes the transaction -- the controller issues STOP and
+/// raises TRANS_COMPLETE -- so waiting on completion alone reports success for
+/// an address nothing answered. That made a bus scan claim every address in
+/// the range responded.
+const I2C_ACK_ERR: u32 = 1 << 10;
+/// `I2C_TIME_OUT_INT_RAW`, bit 8. The bus was held too long, usually a line
+/// stuck low or missing pull-ups.
+const I2C_TIME_OUT: u32 = 1 << 8;
+/// `I2C_ARBITRATION_LOST_INT_RAW`, bit 5.
+const I2C_ARB_LOST: u32 = 1 << 5;
+/// Everything worth clearing before a transaction starts.
+const I2C_INT_ALL: u32 = I2C_TRANS_COMPLETE | I2C_ACK_ERR | I2C_TIME_OUT | I2C_ARB_LOST;
+
+/// `I2C_TX_FIFO_RST`, bit 13, and `I2C_RX_FIFO_RST`, bit 12.
+///
+/// TX is the higher bit. Worth stating, because the natural guess is the other
+/// way round and the failure is a controller that completes one transaction and
+/// then never completes another.
+const I2C_TX_FIFO_RST: u32 = 1 << 13;
+const I2C_RX_FIFO_RST: u32 = 1 << 12;
 
 // ── Pin routing ──────────────────────────────────────────────────────────────
 //
@@ -177,7 +237,79 @@ impl Esp32I2c {
     /// `read_volatile`/`write_volatile` at `base_addr + offset` with no
     /// further validation of the address itself.
     pub unsafe fn new(base_addr: u32) -> Self {
-        Self { base: base_addr }
+        Self { base: base_addr, half: 0 }
+    }
+
+    /// Program every timing and mode register from the stored half-period.
+    ///
+    /// Split out of `init` so [`Esp32I2c::recover`] can rebuild the controller
+    /// without the caller's `BusConfig`.
+    ///
+    /// # Safety
+    /// Writes this controller's registers.
+    unsafe fn program(&self) {
+        let half = self.half;
+        let quarter = (half / 2).max(1);
+
+        // Master mode, and drive both lines. esp-idf's `i2c_ll_master_init`
+        // sets all three; without the FORCE_OUT bits the controller never
+        // drives the bus.
+        self.reg(I2C_CTR)
+            .write_volatile(I2C_MS_MODE | I2C_SCL_FORCE_OUT | I2C_SDA_FORCE_OUT);
+
+        // FIFO mode, nothing held in reset. This register used to be written
+        // with (1<<13)|(1<<14) commented as "TX_EMPTY_INT_ENA | RX_FULL_INT_ENA".
+        // Bit 13 is I2C_TX_FIFO_RST: the transmit FIFO was pinned in reset for
+        // the life of the program, so no byte could ever leave the controller.
+        // Interrupt enables live in I2C_INT_ENA_REG, a different register.
+        self.reg(I2C_FIFO_CONF).write_volatile(0);
+
+        self.reg(I2C_SCL_LOW).write_volatile(half);
+        self.reg(I2C_SCL_HIGH).write_volatile(half);
+
+        // START/STOP shaping. Left at reset values these do not describe a
+        // valid bus, and a device sees a malformed start rather than an address.
+        self.reg(I2C_SDA_HOLD).write_volatile(quarter);
+        self.reg(I2C_SDA_SAMPLE_REG).write_volatile(quarter);
+        self.reg(I2C_SCL_START_HOLD).write_volatile(half.saturating_sub(1).max(1));
+        self.reg(I2C_SCL_RSTART_SETUP).write_volatile(half);
+        self.reg(I2C_SCL_STOP_HOLD).write_volatile(half);
+        self.reg(I2C_SCL_STOP_SETUP).write_volatile(half);
+
+        self.reg(I2C_SCL_FILTER_CFG).write_volatile(I2C_FILTER_EN | 7);
+        self.reg(I2C_SDA_FILTER_CFG).write_volatile(I2C_FILTER_EN | 7);
+
+        // Zero is the shortest bus timeout, not none.
+        self.reg(I2C_TOUT).write_volatile(I2C_TOUT_MAX);
+
+        self.reset_fifo();
+    }
+
+    /// Rebuild the controller after a failed transaction.
+    ///
+    /// The ESP32's I2C state machine does not unwind a NAK on its own: it stops
+    /// mid-sequence without issuing STOP, and the *next* transaction inherits
+    /// the wedged state. A bus scan shows that as alternating false positives --
+    /// every second address appearing to answer, then every third -- which
+    /// looks like devices and is not.
+    ///
+    /// esp-idf's `i2c_hw_fsm_reset` handles it the same way: cycle the
+    /// peripheral through DPORT and reprogram. There is no FSM-reset bit on
+    /// this chip to do it more gently.
+    ///
+    /// # Safety
+    /// Resets and reprograms this controller. Any transaction in flight is lost.
+    unsafe fn recover(&self) {
+        // Clear the command list first: a half-executed sequence left in place
+        // can resume against the rebuilt controller.
+        for slot in 0..I2C_COMD_SLOTS as u32 {
+            self.reg(I2C_COMD_BASE + slot * 4).write_volatile(0);
+        }
+        if let Some(bit) = dport::clock_bit(self.base) {
+            dport::disable(bit);
+            dport::enable(bit);
+        }
+        self.program();
     }
 
     fn reg(&self, offset: u32) -> *mut u32 {
@@ -191,17 +323,62 @@ impl Esp32I2c {
         ctr.write_volatile(ctr.read_volatile() | I2C_TRANS_START);
     }
 
-    /// Wait for `I2C_TRANS_COMPLETE_INT_RAW`, bounded.
+    /// Clear stale status and empty both FIFOs before staging a transaction.
+    ///
+    /// Without this the controller completes exactly one transaction and then
+    /// stops completing any: the TX FIFO still holds the previous address and
+    /// payload, so the next command list reads the wrong bytes and never
+    /// reaches its STOP. On a bus scan that presents as a hang after the first
+    /// address rather than as an error.
+    ///
+    /// # Safety
+    /// Writes this controller's FIFO and interrupt registers.
+    unsafe fn reset_fifo(&self) {
+        let conf = self.reg(I2C_FIFO_CONF);
+        let base = conf.read_volatile() & !(I2C_TX_FIFO_RST | I2C_RX_FIFO_RST);
+        // Pulsed, not left set: held in reset, the FIFOs accept nothing.
+        conf.write_volatile(base | I2C_TX_FIFO_RST | I2C_RX_FIFO_RST);
+        conf.write_volatile(base);
+        self.reg(I2C_INT_CLR).write_volatile(I2C_INT_ALL);
+    }
+
+    /// Wait for the transaction to finish, and say what happened.
+    ///
+    /// Completion alone is not success. A NAKed address completes -- the
+    /// controller issues STOP and raises TRANS_COMPLETE -- so this checks
+    /// ACK_ERR too. Without that check every address in a scan appears to
+    /// respond, which is exactly what the first run on hardware showed.
     fn wait_done(&self) -> BusResult<()> {
         let mut spins: u32 = 0;
         loop {
             let raw = unsafe { self.reg(I2C_INT_RAW).read_volatile() };
+
+            if raw & I2C_ACK_ERR != 0 {
+                // Rebuild before returning: the next caller must not inherit a
+                // wedged state machine.
+                unsafe { self.recover() };
+                return Err(BusError::DeviceNotResponding);
+            }
+            if raw & I2C_TIME_OUT != 0 {
+                // Rebuild before returning: the next caller must not inherit a
+                // wedged state machine.
+                unsafe { self.recover() };
+                return Err(BusError::Timeout);
+            }
+            if raw & I2C_ARB_LOST != 0 {
+                // Rebuild before returning: the next caller must not inherit a
+                // wedged state machine.
+                unsafe { self.recover() };
+                return Err(BusError::Busy);
+            }
             if raw & I2C_TRANS_COMPLETE != 0 {
-                unsafe { self.reg(I2C_INT_CLR).write_volatile(I2C_TRANS_COMPLETE) };
+                unsafe { self.reg(I2C_INT_CLR).write_volatile(I2C_INT_ALL) };
                 return Ok(());
             }
+
             spins += 1;
             if spins > I2C_TIMEOUT_SPINS {
+                unsafe { self.recover() };
                 return Err(BusError::Timeout);
             }
             core::hint::spin_loop();
@@ -214,6 +391,7 @@ impl Esp32I2c {
             return Err(BusError::InvalidConfig);
         }
         unsafe {
+            self.reset_fifo();
             let mut slot = 0u32;
 
             // Command 0: RSTART. No address payload -- the address goes in
@@ -225,13 +403,15 @@ impl Esp32I2c {
             // FIFO.
             self.reg(I2C_FIFO_DATA)
                 .write_volatile(((addr as u32) << 1) | I2C_RW_WRITE);
-            self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_WRITE | 1);
+            self.reg(I2C_COMD_BASE + slot * 4)
+                .write_volatile(I2C_CMD_OP_WRITE | I2C_CMD_ACK_CHECK_EN | 1);
             slot += 1;
 
             // Commands 2..N+1: write data bytes.
             for &byte in data {
                 self.reg(I2C_FIFO_DATA).write_volatile(byte as u32);
-                self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_WRITE | 1);
+                self.reg(I2C_COMD_BASE + slot * 4)
+                .write_volatile(I2C_CMD_OP_WRITE | I2C_CMD_ACK_CHECK_EN | 1);
                 slot += 1;
             }
 
@@ -259,6 +439,7 @@ impl Esp32I2c {
             return Ok(());
         }
         unsafe {
+            self.reset_fifo();
             let mut slot = 0u32;
 
             // Command 0: RSTART.
@@ -269,7 +450,8 @@ impl Esp32I2c {
             // FIFO.
             self.reg(I2C_FIFO_DATA)
                 .write_volatile(((addr as u32) << 1) | I2C_RW_READ);
-            self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_WRITE | 1);
+            self.reg(I2C_COMD_BASE + slot * 4)
+                .write_volatile(I2C_CMD_OP_WRITE | I2C_CMD_ACK_CHECK_EN | 1);
             slot += 1;
 
             // Commands 2..N+1: READ with ACK, except the last byte which
@@ -321,25 +503,8 @@ impl PhysicalBus for Esp32I2c {
                 route_pins(instance, *sda, *scl)?;
 
                 let scl_hz = speed.hz();
-                let half_period = (APB_HZ / scl_hz / 2).max(10);
-
-                unsafe {
-                    self.reg(I2C_SCL_LOW).write_volatile(half_period);
-                    self.reg(I2C_SCL_HIGH).write_volatile(half_period);
-                    self.reg(I2C_SDA_HOLD).write_volatile(half_period / 2);
-                    self.reg(I2C_TOUT).write_volatile(0); // disable timeout
-
-                    // Enable I2C master mode without disturbing other CTR
-                    // bits (there are none set yet, but RMW keeps this
-                    // robust if that changes).
-                    let ctr = self.reg(I2C_CTR);
-                    ctr.write_volatile(ctr.read_volatile() | I2C_MS_MODE);
-
-                    self.reg(I2C_FIFO_CONF).write_volatile(
-                        (1 << 13) | // TX_EMPTY_INT_ENA
-                        (1 << 14)   // RX_FULL_INT_ENA
-                    );
-                }
+                self.half = (APB_HZ / scl_hz / 2).max(10);
+                unsafe { self.program() };
                 Ok(())
             }
             _ => Err(BusError::InvalidConfig),
@@ -491,5 +656,60 @@ mod tests {
         assert!(route_pins(0, 21, 34).is_err());
         // A controller instance this chip does not have.
         assert!(route_pins(2, 21, 22).is_err());
+    }
+
+    #[test]
+    fn the_interrupt_bits_are_espressifs() {
+        // From i2c_reg.h. ACK_ERR is the one that matters: a NAK still raises
+        // TRANS_COMPLETE, so without it every address in a scan "responds".
+        assert_eq!(I2C_TRANS_COMPLETE, 1 << 7);
+        assert_eq!(I2C_ACK_ERR, 1 << 10);
+        assert_eq!(I2C_TIME_OUT, 1 << 8);
+        assert_eq!(I2C_ARB_LOST, 1 << 5);
+    }
+
+    #[test]
+    fn tx_fifo_reset_is_the_higher_bit() {
+        // I2C_TX_FIFO_RST_S is 13 and I2C_RX_FIFO_RST_S is 12 -- the opposite
+        // of the natural guess. Swapping them resets the wrong FIFO, and the
+        // symptom is a controller that completes one transaction and then
+        // never completes another.
+        assert_eq!(I2C_TX_FIFO_RST, 1 << 13);
+        assert_eq!(I2C_RX_FIFO_RST, 1 << 12);
+        // Both sides are constants, so this belongs at compile time.
+        const _: () = assert!(I2C_TX_FIFO_RST > I2C_RX_FIFO_RST);
+    }
+
+    #[test]
+    fn the_status_bits_being_cleared_do_not_overlap() {
+        let all = [I2C_TRANS_COMPLETE, I2C_ACK_ERR, I2C_TIME_OUT, I2C_ARB_LOST];
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_eq!(a & b, 0);
+            }
+        }
+        assert_eq!(I2C_INT_ALL, all.iter().fold(0, |acc, b| acc | b));
+    }
+
+    #[test]
+    fn a_write_command_asks_the_controller_to_check_the_ack() {
+        // The bug that made a bus scan report all 112 addresses present.
+        let cmd = I2C_CMD_OP_WRITE | I2C_CMD_ACK_CHECK_EN | 1;
+        assert_eq!(cmd & 0xFF, 1, "byte_num");
+        assert_ne!(cmd & I2C_CMD_ACK_CHECK_EN, 0, "ack_check_en must be set");
+        assert_eq!(cmd >> 11 & 0x7, 1, "op_code WRITE");
+    }
+
+    #[test]
+    fn the_command_word_fields_do_not_overlap() {
+        // byte_num:8, ack_en:1, ack_exp:1, ack_val:1, op_code:3 -- from
+        // esp-idf i2c_struct.h.
+        assert_eq!(I2C_CMD_ACK_CHECK_EN, 1 << 8);
+        assert_eq!(I2C_CMD_ACK_VALUE_NAK, 1 << 10);
+        assert_eq!(I2C_CMD_ACK_CHECK_EN & I2C_CMD_ACK_VALUE_NAK, 0);
+        assert_eq!(I2C_CMD_ACK_CHECK_EN & 0xFF, 0, "must not collide with byte_num");
+        for op in [I2C_CMD_OP_RSTART, I2C_CMD_OP_WRITE, I2C_CMD_OP_READ, I2C_CMD_OP_STOP] {
+            assert_eq!(op & 0x7FF, 0, "op_code must sit above the ack bits");
+        }
     }
 }

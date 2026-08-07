@@ -39,6 +39,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmi270"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
+
+[[package]]
 name = "board"
 version = "0.1.0"
 dependencies = [
@@ -133,6 +140,20 @@ name = "i2c-bus"
 version = "0.1.0"
 dependencies = [
  "api",
+]
+
+[[package]]
+name = "imu"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "bmi270",
+ "build",
+ "esp32-i2c",
+ "hal",
+ "i2c-bus",
+ "kernel",
+ "soc-esp32",
 ]
 
 [[package]]
