@@ -59,6 +59,18 @@ static SHARED: Spinlock<Contended> = Spinlock::new(Contended {
 /// How many times the APP CPU has taken the lock.
 static APP_TAKEN: AtomicU32 = AtomicU32::new(0);
 
+/// Accumulates the result of a function the APP CPU can only reach through
+/// its instruction cache.
+static FROM_FLASH: AtomicU32 = AtomicU32::new(0);
+
+/// An ordinary function: no `link_section`, no inlining, so it lives in flash
+/// like every task and driver does. The second core running this at all is the
+/// proof its cache works.
+#[inline(never)]
+fn flash_resident_work() -> u32 {
+    1
+}
+
 fn main() {
     task::spawn("smp", smp, Priority::Normal(1), 4096);
 }
@@ -115,6 +127,12 @@ fn smp() {
     task::sleep_ms(200);
     let app_taken = APP_TAKEN.load(Ordering::Relaxed);
     let (count, overlaps) = SHARED.with(|s| (s.count, s.overlaps));
+    let from_flash = FROM_FLASH.load(Ordering::Relaxed);
+    if from_flash == 0 {
+        api::log_error!("[smp] APP CPU never reached flash-resident code");
+    } else {
+        api::log_info!("[smp] APP CPU ran flash-resident code {} times", from_flash);
+    }
 
     api::log_info!(
         "[smp] PRO took {} APP took {} -> count {} (expected {})",
@@ -175,6 +193,11 @@ extern "C" fn app_cpu_main() -> ! {
             s.inside -= 1;
         });
         APP_TAKEN.fetch_add(1, Ordering::Relaxed);
+
+        // Deliberately NOT inlined and NOT in IRAM, so it can only run if the
+        // second core's instruction cache is working. Before the cache was
+        // enabled this call was the thing that hung.
+        FROM_FLASH.fetch_add(flash_resident_work(), Ordering::Relaxed);
         // No delay. A `for _ in 0..n { spin_loop() }` was here and the
         // optimiser removed it -- `spin_loop` is a hint with no side effect,
         // so the loop does nothing observable and is not required to happen.

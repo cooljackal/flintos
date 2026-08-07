@@ -51,6 +51,11 @@ const RTC_OPTIONS0: u32 = RTC_CNTL_BASE;
 const SW_STALL_C0_SHIFT: u32 = 0;
 const SW_STALL_C0_MASK: u32 = 0x3;
 
+/// ROM `Cache_Flush(int cpu)`, from `esp32.rom.ld`.
+const CACHE_FLUSH_ROM: usize = 0x4000_9A14;
+/// ROM `Cache_Read_Enable(int cpu)`, from `esp32.rom.ld`.
+const CACHE_READ_ENABLE_ROM: usize = 0x4000_9A84;
+
 /// `RTC_CNTL_SW_CPU_STALL_REG`, `SW_STALL_APPCPU_C1` in bits [25:20].
 const RTC_SW_CPU_STALL: u32 = RTC_CNTL_BASE + 0xAC;
 const SW_STALL_C1_SHIFT: u32 = 20;
@@ -105,6 +110,23 @@ pub unsafe fn is_stalled() -> bool {
 ///
 /// Starting an already-running core resets it mid-instruction.
 pub unsafe fn start(entry: unsafe extern "C" fn() -> !) {
+    // The APP CPU's instruction cache, enabled from *this* core before the
+    // other one is released. esp-idf does the same, in the same order, in
+    // `start_other_core`.
+    //
+    // Without it the second core cannot fetch anything mapped from flash, and
+    // that is not a corner case: every task, every driver and most of the
+    // kernel live there. The symptom is not an error — the core faults on its
+    // first flash instruction with no vector table to report it, or simply
+    // stops. Both were seen before this call existed.
+    //
+    // Flush before enable. A stale cache enabled over new flash contents
+    // serves whatever was there at the last boot.
+    let flush: extern "C" fn(u32) = core::mem::transmute(CACHE_FLUSH_ROM);
+    let read_enable: extern "C" fn(u32) = core::mem::transmute(CACHE_READ_ENABLE_ROM);
+    flush(1);
+    read_enable(1);
+
     // Order matters. Address first, so the core has somewhere to go the
     // instant it is released; a core released with CTRL_D still zero fetches
     // from 0 and takes an exception with no handler installed.
