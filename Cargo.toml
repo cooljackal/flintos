@@ -49,6 +49,7 @@ members = [
     "apps/blink",
     "apps/imu",
     "apps/pwm",
+    "apps/smp",
 
     "drivers/physical/esp32-uart",
     "drivers/physical/esp32-gpio",

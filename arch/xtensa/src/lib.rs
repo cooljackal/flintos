@@ -19,6 +19,7 @@
 // that the exception vectors are built from, so this crate could not be
 // compiled for its own target. See build.rs.
 
+pub mod appcpu;
 pub mod critical_section;
 pub mod mpu;
 pub mod registers;

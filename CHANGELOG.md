@@ -140,6 +140,9 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **The APP CPU can be started** (`soc_esp32::appcpu`, `arch_xtensa::appcpu`).
+  The kernel is still single-core, and the started core must not touch it —
+  see the module docs for exactly what that rules out.
 - **`esp32-ledc`**: PWM output. Eight high-speed channels over four timers,
   with the frequency/resolution arithmetic as pure functions that refuse an
   impossible combination rather than clamping it.

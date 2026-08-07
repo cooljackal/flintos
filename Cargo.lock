@@ -211,6 +211,18 @@ name = "size"
 version = "0.1.0"
 
 [[package]]
+name = "smp"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "arch-xtensa",
+ "build",
+ "hal",
+ "kernel",
+ "soc-esp32",
+]
+
+[[package]]
 name = "soc-esp32"
 version = "0.1.0"
 dependencies = [

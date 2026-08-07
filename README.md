@@ -63,7 +63,7 @@ in the wiki: [Xtensa LX6](https://github.com/cooljackal/flintos/wiki/Arch-Xtensa
 | Reset-cause reporting | ✅ | ⛔ |
 | Logging, metrics, panic capture | ✅ | ⛔ |
 | Stack high-water marks | ✅ | ⛔ |
-| Second core, task pinning | ⛔ | — |
+| Second core, task pinning | 🚧 | — |
 | DMA | ⛔ | ⛔ |
 | Memory isolation (MPU) | — | ⛔ |
 
@@ -110,7 +110,7 @@ own — see [Architecture](https://github.com/cooljackal/flintos/wiki/Architectu
 
 | | |
 |---|---|
-| Host unit tests | ✅ 336 passing, kernel included |
+| Host unit tests | ✅ 340 passing, kernel included |
 | On-target self-tests | ✅ 11 passing on an ESP32-PICO — `make test-target` |
 | Layer boundary and package naming | ✅ enforced in CI |
 | Image size reporting | ✅ `make size` |
@@ -294,6 +294,7 @@ make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
 make flash APP=blink BOARD=board-m5-atom-matrix  # the Atom Matrix's 5x5 panel
 make flash APP=imu   BOARD=board-m5-atom-matrix  # the onboard IMU, over I²C
 make flash APP=pwm   BOARD=board-m5-atom-matrix  # PWM, measuring its own duty
+make flash APP=smp   BOARD=board-m5-atom-matrix  # starts the second core
 ```
 
 `DEBUG` defaults to `debug-level-1`, which is what you want while developing.

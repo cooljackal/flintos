@@ -18,7 +18,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Assembly translation units, relative to the crate root.
-const ASM_SOURCES: &[&str] = &["src/asm/vectors.S", "src/asm/context.S", "src/startup.S"];
+const ASM_SOURCES: &[&str] = &[
+    "src/asm/vectors.S",
+    "src/asm/context.S",
+    "src/asm/appcpu.S",
+    "src/startup.S",
+];
 
 fn main() {
     let target = env::var("TARGET").unwrap_or_default();

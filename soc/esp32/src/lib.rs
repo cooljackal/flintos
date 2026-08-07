@@ -38,6 +38,7 @@
 /// nothing about it.
 pub mod app_desc;
 pub mod addr;
+pub mod appcpu;
 pub mod dport;
 pub mod gpio_matrix;
 pub mod intr_map;
