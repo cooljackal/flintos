@@ -1,6 +1,15 @@
 # Xtensa LX6
 
 
+### What the kernel relies on here
+
+| | |
+|---|---|
+| Context switch | Register-window spill through the canonical `SPILL_ALL_WINDOWS` sequence |
+| Critical sections | `rsil` token, restored on drop — not unmasked |
+| Tick | `CCOUNT`/`CCOMPARE`, with the CPU frequency measured against the RTC slow clock rather than assumed |
+| Interrupts | Level 1 only. Levels 2–5 reach the unhandled stub, which is why `intr_map` refuses to route a peripheral above level 1 |
+
 **CPU core only.** Traps, the context switch, register windows and the core
 timer. Chip registers do not belong here even when this is the only chip that
 uses the core: the ESP32 interrupt crossbar was sitting in `registers.rs`,

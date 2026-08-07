@@ -115,6 +115,27 @@ without exception.
 SPI3 CS is 68, not 66 or 67 — those are HD and WP. The four SPI signals are not
 contiguous.
 
+## What Flint drives, and how far
+
+The README's table says only whether a peripheral works. This is the detail
+behind each cell.
+
+| Peripheral | State | Detail |
+|---|---|---|
+| UART | ✅ | UART0 is the console. Driven since bring-up. |
+| GPIO | ✅ | Input, output, open-drain. Register-shift bug fixed and regression-tested. |
+| Pin routing | ✅ | GPIO matrix — any signal to any pad, or a clear `InvalidConfig`. IO_MUX native pads used where they exist. |
+| I²C | ✅ | Drives an MPU6886 on an Atom Matrix through all three driver layers. Reads return data, addresses are unshifted, NAKs are detected, and a failed transaction resets the controller. |
+| SPI | 🚧 | Register map audited against the TRM. No device has ever been driven over it. |
+| RMT | ✅ | One shot (two LEDs) and streaming (any length, refilled from the channel interrupt). 600 entries verified on a 5×5 panel. |
+| Hardware RNG | ✅ | `esp32-rng`. Not a CSPRNG, and deliberately not named one. |
+| Interrupt crossbar | ✅ | `intr_map` routes any of the 69 sources onto a CPU input, refusing any the kernel could not service. |
+| Watchdogs | ✅ | RWDT and MWDT. Both verified resetting a real board for the right reason. |
+| Reset cause | ✅ | Distinguishes the three watchdogs, which "a watchdog reset it" does not. |
+| LEDC, TIMG, ADC, DAC, touch | ⛔ | Not started — see the issue tracker. |
+| I2S, TWAI, SDIO, EMAC | ⛔ | Not started. |
+| Wi-Fi, Bluetooth | ⛔ | Not planned. |
+
 ## Peripheral map
 
 | Peripheral | Base | IRQ source |

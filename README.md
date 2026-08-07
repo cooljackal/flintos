@@ -41,53 +41,70 @@ starts one.
 
 ✅ verified on hardware  ·  🧪 written and host-tested, not yet on silicon  ·  🚧 partial  ·  ⛔ not started  ·  — not applicable
 
+Per-peripheral detail — which registers, which pins, what is untested — lives
+in the wiki: [Xtensa LX6](https://github.com/cooljackal/flintos/wiki/Arch-Xtensa-LX6),
+[ESP32](https://github.com/cooljackal/flintos/wiki/SoC-ESP32),
+[Writing a Driver](https://github.com/cooljackal/flintos/wiki/Writing-a-Driver).
+
 ### Kernel
 
 | Feature | Xtensa LX6 | ARM32 |
 |---|---|---|
 | Boots | ✅ | ⛔ |
 | Preemptive scheduling, 48 priorities | ✅ | ⛔ |
-| Context switch | ✅ register-window spill | ⛔ |
+| Context switch | ✅ | ⛔ |
 | Interrupts, nesting, critical sections | ✅ | ⛔ |
-| Peripheral interrupt routing | ✅ DPORT crossbar | ⛔ |
+| Peripheral interrupt routing | ✅ | ⛔ |
 | Tick timer, measured CPU clock | ✅ | ⛔ |
-| Mutexes with priority inheritance | ✅ through chains of blocked owners | ⛔ |
+| Mutexes with priority inheritance | ✅ | ⛔ |
 | Queues, task↔task and ISR→task | ✅ | ⛔ |
-| Task-vs-ISR race tests | ✅ 6 on target | ⛔ |
-| Watchdogs | ✅ both reset a real board | ⛔ |
+| Task-vs-ISR race tests | ✅ | ⛔ |
+| Watchdogs | ✅ | ⛔ |
 | Reset-cause reporting | ✅ | ⛔ |
-| Logging, metrics, panic capture | ✅ compiled out at zero cost | ⛔ |
+| Logging, metrics, panic capture | ✅ | ⛔ |
 | Stack high-water marks | ✅ | ⛔ |
-| Second core, task pinning | ⛔ [#19](https://github.com/cooljackal/flintos/issues/19) | — single core |
-| DMA | ⛔ [#18](https://github.com/cooljackal/flintos/issues/18) | ⛔ |
-| Memory isolation (MPU) | — no MPU on this part | ⛔ |
+| Second core, task pinning | ⛔ | — |
+| DMA | ⛔ | ⛔ |
+| Memory isolation (MPU) | — | ⛔ |
 
-### Peripherals and drivers
+### Peripherals
 
-| Feature | Xtensa LX6 | ARM32 |
+The chip's own blocks, in the order most projects reach for them.
+
+| Peripheral | Xtensa LX6 | ARM32 |
 |---|---|---|
 | UART | ✅ | ⛔ |
 | GPIO | ✅ | ⛔ |
-| Pin routing | ✅ GPIO matrix, any signal to any pad | — direct AF |
-| SPI | 🚧 register map audited, no device driven | ⛔ |
-| I²C | ✅ MPU6886 driven on an Atom Matrix — motion, rate and die temperature | ⛔ |
-| RMT pulse generator | ✅ one shot · ✅ streaming, 600 entries on a panel | — Xtensa-only peripheral |
-| Addressable LED (WS2812/SK6812) [^1] | ✅ driven on an Atom | 🧪 |
+| Pin routing | ✅ | ⛔ |
+| I²C | ✅ | ⛔ |
+| SPI | 🚧 | ⛔ |
+| PWM / LEDC | ⛔ | ⛔ |
+| Timers (TIMG) | ⛔ | ⛔ |
+| ADC | ⛔ | ⛔ |
+| DAC, touch | ⛔ | ⛔ |
+| RMT pulse generator | ✅ | — |
 | Hardware RNG | ✅ | ⛔ |
-| LED matrix geometry [^1] | ✅ Atom Matrix layout measured | 🧪 |
-| PWM / LEDC | ⛔ [#22](https://github.com/cooljackal/flintos/issues/22) | ⛔ |
-| ADC, DAC, touch | ⛔ | ⛔ |
-| Wi-Fi | ⛔ | — no radio |
-| Bluetooth / BLE | ⛔ | — no radio |
 | CAN (TWAI) | ⛔ | ⛔ |
-| Ethernet, SD/SDIO | ⛔ | ⛔ |
-| USB | — not on ESP32-v1 | ⛔ |
+| I2S | ⛔ | ⛔ |
+| SD / SDIO | ⛔ | ⛔ |
+| Ethernet MAC | ⛔ | ⛔ |
+| Wi-Fi | ⛔ | — |
+| Bluetooth / BLE | ⛔ | — |
+| USB | — | ⛔ |
 
-[^1]: Neither of these carries an architecture. `ws2812` is a Layer-3 driver
-depending only on `api` and `lib/*` — it needs a pulse generator underneath and
-does not care what produces one. `led-matrix` is not a driver at all: it lives
-in `lib/`, turns `(x, y)` into an integer, and depends on nothing. The ✅ is for
-the Xtensa build they were driven on, not for anything either crate contains.
+### Device drivers
+
+Parts you attach, not blocks on the chip. These carry no architecture of their
+own — see [Architecture](https://github.com/cooljackal/flintos/wiki/Architecture).
+
+| Device | Status |
+|---|---|
+| MPU6886 IMU | ✅ |
+| WS2812 / SK6812 LED | ✅ |
+| LED panel geometry | ✅ |
+| BMI270 IMU | 🧪 |
+| BME280 | 🧪 |
+| SSD1306 | 🧪 |
 
 ### Build and test
 
@@ -449,13 +466,20 @@ fn bump() {
 
 ## Supported hardware
 
-| Board | SoC | Status | Pinout |
-|---|---|---|---|
-| M5Stack Atom Matrix | ESP32-PICO-D4 (Xtensa LX6) | ✅ Boots, schedules, preempts, drives its LED panel and reads its IMU | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
-| M5Stack Atom Lite | ESP32-PICO-D4 (Xtensa LX6) | ✅ Same manifest, one LED instead of 25 | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
-| ESP32-WROVER | ESP32 | Manifest present, untested | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-WROVER) |
-| ESP32-DevKitC / WROOM-32 | ESP32 | Should work — same manifest, untested | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-DevKitC) |
-| STM32F3 / F4 (Cortex-M) | ARM32 | Planned — needs a whole `arch-cortex-m` | — |
+| Board | SoC | Support | What runs | Pinout |
+|---|---|---|---|---|
+| M5Stack Atom Matrix | ESP32-PICO-D4 | 🟢 full | Scheduler, LED panel, IMU over I²C, both watchdogs | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
+| M5Stack Atom Lite | ESP32-PICO-D4 | 🟢 full | Same, one LED instead of a panel | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
+| ESP32-WROVER | ESP32 | 🟡 partial | Manifest written, never flashed | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-WROVER) |
+| ESP32-DevKitC / WROOM-32 | ESP32 | 🟡 partial | Same manifest as the WROVER, never flashed | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-DevKitC) |
+| STM32F3 / F4 | ARM32 | 🔴 none | Needs an `arch-cortex-m`, and an arch-selection axis that does not exist yet | — |
+
+🟢 runs on this board and has been checked · 🟡 should work, nobody has flashed
+it · 🔴 not supported
+
+The two 🟡 rows are the honest ones: their manifests are written and their
+tests pass, but no one has held the board. **That is the contribution we want
+most** — flash it and tell us what happened.
 
 Adding a board is one manifest plus feature registration in a few places — see
 [Adding a Board](https://github.com/cooljackal/flintos/wiki/Adding-a-Board).
