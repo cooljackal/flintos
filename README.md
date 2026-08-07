@@ -29,9 +29,15 @@ thin, and the API will change.
 
 Read the columns as "does this work on that instruction set". Only Xtensa has a
 port today, so the ARM32 column is an honest row of blanks rather than a
-roadmap — it is there because the `arch/` · `soc/` · `board/` split means
-filling it in is a matter of writing a port, not restructuring the kernel.
-AVR32 and MIPS columns get added when someone starts one.
+roadmap. The directories and the dependency graph are in the right shape for a
+port — `arch/` depends only on `hal`, `soc/` only on `hal`, neither knows the
+other — but the seam is **not yet parameterised**, and an adversarial review
+established what that costs: there is no arch-selection axis (`cfg(target_os =
+"none")` is equally true for `thumbv7em`), `TaskContext` in `hal` is a set of
+Xtensa register-window fields, and the kernel's fatal-fault path writes a
+hard-coded ESP32 UART address. A second architecture means creating that axis
+first. Tracked, not hidden. AVR32 and MIPS columns get added when someone
+starts one.
 
 ✅ verified on hardware  ·  🧪 written and host-tested, not yet on silicon  ·  🚧 partial  ·  ⛔ not started  ·  — not applicable
 
@@ -64,7 +70,7 @@ AVR32 and MIPS columns get added when someone starts one.
 | GPIO | ✅ | ⛔ |
 | Pin routing | ✅ GPIO matrix, any signal to any pad | — direct AF |
 | SPI | 🚧 register map audited, no device driven | ⛔ |
-| I²C | 🚧 routes and configures, no device driven | ⛔ |
+| I²C | 🚧 reads now return data; still no device driven | ⛔ |
 | RMT pulse generator | ✅ one shot · ✅ streaming, 600 entries on a panel | — Xtensa-only peripheral |
 | Addressable LED (WS2812/SK6812) [^1] | ✅ driven on an Atom | 🧪 |
 | Hardware RNG | ✅ | ⛔ |
@@ -85,7 +91,7 @@ produces one. That is the whole point of the layer check.
 
 | | |
 |---|---|
-| Host unit tests | ✅ 215 passing, kernel included |
+| Host unit tests | ✅ 291 passing, kernel included |
 | On-target self-tests | ✅ 11 passing on an ESP32-PICO — `make test-target` |
 | Layer boundary and package naming | ✅ enforced in CI |
 | Image size reporting | ✅ `make size` |

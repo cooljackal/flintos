@@ -19,6 +19,23 @@ A kernel that provides a different one refuses to build and points here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The ESP32 I²C driver never returned the bytes it read.** `read` programmed
+  the READ commands, waited for completion and left the data in the RX FIFO,
+  returning `Ok(())`. Every I²C read this driver has ever done returned
+  nothing — which is consistent with I²C never having been confirmed against a
+  real device. It now takes a buffer and drains the FIFO.
+- **The I²C address was shifted twice.** The bus layer pre-shifted in `write`
+  and not in `transfer`, while the physical driver shifted again, so `0x76`
+  reached the wire as `0xD8` and nothing would ACK. The convention — `tx[0]` is
+  the 7-bit address, unshifted — is now written down on
+  `hal::PhysicalBus::raw_transfer`, where both sides can see it.
+- **A write-only or read-only I²C transfer did nothing and returned `Ok`.**
+  `raw_transfer` acted only when both `tx` and `rx` were non-empty.
+- **`I2cBus::read` addressed the general-call address**, sending a zeroed `tx`
+  rather than the device address.
+
 ### Breaking
 
 - **RMT, the watchdogs and the RNG moved out of `soc-esp32` into their own

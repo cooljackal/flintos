@@ -178,6 +178,27 @@ pub trait PhysicalBus: Send + Sync {
     fn init(&mut self, config: &BusConfig) -> BusResult<()>;
 
     /// Perform a raw duplex hardware transfer.
+    /// Perform a transfer.
+    ///
+    /// **For I2C, `tx[0]` is the device's 7-bit address, unshifted.** The
+    /// physical driver adds the R/W bit. This was never written down, and the
+    /// two layers ended up disagreeing: the bus layer pre-shifted in one
+    /// method and not in another, while the physical driver shifted again, so
+    /// `0x76` reached the wire as `0xD8` and nothing would ACK it.
+    ///
+    /// The three shapes an implementation must handle:
+    ///
+    /// | `tx` | `rx` | Meaning |
+    /// |---|---|---|
+    /// | addr + data | empty | write only |
+    /// | addr | non-empty | read only |
+    /// | addr + data | non-empty | write, repeated start, read |
+    ///
+    /// `rx` must be filled on return. Returning `Ok(())` having left the
+    /// bytes in a FIFO is what the ESP32 I2C driver used to do.
+    ///
+    /// SPI and UART ignore the addressing rule: `tx` is data, `rx` is the
+    /// buffer, and the two are clocked together.
     fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()>;
 
     /// Enable or disable the peripheral clock.

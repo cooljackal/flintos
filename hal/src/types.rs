@@ -2,7 +2,17 @@
 
 //! Core type definitions shared across the kernel, HAL, and API layers.
 //!
-//! These types are architecture-agnostic and form the common vocabulary
+//! Most of these types are architecture-agnostic and form the common vocabulary
+//!
+//! [`TaskContext`] is the exception, and it is worth naming rather than
+//! leaving for whoever attempts a second port to discover: its fields are
+//! Xtensa's (`ps`, `sar`, the `lbeg`/`lend`/`lcount` loop registers, `a[16]`,
+//! `windowbase`, `windowstart`). A Cortex-M context is a different struct, so
+//! this type has to become an associated type of an arch trait before a second
+//! architecture can exist. Until then the claim below is aspirational for this
+//! one type.
+//!
+//! The rest form the common vocabulary
 //! for the scheduler, context switching, MPU management, and task model.
 
 // ── Task context ────────────────────────────────────────────────────────────

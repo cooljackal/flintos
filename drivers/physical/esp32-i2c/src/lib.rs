@@ -243,10 +243,20 @@ impl Esp32I2c {
         self.wait_done()
     }
 
-    /// Read bytes from a slave device.
-    pub fn read(&self, addr: u8, len: usize) -> BusResult<()> {
+    /// Read bytes from a slave device into `buf`.
+    ///
+    /// Takes the buffer rather than a length because the previous signature
+    /// took a length, clocked the bytes in, and left them in the RX FIFO --
+    /// the caller got `Ok(())` and no data. Every read this driver has ever
+    /// done returned nothing, which is consistent with I2C never having been
+    /// confirmed against a real device.
+    pub fn read(&self, addr: u8, buf: &mut [u8]) -> BusResult<()> {
+        let len = buf.len();
         if len > I2C_MAX_BYTES {
             return Err(BusError::InvalidConfig);
+        }
+        if len == 0 {
+            return Ok(());
         }
         unsafe {
             let mut slot = 0u32;
@@ -278,7 +288,16 @@ impl Esp32I2c {
 
             self.start_transfer();
         }
-        self.wait_done()
+        self.wait_done()?;
+
+        // Drain the RX FIFO. The bytes are sitting in it; without this they
+        // are simply dropped.
+        unsafe {
+            for byte in buf.iter_mut() {
+                *byte = (self.reg(I2C_FIFO_DATA).read_volatile() & 0xFF) as u8;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -328,12 +347,25 @@ impl PhysicalBus for Esp32I2c {
     }
 
     fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-        // I2C raw_transfer does a write followed by repeated-start read.
-        if !tx.is_empty() && !rx.is_empty() {
-            self.write(tx[0], &tx[1..])?;
-            self.read(tx[0], rx.len())?;
+        // `tx[0]` is the device's 7-bit address, UNSHIFTED -- this driver adds
+        // the R/W bit itself (see `write`/`read`). A caller that pre-shifts
+        // double-shifts, and 0x76 reaches the wire as 0xD8 with nothing to
+        // ACK it. See `hal::PhysicalBus::raw_transfer`.
+        let Some((&addr, data)) = tx.split_first() else {
+            return Err(BusError::InvalidConfig);
+        };
+
+        // All three shapes, rather than silently succeeding on two of them.
+        // The old version did nothing at all unless both tx and rx were
+        // non-empty, so every write-only call returned Ok having sent nothing.
+        match (data.is_empty(), rx.is_empty()) {
+            (_, true) => self.write(addr, data),
+            (true, false) => self.read(addr, rx),
+            (false, false) => {
+                self.write(addr, data)?;
+                self.read(addr, rx)
+            }
         }
-        Ok(())
     }
 
     fn set_enabled(&mut self, enabled: bool) {
