@@ -140,6 +140,9 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **`esp32-ledc`**: PWM output. Eight high-speed channels over four timers,
+  with the frequency/resolution arithmetic as pure functions that refuse an
+  impossible combination rather than clamping it.
 - **`mpu6886`**, a Layer-3 driver for the Atom Matrix's onboard IMU:
   acceleration, angular rate and die temperature, in integer milli-units. The
   first device in this tree driven through all three layers.

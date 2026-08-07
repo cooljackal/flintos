@@ -78,7 +78,7 @@ The chip's own blocks, in the order most projects reach for them.
 | Pin routing | ✅ | ⛔ |
 | I²C | ✅ | ⛔ |
 | SPI | 🚧 | ⛔ |
-| PWM / LEDC | ⛔ | ⛔ |
+| PWM / LEDC | ✅ | ⛔ |
 | Timers (TIMG) | ⛔ | ⛔ |
 | ADC | ⛔ | ⛔ |
 | DAC, touch | ⛔ | ⛔ |
@@ -110,7 +110,7 @@ own — see [Architecture](https://github.com/cooljackal/flintos/wiki/Architectu
 
 | | |
 |---|---|
-| Host unit tests | ✅ 326 passing, kernel included |
+| Host unit tests | ✅ 336 passing, kernel included |
 | On-target self-tests | ✅ 11 passing on an ESP32-PICO — `make test-target` |
 | Layer boundary and package naming | ✅ enforced in CI |
 | Image size reporting | ✅ `make size` |
@@ -293,6 +293,7 @@ make flash APP=hello                       # the minimal one-task template
 make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
 make flash APP=blink BOARD=board-m5-atom-matrix  # the Atom Matrix's 5x5 panel
 make flash APP=imu   BOARD=board-m5-atom-matrix  # the onboard IMU, over I²C
+make flash APP=pwm   BOARD=board-m5-atom-matrix  # PWM, measuring its own duty
 ```
 
 `DEBUG` defaults to `debug-level-1`, which is what you want while developing.
@@ -648,9 +649,9 @@ Debug features are additive and compile out entirely:
   been run.
 - **Now** — proving the on-target race tests can actually fail
   ([#50](https://github.com/cooljackal/flintos/issues/50)).
-- **Next** — LEDC ([#22](https://github.com/cooljackal/flintos/issues/22)),
-  general-purpose timers ([#25](https://github.com/cooljackal/flintos/issues/25)),
-  ADC1 ([#24](https://github.com/cooljackal/flintos/issues/24)).
+- **Next** — second core ([#19](https://github.com/cooljackal/flintos/issues/19))
+  and task pinning ([#20](https://github.com/cooljackal/flintos/issues/20)),
+  then DMA ([#18](https://github.com/cooljackal/flintos/issues/18)).
 - **Later** — Layer-1 drivers as isolated tasks with one-IPC-hop request/reply;
   `nsh` shell; Cortex-M port for STM32F3/F4.
 

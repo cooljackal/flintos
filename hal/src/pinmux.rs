@@ -54,6 +54,8 @@ pub enum Signal {
     SpiCs(u8),
     /// RMT channel output — pulse trains, e.g. addressable LEDs.
     RmtOut(u8),
+    /// LEDC high-speed PWM channel n (0..8).
+    LedcHs(u8),
 }
 
 impl Signal {
@@ -70,7 +72,8 @@ impl Signal {
             | Signal::SpiMiso(n)
             | Signal::SpiSck(n)
             | Signal::SpiCs(n)
-            | Signal::RmtOut(n) => *n,
+            | Signal::RmtOut(n)
+            | Signal::LedcHs(n) => *n,
         }
     }
 
@@ -86,7 +89,8 @@ impl Signal {
             | Signal::SpiMosi(_)
             | Signal::SpiSck(_)
             | Signal::SpiCs(_)
-            | Signal::RmtOut(_) => SignalDirection::Output,
+            | Signal::RmtOut(_)
+            | Signal::LedcHs(_) => SignalDirection::Output,
             Signal::UartRx(_) | Signal::UartCts(_) | Signal::SpiMiso(_) => SignalDirection::Input,
             Signal::I2cSda(_) | Signal::I2cScl(_) => SignalDirection::Bidirectional,
         }

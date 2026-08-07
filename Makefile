@@ -130,7 +130,7 @@ LD_SCRIPT      := arch/xtensa/flint32.ld
 #
 # This replaces a hand-kept list of fifteen names, which lived here and in three
 # more copies in ci.yml. Those copies had already drifted once.
-HOST_EXCLUDE   := arch-xtensa hello demo blink imu
+HOST_EXCLUDE   := arch-xtensa hello demo blink imu pwm
 HOST_SELECT    := --workspace $(addprefix --exclude ,$(HOST_EXCLUDE))
 
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --

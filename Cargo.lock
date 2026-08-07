@@ -85,6 +85,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-ledc"
+version = "0.1.0"
+dependencies = [
+ "soc-esp32",
+]
+
+[[package]]
 name = "esp32-rmt"
 version = "0.1.0"
 dependencies = [
@@ -184,6 +191,19 @@ name = "mpu6886"
 version = "0.1.0"
 dependencies = [
  "api",
+]
+
+[[package]]
+name = "pwm"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "esp32-gpio",
+ "esp32-ledc",
+ "hal",
+ "kernel",
+ "soc-esp32",
 ]
 
 [[package]]

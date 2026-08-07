@@ -120,6 +120,8 @@ pub fn signal_index(signal: Signal) -> Option<u32> {
 
         // RMT channel n output. Eight consecutive indices from 87.
         Signal::RmtOut(n) if n < 8 => 87 + n as u32,
+        // `LEDC_HS_SIG_OUT0_IDX`. The low-speed channels start at 79.
+        Signal::LedcHs(n) if n < 8 => 71 + n as u32,
 
         _ => return None,
     })

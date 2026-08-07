@@ -27,6 +27,8 @@ pub const I2C0_BASE: u32 = 0x3FF5_3000;
 pub const I2C1_BASE: u32 = 0x3FF6_7000;
 
 pub const RMT_BASE: u32 = 0x3FF5_6000;
+/// `DR_REG_LEDC_BASE`. PWM: eight high-speed channels over four timers.
+pub const LEDC_BASE: u32 = 0x3FF5_9000;
 
 pub const GPIO_BASE: u32 = 0x3FF4_4000;
 pub const IO_MUX_BASE: u32 = 0x3FF4_9000;
@@ -51,6 +53,8 @@ pub const IRQ_I2C0: u8 = 49;
 pub const IRQ_I2C1: u8 = 50;
 /// 47, not 46. Checked against `ETS_RMT_INTR_SOURCE`.
 pub const IRQ_RMT: u8 = 47;
+/// `ETS_LEDC_INTR_SOURCE`. Fade-complete and timer overflow; unused so far.
+pub const IRQ_LEDC: u8 = 45;
 
 // ── Instance lookup ─────────────────────────────────────────────────────────
 //

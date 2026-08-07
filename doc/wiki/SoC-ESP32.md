@@ -132,7 +132,8 @@ behind each cell.
 | Interrupt crossbar | ✅ | `intr_map` routes any of the 69 sources onto a CPU input, refusing any the kernel could not service. |
 | Watchdogs | ✅ | RWDT and MWDT. Both verified resetting a real board for the right reason. |
 | Reset cause | ✅ | Distinguishes the three watchdogs, which "a watchdog reset it" does not. |
-| LEDC, TIMG, ADC, DAC, touch | ⛔ | Not started — see the issue tracker. |
+| LEDC (PWM) | ✅ | Eight high-speed channels over four timers. Verified by driving a pin and sampling it back: 5 kHz at 13-bit, duty measured across a sweep. |
+| TIMG, ADC, DAC, touch | ⛔ | Not started — see the issue tracker. |
 | I2S, TWAI, SDIO, EMAC | ⛔ | Not started. |
 | Wi-Fi, Bluetooth | ⛔ | Not planned. |
 

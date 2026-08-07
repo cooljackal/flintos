@@ -9,7 +9,7 @@
 //!
 //! Bit positions confirmed against esp-idf `soc/dport_reg.h`.
 
-use crate::addr::{DPORT_BASE, RMT_BASE, I2C0_BASE, I2C1_BASE, SPI2_BASE, SPI3_BASE, UART0_BASE, UART1_BASE, UART2_BASE};
+use crate::addr::{DPORT_BASE, LEDC_BASE, RMT_BASE, I2C0_BASE, I2C1_BASE, SPI2_BASE, SPI3_BASE, UART0_BASE, UART1_BASE, UART2_BASE};
 
 const PERIP_CLK_EN: u32 = DPORT_BASE + 0xC0;
 const PERIP_RST_EN: u32 = DPORT_BASE + 0xC4;
@@ -28,6 +28,8 @@ impl ClockBit {
     pub const I2C0: Self = Self(1 << 7);
     pub const I2C1: Self = Self(1 << 18);
     pub const RMT: Self = Self(1 << 9);
+    /// `DPORT_LEDC_CLK_EN`.
+    pub const LEDC: Self = Self(1 << 11);
 
     pub const fn mask(self) -> u32 {
         self.0
@@ -45,6 +47,7 @@ pub fn clock_bit(base: u32) -> Option<ClockBit> {
         I2C0_BASE => ClockBit::I2C0,
         I2C1_BASE => ClockBit::I2C1,
         RMT_BASE => ClockBit::RMT,
+    LEDC_BASE => ClockBit::LEDC,
         _ => return None,
     })
 }
@@ -112,6 +115,12 @@ mod tests {
         assert_eq!(clock_bit(I2C1_BASE), Some(ClockBit::I2C1));
         assert_eq!(clock_bit(UART0_BASE), Some(ClockBit::UART0));
         assert_eq!(clock_bit(SPI3_BASE), Some(ClockBit::SPI3));
+        assert_eq!(clock_bit(RMT_BASE), Some(ClockBit::RMT));
+        assert_eq!(clock_bit(LEDC_BASE), Some(ClockBit::LEDC));
+        // An address with no clock bit must map to None. This caught a real
+        // bug: a base constant that is not imported becomes a *binding* in a
+        // match arm rather than a comparison, so it matches everything and
+        // every peripheral gets the last arm's clock bit.
         assert_eq!(clock_bit(0xDEAD_BEEF), None);
     }
 }
