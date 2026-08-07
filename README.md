@@ -27,23 +27,67 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` → `make fl
 on real silicon — verified on an ESP32-PICO — but it is young, most drivers are
 thin, and the API will change.
 
-| What | Where it stands |
+Read the columns as "does this work on that instruction set". Only Xtensa has a
+port today, so the ARM32 column is an honest row of blanks rather than a
+roadmap — it is there because the `arch/` · `soc/` · `board/` split means
+filling it in is a matter of writing a port, not restructuring the kernel.
+AVR32 and MIPS columns get added when someone starts one.
+
+✅ verified on hardware  ·  🧪 written and host-tested, not yet on silicon  ·  🚧 partial  ·  ⛔ not started  ·  — not applicable
+
+### Kernel
+
+| Feature | Xtensa LX6 | ARM32 |
+|---|---|---|
+| Boots | ✅ | ⛔ |
+| Preemptive scheduling, 48 priorities | ✅ | ⛔ |
+| Context switch | ✅ register-window spill | ⛔ |
+| Interrupts, nesting, critical sections | ✅ | ⛔ |
+| Tick timer, measured CPU clock | ✅ | ⛔ |
+| Mutexes with priority inheritance | ✅ through chains of blocked owners | ⛔ |
+| Queues, task↔task and ISR→task | ✅ | ⛔ |
+| Task-vs-ISR race tests | ✅ 6 on target | ⛔ |
+| Watchdogs | ✅ both reset a real board | ⛔ |
+| Reset-cause reporting | ✅ | ⛔ |
+| Logging, metrics, panic capture | ✅ compiled out at zero cost | ⛔ |
+| Stack high-water marks | ✅ | ⛔ |
+| Second core, task pinning | ⛔ [#19](https://github.com/cooljackal/flintos/issues/19) | — single core |
+| DMA | ⛔ [#18](https://github.com/cooljackal/flintos/issues/18) | ⛔ |
+| Memory isolation (MPU) | — no MPU on this part | ⛔ |
+
+### Peripherals and drivers
+
+| Feature | Xtensa LX6 | ARM32 |
+|---|---|---|
+| UART | ✅ | ⛔ |
+| GPIO | ✅ | ⛔ |
+| Pin routing | ✅ GPIO matrix, any signal to any pad | — direct AF |
+| SPI | 🚧 register map audited, no device driven | ⛔ |
+| I²C | 🚧 routes and configures, no device driven | ⛔ |
+| RMT pulse generator | 🧪 [#23](https://github.com/cooljackal/flintos/issues/23) | — Xtensa-only peripheral |
+| Addressable LED (WS2812/SK6812) [^1] | 🧪 | 🧪 |
+| Hardware RNG | ✅ | ⛔ |
+| PWM / LEDC | ⛔ [#22](https://github.com/cooljackal/flintos/issues/22) | ⛔ |
+| ADC, DAC, touch | ⛔ | ⛔ |
+| Wi-Fi | ⛔ | — no radio |
+| Bluetooth / BLE | ⛔ | — no radio |
+| CAN (TWAI) | ⛔ | ⛔ |
+| Ethernet, SD/SDIO | ⛔ | ⛔ |
+| USB | — not on ESP32-v1 | ⛔ |
+
+[^1]: A layer-3 driver depends only on `api`, so it carries no architecture of
+its own — it needs a pulse generator underneath it and does not care what
+produces one. That is the whole point of the layer check.
+
+### Build and test
+
+| | |
 |---|---|
-| Builds for `xtensa-esp32-none-elf` | ✅ |
-| Host unit tests | ✅ 189 passing, kernel included |
-| On-target self-tests | 11 tests — 5 verified on ESP32-PICO, 6 race tests added and not yet run on hardware |
-| Layer boundary and package naming enforced in CI | ✅ |
-| UART, GPIO, SPI register maps | ✅ audited against Espressif's headers |
-| Boots on real hardware | ✅ ESP32-PICO, 80 MHz measured |
-| Preemptive multitasking on silicon | ✅ three tasks, three priorities, timing exact |
-| Register-window spill on switch | ✅ |
-| Watchdogs | ✅ both verified resetting a real board — `make test-watchdog` |
-| GPIO-matrix pin routing | ✅ any signal to any pad, or a clear error |
-| I²C driver | ⚠️ routes and configures; untested against a real device |
-| Priority inversion | ✅ 11 host tests, including inheritance through a chain of blocked owners |
-| Queue concurrency | ✅ 5 host tests on real threads — exactly-once delivery, contended slots, torn publish |
-| Task-vs-ISR races | ⚠️ 6 on-target tests written, awaiting a board run ([#50](https://github.com/cooljackal/flintos/issues/50)) |
-| Anything beyond ESP32 | ⛔ no Cortex-M port yet |
+| Host unit tests | ✅ 215 passing, kernel included |
+| On-target self-tests | ✅ 11 passing on an ESP32-PICO — `make test-target` |
+| Layer boundary and package naming | ✅ enforced in CI |
+| Image size reporting | ✅ `make size` |
+| ABI versioning and upgrade path | ✅ `make upgrade` |
 
 **Documentation:** the [wiki](https://github.com/cooljackal/flintos/wiki).
 
