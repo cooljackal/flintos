@@ -27,10 +27,39 @@ pub fn _flint_sys_spawn(
     spawn::sys_spawn(name, entry, priority, stack_size)
 }
 
+/// Spawn pinned to `core`.
+///
+/// `core` is a raw index rather than a `CoreId` so the syscall boundary stays
+/// a plain ABI. Out of range is rejected rather than clamped: a task pinned to
+/// a core that does not exist would never be scheduled anywhere, and silently
+/// running it on core 0 instead would defeat the reason it was pinned.
+#[no_mangle]
+pub fn _flint_sys_spawn_on(
+    core: u8,
+    name: &'static str,
+    entry: fn(),
+    priority: Priority,
+    stack_size: usize,
+) -> Option<TaskId> {
+    // Refused, not clamped, and refused for a second reason as well: a core
+    // that exists but does not run the scheduler would hold the task forever.
+    // See `smp::SCHEDULING_CORES`.
+    if !crate::smp::is_pinnable(core) {
+        return None;
+    }
+    spawn::sys_spawn_with_affinity(
+        name,
+        entry,
+        priority,
+        stack_size,
+        scheduler::Affinity::Core(hal::smp::CoreId(core)),
+    )
+}
+
 #[no_mangle]
 pub fn _flint_sys_yield() {
     scheduler::with(|sched| {
-        let cur = sched.current;
+        let cur = sched.current();
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
             tcb.state = TaskState::Ready;
             let prio = tcb.priority;
@@ -47,13 +76,13 @@ pub fn _flint_sys_sleep_ms(ms: u32) {
 
 #[no_mangle]
 pub fn _flint_sys_current_id() -> TaskId {
-    TaskId(scheduler::with(|s| s.current))
+    TaskId(scheduler::with(|s| s.current()))
 }
 
 #[no_mangle]
 pub fn _flint_sys_current_name() -> &'static str {
     scheduler::with(|s| {
-        let cur = s.current;
+        let cur = s.current();
         s.tasks[cur as usize].as_ref().map_or("", |t| t.name)
     })
 }

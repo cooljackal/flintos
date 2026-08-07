@@ -96,7 +96,7 @@ pub fn alloc(size: u32) -> Result<DmaHandle, DmaError> {
         Ok(DmaHandle {
             pool_offset: start,
             size: aligned,
-            owner_task: sched.current,
+            owner_task: sched.current(),
         })
     })
 }
@@ -114,7 +114,7 @@ pub fn submit(
     _direction: DmaDirection,
     _peripheral_id: u32,
 ) -> Result<DmaTransferId, DmaError> {
-    let current = crate::scheduler::with(|s| s.current);
+    let current = crate::scheduler::with(|s| s.current());
     if handle.owner_task != current {
         return Err(DmaError::NotOwner);
     }

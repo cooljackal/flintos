@@ -167,7 +167,7 @@ pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
         return false;
     }
     let cur = scheduler::with(|sched| {
-        let cur = sched.current;
+        let cur = sched.current();
         let dl = deadline_for(timeout_ms);
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
             tcb.sleep_until = dl;
@@ -211,7 +211,7 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
         return false;
     }
     let cur = scheduler::with(|sched| {
-        let cur = sched.current;
+        let cur = sched.current();
         let dl = deadline_for(timeout_ms);
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
             tcb.sleep_until = dl;

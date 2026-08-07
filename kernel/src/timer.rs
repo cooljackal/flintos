@@ -25,7 +25,7 @@ pub fn sleep_ms(ms: u32) {
         ));
     }
     scheduler::with(|sched| {
-        let cur = sched.current;
+        let cur = sched.current();
         let wake = sched.ticks().wrapping_add(ms as u64);
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
             tcb.sleep_until = wake;

@@ -92,7 +92,7 @@ impl<T> Spinlock<T> {
     #[inline(always)]
     pub fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         crate::arch::cs_with(|| {
-            let me = Smp::current_core().0;
+            let me = Smp::context_id();
 
             // Reentrancy is a deadlock, not a wait. Check before spinning, so
             // the report happens instead of the hang.
@@ -125,7 +125,7 @@ impl<T> Spinlock<T> {
     #[inline(always)]
     pub fn try_with<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         crate::arch::cs_with(|| {
-            let me = Smp::current_core().0;
+            let me = Smp::context_id();
             if self.holder.load(Ordering::Relaxed) == me {
                 return None;
             }
@@ -141,12 +141,15 @@ impl<T> Spinlock<T> {
         })
     }
 
-    /// Which core holds this, if any. Diagnostics only — the answer can be
-    /// stale before it is read.
-    pub fn holder(&self) -> Option<CoreId> {
+    /// Which execution context holds this, if any. Diagnostics only — the
+    /// answer can be stale before it is read.
+    ///
+    /// A context id, not a [`CoreId`]: on hardware they are the same number,
+    /// and on a host they are not.
+    pub fn holder(&self) -> Option<u8> {
         match self.holder.load(Ordering::Relaxed) {
             UNLOCKED => None,
-            c => Some(CoreId(c)),
+            c => Some(c),
         }
     }
 
@@ -175,6 +178,30 @@ pub fn cores() -> u8 {
     Smp::cores()
 }
 
+/// How many cores currently run the scheduler.
+///
+/// **One**, and that is the honest answer rather than a placeholder. The
+/// second core starts, has its cache, can take the kernel's locks and can run
+/// flash-resident code — but it has no vector table, no tick and no idle task,
+/// so nothing on it ever calls `schedule()`.
+///
+/// This exists so `spawn_on` can *refuse* a core that would never run the
+/// task. A pinned task that is silently never scheduled is the worst outcome
+/// available: it looks like a spawn that worked.
+///
+/// Raising this is the remaining work on #20, and it means giving the APP CPU
+/// a trap handler and a tick of its own.
+pub const SCHEDULING_CORES: u8 = 1;
+
+/// Whether a task may be pinned to `core`.
+///
+/// Three ways to say no, and they are different failures worth separating from
+/// the allocation failures that follow: the core is beyond `MAX_CORES`, the
+/// part does not have it, or it has it but nothing there runs the scheduler.
+pub const fn is_pinnable(core: u8) -> bool {
+    (core as usize) < hal::smp::MAX_CORES && core < SCHEDULING_CORES
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -185,6 +212,16 @@ mod tests {
     use std::sync::atomic::AtomicU32;
     use std::sync::Arc;
     use std::vec::Vec;
+
+    #[test]
+    fn only_a_core_that_schedules_can_be_pinned_to() {
+        // Core 0 always runs the scheduler. Core 1 starts and runs code but
+        // has no tick or trap handler yet, so a task pinned there would look
+        // spawned and never run.
+        assert!(is_pinnable(0));
+        assert!(!is_pinnable(hal::smp::MAX_CORES as u8), "past the end");
+        assert_eq!(is_pinnable(1), SCHEDULING_CORES > 1);
+    }
 
     #[test]
     fn a_lock_is_free_until_taken() {
@@ -199,7 +236,7 @@ mod tests {
     fn the_holder_is_recorded_while_held() {
         let l = Spinlock::new(());
         l.with(|_| {
-            assert_eq!(l.holder(), Some(current_core()));
+            assert_eq!(l.holder(), Some(crate::arch::Smp::context_id()));
         });
     }
 
@@ -228,6 +265,11 @@ mod tests {
         // races and the total comes out short; the failure is silent and
         // load-dependent, which is why it is worth a real-threads test rather
         // than a reasoned argument.
+        // Exactly `MAX_CORES`, because a host thread models a core and ids
+        // wrap. More threads would share an id and trip the reentrancy check
+        // on honest contention. Iterations raised to keep the stress.
+        // Context ids are unique per thread, so this is free to use more
+        // threads than the part has cores.
         const THREADS: usize = 8;
         const EACH: u32 = 20_000;
 

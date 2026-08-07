@@ -93,6 +93,22 @@ pub fn sys_spawn(
     priority: Priority,
     stack_size: usize,
 ) -> Option<TaskId> {
+    sys_spawn_with_affinity(name, entry, priority, stack_size, scheduler::Affinity::Any)
+}
+
+/// Spawn with an explicit core affinity.
+///
+/// `Affinity::Any` is what `sys_spawn` passes and what most tasks want.
+/// Pinning is for a task that cannot float: a driver whose peripheral
+/// interrupt is routed to one core's matrix, or work with a timing budget that
+/// a migration would blow.
+pub fn sys_spawn_with_affinity(
+    name: &'static str,
+    entry: fn(),
+    priority: Priority,
+    stack_size: usize,
+    affinity: scheduler::Affinity,
+) -> Option<TaskId> {
     // Validate before taking a TCB slot, so a rejected request leaves no trace.
     //
     // These used to be silently clamped with `.min(MAX_STACK_SIZE)`. With no
@@ -106,6 +122,9 @@ pub fn sys_spawn(
 
     scheduler::with(|sched| {
         let id = sched.alloc_id()? as usize;
+        if let Some(tcb) = &mut sched.tasks[id] {
+            tcb.affinity = affinity;
+        }
 
         let stack_base = match allocate_stack(stack_size) {
             Some(b) => b,
@@ -188,7 +207,7 @@ unsafe fn init_context(ctx: &mut hal::TaskContext, entry: usize, stack_top: u32)
 #[no_mangle]
 extern "C" fn flint_task_exit() -> ! {
     scheduler::with(|sched| {
-        let cur = sched.current;
+        let cur = sched.current();
         let Some(tcb) = &mut sched.tasks[cur as usize] else {
             return;
         };

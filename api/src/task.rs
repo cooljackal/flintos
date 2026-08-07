@@ -21,6 +21,34 @@ pub fn spawn(
     unsafe { _flint_sys_spawn(name, entry, priority, stack_size) }
 }
 
+/// Spawn a task pinned to one core.
+///
+/// [`spawn`] means "either core". This means "this core, always" — for a task
+/// that cannot float: a driver whose peripheral interrupt is routed to one
+/// core's matrix, or work whose timing budget a migration would blow.
+///
+/// Returns `None` if `core` is not a core this build runs on. It is not
+/// clamped to core 0: a task that asked to be pinned and silently was not is
+/// worse than one that failed to start.
+pub fn spawn_on(
+    core: u8,
+    name: &'static str,
+    entry: fn(),
+    priority: Priority,
+    stack_size: usize,
+) -> Option<TaskId> {
+    extern "Rust" {
+        fn _flint_sys_spawn_on(
+            core: u8,
+            name: &'static str,
+            entry: fn(),
+            priority: Priority,
+            stack_size: usize,
+        ) -> Option<TaskId>;
+    }
+    unsafe { _flint_sys_spawn_on(core, name, entry, priority, stack_size) }
+}
+
 /// Yield the current task's remaining quantum.
 pub fn yield_now() {
     extern "Rust" {

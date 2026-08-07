@@ -117,7 +117,7 @@ pub fn handle_at(
     // this report exists for — and blocking here would hang the panic handler
     // instead of printing it. Better a report with unknown task than none.
     let (current, tick, task_name) = crate::scheduler::try_with(|sched| {
-        let current = sched.current;
+        let current = sched.current();
         (
             current,
             sched.ticks(),

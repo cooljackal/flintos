@@ -52,6 +52,21 @@ pub trait MultiCore {
 
     /// How many cores this part has running Flint. Not how many exist.
     fn cores() -> u8;
+
+    /// Identifies the calling *execution context* for lock ownership.
+    ///
+    /// On hardware this is the core id, and the default reflects that: one
+    /// core is one context. It is separate from [`MultiCore::current_core`]
+    /// because the two answer different questions — a core id indexes per-core
+    /// arrays and must be below [`MAX_CORES`], while a context id only has to
+    /// be *unique among things that can hold a lock at once*.
+    ///
+    /// They diverge on a host, where threads stand in for cores: there can be
+    /// more threads than cores, and two of them sharing an id would look to a
+    /// spinlock like one core locking twice.
+    fn context_id() -> u8 {
+        Self::current_core().0
+    }
 }
 
 #[cfg(test)]

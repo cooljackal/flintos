@@ -99,20 +99,34 @@ pub mod host {
     /// is what lets the spinlock be tested against genuine parallelism instead
     /// of a simulation of it.
     ///
-    /// Ids are *not* wrapped to `MAX_CORES`. Wrapping was the first attempt
-    /// and it broke the invariant the lock rests on: two threads sharing an id
-    /// look like one core taking the lock twice, so the reentrancy check fired
-    /// on honest contention. One execution context, one id — the same thing
-    /// real hardware guarantees.
+    /// **A test must therefore use no more than `MAX_CORES` threads at once.**
+    /// Ids wrap, so a third concurrent thread would share an id with the first
+    /// — and two contexts sharing an id look to the spinlock like one core
+    /// locking twice, which trips its reentrancy check on honest contention.
     ///
-    /// Capped below 254 to stay clear of the spinlock's `UNLOCKED` sentinel.
-    /// A test with 254 threads has other problems.
+    /// Wrapping is not a shortcut, it is the constraint hardware imposes: a
+    /// core id indexes per-core arrays (`Scheduler::current_per_core`), so it
+    /// must be less than `MAX_CORES`. An earlier version handed out unique ids
+    /// so the lock tests could use eight threads, and the scheduler promptly
+    /// indexed a two-element array with core 9.
     pub struct HostSmp;
 
     static NEXT_CORE: AtomicU32 = AtomicU32::new(0);
 
     std::thread_local! {
-        static MY_CORE: u8 = (NEXT_CORE.fetch_add(1, Ordering::Relaxed) % 254) as u8;
+        static MY_CORE: u8 = {
+            let n = NEXT_CORE.fetch_add(1, Ordering::Relaxed) as usize;
+            (n % hal::smp::MAX_CORES) as u8
+        };
+    }
+
+    static NEXT_CONTEXT: AtomicU32 = AtomicU32::new(0);
+
+    std::thread_local! {
+        /// Unique per thread, unlike the core id. Capped below the spinlock's
+        /// `UNLOCKED` sentinel; a test with 254 live threads has other
+        /// problems.
+        static MY_CONTEXT: u8 = (NEXT_CONTEXT.fetch_add(1, Ordering::Relaxed) % 254) as u8;
     }
 
     impl hal::smp::MultiCore for HostSmp {
@@ -121,6 +135,11 @@ pub mod host {
         }
         fn cores() -> u8 {
             hal::smp::MAX_CORES as u8
+        }
+        /// Unique per thread, so two threads never look like one core taking a
+        /// lock twice. On hardware this is just the core id.
+        fn context_id() -> u8 {
+            MY_CONTEXT.with(|c| *c)
         }
     }
 

@@ -89,7 +89,7 @@ pub fn lock(addr: usize) -> bool {
             ));
             return LockOutcome::Failed;
         }
-        let cur = sched.current;
+        let cur = sched.current();
         let idx = match find_or_create(addr) {
             Some(i) => i,
             None => {
@@ -165,7 +165,7 @@ pub fn unlock(addr: usize) {
             Some(i) => i,
             None => return false,
         };
-        let cur = sched.current;
+        let cur = sched.current();
         let t = table();
         if t[idx].owner == NO_TASK {
             log_error(format_args!(

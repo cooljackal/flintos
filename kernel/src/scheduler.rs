@@ -79,6 +79,8 @@ pub struct TaskControlBlock {
     pub id: u32,
     pub name: &'static str,
     pub entry: Option<fn()>,
+    /// Which core(s) this task may run on.
+    pub affinity: Affinity,
     /// The task's own (base) priority.
     pub base_prio: u8,
     /// Current effective priority (base, or boosted by inheritance).
@@ -103,6 +105,7 @@ impl TaskControlBlock {
             id: u32::MAX,
             name: "",
             entry: None,
+            affinity: Affinity::Any,
             base_prio: 0,
             priority: 0,
             state: TaskState::Init,
@@ -118,9 +121,52 @@ impl TaskControlBlock {
     }
 }
 
+/// Which core(s) a task may run on.
+///
+/// The default is [`Affinity::Any`], because most tasks genuinely do not care
+/// and pinning what does not need pinning throws away the second core.
+///
+/// Pinning exists for the ones that do: a driver whose peripheral interrupt is
+/// routed to one core's matrix cannot service it from the other, and anything
+/// with a hard timing budget does not want to be moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Affinity {
+    /// Runs wherever there is room.
+    #[default]
+    Any,
+    /// Runs only on this core, and is skipped by every other.
+    Core(hal::smp::CoreId),
+}
+
+impl Affinity {
+    /// Whether a task with this affinity may run on `core`.
+    pub const fn allows(self, core: hal::smp::CoreId) -> bool {
+        match self {
+            Affinity::Any => true,
+            Affinity::Core(c) => c.0 == core.0,
+        }
+    }
+
+    /// The core this is pinned to, if any.
+    pub const fn pinned_to(self) -> Option<hal::smp::CoreId> {
+        match self {
+            Affinity::Any => None,
+            Affinity::Core(c) => Some(c),
+        }
+    }
+}
+
 pub struct Scheduler {
     pub tasks: [Option<TaskControlBlock>; MAX_TASKS],
-    pub current: u32,
+    /// The task each core is running. Indexed by [`hal::smp::CoreId`].
+    ///
+    /// Per-core because two cores run two tasks. A single field was correct
+    /// while one core ran the kernel and becomes "whichever core wrote last"
+    /// the moment that stops — the sort of bug that shows up as a task running
+    /// on both cores at once.
+    ///
+    /// Read it through [`Scheduler::current`], which asks the caller's core.
+    pub current_per_core: [u32; hal::smp::MAX_CORES],
     /// One bit per effective priority level with at least one ready task.
     pub ready_mask: u64,
     /// Round-robin rotor: last task index dispatched at each priority level.
@@ -137,7 +183,7 @@ impl Scheduler {
     pub const fn new() -> Self {
         Self {
             tasks: [const { None }; MAX_TASKS],
-            current: u32::MAX,
+            current_per_core: [u32::MAX; hal::smp::MAX_CORES],
             ready_mask: 0,
             last_run: [0; NUM_PRIORITIES],
         }
@@ -199,8 +245,18 @@ impl Scheduler {
         }
     }
 
+    /// The task the *calling* core is running.
+    pub fn current(&self) -> u32 {
+        self.current_per_core[crate::smp::current_core().index()]
+    }
+
+    /// What `core` is running.
+    pub fn current_on(&self, core: hal::smp::CoreId) -> u32 {
+        self.current_per_core[core.index()]
+    }
+
     pub fn set_current(&mut self, id: u32) {
-        self.current = id;
+        self.current_per_core[crate::smp::current_core().index()] = id;
         if let Some(tcb) = &mut self.tasks[id as usize] {
             tcb.state = TaskState::Running;
         }
@@ -212,7 +268,7 @@ impl Scheduler {
     }
 
     pub fn current_priority(&self) -> u8 {
-        self.tasks[self.current as usize]
+        self.tasks[self.current() as usize]
             .as_ref()
             .map_or(IDLE_PRIORITY, |t| t.priority)
     }
@@ -265,14 +321,14 @@ impl Scheduler {
         }
 
         // Decrement the current task's quantum; expiry triggers round-robin.
-        if let Some(tcb) = &mut self.tasks[self.current as usize] {
+        if let Some(tcb) = &mut self.tasks[self.current() as usize] {
             tcb.quantum = tcb.quantum.saturating_sub(1);
             if tcb.quantum == 0 {
                 tcb.quantum = DEFAULT_QUANTUM_MS;
                 if tcb.state == TaskState::Running {
                     // Only switch if another ready task shares this priority.
                     let prio = tcb.priority;
-                    if self.another_ready_at(prio, self.current) {
+                    if self.another_ready_at(prio, self.current()) {
                         need_switch = true;
                     }
                 }
@@ -299,7 +355,14 @@ impl Scheduler {
     }
 
     /// Pick the next task to run. Round-robin within the top ready priority.
+    /// Pick the highest-priority runnable task this core may run.
+    ///
+    /// "May run" is the new part. A task pinned elsewhere is skipped even when
+    /// its priority bit is set, so `ready_mask` is a hint about *some* core
+    /// rather than a promise to this one — which is why the priority loop
+    /// continues instead of returning as soon as a bit is found.
     pub fn schedule(&mut self) -> u32 {
+        let core = crate::smp::current_core();
         for p in 0..NUM_PRIORITIES {
             if self.ready_mask & (1u64 << p) == 0 {
                 continue;
@@ -312,6 +375,10 @@ impl Scheduler {
                 if let Some(tcb) = &self.tasks[i] {
                     if tcb.priority as usize == p
                         && matches!(tcb.state, TaskState::Ready | TaskState::Running)
+                        && tcb.affinity.allows(core)
+                        // A task already running on the *other* core must not
+                        // be handed to this one as well.
+                        && !self.running_elsewhere(i as u32, core)
                     {
                         self.last_run[p] = i as u32;
                         return i as u32;
@@ -319,12 +386,20 @@ impl Scheduler {
                 }
             }
         }
-        self.current
+        self.current()
+    }
+
+    /// Whether `id` is the current task on some core other than `core`.
+    fn running_elsewhere(&self, id: u32, core: hal::smp::CoreId) -> bool {
+        self.current_per_core
+            .iter()
+            .enumerate()
+            .any(|(c, &cur)| c != core.index() && cur == id)
     }
 
     /// Block the current task (queue/mutex/sleep), clearing its ready bit.
     pub fn block_current(&mut self, state: TaskState) {
-        let prio = if let Some(tcb) = &mut self.tasks[self.current as usize] {
+        let prio = if let Some(tcb) = &mut self.tasks[self.current() as usize] {
             tcb.state = state;
             Some(tcb.priority)
         } else {
@@ -336,7 +411,7 @@ impl Scheduler {
     }
 
     pub fn block_current_on_mutex(&mut self, mutex_addr: usize) {
-        let prio = if let Some(tcb) = &mut self.tasks[self.current as usize] {
+        let prio = if let Some(tcb) = &mut self.tasks[self.current() as usize] {
             tcb.state = TaskState::BlockedMutex;
             tcb.blocked_on_mutex = Some(mutex_addr);
             Some(tcb.priority)
@@ -488,5 +563,157 @@ pub fn try_with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> Option<R> {
 pub fn request_switch() {
     set_pending_switch();
     unsafe { crate::arch::registers::request_switch() }
+}
+
+// ── Affinity tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod affinity_tests {
+    use super::*;
+    use crate::testsupport;
+    use hal::smp::CoreId;
+
+    /// Make `id` pinned to `core`.
+    fn pin(id: u32, core: u8) {
+        with(|s| {
+            if let Some(tcb) = &mut s.tasks[id as usize] {
+                tcb.affinity = Affinity::Core(CoreId(core));
+            }
+        });
+    }
+
+    #[test]
+    fn affinity_answers_who_may_run() {
+        assert!(Affinity::Any.allows(CoreId(0)));
+        assert!(Affinity::Any.allows(CoreId(1)));
+        assert!(Affinity::Core(CoreId(1)).allows(CoreId(1)));
+        assert!(!Affinity::Core(CoreId(1)).allows(CoreId(0)));
+        assert_eq!(Affinity::Any.pinned_to(), None);
+        assert_eq!(Affinity::Core(CoreId(1)).pinned_to(), Some(CoreId(1)));
+    }
+
+    #[test]
+    fn a_task_defaults_to_running_anywhere() {
+        // Pinning is opt-in. A default of "core 0" would quietly waste the
+        // second core for every application that never thought about it.
+        let _k = testsupport::lock();
+        let id = testsupport::task(5);
+        with(|s| assert_eq!(s.tasks[id as usize].as_ref().unwrap().affinity, Affinity::Any));
+    }
+
+    #[test]
+    fn a_task_pinned_elsewhere_is_never_chosen() {
+        // The property #20 is about: a pinned task must not migrate. Its
+        // priority bit is set in `ready_mask` either way, so a scheduler that
+        // trusted the mask alone would hand it straight to the wrong core.
+        let _k = testsupport::lock();
+        let mine = testsupport::task(5);
+        let theirs = testsupport::task(3); // higher priority, wrong core
+        pin(theirs, 1);
+        pin(mine, 0);
+
+        let picked = with(|s| {
+            // The test thread is some core id; force the question to be about
+            // core 0 by pinning the candidate set accordingly.
+            s.ready_mask |= 1u64 << 3;
+            s.schedule()
+        });
+        // Whichever core the test thread claims to be, it must not be handed a
+        // task pinned to the *other* one.
+        let core = crate::smp::current_core();
+        let aff = with(|s| s.tasks[picked as usize].as_ref().unwrap().affinity);
+        assert!(aff.allows(core), "picked {picked}, pinned {aff:?}, on {core:?}");
+    }
+
+    #[test]
+    fn an_unpinned_task_is_eligible_on_every_core() {
+        let _k = testsupport::lock();
+        let id = testsupport::task(7);
+        let aff = with(|s| s.tasks[id as usize].as_ref().unwrap().affinity);
+        for c in 0..hal::smp::MAX_CORES as u8 {
+            assert!(aff.allows(CoreId(c)), "unpinned task refused core {c}");
+        }
+    }
+
+    #[test]
+    fn current_is_tracked_per_core() {
+        // One field would make "the current task" mean whichever core wrote
+        // last, and a task would appear to run on both at once.
+        let _k = testsupport::lock();
+        let a = testsupport::task(5);
+        let b = testsupport::task(6);
+        with(|s| {
+            s.current_per_core[0] = a;
+            s.current_per_core[1] = b;
+            assert_eq!(s.current_on(CoreId(0)), a);
+            assert_eq!(s.current_on(CoreId(1)), b);
+            assert_ne!(s.current_on(CoreId(0)), s.current_on(CoreId(1)));
+        });
+    }
+
+    #[test]
+    fn a_task_running_on_one_core_is_not_handed_to_the_other() {
+        // Without this check both cores can pick the same task, and it would
+        // then be resumed from one saved context on two stacks.
+        let _k = testsupport::lock();
+        let only = testsupport::task(5);
+        let me = crate::smp::current_core();
+        let other = CoreId(if me.0 == 0 { 1 } else { 0 });
+        with(|s| {
+            s.current_per_core[other.index()] = only;
+            assert!(s.running_elsewhere(only, me));
+            assert!(!s.running_elsewhere(only, other));
+        });
+    }
+
+    #[test]
+    fn pinning_to_a_core_that_does_not_schedule_is_refused() {
+        // The second core exists and runs code, but nothing on it calls
+        // `schedule()` yet. A task pinned there would look spawned and never
+        // run -- the worst of the three possible outcomes.
+        let _k = testsupport::lock();
+        if crate::smp::SCHEDULING_CORES < 2 {
+            assert!(crate::syscall::_flint_sys_spawn_on(
+                1,
+                "pinned-to-idle-core",
+                || {},
+                hal::types::Priority::Normal(1),
+                4096
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn affinity_is_recorded_on_the_task_that_asked_for_it() {
+        // `sys_spawn_on` cannot run here -- it allocates from a stack pool the
+        // host does not have -- so this checks the part that is about pinning:
+        // the affinity reaches the TCB and survives.
+        let _k = testsupport::lock();
+        let id = testsupport::task(5);
+        pin(id, 0);
+        with(|s| {
+            assert_eq!(
+                s.tasks[id as usize].as_ref().unwrap().affinity,
+                Affinity::Core(CoreId(0))
+            );
+        });
+        assert!(crate::smp::is_pinnable(0));
+    }
+
+    #[test]
+    fn pinning_to_a_core_that_does_not_exist_is_refused() {
+        // Clamping to core 0 would run the task somewhere it explicitly asked
+        // not to be, which is worse than not starting.
+        let _k = testsupport::lock();
+        assert!(crate::syscall::_flint_sys_spawn_on(
+            hal::smp::MAX_CORES as u8,
+            "nope",
+            || {},
+            hal::types::Priority::Normal(1),
+            4096
+        )
+        .is_none());
+    }
 }
 

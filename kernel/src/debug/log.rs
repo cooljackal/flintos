@@ -40,7 +40,7 @@ pub fn write(level: Level, args: &core::fmt::Arguments<'_>) {
     //
     // A log line missing its tick and task is worth far more than a kernel that
     // deadlocks trying to stamp one.
-    let (tick, task) = crate::scheduler::try_with(|s| (s.ticks(), s.current))
+    let (tick, task) = crate::scheduler::try_with(|s| (s.ticks(), s.current()))
         .unwrap_or((0, u32::MAX));
 
     // Store in the ring buffer (under a critical section — shared with readers).

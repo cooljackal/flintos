@@ -75,8 +75,10 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
 
             if TRAP_DIAGNOSTICS && now % 1000 == 0 {
                 scheduler::with(|sched| {
-                    let cur = sched.current;
-                    debug::fault::raw_print("[FLINT] t=");
+                    let cur = sched.current();
+                    debug::fault::raw_print("[FLINT] core=");
+                    debug::fault::raw_dec(crate::smp::current_core().0 as u32);
+                    debug::fault::raw_print(" t=");
                     debug::fault::raw_dec(now as u32);
                     debug::fault::raw_print(" cur=");
                     debug::fault::raw_dec(cur);
@@ -84,6 +86,17 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
                     debug::fault::raw_print(match &sched.tasks[cur as usize] {
                         Some(tcb) => tcb.name,
                         None => "?",
+                    });
+                    // Affinity, because "why is this task here" is the
+                    // question a pinned system makes you ask.
+                    debug::fault::raw_print(match sched.tasks[cur as usize]
+                        .as_ref()
+                        .map(|t| t.affinity)
+                    {
+                        Some(scheduler::Affinity::Any) => " aff=any",
+                        Some(scheduler::Affinity::Core(c)) if c.0 == 0 => " aff=core0",
+                        Some(scheduler::Affinity::Core(_)) => " aff=core1",
+                        None => " aff=?",
                     });
                     debug::fault::raw_print(" ready=");
                     debug::fault::raw_hex(sched.ready_mask as u32);
@@ -102,7 +115,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
                     scheduler::set_pending_switch();
                 }
                 // Stack high-water for the running task, while we hold it.
-                let cur = sched.current;
+                let cur = sched.current();
                 debug::stack::update_hwm(sched, cur);
             });
             timer::process_timers(now);
@@ -146,7 +159,7 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
         if !scheduler::take_pending_switch() {
             return None;
         }
-        let cur = sched.current;
+        let cur = sched.current();
         let next = sched.schedule();
         if next == cur {
             return None;
