@@ -180,18 +180,18 @@ pub fn cores() -> u8 {
 
 /// How many cores currently run the scheduler.
 ///
-/// **One**, and that is the honest answer rather than a placeholder. The
-/// second core starts, has its cache, can take the kernel's locks and can run
-/// flash-resident code — but it has no vector table, no tick and no idle task,
-/// so nothing on it ever calls `schedule()`.
+/// Both, once `boot::join_scheduler` has run on the second one.
 ///
 /// This exists so `spawn_on` can *refuse* a core that would never run the
 /// task. A pinned task that is silently never scheduled is the worst outcome
 /// available: it looks like a spawn that worked.
 ///
-/// Raising this is the remaining work on #20, and it means giving the APP CPU
-/// a trap handler and a tick of its own.
-pub const SCHEDULING_CORES: u8 = 1;
+/// It is a compile-time constant rather than a count of cores that have
+/// actually joined, which means pinning to core 1 is accepted from the moment
+/// the image is built. An application that pins without starting the second
+/// core gets a task that waits — visible in the trap diagnostics as a ready
+/// task nobody runs, rather than a silent nothing.
+pub const SCHEDULING_CORES: u8 = 2;
 
 /// Whether a task may be pinned to `core`.
 ///

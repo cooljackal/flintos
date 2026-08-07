@@ -280,6 +280,10 @@ fn install_idle_task() {
             tcb.state = scheduler::TaskState::Running;
             tcb.quantum = scheduler::DEFAULT_QUANTUM_MS;
             tcb.stack_size = 0;
+            // Pinned, and it matters. Idle runs on its core's own stack and
+            // has no saved context to resume from, so the other core picking
+            // it up would resume a stack it does not own.
+            tcb.affinity = scheduler::Affinity::Core(hal::smp::CoreId::BOOT);
         }
         sched.ready_mask |= 1u64 << scheduler::IDLE_PRIORITY;
         sched.set_current(0);
@@ -303,4 +307,68 @@ fn idle_loop() -> ! {
 /// to (idle's context is the live boot context), but keeps the TCB well-formed.
 fn idle_loop_entry() {
     idle_loop();
+}
+
+// ── Secondary core ──────────────────────────────────────────────────────────
+
+/// Bring a secondary core into the scheduler.
+///
+/// Called *on that core*, by the trampoline, once it has a stack. When this
+/// returns the core is a full peer: it takes traps, ticks, and schedules.
+///
+/// The order is the whole of it. Each step makes the next one survivable:
+///
+/// 1. **Vector table.** Until `VECBASE` points somewhere real, any exception —
+///    including the first tick — goes wherever reset left it.
+/// 2. **An idle task, pinned here.** A core with nothing to run still needs a
+///    `current`: the trap handler saves the outgoing context into it. Pinned,
+///    because idle runs on this core's own stack.
+/// 3. **This core's timer.** `CCOUNT`, `CCOMPARE0` and `INTENABLE` are all
+///    per-core. The shared tick count is *not* advanced here — see
+///    `XtensaTick::tick`.
+/// 4. **Unmask.** Only now, with a handler installed and a task to switch away
+///    from.
+///
+/// # Safety
+/// Runs on a core that is not yet scheduling, with interrupts masked.
+#[cfg(target_os = "none")]
+pub unsafe fn join_scheduler() -> ! {
+    extern "C" {
+        static _vector_table_start: u32;
+    }
+    registers::set_vecbase(core::ptr::addr_of!(_vector_table_start) as u32);
+
+    let me = crate::smp::current_core();
+    scheduler::with(|sched| {
+        let id = sched.alloc_id().expect("no TCB slot for a secondary idle task");
+        if let Some(tcb) = &mut sched.tasks[id as usize] {
+            tcb.name = "idle1";
+            tcb.entry = Some(idle_loop_entry);
+            tcb.base_prio = scheduler::IDLE_PRIORITY;
+            tcb.priority = scheduler::IDLE_PRIORITY;
+            tcb.state = scheduler::TaskState::Running;
+            tcb.quantum = scheduler::DEFAULT_QUANTUM_MS;
+            tcb.stack_size = 0;
+            tcb.affinity = scheduler::Affinity::Core(me);
+        }
+        sched.ready_mask |= 1u64 << scheduler::IDLE_PRIORITY;
+        sched.set_current(id);
+    });
+
+    Tick::init_this_core();
+
+    // The software interrupt too, and it is not optional. `request_switch`
+    // raises it to make a cooperative switch happen -- every `sleep_ms`,
+    // `yield_now` and blocking send goes through it. Masked, the call returns
+    // and the task keeps running with its TCB already marked blocked, until
+    // the next timer tick happens to preempt it.
+    //
+    // That is exactly what the second core did before this line existed: a
+    // task sleeping 7 ms iterated ten thousand times a second. `INTENABLE` is
+    // per-core, so core 0 enabling it says nothing about core 1.
+    registers::enable_interrupt(registers::INT_SOFTWARE);
+
+    let _prev = registers::set_intlevel_0();
+
+    idle_loop()
 }

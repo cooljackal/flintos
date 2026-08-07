@@ -50,9 +50,10 @@ pub fn lock() -> MutexGuard<'static, ()> {
 fn reset() {
     scheduler::with(|sched| *sched = Scheduler::new());
     crate::mutex::reset_for_test();
-    // Leftover from a previous test would make the next one's first
+    // Every core's, not just this thread's: the flags are per-core now, and a
+    // leftover on another core makes the next test's first
     // `take_pending_switch` lie.
-    scheduler::take_pending_switch();
+    scheduler::clear_all_pending_switches();
 }
 
 /// Create a Ready task at `prio` and return its id.

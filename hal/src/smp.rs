@@ -2,11 +2,14 @@
 
 //! Core identity, for kernels that run on more than one.
 //!
-//! Deliberately minimal and deliberately not ESP32-shaped. The interesting
-//! multi-core parts today are as often asymmetric as symmetric — a Cortex-M7
-//! beside an M0, an ESP32's PRO and APP cores, an RP2040's two identical M0s —
-//! and the one thing all of them need from a kernel is *"which core am I?"*,
-//! answered cheaply enough to sit at the top of a lock.
+//! **Symmetric cores only.** Every core Flint runs on is assumed to be a peer:
+//! same instruction set, same speed, same view of memory. That covers the
+//! ESP32's two LX6s and an RP2040's two M0s.
+//!
+//! Asymmetric parts — an M7 beside an M0 — are deliberately out of scope. In
+//! practice those run two different images rather than one kernel across both,
+//! and guessing at which of the many possible splits to support would be
+//! designing against a hypothetical.
 
 /// Which core is executing.
 ///

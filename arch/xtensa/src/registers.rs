@@ -125,6 +125,20 @@ pub unsafe fn write_ps(val: u32) {
 /// bring-up diagnostics: it should equal `_vector_table_start` once
 /// `startup.S` has run, proving the vector table was actually installed
 /// rather than left at the ROM's own vectors.
+/// Point this core at a vector table.
+///
+/// Per-core: each core has its own `VECBASE`, and a core that never sets one
+/// takes every exception to wherever reset left it. The two cores can share
+/// the same table — it is code, and the handler is written to work on either.
+///
+/// # Safety
+/// `base` must point at a valid vector table, 1 KiB aligned. Wrong, and the
+/// first interrupt on this core goes somewhere arbitrary.
+#[inline(always)]
+pub unsafe fn set_vecbase(base: u32) {
+    core::arch::asm!("wsr.vecbase {0}", "rsync", in(reg) base, options(nostack));
+}
+
 pub unsafe fn read_vecbase() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.vecbase {0}", out(reg) val);

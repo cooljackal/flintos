@@ -64,7 +64,7 @@ in the wiki: [Xtensa LX6](https://github.com/cooljackal/flintos/wiki/Arch-Xtensa
 | Logging, metrics, panic capture | ✅ | ⛔ |
 | Stack high-water marks | ✅ | ⛔ |
 | Second core | ✅ | — |
-| Task pinning | 🚧 [#20](https://github.com/cooljackal/flintos/issues/20) | — |
+| Task pinning | ✅ | — |
 | DMA | ⛔ | ⛔ |
 | Memory isolation (MPU) | — | ⛔ |
 
@@ -111,7 +111,7 @@ own — see [Architecture](https://github.com/cooljackal/flintos/wiki/Architectu
 
 | | |
 |---|---|
-| Host unit tests | ✅ 359 passing, kernel included |
+| Host unit tests | ✅ 360 passing, kernel included |
 | On-target self-tests | ✅ 11 passing on an ESP32-PICO — `make test-target` |
 | Layer boundary and package naming | ✅ enforced in CI |
 | Image size reporting | ✅ `make size` |

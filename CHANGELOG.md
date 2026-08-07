@@ -140,6 +140,9 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **Both cores run the scheduler.** `kernel::boot::join_scheduler` gives a
+  secondary core a vector table, a pinned idle task and its own timer, after
+  which it takes traps and runs tasks like the first.
 - **`task::spawn_on(core, ...)`** pins a task to one core; `spawn` still means
   "either". The scheduler tracks a current task per core and skips a task
   pinned elsewhere. Pinning to a core that does not run the scheduler is

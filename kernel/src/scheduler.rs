@@ -512,22 +512,43 @@ impl Scheduler {
 
 /// Set when a context switch is owed, consumed by the trap handler.
 ///
+/// **Per core.** One flag for both cores meant either could consume the
+/// other's request: a task called `sleep_ms`, set the flag, and the *other*
+/// core's trap handler took it — so the switch never happened where it was
+/// asked for and the task carried on running with its TCB marked Blocked.
+///
+/// On hardware that showed as a task sleeping 7 ms iterating ten thousand
+/// times a second. It is invisible with one core, because there is no one else
+/// to take the flag.
+///
 /// Deliberately a free-standing static rather than a `Scheduler` field.
 /// `request_switch()` is called from task context *after* its critical section
 /// has closed, so reaching this through `global()` would mint an
 /// `&'static mut Scheduler` with interrupts unmasked -- racing the trap
 /// handler's own reference and violating the contract `global()` documents.
 /// An atomic needs no such reference.
-static PENDING_SWITCH: AtomicBool = AtomicBool::new(false);
+static PENDING_SWITCH: [AtomicBool; hal::smp::MAX_CORES] =
+    [const { AtomicBool::new(false) }; hal::smp::MAX_CORES];
 
 /// Record that a switch is owed.
 pub fn set_pending_switch() {
-    PENDING_SWITCH.store(true, Ordering::Relaxed);
+    PENDING_SWITCH[crate::smp::current_core().index()].store(true, Ordering::Relaxed);
+}
+
+/// Clear every core's pending-switch flag.
+///
+/// For the test harness: `reset` means power-on state, and clearing only the
+/// calling core's flag left another core's set for the next test to trip over.
+#[cfg(test)]
+pub fn clear_all_pending_switches() {
+    for f in &PENDING_SWITCH {
+        f.store(false, Ordering::Relaxed);
+    }
 }
 
 /// Consume the pending-switch flag, returning whether one was owed.
 pub fn take_pending_switch() -> bool {
-    PENDING_SWITCH.swap(false, Ordering::Relaxed)
+    PENDING_SWITCH[crate::smp::current_core().index()].swap(false, Ordering::Relaxed)
 }
 
 /// The scheduler, behind a lock that excludes the other core as well as this
@@ -580,6 +601,22 @@ mod affinity_tests {
                 tcb.affinity = Affinity::Core(CoreId(core));
             }
         });
+    }
+
+    #[test]
+    fn a_pending_switch_belongs_to_the_core_that_asked() {
+        // One flag for both cores let either consume the other's request, so a
+        // task that yielded on one core kept running while the other core
+        // switched instead.
+        let _k = testsupport::lock();
+        let me = crate::smp::current_core();
+        let other = CoreId(if me.0 == 0 { 1 } else { 0 });
+
+        set_pending_switch();
+        // Draining the other core's flag must not take ours.
+        assert!(!PENDING_SWITCH[other.index()].swap(false, core::sync::atomic::Ordering::Relaxed));
+        assert!(take_pending_switch(), "our own request went missing");
+        assert!(!take_pending_switch(), "consumed twice");
     }
 
     #[test]
