@@ -114,10 +114,18 @@ fn imu() {
 fn read_mpu6886(bus: &'static dyn hal::bus::Bus) -> ! {
     let dev = Mpu6886::new(BusHandle::new(bus));
 
-    // The driver takes the delay rather than sleeping itself, so it stays
-    // usable outside a task and testable on a host.
-    if let Err(e) = dev.init(task::sleep_ms) {
-        api::log_error!("[imu] init failed: {:?}", e);
+    // The driver does not wait -- how long to pause after a reset depends on
+    // this board, not on the part, so the sequencing is ours. 10 ms is the
+    // datasheet minimum and the Atom needs no more.
+    let brought_up = dev.reset().and_then(|()| {
+        task::sleep_ms(10);
+        dev.wake()
+    }).and_then(|()| {
+        task::sleep_ms(10);
+        dev.configure()
+    });
+    if let Err(e) = brought_up {
+        api::log_error!("[imu] bring-up failed: {:?}", e);
         park();
     }
     api::log_info!("[imu] configured: +/-8 g, +/-2000 dps");

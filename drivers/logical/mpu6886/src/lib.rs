@@ -16,13 +16,23 @@
 //! that a context switch has to save. Milli-units carry more precision than
 //! this part's noise floor, so nothing is lost.
 //!
-//! # Delays are the caller's
+//! # This driver does not wait
 //!
-//! [`Mpu6886::init`] takes a `delay_ms` callback rather than calling
-//! `api::task::sleep_ms` itself. The reset sequence genuinely needs to wait —
-//! the part is unresponsive for a few milliseconds after a soft reset — but a
-//! driver that sleeps is a driver that only works from a task, and one that
-//! links against the kernel cannot be unit-tested on a host at all.
+//! There is no delay anywhere in it, and no delay callback either. The part
+//! needs pauses during its reset sequence, and how long they should be depends
+//! on the board — supply rise time, bus capacitance, whether the part shares a
+//! rail that is still settling. The driver cannot know any of that.
+//!
+//! So it exposes the steps and the caller sequences them:
+//!
+//! ```ignore
+//! dev.reset()?;      delay(10);
+//! dev.wake()?;       delay(10);
+//! dev.configure()?;
+//! ```
+//!
+//! The 10 ms figures below are the datasheet's minimum, not a recommendation
+//! for your board.
 //!
 //! # Register facts
 //!
@@ -161,22 +171,32 @@ impl Mpu6886 {
         Ok(self.who_am_i()? == WHO_AM_I)
     }
 
-    /// Reset, wake, and configure for ±8 g and ±2000 °/s.
+    /// Clear the sleep bit, then soft-reset the part.
     ///
-    /// `delay_ms` must actually wait: the part ignores the bus for a few
-    /// milliseconds after a soft reset, and skipping the pause leaves it in a
-    /// half-reset state that answers `WHO_AM_I` and returns zeros for motion.
-    pub fn init(&self, mut delay_ms: impl FnMut(u32)) -> BusResult<()> {
-        // Clear sleep, then reset, then select the PLL. M5Stack's own driver
-        // does exactly this dance, and the order matters -- a reset issued
-        // while asleep does not take.
+    /// **Wait at least 10 ms after this**, and again after [`Mpu6886::wake`].
+    /// The part ignores the bus while resetting; carry on too early and it
+    /// settles half-reset, answering `WHO_AM_I` correctly and returning zeros
+    /// for motion.
+    ///
+    /// Sleep is cleared first because a reset issued while the part is asleep
+    /// does not take.
+    pub fn reset(&self) -> BusResult<()> {
         self.write_reg(REG_PWR_MGMT_1, 0x00)?;
-        delay_ms(10);
-        self.write_reg(REG_PWR_MGMT_1, PWR_DEVICE_RESET)?;
-        delay_ms(10);
-        self.write_reg(REG_PWR_MGMT_1, PWR_CLK_PLL)?;
-        delay_ms(10);
+        self.write_reg(REG_PWR_MGMT_1, PWR_DEVICE_RESET)
+    }
 
+    /// Select the PLL clock, which the datasheet prefers to the internal
+    /// oscillator. Call after [`Mpu6886::reset`] and its delay.
+    pub fn wake(&self) -> BusResult<()> {
+        self.write_reg(REG_PWR_MGMT_1, PWR_CLK_PLL)
+    }
+
+    /// Configure for ±8 g and ±2000 °/s, polled, no FIFO.
+    ///
+    /// The full scales here are what [`Axes::to_milli_g`] and
+    /// [`Axes::to_milli_dps`] assume. Changing one without the other makes
+    /// every reading wrong by a factor, silently.
+    pub fn configure(&self) -> BusResult<()> {
         self.write_reg(REG_ACCEL_CONFIG, ACCEL_FS_8G)?;
         self.write_reg(REG_GYRO_CONFIG, GYRO_FS_2000DPS)?;
         // DLPF 1: ~184 Hz bandwidth, and a 1 kHz sample rate divided by 6.
@@ -186,9 +206,7 @@ impl Mpu6886 {
         self.write_reg(REG_INT_ENABLE, 0x00)?;
         self.write_reg(REG_ACCEL_CONFIG2, 0x00)?;
         self.write_reg(REG_USER_CTRL, 0x00)?;
-        self.write_reg(REG_FIFO_EN, 0x00)?;
-        delay_ms(10);
-        Ok(())
+        self.write_reg(REG_FIFO_EN, 0x00)
     }
 
     /// Acceleration, raw counts. ±8 g full scale.
@@ -323,24 +341,23 @@ mod tests {
     }
 
     #[test]
-    fn init_resets_before_selecting_a_clock() {
+    fn reset_clears_sleep_before_resetting() {
         // A reset issued while the part is asleep does not take, and the
         // symptom is a device that answers WHO_AM_I and returns zeros.
         let (m, f) = imu(&[(REG_WHO_AM_I, WHO_AM_I)]);
-        let mut delays = 0;
-        m.init(|_| delays += 1).unwrap();
+        m.reset().unwrap();
+        m.wake().unwrap();
 
         let writes = f.writes.lock().unwrap();
         let pwr: Vec<u8> = writes.iter().filter(|(r, _)| *r == REG_PWR_MGMT_1).map(|(_, v)| *v).collect();
-        assert_eq!(pwr, [0x00, PWR_DEVICE_RESET, PWR_CLK_PLL], "wake, reset, then PLL");
-        assert!(delays >= 3, "the reset sequence must actually wait");
+        assert_eq!(pwr, [0x00, PWR_DEVICE_RESET, PWR_CLK_PLL], "clear sleep, reset, then PLL");
     }
 
     #[test]
-    fn init_selects_the_full_scales_the_conversions_assume() {
+    fn configure_selects_the_full_scales_the_conversions_assume() {
         // If these drift apart, every reading is silently wrong by a factor.
         let (m, f) = imu(&[]);
-        m.init(|_| {}).unwrap();
+        m.configure().unwrap();
         assert_eq!(f.get(REG_ACCEL_CONFIG), Some(ACCEL_FS_8G));
         assert_eq!(f.get(REG_GYRO_CONFIG), Some(GYRO_FS_2000DPS));
         assert_eq!(ACCEL_FS_8G >> 3, 0b10, "+/-8 g");
