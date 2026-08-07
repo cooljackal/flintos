@@ -49,6 +49,7 @@ pub use esp32_rng as rng;
 pub mod selftest;
 pub mod queue;
 pub mod scheduler;
+pub mod smp;
 
 #[cfg(test)]
 mod testsupport;

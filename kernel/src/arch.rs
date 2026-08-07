@@ -33,6 +33,8 @@ pub use arch_xtensa::cs_with;
 #[cfg(target_os = "none")]
 pub use arch_xtensa::registers;
 #[cfg(target_os = "none")]
+pub use arch_xtensa::smp::XtensaSmp as Smp;
+#[cfg(target_os = "none")]
 pub use arch_xtensa::tick::XtensaTick as Tick;
 
 /// Park the CPU until the next interrupt.
@@ -54,7 +56,7 @@ pub fn wait_masked() {
 // ── Host: stand-ins, with the instrumentation the real ones cannot offer ────
 
 #[cfg(not(target_os = "none"))]
-pub use host::{cs_with, registers, HostTick as Tick};
+pub use host::{cs_with, registers, HostSmp as Smp, HostTick as Tick};
 
 /// On a host these are only reachable by mistake: every caller is a terminal
 /// `loop` in code that only runs on hardware (the idle task, the fault
@@ -87,9 +89,50 @@ pub mod host {
     //! stack pointer, `EXCCAUSE` — and faking those would be inventing a CPU.
     //! Both are `#[cfg(target_os = "none")]` in `lib.rs` instead.
 
+    extern crate std;
+
     use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-    static CS_DEPTH: AtomicU32 = AtomicU32::new(0);
+    /// Core identity on a host.
+    ///
+    /// **A thread stands in for a core**, and each one gets its own id. That
+    /// is what lets the spinlock be tested against genuine parallelism instead
+    /// of a simulation of it.
+    ///
+    /// Ids are *not* wrapped to `MAX_CORES`. Wrapping was the first attempt
+    /// and it broke the invariant the lock rests on: two threads sharing an id
+    /// look like one core taking the lock twice, so the reentrancy check fired
+    /// on honest contention. One execution context, one id — the same thing
+    /// real hardware guarantees.
+    ///
+    /// Capped below 254 to stay clear of the spinlock's `UNLOCKED` sentinel.
+    /// A test with 254 threads has other problems.
+    pub struct HostSmp;
+
+    static NEXT_CORE: AtomicU32 = AtomicU32::new(0);
+
+    std::thread_local! {
+        static MY_CORE: u8 = (NEXT_CORE.fetch_add(1, Ordering::Relaxed) % 254) as u8;
+    }
+
+    impl hal::smp::MultiCore for HostSmp {
+        fn current_core() -> hal::smp::CoreId {
+            hal::smp::CoreId(MY_CORE.with(|c| *c))
+        }
+        fn cores() -> u8 {
+            hal::smp::MAX_CORES as u8
+        }
+    }
+
+
+    // Per-thread, because masking is per-core and a thread stands in for a
+    // core here. It was a process-global counter, which meant one test's
+    // nesting was visible to every other -- and once the spinlock tests
+    // started spawning eight threads that call `cs_with`, the balance
+    // assertions began failing on threads that had done nothing wrong.
+    std::thread_local! {
+        static CS_DEPTH_TLS: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    }
     static CS_ENTRIES: AtomicU32 = AtomicU32::new(0);
     static CS_MAX_DEPTH: AtomicU32 = AtomicU32::new(0);
     static SWITCH_REQUESTS: AtomicU32 = AtomicU32::new(0);
@@ -103,7 +146,10 @@ pub mod host {
     /// can read.
     #[inline]
     pub fn cs_with<R>(f: impl FnOnce() -> R) -> R {
-        let depth = CS_DEPTH.fetch_add(1, Ordering::SeqCst) + 1;
+        let depth = CS_DEPTH_TLS.with(|d| {
+            d.set(d.get() + 1);
+            d.get()
+        });
         CS_ENTRIES.fetch_add(1, Ordering::SeqCst);
         CS_MAX_DEPTH.fetch_max(depth, Ordering::SeqCst);
 
@@ -115,7 +161,7 @@ pub mod host {
         struct Guard;
         impl Drop for Guard {
             fn drop(&mut self) {
-                CS_DEPTH.fetch_sub(1, Ordering::SeqCst);
+                CS_DEPTH_TLS.with(|d| d.set(d.get() - 1));
             }
         }
         let _guard = Guard;
@@ -125,7 +171,7 @@ pub mod host {
 
     /// Critical-section nesting depth right now. Zero outside any `cs_with`.
     pub fn cs_depth() -> u32 {
-        CS_DEPTH.load(Ordering::SeqCst)
+        CS_DEPTH_TLS.with(|d| d.get())
     }
 
     /// How many times `cs_with` has been entered since the last reset.
@@ -160,7 +206,7 @@ pub mod host {
     /// a test that asserts on a counter must own it — see the note on
     /// `arch_seam` in the kernel's test modules.
     pub fn reset() {
-        CS_DEPTH.store(0, Ordering::SeqCst);
+        CS_DEPTH_TLS.with(|d| d.set(0));
         CS_ENTRIES.store(0, Ordering::SeqCst);
         CS_MAX_DEPTH.store(0, Ordering::SeqCst);
         SWITCH_REQUESTS.store(0, Ordering::SeqCst);

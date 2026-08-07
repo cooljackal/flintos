@@ -455,19 +455,33 @@ pub fn take_pending_switch() -> bool {
     PENDING_SWITCH.swap(false, Ordering::Relaxed)
 }
 
-/// Global scheduler instance. Access only via `with()` (critical section) from
-/// task context, or directly from the trap handler (interrupts already masked).
-static mut SCHEDULER: Scheduler = Scheduler::new();
+/// The scheduler, behind a lock that excludes the other core as well as this
+/// core's own interrupts.
+///
+/// It used to be a bare `static mut` reached through a `global()` that
+/// documented "caller must hold a critical section". That was sound while one
+/// core ran the kernel and became a data race in the language's own terms the
+/// moment a second one could — a critical section is `rsil`, which masks the
+/// calling core only.
+static SCHEDULER: crate::smp::Spinlock<Scheduler> = crate::smp::Spinlock::new(Scheduler::new());
 
-/// Raw access — caller MUST hold a critical section or be in the trap handler.
-pub fn global() -> &'static mut Scheduler {
-    unsafe { &mut *core::ptr::addr_of_mut!(SCHEDULER) }
-}
-
-/// Run `f` with the scheduler under a critical section (task-context safe).
+/// Run `f` with the scheduler locked. Safe from task or interrupt context, on
+/// either core.
+///
+/// Keep `f` short: interrupts are masked on this core throughout, and the
+/// other core spins if it wants the scheduler meanwhile.
 pub fn with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
-    crate::arch::cs_with(|| f(global()))
+    SCHEDULER.with(f)
 }
+
+/// Run `f` only if the scheduler is free, rather than waiting.
+///
+/// For diagnostics that must not hang — a fault handler reporting task state
+/// cannot afford to block on a lock whose holder may be the thing that faulted.
+pub fn try_with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> Option<R> {
+    SCHEDULER.try_with(f)
+}
+
 
 /// Request a context switch: set the flag and raise the software interrupt so
 /// the switch happens in the trap handler.
@@ -475,3 +489,4 @@ pub fn request_switch() {
     set_pending_switch();
     unsafe { crate::arch::registers::request_switch() }
 }
+

@@ -33,7 +33,15 @@ pub fn write(level: Level, args: &core::fmt::Arguments<'_>) {
         len = writer.pos;
     }
 
-    let (tick, task) = crate::scheduler::with(|s| (s.ticks(), s.current));
+    // `try_with`, not `with`. Logging is reachable from inside the scheduler
+    // lock -- `mutex::log_error` reports a full waiter list while holding it --
+    // and taking the lock again is reentrancy, which now panics rather than
+    // silently aliasing two `&mut` to the scheduler as it used to.
+    //
+    // A log line missing its tick and task is worth far more than a kernel that
+    // deadlocks trying to stamp one.
+    let (tick, task) = crate::scheduler::try_with(|s| (s.ticks(), s.current))
+        .unwrap_or((0, u32::MAX));
 
     // Store in the ring buffer (under a critical section — shared with readers).
     crate::arch::cs_with(|| unsafe {
@@ -82,9 +90,15 @@ pub fn dump() {
         for i in 0..RING_COUNT {
             let idx = (RING_HEAD + i) % RING_BUF_SIZE;
             if let Some(entry) = &ring[idx] {
-                let task_name = crate::scheduler::global().tasks[entry.task as usize]
-                    .as_ref()
-                    .map_or("?", |t| t.name);
+                // Same reasoning: draining the ring can be reached from a
+                // context that already holds the scheduler.
+                let task_name = crate::scheduler::try_with(|s| {
+                    s.tasks
+                        .get(entry.task as usize)
+                        .and_then(|t| t.as_ref())
+                        .map_or("?", |t| t.name)
+                })
+                .unwrap_or("?");
                 let text = core::str::from_utf8(&entry.msg[..entry.len as usize]).unwrap_or("?");
                 let _ = write!(
                     console,

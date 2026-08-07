@@ -8,7 +8,6 @@
 //! it still holds (so multiple held mutexes compose correctly), and ownership
 //! transfers to the next waiter.
 
-use crate::arch::cs_with;
 use crate::scheduler::{self};
 
 const MAX_MUTEXES: usize = 16;
@@ -82,7 +81,7 @@ fn log_error(args: core::fmt::Arguments<'_>) {
 /// falling through to the "held" branch and enqueuing the owner as its own
 /// waiter — deadlocked the task forever with no diagnostic at all.
 pub fn lock(addr: usize) -> bool {
-    let outcome = cs_with(|| {
+    let outcome = scheduler::with(|sched| {
         if crate::interrupt::in_interrupt() {
             log_error(format_args!(
                 "mutex::lock called from interrupt context (addr={:#x})",
@@ -90,7 +89,7 @@ pub fn lock(addr: usize) -> bool {
             ));
             return LockOutcome::Failed;
         }
-        let cur = scheduler::global().current;
+        let cur = sched.current;
         let idx = match find_or_create(addr) {
             Some(i) => i,
             None => {
@@ -130,14 +129,14 @@ pub fn lock(addr: usize) -> bool {
             return LockOutcome::Failed;
         }
         let owner = t[idx].owner;
-        let cur_prio = scheduler::global().tasks[cur as usize]
+        let cur_prio = sched.tasks[cur as usize]
             .as_ref()
             .map_or(scheduler::IDLE_PRIORITY, |x| x.priority);
-        boost_chain(owner, cur_prio);
+        boost_chain(sched, owner, cur_prio);
         let wc = t[idx].waiter_count as usize;
         t[idx].waiters[wc] = cur;
         t[idx].waiter_count += 1;
-        scheduler::global().block_current_on_mutex(addr);
+        sched.block_current_on_mutex(addr);
         LockOutcome::Blocked
     });
 
@@ -161,12 +160,12 @@ pub fn lock(addr: usize) -> bool {
 /// mutex it never held, corrupting whichever task's critical section was
 /// actually relying on holding it.
 pub fn unlock(addr: usize) {
-    let switched = cs_with(|| {
+    let switched = scheduler::with(|sched| {
         let idx = match table().iter().position(|e| e.addr == addr) {
             Some(i) => i,
             None => return false,
         };
-        let cur = scheduler::global().current;
+        let cur = sched.current;
         let t = table();
         if t[idx].owner == NO_TASK {
             log_error(format_args!(
@@ -198,16 +197,16 @@ pub fn unlock(addr: usize) {
 
         if t[idx].waiter_count > 0 {
             // Pop the highest-priority waiter (FIFO among equal priorities).
-            let next = pop_best_waiter(idx);
+            let next = pop_best_waiter(sched, idx);
             t[idx].owner = next;
-            scheduler::global().unblock(next);
+            sched.unblock(next);
         } else {
             t[idx].owner = NO_TASK;
             t[idx].addr = 0; // free the slot
         }
 
         // Drop boosts this owner received from the mutex(es) it no longer needs.
-        recompute_owner_priority(prev_owner);
+        recompute_owner_priority(sched, prev_owner);
         true
     });
     if switched {
@@ -229,13 +228,13 @@ pub fn unlock(addr: usize) {
 /// The walk is bounded by the table size. A cycle in the chain means the tasks
 /// have deadlocked on each other, and this is not the place to discover that —
 /// but it is a place that would otherwise spin forever, so it stops.
-fn boost_chain(owner: u32, target: u8) {
+fn boost_chain(sched: &mut scheduler::Scheduler, owner: u32, target: u8) {
     let mut id = owner;
     for _ in 0..MAX_MUTEXES {
-        scheduler::global().boost_priority(id, target);
+        sched.boost_priority(id, target);
 
         // Is this one waiting on a mutex of its own?
-        let waiting_on = match &scheduler::global().tasks[id as usize] {
+        let waiting_on = match &sched.tasks[id as usize] {
             Some(t) => t.blocked_on_mutex,
             None => return,
         };
@@ -253,14 +252,14 @@ fn boost_chain(owner: u32, target: u8) {
 
 /// Remove and return the highest-priority (lowest numeric) waiter of mutex
 /// `idx`, preserving FIFO order for the rest.
-fn pop_best_waiter(idx: usize) -> u32 {
+fn pop_best_waiter(sched: &mut scheduler::Scheduler, idx: usize) -> u32 {
     let t = table();
     let count = t[idx].waiter_count as usize;
     let mut best = 0usize;
     let mut best_prio = u8::MAX;
     for i in 0..count {
         let id = t[idx].waiters[i];
-        let prio = scheduler::global().tasks[id as usize]
+        let prio = sched.tasks[id as usize]
             .as_ref()
             .map_or(u8::MAX, |x| x.priority);
         if prio < best_prio {
@@ -278,15 +277,15 @@ fn pop_best_waiter(idx: usize) -> u32 {
 
 /// Recompute `owner`'s effective priority as the strongest of its base priority
 /// and the highest-priority waiter across every mutex it still holds.
-fn recompute_owner_priority(owner: u32) {
-    let base = scheduler::global().base_priority(owner);
+fn recompute_owner_priority(sched: &mut scheduler::Scheduler, owner: u32) {
+    let base = sched.base_priority(owner);
     let mut effective = base;
     let t = table();
     for e in t.iter() {
         if e.addr != 0 && e.owner == owner {
             for i in 0..e.waiter_count as usize {
                 let id = e.waiters[i];
-                let prio = scheduler::global().tasks[id as usize]
+                let prio = sched.tasks[id as usize]
                     .as_ref()
                     .map_or(u8::MAX, |x| x.priority);
                 if prio < effective {
@@ -295,7 +294,7 @@ fn recompute_owner_priority(owner: u32) {
             }
         }
     }
-    scheduler::global().set_inherited_priority(owner, effective);
+    sched.set_inherited_priority(owner, effective);
 }
 
 /// Clear the table between host tests. See `crate::testsupport`.

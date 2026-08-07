@@ -58,8 +58,10 @@ pub fn every(ms: u32, callback: fn()) -> u32 {
 }
 
 fn register(ms: u32, interval: u32, callback: fn()) -> u32 {
+    // The tick first, through the lock, before taking the timer table's own
+    // critical section: the two must not nest.
+    let now = scheduler::with(|s| s.ticks());
     cs_with(|| unsafe {
-        let now = scheduler::global().ticks();
         let timers = &mut *core::ptr::addr_of_mut!(TIMERS);
         for slot in timers.iter_mut() {
             if slot.is_none() {

@@ -215,8 +215,7 @@ pub fn interrupt_depth_returns_to_zero() -> Check {
 /// mid-update.
 pub fn ready_mask_agrees_with_task_states() -> Check {
     for _ in 0..2_000 {
-        let bad = crate::arch::cs_with(|| {
-            let sched = scheduler::global();
+        let bad = scheduler::with(|sched| {
             for prio in 0..scheduler::NUM_PRIORITIES as u8 {
                 let runnable = sched.tasks.iter().flatten().any(|t| {
                     t.priority == prio
@@ -281,8 +280,7 @@ pub fn pending_switch_is_taken_once() -> Check {
 pub fn mutex_cycle_under_ticks_leaves_no_residue() -> Check {
     const ADDR: usize = 0xF1E7_0001;
 
-    let base = crate::arch::cs_with(|| {
-        let sched = scheduler::global();
+    let base = scheduler::with(|sched| {
         let cur = sched.current;
         sched.base_priority(cur)
     });
@@ -294,8 +292,7 @@ pub fn mutex_cycle_under_ticks_leaves_no_residue() -> Check {
         crate::mutex::unlock(ADDR);
     }
 
-    let effective = crate::arch::cs_with(|| {
-        let sched = scheduler::global();
+    let effective = scheduler::with(|sched| {
         let cur = sched.current;
         sched.tasks[cur as usize]
             .as_ref()
@@ -326,7 +323,7 @@ pub fn mutex_cycle_under_ticks_leaves_no_residue() -> Check {
     // boost back, which is the part that runs on target. That contention
     // *causes* a boost is covered by the host tests, including through chains
     // of blocked owners.
-    let cur = crate::arch::cs_with(|| scheduler::global().current);
+    let cur = scheduler::with(|s| s.current);
     let boosted = base.saturating_sub(1);
     if boosted == base {
         // Already at the top of the range; there is no higher priority to be
@@ -337,10 +334,10 @@ pub fn mutex_cycle_under_ticks_leaves_no_residue() -> Check {
     if !crate::mutex::lock(ADDR) {
         return Err("could not take the mutex for the boost check");
     }
-    crate::arch::cs_with(|| scheduler::global().boost_priority(cur, boosted));
+    scheduler::with(|s| s.boost_priority(cur, boosted));
 
-    let while_held = crate::arch::cs_with(|| {
-        scheduler::global().tasks[cur as usize]
+    let while_held = scheduler::with(|sched| {
+        sched.tasks[cur as usize]
             .as_ref()
             .map_or(u8::MAX, |t| t.priority)
     });
@@ -351,8 +348,8 @@ pub fn mutex_cycle_under_ticks_leaves_no_residue() -> Check {
 
     crate::mutex::unlock(ADDR);
 
-    let after = crate::arch::cs_with(|| {
-        scheduler::global().tasks[cur as usize]
+    let after = scheduler::with(|sched| {
+        sched.tasks[cur as usize]
             .as_ref()
             .map_or(u8::MAX, |t| t.priority)
     });

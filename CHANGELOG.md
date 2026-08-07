@@ -140,6 +140,10 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **The kernel is safe for two cores.** `kernel::smp::Spinlock` excludes the
+  other core as well as this core's interrupts, and the scheduler lives behind
+  one. There is no longer any way to reach the scheduler without the lock — the
+  `unsafe global()` escape hatch is gone rather than documented.
 - **The APP CPU can be started** (`soc_esp32::appcpu`, `arch_xtensa::appcpu`).
   The kernel is still single-core, and the started core must not touch it —
   see the module docs for exactly what that rules out.

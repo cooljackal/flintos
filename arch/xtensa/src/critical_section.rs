@@ -25,6 +25,7 @@ pub struct XtensaCsToken {
 impl CriticalSection for XtensaCriticalSection {
     type Token = XtensaCsToken;
 
+    #[inline(always)]
     fn enter() -> Self::Token {
         let saved_ps: u32;
         unsafe {
@@ -43,6 +44,7 @@ impl CriticalSectionToken for XtensaCsToken {
 }
 
 impl Drop for XtensaCsToken {
+    #[inline(always)]
     fn drop(&mut self) {
         unsafe {
             core::arch::asm!("wsr.ps {0}", "rsync", in(reg) self.saved_ps);
@@ -51,7 +53,10 @@ impl Drop for XtensaCsToken {
 }
 
 /// Convenience: run `f` with interrupts masked, returning its result.
-#[inline]
+/// `inline(always)`: code running on the second core lives in IRAM, and a
+/// real call from there into this (in flash) would hang -- that core has no
+/// instruction cache.
+#[inline(always)]
 pub fn with<R>(f: impl FnOnce() -> R) -> R {
     let _token = XtensaCriticalSection::enter();
     f()

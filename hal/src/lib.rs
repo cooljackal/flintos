@@ -18,6 +18,7 @@ pub mod bus;
 pub mod critical_section;
 pub mod mpu;
 pub mod pinmux;
+pub mod smp;
 pub mod tick;
 pub mod types;
 
@@ -25,5 +26,6 @@ pub use bus::*;
 pub use critical_section::CriticalSection;
 pub use mpu::MpuManager;
 pub use pinmux::{PinConfig, PinDrive, PinMux, PinPull, Signal, SignalDirection};
+pub use smp::{CoreId, MultiCore, MAX_CORES};
 pub use tick::TickSource;
 pub use types::*;

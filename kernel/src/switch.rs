@@ -74,19 +74,20 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
             let now = Tick::now();
 
             if TRAP_DIAGNOSTICS && now % 1000 == 0 {
-                let sched = scheduler::global();
-                let cur = sched.current;
-                debug::fault::raw_print("[FLINT] t=");
-                debug::fault::raw_dec(now as u32);
-                debug::fault::raw_print(" cur=");
-                debug::fault::raw_dec(cur);
-                debug::fault::raw_print(":");
-                debug::fault::raw_print(match &sched.tasks[cur as usize] {
-                    Some(tcb) => tcb.name,
-                    None => "?",
+                scheduler::with(|sched| {
+                    let cur = sched.current;
+                    debug::fault::raw_print("[FLINT] t=");
+                    debug::fault::raw_dec(now as u32);
+                    debug::fault::raw_print(" cur=");
+                    debug::fault::raw_dec(cur);
+                    debug::fault::raw_print(":");
+                    debug::fault::raw_print(match &sched.tasks[cur as usize] {
+                        Some(tcb) => tcb.name,
+                        None => "?",
+                    });
+                    debug::fault::raw_print(" ready=");
+                    debug::fault::raw_hex(sched.ready_mask as u32);
                 });
-                debug::fault::raw_print(" ready=");
-                debug::fault::raw_hex(sched.ready_mask as u32);
                 debug::fault::raw_print(" pc=");
                 debug::fault::raw_hex(unsafe { (*frame).pc });
                 debug::fault::raw_print(" ws=");
@@ -94,13 +95,17 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
                 debug::fault::raw_print("\r\n");
             }
 
-            if scheduler::global().on_tick(now) {
-                scheduler::set_pending_switch();
-            }
+            // One lock for the whole tick update, not one per read: the other
+            // core must never observe `on_tick` half applied.
+            scheduler::with(|sched| {
+                if sched.on_tick(now) {
+                    scheduler::set_pending_switch();
+                }
+                // Stack high-water for the running task, while we hold it.
+                let cur = sched.current;
+                debug::stack::update_hwm(sched, cur);
+            });
             timer::process_timers(now);
-            // Stack high-water update for the running task.
-            let cur = scheduler::global().current;
-            debug::stack::update_hwm(cur);
         }
 
         // Software interrupt: a cooperative switch was requested.
@@ -128,29 +133,42 @@ pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
     }
 
     // Decide whether to switch.
-    let sched = scheduler::global();
-    if scheduler::take_pending_switch() {
+    //
+    // Under the scheduler lock for the whole decision, not just parts of it:
+    // choosing a task, saving the outgoing context and installing the incoming
+    // one have to look atomic to the other core, or it can schedule the same
+    // task twice.
+    //
+    // The returned pointer outlives the lock, which is sound for the reason
+    // the trap handler is special: it returns straight into the assembly that
+    // restores from that frame, on this core, with interrupts still masked.
+    let next_frame = scheduler::with(|sched| {
+        if !scheduler::take_pending_switch() {
+            return None;
+        }
         let cur = sched.current;
         let next = sched.schedule();
-        if next != cur {
-            announce_once(&FIRST_SWITCH, "[FLINT] first context switch\r\n");
-            // Save the interrupted context into the current task's TCB, unless
-            // it has been torn down.
-            if let Some(tcb) = &mut sched.tasks[cur as usize] {
-                // The current task was Running; demote to Ready unless it
-                // blocked itself (block_current already set a blocked state).
-                if tcb.state == TaskState::Running {
-                    tcb.state = TaskState::Ready;
-                    let prio = tcb.priority;
-                    sched.ready_mask |= 1u64 << prio;
-                }
-                unsafe { core::ptr::copy_nonoverlapping(frame, &mut tcb.context, 1) };
-            }
-            sched.set_current(next);
-            if let Some(tcb) = &mut sched.tasks[next as usize] {
-                return &mut tcb.context as *mut TaskContext;
-            }
+        if next == cur {
+            return None;
         }
-    }
-    frame
+        announce_once(&FIRST_SWITCH, "[FLINT] first context switch\r\n");
+        // Save the interrupted context into the current task's TCB, unless it
+        // has been torn down.
+        if let Some(tcb) = &mut sched.tasks[cur as usize] {
+            // The current task was Running; demote to Ready unless it blocked
+            // itself (block_current already set a blocked state).
+            if tcb.state == TaskState::Running {
+                tcb.state = TaskState::Ready;
+                let prio = tcb.priority;
+                sched.ready_mask |= 1u64 << prio;
+            }
+            unsafe { core::ptr::copy_nonoverlapping(frame, &mut tcb.context, 1) };
+        }
+        sched.set_current(next);
+        sched.tasks[next as usize]
+            .as_mut()
+            .map(|tcb| &mut tcb.context as *mut TaskContext)
+    });
+
+    next_frame.unwrap_or(frame)
 }

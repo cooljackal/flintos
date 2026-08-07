@@ -61,6 +61,7 @@ fn push(list: &mut [u32; MAX_WAITERS], count: &mut u32, id: u32) -> bool {
 /// preserves both: the timed-out task still finds itself listed later, and
 /// the real waiter is the one actually returned here.
 fn pop_first_blocked(
+    sched: &mut scheduler::Scheduler,
     list: &mut [u32; MAX_WAITERS],
     count: &mut u32,
     expected: TaskState,
@@ -68,7 +69,7 @@ fn pop_first_blocked(
     let n = *count as usize;
     for i in 0..n {
         let id = list[i];
-        let still_waiting = scheduler::global().tasks[id as usize]
+        let still_waiting = sched.tasks[id as usize]
             .as_ref()
             .is_some_and(|t| t.state == expected);
         if still_waiting {
@@ -148,7 +149,7 @@ fn deadline_for(timeout_ms: u32) -> u64 {
     if timeout_ms == u32::MAX {
         0
     } else {
-        scheduler::global().ticks().wrapping_add(timeout_ms as u64).max(1)
+        scheduler::with(|s| s.ticks()).wrapping_add(timeout_ms as u64).max(1)
     }
 }
 
@@ -245,24 +246,24 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
 
 /// Wake one receiver after a successful send (a message is now available).
 pub fn wake_one_receiver(q_addr: usize) {
-    cs_with(|| {
+    scheduler::with(|sched| {
         let id = waiters().find(q_addr).and_then(|l| {
-            pop_first_blocked(&mut l.recv_waiters, &mut l.recv_count, TaskState::BlockedRecv)
+            pop_first_blocked(sched, &mut l.recv_waiters, &mut l.recv_count, TaskState::BlockedRecv)
         });
         if let Some(id) = id {
-            scheduler::global().unblock(id);
+            sched.unblock(id);
         }
     });
 }
 
 /// Wake one sender after a successful receive (a slot is now free).
 pub fn wake_one_sender(q_addr: usize) {
-    cs_with(|| {
+    scheduler::with(|sched| {
         let id = waiters().find(q_addr).and_then(|l| {
-            pop_first_blocked(&mut l.send_waiters, &mut l.send_count, TaskState::BlockedSend)
+            pop_first_blocked(sched, &mut l.send_waiters, &mut l.send_count, TaskState::BlockedSend)
         });
         if let Some(id) = id {
-            scheduler::global().unblock(id);
+            sched.unblock(id);
         }
     });
 }

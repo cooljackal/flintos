@@ -112,20 +112,33 @@ pub fn handle_at(
     // A nested panic gets the console line but not the snapshot: first wins.
     let first = !PANICKING.swap(true, Ordering::Relaxed);
 
-    // Interrupts are masked, so the scheduler is ours; `scheduler::with` would
-    // take a critical section we are already inside.
-    let sched = crate::scheduler::global();
-    let current = sched.current;
-    let tick = sched.ticks();
-    let task_name = sched.tasks[current as usize].as_ref().map_or("", |t| t.name);
+    // `try_with`, not `with`. Whatever panicked may have been holding the
+    // scheduler lock — a fault inside a scheduler update is exactly the case
+    // this report exists for — and blocking here would hang the panic handler
+    // instead of printing it. Better a report with unknown task than none.
+    let (current, tick, task_name) = crate::scheduler::try_with(|sched| {
+        let current = sched.current;
+        (
+            current,
+            sched.ticks(),
+            sched.tasks[current as usize].as_ref().map_or("", |t| t.name),
+        )
+    })
+    .unwrap_or((u32::MAX, 0, "<scheduler locked>"));
 
     // Take the panicking task out of the run set. Nothing will schedule after
     // this -- interrupts stay masked forever -- but a TCB still claiming to be
     // Running would mislead anyone reading memory through a debugger.
-    if let Some(tcb) = &mut sched.tasks[current as usize] {
-        tcb.state = TaskState::Faulted;
-    }
-    sched.recompute_ready_mask();
+    //
+    // `try_with` again, and skipped entirely if the lock is held: marking the
+    // task is a courtesy to a debugger, and hanging the panic handler to
+    // deliver it would be a poor trade.
+    let _ = crate::scheduler::try_with(|sched| {
+        if let Some(tcb) = &mut sched.tasks[current as usize] {
+            tcb.state = TaskState::Faulted;
+        }
+        sched.recompute_ready_mask();
+    });
 
     let mut msg = [0u8; CAUSE_LEN];
     let msg_len = {

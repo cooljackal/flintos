@@ -17,12 +17,11 @@ const WARN_PCT: u32 = 80;
 
 /// Update the high-water mark for a task and check its guard word.
 ///
-/// # Safety contract
-/// Reads and writes the global scheduler directly rather than through
-/// `scheduler::with`. This is only sound because the sole caller is the trap
-/// handler, which runs with interrupts already masked.
-pub fn update_hwm(task_id: u32) {
-    let sched = scheduler::global();
+/// Takes the scheduler rather than reaching for it, because the caller already
+/// holds the lock. Reaching for it here would mint a second `&mut` to data the
+/// caller is already holding one to — sound on one core only by accident, and
+/// aliasing UB in the language regardless.
+pub fn update_hwm(sched: &mut scheduler::Scheduler, task_id: u32) {
     let Some(tcb) = &mut sched.tasks[task_id as usize] else {
         return;
     };
