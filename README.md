@@ -83,9 +83,11 @@ starts one.
 | Ethernet, SD/SDIO | ⛔ | ⛔ |
 | USB | — not on ESP32-v1 | ⛔ |
 
-[^1]: A layer-3 driver depends only on `api`, so it carries no architecture of
-its own — it needs a pulse generator underneath it and does not care what
-produces one. That is the whole point of the layer check.
+[^1]: Neither of these carries an architecture. `ws2812` is a Layer-3 driver
+depending only on `api` and `lib/*` — it needs a pulse generator underneath and
+does not care what produces one. `led-matrix` is not a driver at all: it lives
+in `lib/`, turns `(x, y)` into an integer, and depends on nothing. The ✅ is for
+the Xtensa build they were driven on, not for anything either crate contains.
 
 ### Build and test
 
@@ -119,8 +121,10 @@ Flint is a small preemptive RTOS built around three ideas:
    round-robin inside a level, priority inheritance on mutexes, 1 ms tick. Not a
    cooperative loop that grew a scheduler later.
 2. **A three-layer driver model that is enforced, not suggested.** Adding a new
-   sensor means writing *only* the device layer. Adding a new MCU means writing
-   *only* the register layer. A CI check fails the build if the two ever touch.
+   sensor means writing *only* the device layer. Adding a new peripheral means
+   writing *only* the register layer. A CI check fails the build if the two
+   ever touch — and a lint stops a device driver reaching a register even
+   without naming one.
 3. **Debugging as a first-class feature, at zero release cost.** Levelled logging,
    metrics, stack high-water marks, and postmortem capture — all compiled out
    entirely when you turn the feature off.
@@ -149,35 +153,66 @@ Flint is a small preemptive RTOS built around three ideas:
    ──────────        │  task    task    task    task           │  ← you write these
                      └────────────────┬────────────────────────┘
                                       │  api
-   Layer 3           ┌────────────────┴────────────────────────┐
-   logical drivers   │  bme280        ssd1306      your_device │  ← portable across MCUs
-                     └────────────────┬────────────────────────┘
-   Layer 2           ┌────────────────┴────────────────────────┐
-   bus abstraction   │  spi-bus       i2c-bus      uart-bus    │
-                     └────────────────┬────────────────────────┘
-   Layer 1           ┌────────────────┴────────────────────────┐
-   physical drivers  │  esp32-spi     esp32-i2c    esp32-uart  │  ← portable across devices
+   Layer 3           ┌────────────────┴────────────────────────┐      ┌───────────────┐
+   logical drivers   │  bme280     ssd1306     ws2812          │─────▶│     lib/      │
+   one part number   └────────────────┬────────────────────────┘      │               │
+                                      │                               │  led-strip    │
+   Layer 2           ┌────────────────┴────────────────────────┐─────▶│  led-matrix   │
+   transport         │  spi-bus       i2c-bus      uart-bus    │      │               │
+                     └────────────────┬────────────────────────┘      │  contracts +  │
+   Layer 1           ┌────────────────┴────────────────────────┐      │  pure code,   │
+   one peripheral    │  esp32-spi   esp32-i2c   esp32-uart     │      │  no hardware  │
+                     │  esp32-rmt   esp32-wdt   esp32-rng      │      └───────────────┘
                      └────────────────┬────────────────────────┘
                      ┌────────────────┴────────────────────────┐
    kernel            │  scheduler · IPC · timers · IRQ router  │
                      └────────────────┬────────────────────────┘
                      ┌────────────────┴────────────────────────┐
-   soc               │  soc/esp32   (pin mux, peripheral map)  │
+   soc   the chip    │  soc/esp32   address map, pin mux, IRQ  │
                      └────────────────┬────────────────────────┘
                      ┌────────────────┴────────────────────────┐
-   arch              │  arch/xtensa (trap, tick, context)      │
+   arch  the core    │  arch/xtensa trap, tick, context switch │
+                     └────────────────┬────────────────────────┘
+                     ┌────────────────┴────────────────────────┐
+   hal               │  traits only — depends on nothing       │
                      └─────────────────────────────────────────┘
 ```
 
+**Two axes, not one.** Layers 1–3 are about drivers. `arch` / `soc` / `board`
+is a separate axis about how specific a piece of hardware is. The test for
+which side something lands on: *would a second peripheral driver need this?*
+An address map and a pin router, yes — that is `soc/`. A pulse generator, no —
+that is a driver.
+
+`lib/` is neither. It holds device-class contracts (`trait LedStrip`) and code
+generic over them, and touches no hardware at all — `led-matrix` turns `(x, y)`
+into an integer and depends on nothing, not even `api`. That is what lets a
+`ws2812` panel and an `apa102` one share every effect written for either.
+
 The boundary between Layer 3 and Layer 1 is the whole point. A `bme280` driver
-depends only on `api`, and `tools/check-layers.sh` fails the build if it names
-anything else.
+depends only on `api` and `lib/*`, and `tools/check-layers.sh` fails the build
+if it names anything else.
 
 That check reads the dependency graph, so by itself it could not stop a driver
 writing to `0x3FF44008` — raw MMIO needs no dependency, and an adversarial
-review demonstrated exactly that. `#![forbid(unsafe_code)]` in each logical
-driver is what closes it. The two together are the guarantee; the dependency
-check alone never was.
+review demonstrated exactly that. Every logical driver therefore carries
+`#![cfg_attr(not(test), forbid(unsafe_code))]`, which is the lint that makes
+the claim true. The two together are the guarantee; the dependency check alone
+never was.
+
+A third check reports rather than fails — `make device-matrix` prints which
+drivers keep which device-class promise, so "this chip can't do it" and "nobody
+got round to it" stop looking identical:
+
+```
+  CONTRACT  FROM          IMPLEMENTED BY
+  Dimmable  led-strip     (nobody yet)
+  LedStrip  led-strip     ws2812
+```
+
+WS2812 has no brightness register, so it implements `LedStrip` and not
+`Dimmable`. Leaving a trait out is a statement about the hardware, not an
+oversight — which is why a blank there must never break the build.
 
 ---
 
@@ -442,7 +477,7 @@ kernel/                scheduler, IPC, timers, IRQ routing, debug — a library
 board/                 PCB — which pin is wired to what
 drivers/physical/      Layer 1 — one peripheral's registers each
 drivers/bus/           Layer 2 — transport abstractions
-drivers/logical/       Layer 3 — device drivers, MCU-agnostic
+drivers/logical/       Layer 3 — one part number each, MCU-agnostic
 lib/                   portable libraries — no registers, no part numbers
 tools/build/           build-script helper that gives an app the linker script
 tools/size/            `make size` — where the image's bytes went, per region
