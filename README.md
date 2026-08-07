@@ -650,11 +650,16 @@ Debug features are additive and compile out entirely:
   driven through all three driver layers, which is the first time any device in
   this tree has been. It found four bugs in a controller driver that had never
   been run.
-- **Now** — proving the on-target race tests can actually fail
-  ([#50](https://github.com/cooljackal/flintos/issues/50)).
-- **Next** — second core ([#19](https://github.com/cooljackal/flintos/issues/19))
-  and task pinning ([#20](https://github.com/cooljackal/flintos/issues/20)),
-  then DMA ([#18](https://github.com/cooljackal/flintos/issues/18)).
+- **Done** — both cores run the scheduler
+  ([#19](https://github.com/cooljackal/flintos/issues/19)), with task pinning
+  ([#20](https://github.com/cooljackal/flintos/issues/20)). Mutation testing
+  proved the on-target race tests can actually fail
+  ([#50](https://github.com/cooljackal/flintos/issues/50)) — and found two that
+  could not.
+- **Now** — [v1](https://github.com/cooljackal/flintos/milestone/1): every
+  documented ESP32 peripheral, driven and tested on silicon. DMA has channels
+  and buffers but no transfer engine
+  ([#18](https://github.com/cooljackal/flintos/issues/18)).
 - **Later** — Layer-1 drivers as isolated tasks with one-IPC-hop request/reply;
   `nsh` shell; Cortex-M port for STM32F3/F4.
 

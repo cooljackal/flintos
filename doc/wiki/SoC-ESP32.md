@@ -1,7 +1,7 @@
 # ESP32
 
-Classic ESP32 (and the PICO-D4 SiP built on it). Xtensa LX6 dual-core; Flint
-uses core 0 only.
+Classic ESP32 (and the PICO-D4 SiP built on it). Xtensa LX6 dual-core, and
+Flint runs the scheduler on both — see [Multicore](Multicore).
 
 Crate: `soc/esp32` (`soc-esp32`). Everything below is in code — `addr.rs`,
 `io_mux.rs`, `gpio_matrix.rs`, `dport.rs`, `pinmux.rs`, `intr_map.rs`,
@@ -174,6 +174,42 @@ unsafe { dport::enable(bit) };
 Bits: UART0=2, UART1=5, UART2=23, SPI2=6, SPI3=16, I2C0=7, I2C1=18.
 
 UART0 works without this only because the boot ROM already ungated it.
+
+## Reading DPORT
+
+DPORT is shared by both cores, and it is unsafe to touch naively in two
+separate ways. Use `soc_esp32::dport::read` and `::write` rather than a
+`read_volatile` — the module exists for this reason.
+
+### The erratum
+
+A DPORT read taken while the other CPU accesses APB can **return the APB
+value**. Nothing faults. The caller gets a plausible wrong number, so a
+forgotten workaround looks like a wrong register map — the same disguise a
+forgotten ungate wears.
+
+The fix is not a lock. Read any APB register immediately before the DPORT
+read, with the two loads adjacent and interrupts masked; the pre-read
+synchronises the two CPUs' view of the bus. `dport::read` does this, using
+UART0's `DATE` register at `0x3FF40078` — the same one esp-idf uses.
+
+**Writes need no protection.** esp-idf's `DPORT_REG_WRITE` is a plain store,
+documented as such, and so is ours.
+
+### Lost updates
+
+Separately and unrelatedly, `PERIP_CLK_EN` and `PERIP_RST_EN` are
+read-modify-written. Two cores gating different peripherals can drop each
+other's bits — the second read happens before the first write lands. The
+erratum workaround does nothing about this, because each read is individually
+correct.
+
+`dport::modify`, `::enable` and `::disable` take a lock across the whole
+sequence. `enable` holds it across *both* registers: acquiring twice would let
+the other core observe a peripheral clocked but still held in reset, which is
+the one intermediate state nobody should see.
+
+Neither hazard was reachable while one core ran. Both are live now.
 
 ## Clocks
 

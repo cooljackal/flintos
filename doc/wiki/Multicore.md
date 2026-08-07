@@ -115,6 +115,11 @@ Shared, one copy, protected by a lock:
 - the scheduler — ready mask, every TCB, the timer list
 - the mutex table
 - the log buffer and metrics
+- **DPORT** — peripheral clock gating, the interrupt crossbar, the DMA channel
+  selector. Shared hardware rather than kernel state, and unsafe in its own
+  particular way: see
+  [Reading DPORT](SoC-ESP32#reading-dport). Go through `soc_esp32::dport`,
+  never a bare `read_volatile`.
 
 Per-core, one copy each:
 
@@ -211,6 +216,17 @@ float  core0=N  core1=M
 Both zeros matter. A pinned task with a nonzero count on the wrong core is a
 scheduler bug; `float` with a zero is a second core that never actually ran.
 
+The same app also hammers DPORT from both cores at once, reporting
+
+```
+dport round N: core0 X ops, core1 Y ops, lost 0
+```
+
+`lost` counts the times a core set its own clock bit and immediately found it
+gone, which only the other core can have done. It must stay at zero, and both
+op counts must be nonzero — a lost-update test where one side never ran is a
+test that passes for the wrong reason.
+
 ---
 
 ## Sources
@@ -219,4 +235,5 @@ scheduler bug; `float` with a zero is a second core that never actually ran.
 - `soc/esp32/src/appcpu.rs` — the three holds and the cache enable
 - `kernel/src/smp.rs` — the lock
 - `kernel/src/scheduler.rs` — affinity and per-core current
+- `soc/esp32/src/dport.rs` — the DPORT erratum workaround and its lock
 - `apps/smp/` — the hardware test
