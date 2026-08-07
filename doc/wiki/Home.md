@@ -52,3 +52,4 @@ Pin tables and register maps, so you don't have to go looking.
 
 - [Issues](https://github.com/cooljackal/flintos/issues) — the source of truth for open work
 - [`doc/review-findings.md`](https://github.com/cooljackal/flintos/blob/main/doc/review-findings.md) — the adversarial review that shaped the tree
+- [`doc/plan-radio.md`](https://github.com/cooljackal/flintos/blob/main/doc/plan-radio.md) — how Wi-Fi and BLE would be added, and what they cost
