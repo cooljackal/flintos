@@ -57,6 +57,23 @@ MARK_BEGIN="[FLINT] SELFTEST BEGIN"
 MARK_END="[FLINT] SELFTEST END"
 MARK_TEST="[FLINT] TEST "
 
+# The *complete* summary line, counts included, as an extended regex.
+#
+# The poll loop below waits for this rather than for MARK_END alone. The
+# marker arrives a few bytes before "pass=N fail=N" does, so breaking on it and
+# killing espflash immediately could truncate the line mid-way -- and the judge
+# then failed a board that had passed, reporting that it could not read counts
+# it had printed. Intermittent, because it depended on where the serial read
+# happened to land.
+MARK_SUMMARY='SELFTEST END pass=[0-9][0-9]* fail=[0-9][0-9]*'
+
+# How long to let espflash keep draining after the summary appears.
+#
+# The line being complete does not mean the console is: the last test's PASS
+# line and the summary can still be in flight behind it. A second costs nothing
+# against a run that already took ten.
+SETTLE_SECS=1
+
 # Long enough for a slow flash plus the tests themselves (the tick tests spin
 # for several tick periods, the recursion tests are bounded). Short enough that
 # a wedged board does not hold a terminal forever.
@@ -100,8 +117,29 @@ judge() {
     passed=$(grep -cE "^.*${MARK_TEST//\[/\\[}.* PASS$" "$log" || true)
     failed=$(grep -cE "^.*${MARK_TEST//\[/\\[}.* FAIL " "$log" || true)
 
-    reported_pass=$(sed -n 's/.*pass=\([0-9][0-9]*\).*/\1/p' <<<"$end_line")
-    reported_fail=$(sed -n 's/.*fail=\([0-9][0-9]*\).*/\1/p' <<<"$end_line")
+    # Bash's own regex, not `sed`.
+    #
+    # This shelled out to sed and failed *only when run from `make`*: the board
+    # printed "pass=11 fail=0", the harness echoed that exact line back, and
+    # then reported it could not read the counts from it. Reproducible five
+    # times out of five through make, and never directly.
+    #
+    # The Makefile prepends Windows-style directories (`C:/...`) to PATH for
+    # the toolchain. An MSYS shell splits PATH on `:`, so those entries mangle
+    # the lookup: a recipe gets bash 5.2 and Git-for-Windows' sed where an
+    # interactive shell gets bash 4.4 and MSYS2's, and that sed did not match
+    # the pattern at all -- with or without a trailing CR.
+    #
+    # `[[ =~ ]]` is a builtin. No PATH lookup, nothing to pick the wrong copy
+    # of. A test harness should not report a passing board as failed because of
+    # which toolchain happens to be first on PATH.
+    if [[ "$end_line" =~ pass=([0-9]+)[[:space:]]+fail=([0-9]+) ]]; then
+        reported_pass="${BASH_REMATCH[1]}"
+        reported_fail="${BASH_REMATCH[2]}"
+    else
+        reported_pass=""
+        reported_fail=""
+    fi
 
     if [ -z "$reported_pass" ] || [ -z "$reported_fail" ]; then
         echo "FAIL: could not read the summary counts from: $end_line"
@@ -282,7 +320,9 @@ ESPFLASH_PID=$!
 
 deadline=$((SECONDS + TIMEOUT_SECS))
 while kill -0 "$ESPFLASH_PID" 2>/dev/null; do
-    if grep -qF "$MARK_END" "$LOG" 2>/dev/null; then
+    if grep -qE "$MARK_SUMMARY" "$LOG" 2>/dev/null; then
+        # Let the tail of the output land before killing the monitor.
+        sleep "$SETTLE_SECS"
         break
     fi
     if [ "$SECONDS" -ge "$deadline" ]; then

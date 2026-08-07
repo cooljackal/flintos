@@ -21,6 +21,11 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Fixed
 
+- **`make test-target` failed a passing board.** The judge shelled out to `sed`
+  to read the summary counts, and under `make` the PATH picks up a different
+  toolchain's `sed` that did not match the pattern. It parses with a bash
+  builtin now, which has no PATH lookup to get wrong.
+
 - **The ESP32 I²C controller was never correctly initialised.** `init` wrote
   `I2C_FIFO_CONF` with bit 13 set, commented as an interrupt enable; bit 13 is
   `I2C_TX_FIFO_RST`, so the transmit FIFO was pinned in reset and no byte could
