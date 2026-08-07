@@ -28,10 +28,32 @@
 //! `soc/dport_reg.h` and `soc/gpio_sig_map.h` rather than recalled. Four of
 //! them would have been wrong from memory, which is why:
 //!
-//! - the channel FIFO is at offset **0x0000**, not 0x800
+//! - the channel FIFO register is at offset **0x0000**, not 0x800
 //! - `IDLE_OUT_EN` and `IDLE_OUT_LV` live in **CONF1**, not CONF0
 //! - `ETS_RMT_INTR_SOURCE` is **47**, not 46
 //! - `RMT_SIG_OUT0_IDX` is 87
+//!
+//! # Two ways in, and only one of them works twice
+//!
+//! There are two paths to a channel's entries, and the first version of this
+//! module took the wrong one. Writing `RMT_CHnDATA_REG` pushes through an APB
+//! FIFO; setting `RMT_APB_FIFO_MASK` instead maps the 64-entry block into
+//! memory at `RMT_BASE + 0x800` and you write it by index.
+//!
+//! The FIFO path transmits correctly *once*. Its write pointer is rewound by
+//! `APB_MEM_RST`, which is a different bit from the `MEM_RD_RST` that rewinds
+//! the read pointer, so a driver that resets only the read pointer replays its
+//! first frame forever -- an LED that lights the right colour and then ignores
+//! every later one. That is what happened, and the symptom is quiet enough to
+//! be mistaken for the encoder.
+//!
+//! This uses the memory path, because esp-idf does: `rmt_ll_tx_reset_pointer`
+//! touches `mem_rd_rst` alone, which is only sufficient when the writes went
+//! to `RMTMEM` rather than through the FIFO. `mem_wr_rst`, despite the name,
+//! rewinds the *receiver's* pointer and has nothing to do with transmitting.
+//!
+//! `RMTMEM = 0x3ff56800` comes from esp-idf's `esp32.peripherals.ld`, and the
+//! rest from `rmt_reg.h` read literally rather than summarised.
 
 use crate::addr::RMT_BASE;
 
@@ -44,11 +66,24 @@ pub const APB_HZ: u32 = crate::APB_HZ;
 /// is one entry, giving 64 bits, or two LEDs and change.
 pub const ENTRIES_PER_BLOCK: usize = 64;
 
-/// Channel FIFO write register. `RMT_CH0DATA_REG` is `DR_REG_RMT_BASE + 0x0000`
-/// and the channels are 4 bytes apart.
-const fn ch_data(ch: u8) -> u32 {
-    RMT_BASE + 4 * ch as u32
+/// Base of the channel entry RAM. `RMTMEM` is `DR_REG_RMT_BASE + 0x800`.
+///
+/// Not to be confused with `RMT_CH0DATA_REG` at offset 0x0000, which is the
+/// APB FIFO window onto the same storage. See the module header for why this
+/// driver uses one and not the other.
+const MEM_BASE: u32 = RMT_BASE + 0x800;
+
+/// One channel's entry block: 64 entries of 4 bytes.
+const fn ch_mem(ch: u8) -> u32 {
+    MEM_BASE + (ENTRIES_PER_BLOCK as u32 * 4) * ch as u32
 }
+
+/// `RMT_APB_CONF_REG`. Global, not per channel.
+const APB_CONF: u32 = RMT_BASE + 0xF0;
+
+/// "Set this bit to enable RMTMEM and disable apb fifo access." Resets to 0,
+/// so the FIFO is the default and this has to be set explicitly.
+const APB_FIFO_MASK: u32 = 1 << 0;
 
 /// `RMT_CHnCONF0_REG`: divider, memory blocks, carrier.
 const fn ch_conf0(ch: u8) -> u32 {
@@ -67,7 +102,19 @@ const CONF0_CARRIER_EN: u32 = 1 << 28;
 
 // CONF1 fields.
 const CONF1_TX_START: u32 = 1 << 0;
+/// Rewinds the transmitter's read pointer. The one that matters here.
 const CONF1_MEM_RD_RST: u32 = 1 << 3;
+/// Rewinds the APB FIFO pointer.
+///
+/// Deliberately unused: this driver does not touch the FIFO. It is defined
+/// anyway because the bug that made the first version replay one frame forever
+/// was confusing it with `MEM_RD_RST`, and a named constant asserted against
+/// the header is how that stays fixed. Deleting it would leave nothing to
+/// distinguish it from.
+#[allow(dead_code)]
+const CONF1_APB_MEM_RST: u32 = 1 << 4;
+/// 0 = the transmitter owns the block. Set would hand it to the receiver.
+const CONF1_MEM_OWNER: u32 = 1 << 5;
 const CONF1_REF_CNT_RST: u32 = 1 << 16;
 /// Clock the divider from APB rather than REF_TICK. REF_TICK is 1 MHz, far too
 /// coarse for a 350 ns pulse.
@@ -148,9 +195,19 @@ impl Rmt {
         (ch_conf0(ch) as *mut u32).write_volatile(conf0 & !CONF0_CARRIER_EN);
 
         // Idle low: a WS2812 reads a long high as data, and leaving the line
-        // high between frames would corrupt the next one.
+        // high between frames would corrupt the next one. MEM_OWNER clear
+        // leaves the entry block with the transmitter.
         let conf1 = CONF1_REF_ALWAYS_ON | CONF1_IDLE_OUT_EN;
-        (ch_conf1(ch) as *mut u32).write_volatile(conf1 & !CONF1_IDLE_OUT_LV);
+        (ch_conf1(ch) as *mut u32)
+            .write_volatile(conf1 & !(CONF1_IDLE_OUT_LV | CONF1_MEM_OWNER));
+
+        // Map the entry blocks into memory instead of the APB FIFO. This
+        // register is global, so it is set for every channel by whichever is
+        // constructed first -- which is correct, since no channel in this
+        // driver uses the FIFO, but it does mean a caller mixing this with
+        // FIFO writes elsewhere would break them.
+        let apb = APB_CONF as *mut u32;
+        apb.write_volatile(apb.read_volatile() | APB_FIFO_MASK);
 
         Some(Self { ch })
     }
@@ -176,18 +233,26 @@ impl Rmt {
             return false;
         }
 
-        // Rewind the read pointer, or the channel resumes from wherever the
-        // previous transmission left it.
+        // Write the block by index. There is no pointer to advance and so none
+        // to get out of step between frames, which is the whole reason this
+        // driver does not use the FIFO.
+        let mem = ch_mem(self.ch) as *mut u32;
+        for (i, e) in entries.iter().enumerate() {
+            mem.add(i).write_volatile(e.0);
+        }
+        mem.add(entries.len()).write_volatile(Entry::END.0);
+
         let c1 = ch_conf1(self.ch) as *mut u32;
-        let base = c1.read_volatile();
+        // Drop the one-shot bits before the read-modify-write, so a TX_START
+        // left set by the previous frame cannot be re-asserted here.
+        let base = c1.read_volatile() & !(CONF1_TX_START | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
+
+        // Rewind the read pointer and the divider phase, both pulsed rather
+        // than left set -- held in reset, the channel emits nothing. Resetting
+        // the divider is what makes the first pulse a full one; at a 350 ns
+        // pulse and a +/-150 ns budget, a partial first tick is a wrong bit.
         c1.write_volatile(base | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
         c1.write_volatile(base);
-
-        let fifo = ch_data(self.ch) as *mut u32;
-        for e in entries {
-            fifo.write_volatile(e.0);
-        }
-        fifo.write_volatile(Entry::END.0);
 
         c1.write_volatile(base | CONF1_TX_START);
         true
@@ -210,13 +275,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_channel_fifo_is_at_offset_zero() {
-        // Would have been 0x800 from memory. The CONF registers start at 0x20,
-        // which is exactly where eight 4-byte FIFO registers end -- the layout
-        // only makes sense this way.
-        assert_eq!(ch_data(0), RMT_BASE);
-        assert_eq!(ch_data(7), RMT_BASE + 0x1C);
-        assert_eq!(ch_conf0(0), RMT_BASE + 0x20, "CONF0 follows the eight FIFOs");
+    fn the_entry_blocks_are_where_the_linker_script_puts_rmtmem() {
+        // esp32.peripherals.ld: PROVIDE ( RMTMEM = 0x3ff56800 ). 0x800 was the
+        // right number attached to the wrong thing in the first draft -- it is
+        // the RAM, not the data register, and the data register is at 0x0000.
+        assert_eq!(MEM_BASE, 0x3FF5_6800);
+        assert_eq!(ch_mem(0), MEM_BASE);
+        assert_eq!(ch_mem(1), MEM_BASE + 256, "64 entries of 4 bytes each");
+        assert_eq!(ch_mem(7), MEM_BASE + 7 * 256);
+    }
+
+    #[test]
+    fn the_blocks_tile_without_overlapping() {
+        // A stride shorter than the block would put channel 1's entries inside
+        // channel 0's, which shows up as one LED string corrupting another.
+        for ch in 0..7u8 {
+            let end = ch_mem(ch) + ENTRIES_PER_BLOCK as u32 * 4;
+            assert_eq!(end, ch_mem(ch + 1), "channel {ch} runs into the next");
+        }
+    }
+
+    #[test]
+    fn the_memory_path_has_to_be_switched_on() {
+        // RMT_APB_CONF_REG, quoted from rmt_reg.h: (DR_REG_RMT_BASE + 0x00f0).
+        // FIFO_MASK "resets to 1'h0", so the FIFO is what you get by default
+        // and writing RMTMEM without setting this goes nowhere.
+        assert_eq!(APB_CONF, RMT_BASE + 0xF0);
+        assert_eq!(APB_FIFO_MASK, 1);
+    }
+
+    #[test]
+    fn the_two_pointer_resets_are_not_the_same_bit() {
+        // The bug this driver shipped with. MEM_RD_RST rewinds the read
+        // pointer; APB_MEM_RST rewinds the FIFO write pointer. Resetting only
+        // the first while writing through the FIFO replays frame one forever,
+        // which on an LED looks like a stuck colour rather than a fault.
+        assert_ne!(CONF1_MEM_RD_RST, CONF1_APB_MEM_RST);
+        assert_eq!(CONF1_MEM_RD_RST, 1 << 3);
+        assert_eq!(CONF1_APB_MEM_RST, 1 << 4);
+    }
+
+    #[test]
+    fn the_transmitter_keeps_the_entry_block() {
+        // MEM_OWNER set hands the block to the receiver, which then overwrites
+        // the entries with whatever it thinks it is sampling.
+        assert_eq!(CONF1_MEM_OWNER, 1 << 5);
     }
 
     #[test]
@@ -232,6 +335,8 @@ mod tests {
         let all = [
             CONF1_TX_START,
             CONF1_MEM_RD_RST,
+            CONF1_APB_MEM_RST,
+            CONF1_MEM_OWNER,
             CONF1_REF_CNT_RST,
             CONF1_REF_ALWAYS_ON,
             CONF1_IDLE_OUT_LV,

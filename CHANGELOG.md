@@ -67,6 +67,11 @@ A kernel that provides a different one refuses to build and points here.
 - **`apps/blink`**, which drives the M5Stack Atom's onboard LED. It is also
   the on-hardware test for the RMT register map — no host test can tell you
   whether a register is where you think it is.
+- **RMT feeds the channel through `RMTMEM` rather than the APB FIFO.** Via the
+  FIFO, only the first frame transmitted: the write pointer is rewound by
+  `APB_MEM_RST`, a different bit from the `MEM_RD_RST` that rewinds the read
+  pointer, so every later frame landed past the terminator and the channel
+  replayed the first one. An LED stuck on its first colour.
 - **RMT driver** (`soc_esp32::rmt`) and a **WS2812/SK6812 logical driver**
   (`ws2812`), so an addressable LED can be driven with the sub-microsecond
   pulse timing it needs. One shot, one channel's memory block — about two LEDs;
