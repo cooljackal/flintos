@@ -70,7 +70,7 @@ The blob allocates constantly. Flint currently has no allocator at all.
 
 | Step | Work | Done when |
 |---|---|---|
-| 1.1 | Pick and place a heap region in the memory map | The map still fits below `0x3FFDC200`, and `make size` reports where it went. |
+| 1.1 | Reclaim heap memory **above** `0x3FFDC200` at runtime — not a new statically placed region | The heap is sized at boot from reclaimed RAM, and the static map below the bound is unchanged. |
 | 1.2 | Implement the allocator | Alloc/free under a host test suite, including fragmentation behaviour. |
 | 1.3 | Add the three flavours the blob wants: general, internal-only (DRAM, never PSRAM), DMA-capable | Each returns memory in the right region, proven by asserting the address range. |
 | 1.4 | Report exhaustion honestly | `get_free_heap_size` is accurate; an out-of-memory path is tested, not assumed. |
@@ -156,15 +156,35 @@ are not.
 
 ## Memory budget
 
-Check this before Phase 1, not after Phase 5.
+Checked, with real numbers, before writing any of the above. It closes — but
+only one way.
 
-Today everything is statically placed below `0x3FFDC200`, with 64 KB DRAM and
-96 KB of task stacks. Wi-Fi wants roughly 50 KB of working RAM and BLE is
-similar. IRAM is 127 KB and already holds the vectors and the second core's
-entry.
+`make size` on `apps/smp` today:
 
-If the budget does not close, that is worth knowing while the work is still a
-document.
+| Region | Used | Capacity |
+|---|---|---|
+| `dram_seg` | 20.6 KiB | 64 KiB |
+| `task_stacks` | 96 KiB reserved | 96 KiB |
+| `iram_seg` | 766 B | 127 KiB |
+| `vectors_seg` | 963 B | 1 KiB |
+
+The static map runs `0x3FFB0000`–`0x3FFDB000` and leaves **4.5 KiB spare**
+below the `0x3FFDC200` bound. Wi-Fi wants roughly 50 KB and BLE is similar, so
+a statically placed heap does not fit and never will.
+
+It does not need to. The linker script already records the way out: memory
+above the bound is the ROM's during boot and **reclaimable afterwards**. That
+is SRAM2 up to `0x3FFDFFFF` plus SRAM1 (`0x3FFE0000`–`0x3FFFFFFF`, 128 KiB),
+which Flint does not touch at all today. Espressif's own builds put the heap
+there for exactly this reason.
+
+So the heap is reclaimed at runtime, not placed at link time — see step 1.1.
+Confirm how much of SRAM1 the BT controller permanently reserves before
+sizing it.
+
+**IRAM is not a constraint.** 766 bytes of 127 KiB are used, so the blob's
+ISR paths have room. `vectors_seg` at 94 % is tight but fixed-size and
+unrelated.
 
 ---
 
