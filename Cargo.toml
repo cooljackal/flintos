@@ -45,6 +45,7 @@ members = [
     # links it. Adding one here is all that is needed for `make APP=<name>`.
     "apps/hello",
     "apps/demo",
+    "apps/blink",
 
     "drivers/physical/esp32-uart",
     "drivers/physical/esp32-gpio",

@@ -17,6 +17,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blink"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "esp32-gpio",
+ "hal",
+ "kernel",
+ "soc-esp32",
+ "ws2812",
+]
+
+[[package]]
 name = "bme280"
 version = "0.1.0"
 dependencies = [

@@ -210,6 +210,7 @@ of logging:
 make apps                                  # what's available
 make flash APP=hello                       # the minimal one-task template
 make flash APP=demo BOARD=board-m5-atom    # M5Stack Atom (ESP32-PICO-D4)
+make flash APP=blink BOARD=board-m5-atom   # the Atom's onboard LED, red/green/blue
 ```
 
 `DEBUG` defaults to `debug-level-1`, which is what you want while developing.
