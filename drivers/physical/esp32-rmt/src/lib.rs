@@ -67,10 +67,12 @@
 //! `RMTMEM = 0x3ff56800` comes from esp-idf's `esp32.peripherals.ld`, and the
 //! rest from `rmt_reg.h` read literally rather than summarised.
 
-use crate::addr::RMT_BASE;
+#![no_std]
+
+use soc_esp32::addr::RMT_BASE;
 
 /// APB clock feeding the RMT divider.
-pub const APB_HZ: u32 = crate::APB_HZ;
+pub const APB_HZ: u32 = soc_esp32::APB_HZ;
 
 /// Entries in one channel's memory block.
 ///

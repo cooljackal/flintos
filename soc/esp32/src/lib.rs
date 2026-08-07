@@ -13,6 +13,13 @@
 //! - [`pinmux`] — [`Esp32PinMux`], the chip's implementation of
 //!   [`hal::PinMux`]
 //!
+//! What is deliberately *not* here: peripherals. RMT, the watchdogs and the
+//! RNG were modules of this crate and are now `drivers/physical/esp32-*`,
+//! because a peripheral is something you write a driver for, while this crate
+//! holds what every one of those drivers needs underneath it. The test is
+//! whether a second peripheral would want it: an address map and a pin router
+//! yes, a pulse generator no.
+//!
 //! It sits between the arch layer (Xtensa LX6: traps, context switch, tick,
 //! which the ESP32 shares with other Xtensa parts) and the board layer (which
 //! pin is wired to what, which differs between two boards carrying the same
@@ -26,6 +33,10 @@
 
 #![no_std]
 
+/// The ESP-IDF application image header. A chip-boot artifact, not a CPU
+/// one -- the second-stage bootloader reads it, and the Xtensa core knows
+/// nothing about it.
+pub mod app_desc;
 pub mod addr;
 pub mod dport;
 pub mod gpio_matrix;
@@ -33,9 +44,6 @@ pub mod intr_map;
 pub mod io_mux;
 pub mod pinmux;
 pub mod reset;
-pub mod rmt;
-pub mod rng;
-pub mod wdt;
 
 pub use pinmux::Esp32PinMux;
 

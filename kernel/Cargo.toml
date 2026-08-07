@@ -30,6 +30,12 @@ board = { path = "../board", default-features = false }
 # is what used to give them that coverage.
 esp32-uart = { path = "../drivers/physical/esp32-uart" }
 
+# Two more the kernel genuinely uses: `watchdog` feeds them and `rng` is
+# re-exported. Both were modules of `soc-esp32` until peripherals were
+# separated from chip infrastructure.
+esp32-wdt = { path = "../drivers/physical/esp32-wdt" }
+esp32-rng = { path = "../drivers/physical/esp32-rng" }
+
 # Xtensa support is target-only, and that is what lets this crate be built —
 # and therefore tested — on a host at all.
 #

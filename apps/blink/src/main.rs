@@ -14,7 +14,7 @@
 //!
 //! - `ws2812` turns a colour into pulse widths. It depends only on `api` and
 //!   has never heard of an ESP32.
-//! - `soc_esp32::rmt` emits pulse widths. It has never heard of an LED.
+//! - `esp32_rmt` emits pulse widths. It has never heard of an LED.
 //! - this file knows both exist, and which pin the board put between them.
 //!
 //! The kernel is not in that list, which is the intended shape: it depends on
@@ -51,7 +51,7 @@ use hal::{PinConfig, PinMux, Signal};
 use esp32_gpio::{Esp32Gpio, PinMode};
 use soc_esp32::dport::{self, ClockBit};
 use soc_esp32::pinmux::Esp32PinMux;
-use soc_esp32::rmt::{self, Entry, Refill, Rmt};
+use esp32_rmt::{self as rmt, Entry, Refill, Rmt};
 use soc_esp32::{addr, intr_map};
 use led_matrix::Layout;
 use ws2812::{Rgb, Timing};

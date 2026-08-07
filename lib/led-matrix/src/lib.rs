@@ -15,9 +15,9 @@
 //! and its output is an integer. The same layouts describe APA102, SK9822 and
 //! anything else wired as a chain.
 //!
-//! It depends on nothing — not even `api`. Calling it a driver would have been
-//! a false statement, and the Layer-3 naming convention would have made the
-//! claim out loud by handing it the name `driver-led-matrix`.
+//! It depends on nothing — not even `api`, which the layer check now enforces
+//! for `lib/` crates rather than merely describing. Calling it a driver would
+//! have been a false statement about what it is.
 //!
 //! # Coordinates
 //!

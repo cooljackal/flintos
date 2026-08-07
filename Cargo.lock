@@ -23,6 +23,7 @@ dependencies = [
  "api",
  "build",
  "esp32-gpio",
+ "esp32-rmt",
  "hal",
  "kernel",
  "led-matrix",
@@ -77,6 +78,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-rmt"
+version = "0.1.0"
+dependencies = [
+ "soc-esp32",
+]
+
+[[package]]
+name = "esp32-rng"
+version = "0.1.0"
+dependencies = [
+ "soc-esp32",
+]
+
+[[package]]
 name = "esp32-spi"
 version = "0.1.0"
 dependencies = [
@@ -89,6 +104,13 @@ name = "esp32-uart"
 version = "0.1.0"
 dependencies = [
  "hal",
+ "soc-esp32",
+]
+
+[[package]]
+name = "esp32-wdt"
+version = "0.1.0"
+dependencies = [
  "soc-esp32",
 ]
 
@@ -120,7 +142,9 @@ dependencies = [
  "api",
  "arch-xtensa",
  "board",
+ "esp32-rng",
  "esp32-uart",
+ "esp32-wdt",
  "hal",
  "soc-esp32",
 ]

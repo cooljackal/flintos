@@ -27,6 +27,8 @@
 //! Register from the ESP32 TRM chapter 24 and esp-idf's `esp_random()`, which
 //! reads the same address.
 
+#![no_std]
+
 /// `WDEV_RND_REG`. Reads return a new value each time; there is nothing to
 /// configure and nothing to enable.
 pub const RNG_DATA_REG: u32 = 0x3FF7_5144;

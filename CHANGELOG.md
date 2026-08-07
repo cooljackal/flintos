@@ -21,6 +21,21 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Breaking
 
+- **RMT, the watchdogs and the RNG moved out of `soc-esp32` into their own
+  physical drivers.** A peripheral is something you write a driver for; the SoC
+  crate holds what every driver needs underneath it.
+
+  ```rust
+  use esp32_rmt::{Entry, Rmt};   // was: soc_esp32::rmt::{Entry, Rmt}
+  ```
+
+  ```toml
+  esp32-rmt = { path = "../../drivers/physical/esp32-rmt" }
+  ```
+
+  `kernel::rng` and `kernel::watchdog` are unchanged — the kernel re-exports
+  them from the new crates.
+
 - **`board-m5-atom` split into `board-m5-atom-lite` and
   `board-m5-atom-matrix`.** The Atom Lite has one LED and the Atom Matrix has a
   5×5 panel on the same pin, and one feature could not tell them apart — an
@@ -86,6 +101,14 @@ A kernel that provides a different one refuses to build and points here.
 - **`apps/blink`**, which drives the M5Stack Atom's onboard LED. It is also
   the on-hardware test for the RMT register map — no host test can tell you
   whether a register is where you think it is.
+- **`tools/check-layers.sh` polices every tier**, not three of them: `hal`
+  depends on nothing, `arch/*` and `soc/*` on `hal`, `drivers/physical/*` on
+  `hal` and `soc/*`, bus and logical drivers on `api` and `lib/*`, `lib/*` on
+  each other. 17 crates checked, up from 7 — `drivers/physical/` was entirely
+  unchecked, so the layering could be inverted with CI green.
+- **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
+  cannot stop a driver writing to a register, because raw MMIO needs no
+  dependency. This is the lint that makes the guarantee real.
 - **`lib/`**, a home for portable libraries that are not drivers: no
   registers, no part numbers, output is a value rather than something bound for
   a pin. `tools/check-layers.sh` enforces that they depend only on `api` and on

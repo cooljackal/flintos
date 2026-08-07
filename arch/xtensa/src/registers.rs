@@ -37,22 +37,15 @@ pub const INT_SOFTWARE_MASK: u32 = 1 << INT_SOFTWARE;
 
 // ── DPORT interrupt matrix (peripheral source → CPU interrupt routing) ───────
 
-pub mod dport {
-    /// DPORT base.
-    pub const BASE: u32 = 0x3FF0_0000;
-    /// PRO-CPU peripheral interrupt map base (DPORT_PRO_*_MAP_REG).
-    /// Each peripheral source has a 32-bit register at BASE + 0x104 + src*4
-    /// holding the CPU interrupt number it is routed to.
-    pub const PRO_MAP_BASE: u32 = BASE + 0x104;
-
-    /// Route peripheral interrupt `source` to CPU interrupt `cpu_int`.
-    pub unsafe fn route(source: u32, cpu_int: u32) {
-        let reg = (PRO_MAP_BASE + source * 4) as *mut u32;
-        core::ptr::write_volatile(reg, cpu_int);
-    }
-}
-
-// ── RTC_CNTL (used only to measure the CPU clock at boot) ────────────────────
+// `dport` used to live here: the ESP32 interrupt crossbar, at 0x3FF00000.
+// Deleted rather than moved. It was chip infrastructure inside the CPU-core
+// crate, it had no callers, and `soc_esp32::intr_map` is the live
+// implementation of the same registers -- written later, without noticing this
+// one, which is exactly what a duplicate in the wrong tier costs.
+//
+// `rtc_cntl` below is the same mistake and is still here because `tick.rs`
+// measures the CPU frequency against the RTC slow clock. Fixing it means the
+// arch crate stops owning the measurement and takes `cpu_hz` from its caller.
 
 pub mod rtc_cntl {
     //! RTC timer registers, used solely by `tick::XtensaTick::init` to

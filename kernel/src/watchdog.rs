@@ -25,7 +25,7 @@
 //! is irrelevant. The MWDT counts off APB and is accurate, but is fed from idle,
 //! and idle can legitimately not run for a while under load.
 
-use soc_esp32::wdt;
+use esp32_wdt as wdt;
 
 /// How long the kernel may go without servicing a timer interrupt.
 ///

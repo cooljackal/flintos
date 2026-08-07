@@ -2,20 +2,30 @@
 # SPDX-License-Identifier: Apache-2.0
 # Layer-boundary enforcement (plan W7.1).
 #
-# Two rules, both whitelists:
+# One whitelist per tier. The rule the tiers encode:
 #
-#   drivers/logical/*, drivers/bus/*   may depend only on api
-#   lib/*                              may depend only on api and other lib/*
+#   hal                  nothing            contracts only
+#   arch/*               hal                the CPU core: traps, context, core timer
+#   soc/*                hal                chip infrastructure every peripheral needs
+#   drivers/physical/*   hal, soc/*         one peripheral's registers
+#   drivers/bus/*        api, lib/*         transport
+#   drivers/logical/*    api, lib/*         one part number
+#   lib/*                lib/*              no hardware at all
 #
-# A driver knows a specific part number and its output is destined for a pin.
-# Letting one reach hardware register definitions defeats the three-layer
-# model, so api is all it gets.
+# arch and soc hold what is specific to a CPU core or a chip *and shared*.
+# Anything that is one peripheral is a driver, wherever it happens to sit
+# today: RMT, the watchdogs and the RNG were modules of soc-esp32 and are
+# drivers now. The test is whether a second peripheral driver would want it --
+# an address map and a pin router yes, a pulse generator no.
 #
-# `lib/*` is not drivers. These are portable libraries that touch no register,
-# name no part number, and return values rather than driving anything --
-# geometry, framebuffers, colour conversion. They may build on each other,
-# because composing them creates no route to hardware: none of them has one to
-# begin with. If a lib/ crate ever needs hal or a soc, it was misfiled.
+# `lib/*` is not drivers at all: no registers, no part numbers, values rather
+# than anything destined for a pin. It gets no `api`, because api re-exports
+# `hal::bus` and a lib crate accepting a `&dyn Bus` would be misfiled. Drivers
+# may name lib crates, since composing them creates no route to hardware.
+#
+# Note the limit of any dependency-graph check: raw MMIO in Rust needs no
+# dependency at all, so this cannot stop a driver writing to 0x3FF44008. The
+# lint that does that is `#![forbid(unsafe_code)]` in the crate itself.
 #
 # This is a WHITELIST: everything except api is a violation. It used to be a
 # blacklist of three prefixes (hal, arch-*, soc-*), which missed the most
@@ -53,53 +63,81 @@ done
 PYSRC=$(cat <<'EOF'
 import json, os, sys
 
-# The one dependency a portable driver is allowed to name.
-ALLOWED = {"api"}
-
-# Directory -> layer. Layer is a property of the package, but the directory is
-# what declares intent, and a crate in the wrong directory is its own bug.
-LAYERS = {
-    "drivers/logical": "Layer-3 logical driver",
-    "drivers/bus":     "Layer-2 bus abstraction",
-    "lib":             "portable library",
-}
-
 meta = json.load(sys.stdin)
+root = meta["workspace_root"].replace("\\", "/").rstrip("/")
 
-def category(path):
-    for d, l in LAYERS.items():
-        if "/%s/" % d in path + "/":
-            return d, l
-    return None, None
+def rel(pkg):
+    path = os.path.dirname(pkg["manifest_path"]).replace("\\", "/")
+    # Relative to the workspace, never the absolute path: matching "/lib/" as a
+    # substring made every crate a "portable library" when the checkout itself
+    # lived under a directory called lib.
+    return path[len(root) + 1:] if path.startswith(root + "/") else path
 
-# Every lib/ crate, so lib/ crates can be allowed to name each other. Collected
-# from the workspace rather than hardcoded: a new one should not need this file
-# edited to be usable by its neighbours.
-LIBS = {
-    pkg["name"]
-    for pkg in meta["packages"]
-    if category(os.path.dirname(pkg["manifest_path"]).replace("\\", "/"))[0] == "lib"
+def category(r):
+    # Longest first, so drivers/physical wins over drivers.
+    for d in sorted(TIERS, key=len, reverse=True):
+        if r == d or r.startswith(d + "/"):
+            return d
+    return None
+
+TIERS = {
+    "arch":             "CPU-core crate",
+    "soc":              "SoC crate",
+    "drivers/physical": "Layer-1 physical driver",
+    "drivers/bus":      "Layer-2 bus abstraction",
+    "drivers/logical":  "Layer-3 logical driver",
+    "lib":              "portable library",
 }
+
+# Membership is read from the workspace, so a new soc or lib crate is usable by
+# its neighbours without editing this file.
+def names_in(d):
+    return {p["name"] for p in meta["packages"] if category(rel(p)) == d}
+
+SOCS = names_in("soc")
+LIBS = names_in("lib")
+
+ALLOWED = {
+    "arch":             {"hal"},
+    "soc":              {"hal"},
+    "drivers/physical": {"hal"} | SOCS,
+    "drivers/bus":      {"api"} | LIBS,
+    "drivers/logical":  {"api"} | LIBS,
+    "lib":              LIBS,
+}
+DESCRIBE = {
+    "arch":             "hal",
+    "soc":              "hal",
+    "drivers/physical": "hal and soc/ crates",
+    "drivers/bus":      "api and lib/ crates",
+    "drivers/logical":  "api and lib/ crates",
+    "lib":              "other lib/ crates only",
+}
+
 violations = []
 checked = 0
 
 for pkg in meta["packages"]:
-    path = os.path.dirname(pkg["manifest_path"]).replace("\\", "/")
-    directory, layer = category(path)
-    if layer is None:
-        continue
+    r = rel(pkg)
+    # `hal` is the root of the graph: it may name nothing.
+    if pkg["name"] == "hal":
+        tier, allowed, rule = "hal", set(), "nothing -- hal is the root of the graph"
+    else:
+        tier = category(r)
+        if tier is None:
+            continue
+        allowed, rule = ALLOWED[tier], DESCRIBE[tier]
     checked += 1
-    allowed = ALLOWED | LIBS if directory == "lib" else ALLOWED
-    rule = ("api and other lib/ crates" if directory == "lib" else "api")
     for dep in pkg["dependencies"]:
         # dev-dependencies are test scaffolding; they never ship in the image
-        # and so cannot leak hardware access into a driver's public surface.
+        # and so cannot leak hardware access into a crate's public surface.
         if dep["kind"] == "dev":
             continue
         if dep["name"] not in allowed:
+            label = TIERS.get(tier, "hal")
             violations.append(
                 "LAYER VIOLATION: %s (%s) depends on %s -- may depend only on %s"
-                % (pkg["name"], layer, dep["name"], rule)
+                % (pkg["name"], label, dep["name"], rule)
             )
 
 for v in violations:
@@ -107,16 +145,15 @@ for v in violations:
 
 if violations:
     print("")
-    print("%d layer violation(s) found. Drivers may depend only on api; "
-          "lib/ crates only on api and each other." % len(violations))
+    print("%d layer violation(s) found." % len(violations))
     sys.exit(1)
 
 if checked == 0:
-    print("check-layers: matched no driver or lib crates -- has the layout moved?")
+    print("check-layers: matched no crates -- has the layout moved?")
     sys.exit(1)
 
-print("Layer boundary OK: %d driver/lib crates within their dependency whitelist "
-      "(%d lib)." % (checked, len(LIBS)))
+print("Layer boundary OK: %d crates within their tier's whitelist "
+      "(%d soc, %d lib)." % (checked, len(SOCS), len(LIBS)))
 EOF
 )
 

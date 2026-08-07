@@ -12,4 +12,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# Nothing here names `api`: this crate is pure encoding. Left declared
+# because the layer check treats it as the one permitted dependency, and
+# a driver that needs a queue or a log later will want it.
 api = { path = "../../../api" }

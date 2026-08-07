@@ -164,8 +164,14 @@ Flint is a small preemptive RTOS built around three ideas:
 ```
 
 The boundary between Layer 3 and Layer 1 is the whole point. A `bme280` driver
-depends only on `api` — it cannot name an ESP32 register even if it wants
-to, because `tools/check-layers.sh` fails the build if it tries.
+depends only on `api`, and `tools/check-layers.sh` fails the build if it names
+anything else.
+
+That check reads the dependency graph, so by itself it could not stop a driver
+writing to `0x3FF44008` — raw MMIO needs no dependency, and an adversarial
+review demonstrated exactly that. `#![forbid(unsafe_code)]` in each logical
+driver is what closes it. The two together are the guarantee; the dependency
+check alone never was.
 
 ---
 
@@ -425,16 +431,17 @@ apps/                  applications — the binaries you actually flash
 hal/                   traits + types every layer depends on (depends on nothing)
 api/                   the API your application code uses
 arch/xtensa/           CPU — boot, vectors, context switch, tick
-soc/esp32/             chip — peripheral map, IO_MUX, GPIO matrix, clock gating
+soc/esp32/             chip — address map, IO_MUX, GPIO matrix, clock gating, IRQ crossbar
 kernel/                scheduler, IPC, timers, IRQ routing, debug — a library
 board/                 PCB — which pin is wired to what
-drivers/physical/      Layer 1 — MCU register drivers
+drivers/physical/      Layer 1 — one peripheral's registers each
 drivers/bus/           Layer 2 — transport abstractions
 drivers/logical/       Layer 3 — device drivers, MCU-agnostic
 lib/                   portable libraries — no registers, no part numbers
 tools/build/           build-script helper that gives an app the linker script
 tools/size/            `make size` — where the image's bytes went, per region
-tools/check-layers.sh  enforces the driver and lib/ dependency whitelists
+tools/check-layers.sh  enforces every tier's dependency whitelist
+tools/check-names.sh   enforces the package naming and layout convention
 doc/wiki/              the wiki's source; CI publishes it on merge
 doc/internal/          superseded planning documents, kept as history
 ```
@@ -443,9 +450,12 @@ doc/internal/          superseded planning documents, kept as history
 at all.** A driver knows a part number and its output is destined for a pin:
 `ws2812` knows GRB order and 350 ns pulses. `led-matrix` knows no chip, no bus
 and no pin — it turns `(x, y)` into an integer and depends on nothing, not even
-`api`. Filing that under `drivers/` would be a false statement, and the Layer 3
-naming convention would have made the claim out loud by calling it
-`driver-led-matrix`. Font rendering, framebuffers and colour conversion belong
+`api`. Filing that under `drivers/` would be a false statement about what it is. (An
+earlier version of this paragraph claimed the naming convention would have
+forced the name `driver-led-matrix`. It would not: a package's name is its
+directory leaf, and `check-names.sh` tolerates a category prefix rather than
+assigning one. The category earns its place on the hardware-free property
+alone.) Font rendering, framebuffers and colour conversion belong
 in the same bucket when they arrive.
 
 **arch / SoC / board are three separate tiers, deliberately.** The CPU core, the

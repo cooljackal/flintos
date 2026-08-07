@@ -26,7 +26,9 @@
 //! (timer groups) and 30 (RTC), cross-checked against esp-idf's
 //! `soc/rtc_cntl_reg.h` and `soc/timer_group_reg.h`.
 
-use crate::addr::{RTC_CNTL_BASE, TIMG0_BASE, TIMG1_BASE};
+#![no_std]
+
+use soc_esp32::addr::{RTC_CNTL_BASE, TIMG0_BASE, TIMG1_BASE};
 
 /// Write-protect key. Both watchdog families use the same value; the config
 /// registers ignore writes until it is present, and re-locking after each

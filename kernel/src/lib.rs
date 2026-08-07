@@ -43,7 +43,7 @@ pub mod watchdog;
 /// would only put distance between the caller and the entropy caveat in its
 /// docs -- which is the part that matters.
 #[cfg(target_os = "none")]
-pub use soc_esp32::rng;
+pub use esp32_rng as rng;
 
 #[cfg(all(feature = "self-test", target_os = "none"))]
 pub mod selftest;

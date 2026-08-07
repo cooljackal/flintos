@@ -28,6 +28,17 @@
 //! has no humidity sensor) fails closed rather than returning zero or noise.
 
 #![no_std]
+#![cfg_attr(not(test), forbid(unsafe_code))]
+//
+// The layer check reads the dependency graph, and raw MMIO needs no
+// dependency -- a device driver could write 0x3FF44008 with `api` as its only
+// dep and still pass. This is the line that makes "cannot reach hardware" true
+// rather than aspirational.
+//
+// Scoped to non-test builds because the mock buses these crates test against
+// use `unsafe` to extend a stack borrow to 'static (see `extend` below in
+// bme280). That is test scaffolding and never ships; the shipping code in all
+// three crates contains no `unsafe` at all.
 
 use api::bus::{BusError, BusHandle, BusResult};
 
