@@ -82,6 +82,30 @@ SSD1306 — those are WROVER dev-board wiring. Inventing bus entries for hardwar
 that isn't there is exactly the copy-paste error the manifest tests exist to
 catch.
 
+The Matrix's IMU is on a private I²C bus and is declared as pins rather than a
+`BusMapping`: `IMU_SDA_GPIO` 25, `IMU_SCL_GPIO` 21, `IMU_I2C_ADDR` 0x68. Those
+pins reach nothing else, so there is no bus for another device to share.
+
+## The IMU
+
+`apps/imu` drives it, and it is the first device in this tree assembled through
+all three driver layers — `esp32-i2c` → `i2c-bus` → `mpu6886`.
+
+```bash
+make flash APP=imu BOARD=board-m5-atom-matrix
+```
+
+It scans the bus first, then identifies the part, then streams acceleration,
+angular rate and die temperature. Stationary on a desk it reads about 1000 mg
+total acceleration — that is gravity, and it is the check worth making, because
+a wrong full-scale setting still produces plausible-looking numbers on any
+single axis.
+
+**Which part you have matters.** M5Stack shipped this board with an MPU6886 and
+later revisions with a BMI270. Both answer at 0x68, so the address proves
+nothing; only the ID registers separate them, and they live at different
+addresses. The app probes for both and reports which it found.
+
 To use the Grove port as I²C, add an `i2c0` `BusMapping` with SDA 26 / SCL 32
 and the I2C0 base address. The GPIO matrix reaches those pins fine — ESP32 I²C
 has no native pads anyway.

@@ -156,9 +156,42 @@ pub fn interrupt_depth_returns_to_zero() -> Check {
     if crate::interrupt::in_interrupt() {
         return Err("already in interrupt context before the test started");
     }
+
+    // Ticks first. This part is nearly free and proves nothing on its own --
+    // see below -- but a depth left dirty by some future tick-path change
+    // would show up here.
     spin_cycles(Tick::ticks_per_period().saturating_mul(5));
     if crate::interrupt::in_interrupt() {
         return Err("interrupt depth did not return to zero after servicing ticks");
+    }
+
+    // The guard's own contract, exercised directly.
+    //
+    // This test used to be only the tick check above, and a mutation that
+    // removed the decrement from `InterruptGuard::drop` did not fail it. The
+    // reason is that `InterruptGuard` is entered only in `interrupt::dispatch`,
+    // which handles *routed peripheral* IRQs -- the tick and the software
+    // interrupt do not go through it. With no peripheral interrupt firing
+    // during the suite, the depth was never incremented, so a broken decrement
+    // was invisible. The test was measuring nothing.
+    {
+        let _outer = crate::interrupt::InterruptGuard::enter();
+        if !crate::interrupt::in_interrupt() {
+            return Err("entering interrupt context was not visible to in_interrupt");
+        }
+        {
+            let _inner = crate::interrupt::InterruptGuard::enter();
+            if !crate::interrupt::in_interrupt() {
+                return Err("a nested interrupt guard lost interrupt context");
+            }
+        }
+        // The inner guard has gone; the outer one has not.
+        if !crate::interrupt::in_interrupt() {
+            return Err("leaving a nested guard left interrupt context too early");
+        }
+    }
+    if crate::interrupt::in_interrupt() {
+        return Err("interrupt depth did not return to zero after the guards were dropped");
     }
     Ok(())
 }
@@ -279,5 +312,52 @@ pub fn mutex_cycle_under_ticks_leaves_no_residue() -> Check {
         return Err("the mutex table leaked entries across lock/unlock cycles");
     }
     crate::mutex::unlock(ADDR);
+
+    // Now with a boost to give back.
+    //
+    // Everything above is uncontended, so no priority inheritance ever
+    // happens -- which meant a mutation deleting `recompute_owner_priority`
+    // from `unlock` did not fail this test. There was no boost to fail to
+    // restore. The check was real but vacuous.
+    //
+    // Staging a genuine waiter would need a second task blocking on this
+    // mutex, and the suite runs at idle priority where that is awkward. The
+    // boost is applied directly instead: this asserts that `unlock` gives a
+    // boost back, which is the part that runs on target. That contention
+    // *causes* a boost is covered by the host tests, including through chains
+    // of blocked owners.
+    let cur = crate::arch::cs_with(|| scheduler::global().current);
+    let boosted = base.saturating_sub(1);
+    if boosted == base {
+        // Already at the top of the range; there is no higher priority to be
+        // boosted to, so skip rather than assert something meaningless.
+        return Ok(());
+    }
+
+    if !crate::mutex::lock(ADDR) {
+        return Err("could not take the mutex for the boost check");
+    }
+    crate::arch::cs_with(|| scheduler::global().boost_priority(cur, boosted));
+
+    let while_held = crate::arch::cs_with(|| {
+        scheduler::global().tasks[cur as usize]
+            .as_ref()
+            .map_or(u8::MAX, |t| t.priority)
+    });
+    if while_held != boosted {
+        crate::mutex::unlock(ADDR);
+        return Err("boost_priority did not raise the holder's priority");
+    }
+
+    crate::mutex::unlock(ADDR);
+
+    let after = crate::arch::cs_with(|| {
+        scheduler::global().tasks[cur as usize]
+            .as_ref()
+            .map_or(u8::MAX, |t| t.priority)
+    });
+    if after != base {
+        return Err("unlock did not give back the priority the holder was boosted to");
+    }
     Ok(())
 }

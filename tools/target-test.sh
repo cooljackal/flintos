@@ -295,6 +295,15 @@ done
 kill "$ESPFLASH_PID" 2>/dev/null
 wait "$ESPFLASH_PID" 2>/dev/null
 
+# Keep the raw capture for diagnosis. The judge reads bytes that the indented
+# echo below can hide -- carriage returns from espflash's progress bar, escape
+# sequences -- so "it looked fine on screen" is not evidence about what was
+# parsed.
+if [ -n "${FLINT_KEEP_LOG:-}" ]; then
+    cp "$LOG" "$FLINT_KEEP_LOG"
+    echo "==> Raw capture kept at $FLINT_KEEP_LOG"
+fi
+
 echo
 echo "==> Board output"
 sed 's/^/    /' "$LOG"

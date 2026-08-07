@@ -193,6 +193,21 @@ The boundary between Layer 3 and Layer 1 is the whole point. A `bme280` driver
 depends only on `api` and `lib/*`, and `tools/check-layers.sh` fails the build
 if it names anything else.
 
+**All three layers now run together**, which they had never done before
+`apps/imu`: `esp32-i2c` → `i2c-bus` → `mpu6886`, reading the Atom Matrix's
+onboard IMU. Worth knowing what that first assembly cost — the I²C controller
+driver had four bugs, none of which a host test could see:
+
+| Bug | Symptom |
+|---|---|
+| `I2C_FIFO_CONF` bit 13 written as an "interrupt enable" — it is `TX_FIFO_RST` | The transmit FIFO was held in reset; no byte ever left |
+| Command words never set `ack_check_en` | A bus scan reported all 112 addresses present |
+| A NAK left the state machine wedged | Alternating false positives that looked like devices |
+| FIFOs never reset before a transaction | One transfer worked, the next hung |
+
+A driver nobody has run is a driver that does not work. That is what the layer
+diagram was describing until now.
+
 That check reads the dependency graph, so by itself it could not stop a driver
 writing to `0x3FF44008` — raw MMIO needs no dependency, and an adversarial
 review demonstrated exactly that. Every logical driver therefore carries
@@ -260,6 +275,7 @@ make apps                                  # what's available
 make flash APP=hello                       # the minimal one-task template
 make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
 make flash APP=blink BOARD=board-m5-atom-matrix  # the Atom Matrix's 5x5 panel
+make flash APP=imu   BOARD=board-m5-atom-matrix  # the onboard IMU, over I²C
 ```
 
 `DEBUG` defaults to `debug-level-1`, which is what you want while developing.
@@ -435,12 +451,13 @@ fn bump() {
 
 | Board | SoC | Status | Pinout |
 |---|---|---|---|
-| M5Stack Atom (Lite/Matrix) | ESP32-PICO-D4 (Xtensa LX6) | ✅ Boots, schedules, preempts | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
+| M5Stack Atom Matrix | ESP32-PICO-D4 (Xtensa LX6) | ✅ Boots, schedules, preempts, drives its LED panel and reads its IMU | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
+| M5Stack Atom Lite | ESP32-PICO-D4 (Xtensa LX6) | ✅ Same manifest, one LED instead of 25 | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
 | ESP32-WROVER | ESP32 | Manifest present, untested | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-WROVER) |
 | ESP32-DevKitC / WROOM-32 | ESP32 | Should work — same manifest, untested | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-DevKitC) |
 | STM32F3 / F4 (Cortex-M) | ARM32 | Planned — needs a whole `arch-cortex-m` | — |
 
-Adding a board is one file — see
+Adding a board is one manifest plus feature registration in a few places — see
 [Adding a Board](https://github.com/cooljackal/flintos/wiki/Adding-a-Board).
 
 The wiki carries the full [ESP32 pin table](https://github.com/cooljackal/flintos/wiki/SoC-ESP32):
@@ -601,9 +618,15 @@ Debug features are additive and compile out entirely:
 - **Done** — ESP32 bring-up: trap handler, register-window spill, context
   switch, preemption and tick all proven on silicon. Applications split out of
   the kernel. arch/SoC/board split, with GPIO-matrix pin routing. Wiki docs.
-- **Now** — getting the kernel's own tests to run somewhere
-  ([#17](https://github.com/cooljackal/flintos/issues/17)).
-- **Next** — I²C against a real device; driver register audit against the TRM.
+- **Done** — I²C against a real device. The Atom Matrix's onboard MPU6886 is
+  driven through all three driver layers, which is the first time any device in
+  this tree has been. It found four bugs in a controller driver that had never
+  been run.
+- **Now** — proving the on-target race tests can actually fail
+  ([#50](https://github.com/cooljackal/flintos/issues/50)).
+- **Next** — LEDC ([#22](https://github.com/cooljackal/flintos/issues/22)),
+  general-purpose timers ([#25](https://github.com/cooljackal/flintos/issues/25)),
+  ADC1 ([#24](https://github.com/cooljackal/flintos/issues/24)).
 - **Later** — Layer-1 drivers as isolated tasks with one-IPC-hop request/reply;
   `nsh` shell; Cortex-M port for STM32F3/F4.
 

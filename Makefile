@@ -68,6 +68,11 @@ endif
 # macOS has /bin/bash instead, where the PATH lookup is correct anyway.
 BASH := $(if $(wildcard /usr/bin/bash),/usr/bin/bash,bash)
 
+# Python, for the tooling that needs more than shell. Same probing reason
+# as the checkers: Windows ships a `python3` shim that is not an
+# interpreter.
+PY := $(shell for c in python3 python py; do if command -v $$c >/dev/null 2>&1 && $$c -c '' >/dev/null 2>&1; then echo $$c; break; fi; done)
+
 ESP_GCC_DIR    := $(RUSTUP_HOME_DIR)/toolchains/esp/xtensa-esp-elf/bin
 
 # Where cargo put its binaries -- cargo, rustup, espflash all live here.
@@ -308,6 +313,10 @@ check-all: ## Full check including arch (requires Xtensa toolchain)
 .PHONY: check-layers
 check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)
 	$(BASH) tools/check-layers.sh
+
+.PHONY: test-mutants
+test-mutants: ## Break the kernel on purpose and check the race tests notice (needs a board)
+	@$(PY) tools/mutate-selftests.py
 
 .PHONY: device-matrix
 device-matrix: ## Which drivers keep which device-class promises
