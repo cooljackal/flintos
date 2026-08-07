@@ -103,7 +103,8 @@ reports itself by name:
 ## API
 
 ```rust
-task::spawn(name, entry, priority, stack_bytes)  // -> Option<TaskId>
+task::spawn(name, entry, priority, stack_bytes)           // -> Option<TaskId>
+task::spawn_on(core, name, entry, priority, stack_bytes)  // pinned to a core
 task::sleep_ms(ms)
 task::yield_now()
 
@@ -115,3 +116,8 @@ log_debug!() log_trace!()                 // feature-gated
 
 Queues and mutexes: see `api/src/queue.rs` and `api/src/mutex.rs`.
 `Queue::send_isr` is the interrupt-to-task path; it wakes a blocked receiver.
+
+`spawn` leaves the task free to run on any core, which is usually what you
+want. Reach for `spawn_on` when the core matters for correctness — see
+[Multicore](Multicore#when-to-pin). The second core has to be started first,
+or a task pinned to it waits forever.

@@ -44,7 +44,8 @@ starts one.
 Per-peripheral detail — which registers, which pins, what is untested — lives
 in the wiki: [Xtensa LX6](https://github.com/cooljackal/flintos/wiki/Arch-Xtensa-LX6),
 [ESP32](https://github.com/cooljackal/flintos/wiki/SoC-ESP32),
-[Writing a Driver](https://github.com/cooljackal/flintos/wiki/Writing-a-Driver).
+[Writing a Driver](https://github.com/cooljackal/flintos/wiki/Writing-a-Driver),
+[Multicore](https://github.com/cooljackal/flintos/wiki/Multicore).
 
 ### Kernel
 
@@ -65,7 +66,7 @@ in the wiki: [Xtensa LX6](https://github.com/cooljackal/flintos/wiki/Arch-Xtensa
 | Stack high-water marks | ✅ | ⛔ |
 | Second core | ✅ | — |
 | Task pinning | ✅ | — |
-| DMA | 🚧 channels allocated, no engine yet | ⛔ |
+| DMA | 🚧 | ⛔ |
 | Memory isolation (MPU) | — | ⛔ |
 
 ### Peripherals

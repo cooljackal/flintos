@@ -145,6 +145,11 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **[Multicore](https://github.com/cooljackal/flintos/wiki/Multicore) in the
+  wiki.** Starting the second core, why its entry has to be in `.iram1`, what
+  is shared and what is per-core, when to pin a task, and why asymmetric cores
+  are out of scope.
+
 - **DMA channel allocator** (`soc_esp32::dma`). Three channels shared by SPI1,
   SPI2 and SPI3; a second claim returns an error rather than letting two
   drivers write each other's descriptors.

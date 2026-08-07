@@ -12,8 +12,8 @@ Three tasks running on an ESP32. No Kconfig, no CMake, no vendor SDK.
 
 ## Status
 
-Pre-alpha. Boots, schedules and preempts on real silicon (ESP32-PICO). Young,
-most drivers thin, API will change. Don't ship it.
+Pre-alpha. Boots, schedules and preempts on real silicon (ESP32-PICO), on
+both cores. Young, most drivers thin, API will change. Don't ship it.
 
 32-bit only — see [Architecture](Architecture#word-size).
 
@@ -31,6 +31,7 @@ most drivers thin, API will change. Don't ship it.
 | Page | What it covers |
 |---|---|
 | [Architecture](Architecture) | How the layers fit |
+| [Multicore](Multicore) | Both cores, one scheduler; pinning tasks |
 | [Debug Levels](Debug-Levels) | What each level costs |
 | [Writing a Driver](Writing-a-Driver) | One page per layer |
 | [Adding a Board](Adding-a-Board) | One file |

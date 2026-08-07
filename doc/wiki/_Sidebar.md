@@ -8,6 +8,7 @@
 
 **Reference**
 - [Architecture](Architecture)
+- [Multicore](Multicore)
 - [Debug Levels](Debug-Levels)
 - [Writing a Driver](Writing-a-Driver)
 - [Adding a Board](Adding-a-Board)

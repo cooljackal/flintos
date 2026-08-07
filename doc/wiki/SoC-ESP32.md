@@ -133,6 +133,8 @@ behind each cell.
 | Watchdogs | ✅ | RWDT and MWDT. Both verified resetting a real board for the right reason. |
 | Reset cause | ✅ | Distinguishes the three watchdogs, which "a watchdog reset it" does not. |
 | LEDC (PWM) | ✅ | Eight high-speed channels over four timers. Verified by driving a pin and sampling it back: 5 kHz at 13-bit, duty measured across a sweep. |
+| APP CPU | ✅ | Second core started, cache enabled, joined to the scheduler. Runs tasks like the first. See [Multicore](Multicore). |
+| DMA | 🚧 | Three channels allocated across the SPI hosts, and buffers guaranteed to sit in DMA-reachable RAM. **No transfer engine** — no descriptor chains, no start/stop, no completion interrupt. Nothing moves data yet. |
 | TIMG, ADC, DAC, touch | ⛔ | Not started — see the issue tracker. |
 | I2S, TWAI, SDIO, EMAC | ⛔ | Not started. |
 | Wi-Fi, Bluetooth | ⛔ | Not planned. |
@@ -200,6 +202,36 @@ DMA buffers must live in SRAM2 (`0x3FFAE000`–`0x3FFDFFFF`) to be reachable by
 the DMA engines.
 
 Code placed past `0x40400000` is not mapped and faults on fetch.
+
+## DMA
+
+Two halves, and only one of them exists.
+
+**Channels.** The ESP32 has three general DMA channels and a crossbar that
+binds each to one SPI host. `soc_esp32::dma` owns that crossbar:
+
+```rust
+let channel = unsafe { dma::claim(dma::Host::Spi2)? };
+// ...
+unsafe { dma::release(channel) };
+```
+
+`Channel` is deliberately not `Copy`. Two drivers holding the same channel is
+the failure this prevents, and a type you can duplicate does not prevent it.
+A second `claim` for a host that already has one is an error, not a silent
+rebind.
+
+**Buffers.** `kernel::dma_broker::alloc` hands out memory from the DMA pool,
+which is placed in SRAM2 by the linker script. This is not a convenience: a
+buffer on a task stack or in `.bss` may sit outside SRAM2, where the engine
+cannot reach it. The transfer then completes, reports success, and moves
+nothing — a failure mode with no error to read.
+
+**What is missing.** There is no transfer engine. No descriptor chains, no
+start or stop, no completion interrupt. Allocating a channel and a buffer is
+the whole of it; nothing moves data yet. That work belongs to the first driver
+that actually needs it, where the descriptor shape can be validated against a
+real peripheral rather than guessed at (issue #18).
 
 ## Sources
 

@@ -206,6 +206,14 @@ A package name is its directory leaf, unprefixed: `hal/` is `hal`,
 sets `publish = false` — so there is no global namespace to be unambiguous in,
 and a prefix would only make every name longer.
 
+## One scheduler, every core
+
+There is one scheduler and one ready queue, shared by every core. A task is not
+owned by a core; where it runs is a scheduling decision, and pinning it is a
+constraint you add rather than the default.
+
+This holds only for **symmetric** cores. See [Multicore](Multicore).
+
 ## The kernel is a library
 
 The binary is an application in `apps/`. See
