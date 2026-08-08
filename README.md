@@ -66,7 +66,7 @@ in the wiki: [Xtensa LX6](https://github.com/cooljackal/flintos/wiki/Arch-Xtensa
 | Stack high-water marks | ✅ | ⛔ |
 | Second core | ✅ | — |
 | Task pinning | ✅ | — |
-| DMA | 🚧 | ⛔ |
+| DMA | ✅ | ⛔ |
 | Memory isolation (MPU) | — | ⛔ |
 
 ### Peripherals
@@ -79,9 +79,9 @@ The chip's own blocks, in the order most projects reach for them.
 | GPIO | ✅ | ⛔ |
 | Pin routing | ✅ | ⛔ |
 | I²C | ✅ | ⛔ |
-| SPI | 🚧 | ⛔ |
+| SPI | ✅ | ⛔ |
 | PWM / LEDC | ✅ | ⛔ |
-| Timers (TIMG) | ⛔ | ⛔ |
+| Timers (TIMG) | ✅ | ⛔ |
 | ADC | ⛔ | ⛔ |
 | DAC, touch | ⛔ | ⛔ |
 | RMT pulse generator | ✅ | — |

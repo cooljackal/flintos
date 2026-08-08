@@ -126,7 +126,7 @@ behind each cell.
 | GPIO | ✅ | Input, output, open-drain. Register-shift bug fixed and regression-tested. |
 | Pin routing | ✅ | GPIO matrix — any signal to any pad, or a clear `InvalidConfig`. IO_MUX native pads used where they exist. |
 | I²C | ✅ | Drives an MPU6886 on an Atom Matrix through all three driver layers. Reads return data, addresses are unshifted, NAKs are detected, and a failed transaction resets the controller. |
-| SPI | 🚧 | Register map audited against the TRM. No device has ever been driven over it. |
+| SPI | ✅ | Full duplex, FIFO up to 64 bytes and DMA past it. Proven by looping MOSI back to MISO through the GPIO matrix and comparing 512 bytes. `SPI_DOUTDIN` was never set until that test: the phases ran sequentially and every read came back from an undriven line. |
 | RMT | ✅ | One shot (two LEDs) and streaming (any length, refilled from the channel interrupt). 600 entries verified on a 5×5 panel. |
 | Hardware RNG | ✅ | `esp32-rng`. Not a CSPRNG, and deliberately not named one. |
 | Interrupt crossbar | ✅ | `intr_map` routes any of the 69 sources onto a CPU input, refusing any the kernel could not service. |
@@ -134,8 +134,9 @@ behind each cell.
 | Reset cause | ✅ | Distinguishes the three watchdogs, which "a watchdog reset it" does not. |
 | LEDC (PWM) | ✅ | Eight high-speed channels over four timers. Verified by driving a pin and sampling it back: 5 kHz at 13-bit, duty measured across a sweep. |
 | APP CPU | ✅ | Second core started, cache enabled, joined to the scheduler. Runs tasks like the first. See [Multicore](Multicore). |
-| DMA | 🚧 | Three channels allocated across the SPI hosts, and buffers guaranteed to sit in DMA-reachable RAM. **No transfer engine** — no descriptor chains, no start/stop, no completion interrupt. Nothing moves data yet. |
-| TIMG, ADC, DAC, touch | ⛔ | Not started — see the issue tracker. |
+| DMA | ✅ | Channel crossbar, descriptor chains, start/stop, and completion by interrupt. 512 bytes moved over SPI2 with the CPU out of the loop. Chains longer than one descriptor (4092 bytes) are unit-tested but have not run on hardware. |
+| TIMG | ✅ | Four 64-bit timers, 16-bit prescaler, one-shot and periodic alarms firing from the ISR. Microsecond resolution, checked against the scheduler tick. The tick itself stays on the Xtensa CCOMPARE. |
+| ADC, DAC, touch | ⛔ | Not started — see the issue tracker. |
 | I2S, TWAI, SDIO, EMAC | ⛔ | Not started. |
 | Wi-Fi, Bluetooth | ⛔ | Not planned. |
 
@@ -263,11 +264,22 @@ buffer on a task stack or in `.bss` may sit outside SRAM2, where the engine
 cannot reach it. The transfer then completes, reports success, and moves
 nothing — a failure mode with no error to read.
 
-**What is missing.** There is no transfer engine. No descriptor chains, no
-start or stop, no completion interrupt. Allocating a channel and a buffer is
-the whole of it; nothing moves data yet. That work belongs to the first driver
-that actually needs it, where the descriptor shape can be validated against a
-real peripheral rather than guessed at (issue #18).
+**Descriptors.** The engine does not take an address and a length — it walks a
+linked list of 12-byte descriptors, and the list itself must be DMA-reachable
+because hardware follows the `next` pointers. `dma::build_chain` lays one out.
+
+Two 12-bit fields do the work, and swapping them gives a transfer that runs,
+reports success and moves nothing: `size` is how big the buffer is, `length`
+is how much of it matters, and on receive the **engine writes** `length`.
+
+**Completion.** `SPI_DMA_INT_ENA` at `0x110`, with `IN_SUC_EOF` bit 5. Note
+that `SPI_TRANS_DONE` (`SPI_SLAVE_REG` bit 4) is a *second* contributor to the
+same interrupt line, is enabled at reset, and is write-zero-to-clear.
+Acknowledging only the DMA flags leaves the line asserted and the handler
+re-enters forever.
+
+**Still missing.** Chains longer than one descriptor are unit-tested but have
+never run on hardware, and nothing in the tree uses DMA in anger yet.
 
 ## Sources
 

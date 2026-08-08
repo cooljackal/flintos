@@ -10,7 +10,10 @@ coming. That position was correct while the cost was unexamined; this document
 is the examined version. The route is viable, the price is known, and the price
 is high.
 
-**Status:** not started. No step below has been attempted.
+**Status:** not started as a radio. Three of Phase 0's four prerequisites have
+landed for their own reasons — the DPORT stall (#56), general-purpose timers
+(#25) and the DMA engine (#18). Persistent configuration (#32) is the one
+left, and nothing in Phase 1 onward has been attempted.
 
 ---
 
@@ -54,13 +57,14 @@ Independent of the radio. Do these anyway.
 
 | Step | Work | Done when |
 |---|---|---|
-| 0.1 | **DPORT cross-core stall.** `dport::enable/disable` read-modify-writes from either core with no protection. The ESP32 hazard is real and the blob needs the same primitive. | Both cores hammer DPORT in an on-target test without a wrong read. |
-| 0.2 | **General-purpose timers (#25)** | `esp_timer_get_time` equivalent: 64-bit, microseconds, monotonic across a tick rollover. |
-| 0.3 | **Persistent config (#32)** | Key/value in flash, blob values included. PHY calibration lives here — it is load-bearing, not a nicety. |
-| 0.4 | **DMA transfer engine (#18)** | Descriptor chains, start/stop, completion interrupt. The MAC moves frames by DMA. |
+| 0.1 | ✅ **DPORT cross-core stall** (#56) | Done. Not a stall in the end — the documented workaround is an APB pre-read. Both cores hammer DPORT without a lost update. |
+| 0.2 | ✅ **General-purpose timers** (#25) | Done. `esp32-timg` gives 64-bit microseconds. A monotonic `esp_timer_get_time` on top is still to write. |
+| 0.3 | ⬜ **Persistent config (#32)** | Key/value in flash, blob values included. PHY calibration lives here — load-bearing, not a nicety. **The one Phase 0 item left.** |
+| 0.4 | ✅ **DMA transfer engine** (#18) | Done. Descriptor chains, start/stop, completion by interrupt, proven over SPI. |
 
-Steps 0.2–0.4 are already P1 issues. The radio is one more reason to do them,
-not the reason.
+Steps 0.2–0.4 were already P1 issues. The radio was one more reason to do
+them, not the reason, and three of the four have now landed on their own
+merits — which is exactly how this phase was meant to be paid for.
 
 ---
 
