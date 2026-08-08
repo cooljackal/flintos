@@ -222,6 +222,10 @@ impl Timg {
     /// including periodic — auto-reload reloads the *counter*, not the alarm.
     /// A periodic timer whose handler forgets this fires exactly once.
     ///
+    /// Measured, not inferred: deleting the re-arm from the on-target periodic
+    /// test gives one alarm and then silence, which is what that test's
+    /// "fired once and stopped" failure exists to name.
+    ///
     /// # Safety
     /// Writes this timer's config register.
     pub unsafe fn rearm(&self) {
@@ -300,6 +304,32 @@ pub unsafe fn clear_interrupt(group: Group, timer: Timer) {
         Timer::T1 => 1u32 << 1,
     };
     ((base + INT_CLR) as *mut u32).write_volatile(bit);
+}
+
+/// Re-arm a timer's alarm without holding a [`Timg`].
+///
+/// The companion to [`clear_interrupt`], and needed in the same place: a
+/// periodic alarm's handler has to put `ALARM_EN` back every time, and a
+/// top-half cannot reach a shared handle.
+///
+/// # Safety
+/// Read-modify-writes the timer's config register.
+pub unsafe fn rearm(group: Group, timer: Timer) {
+    let base = timer_base(group, timer);
+    let r = (base + CONFIG) as *mut u32;
+    r.write_volatile(r.read_volatile() | CONFIG_ALARM_EN);
+}
+
+/// Base of one timer's register set.
+const fn timer_base(group: Group, timer: Timer) -> u32 {
+    let g = match group {
+        Group::Timg0 => TIMG0_BASE,
+        Group::Timg1 => TIMG1_BASE,
+    };
+    match timer {
+        Timer::T0 => g,
+        Timer::T1 => g + TIMER_STRIDE,
+    }
 }
 
 /// Prescaler for a requested counter frequency.

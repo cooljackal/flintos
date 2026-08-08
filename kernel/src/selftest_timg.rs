@@ -142,6 +142,89 @@ pub(crate) fn a_timg_alarm_fires_once_from_the_isr() -> Check {
     Ok(())
 }
 
+/// Fired by the periodic alarm.
+#[cfg(target_os = "none")]
+static PERIODIC_HITS: AtomicU32 = AtomicU32::new(0);
+
+/// A different CPU input from the one-shot test: `interrupt::register`
+/// refuses a second handler for an input that already has one, on purpose.
+#[cfg(target_os = "none")]
+const PERIODIC_CPU_INT: u8 = 17;
+
+/// Period, and how long to watch for. 2 ms over 40 ms is 20 alarms — enough
+/// that a rate wrong by any meaningful factor lands outside the window, and
+/// short enough not to stall the suite.
+#[cfg(target_os = "none")]
+const PERIODIC_US: u64 = 2_000;
+#[cfg(target_os = "none")]
+const WATCH_TICKS: u64 = 40;
+
+#[cfg(target_os = "none")]
+fn periodic_isr() {
+    unsafe { esp32_timg::clear_interrupt(esp32_timg::Group::Timg1, esp32_timg::Timer::T0) };
+    // Re-arm, because ALARM_EN clears itself on fire even in periodic mode:
+    // auto-reload reloads the counter, not the alarm. Removing this line is
+    // the mutation that proves the claim — without it the count stops at one.
+    unsafe { esp32_timg::rearm(esp32_timg::Group::Timg1, esp32_timg::Timer::T0) };
+    PERIODIC_HITS.fetch_add(1, Ordering::SeqCst);
+}
+
+/// A periodic alarm must keep firing, at the rate it was given.
+///
+/// The one-shot test proves an alarm can fire. This proves it keeps firing,
+/// which is a different mechanism: auto-reload puts the counter back and the
+/// handler puts the alarm back, and either one missing gives exactly one
+/// alarm rather than none. A test that only asked "did it fire again" would
+/// pass on a timer running at any rate at all, so the count is checked
+/// against the tick.
+#[cfg(target_os = "none")]
+pub(crate) fn a_periodic_alarm_keeps_firing_at_its_rate() -> Check {
+    use esp32_timg::{Group, Mode, Timer, Timg};
+    use soc_esp32::{addr, intr_map};
+
+    PERIODIC_HITS.store(0, Ordering::SeqCst);
+
+    let t = match unsafe { Timg::new(Group::Timg1, Timer::T0, 1_000_000) } {
+        Ok(t) => t,
+        Err(_) => return Err("could not configure TIMG1 T0"),
+    };
+    if unsafe { intr_map::route(addr::IRQ_TIMG1_T0, PERIODIC_CPU_INT) }.is_err() {
+        return Err("could not route the periodic timer interrupt");
+    }
+    if !crate::interrupt::register(PERIODIC_CPU_INT, periodic_isr) {
+        return Err("that CPU interrupt already has a handler");
+    }
+    unsafe { crate::arch::registers::enable_interrupt(PERIODIC_CPU_INT as u32) };
+
+    if unsafe { t.start_alarm(PERIODIC_US, Mode::Periodic) }.is_err() {
+        return Err("could not arm the periodic alarm");
+    }
+
+    let start = Tick::now();
+    while Tick::now().saturating_sub(start) < WATCH_TICKS {
+        core::hint::spin_loop();
+    }
+    let watched = Tick::now().saturating_sub(start);
+    let hits = PERIODIC_HITS.load(Ordering::SeqCst);
+    unsafe { t.stop() };
+
+    if hits == 0 {
+        return Err("the periodic alarm never fired");
+    }
+    if hits == 1 {
+        // The precise failure this test exists for: one alarm and then
+        // silence is auto-reload without a re-arm.
+        return Err("the periodic alarm fired once and stopped");
+    }
+    // Expected count from the *other* clock, so the timer is not marking its
+    // own homework.
+    let expected = watched * 1000 / PERIODIC_US;
+    if (hits as u64) < expected * 3 / 4 || (hits as u64) > expected * 5 / 4 {
+        return Err("the periodic alarm fired at the wrong rate");
+    }
+    Ok(())
+}
+
 // Host stand-ins: there is no register block to drive.
 #[cfg(not(target_os = "none"))]
 pub(crate) fn timg_counts_at_the_rate_it_was_given() -> Check {
@@ -150,6 +233,10 @@ pub(crate) fn timg_counts_at_the_rate_it_was_given() -> Check {
 #[cfg(not(target_os = "none"))]
 pub(crate) fn a_timg_alarm_fires_once_from_the_isr() -> Check {
     let _ = &ALARM_HITS_HOST;
+    Ok(())
+}
+#[cfg(not(target_os = "none"))]
+pub(crate) fn a_periodic_alarm_keeps_firing_at_its_rate() -> Check {
     Ok(())
 }
 #[cfg(not(target_os = "none"))]

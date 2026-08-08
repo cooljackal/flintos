@@ -219,6 +219,11 @@ A kernel that provides a different one refuses to build and points here.
   hardware against the scheduler tick — two independent clocks, neither
   confirming itself.
 
+  Periodic mode is verified too: a handler must re-arm `ALARM_EN` on every
+  alarm, because auto-reload puts the counter back and not the alarm. Without
+  that the timer fires once and stops, which the on-target test says in those
+  words.
+
   The kernel's `timer::once`/`every` are unchanged and still ride the tick.
   This is the hardware for anything that needs to be accurate rather than
   coarse; nothing has been moved onto it yet.

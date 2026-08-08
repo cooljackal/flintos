@@ -78,6 +78,8 @@ pub fn run() {
     check("timg_counts_at_the_rate_it_was_given", timg::timg_counts_at_the_rate_it_was_given(), &mut pass, &mut fail);
     check("a_timg_alarm_fires_once_from_the_isr", timg::a_timg_alarm_fires_once_from_the_isr(), &mut pass, &mut fail);
 
+    check("a_periodic_alarm_keeps_firing_at_its_rate", timg::a_periodic_alarm_keeps_firing_at_its_rate(), &mut pass, &mut fail);
+
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
 
     raw_print("[FLINT] SELFTEST END pass=");
