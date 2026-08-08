@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-timg"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "TIMG0/TIMG1 general-purpose timers: microsecond clock and alarms"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+soc-esp32 = { path = "../../../../soc/esp32" }

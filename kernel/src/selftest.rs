@@ -39,6 +39,9 @@ mod races;
 #[path = "selftest_dport.rs"]
 mod dport;
 
+#[path = "selftest_timg.rs"]
+mod timg;
+
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
 pub(crate) type Check = Result<(), &'static str>;
@@ -72,6 +75,9 @@ pub fn run() {
 
     check("dport_read_agrees_with_a_plain_read", dport::dport_read_agrees_with_a_plain_read(), &mut pass, &mut fail);
     check("dport_read_leaves_the_tick_running", dport::dport_read_leaves_the_tick_running(), &mut pass, &mut fail);
+    check("timg_counts_at_the_rate_it_was_given", timg::timg_counts_at_the_rate_it_was_given(), &mut pass, &mut fail);
+    check("a_timg_alarm_fires_once_from_the_isr", timg::a_timg_alarm_fires_once_from_the_isr(), &mut pass, &mut fail);
+
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
 
     raw_print("[FLINT] SELFTEST END pass=");

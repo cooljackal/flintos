@@ -56,6 +56,17 @@ pub const IRQ_RMT: u8 = 47;
 /// `ETS_LEDC_INTR_SOURCE`. Fade-complete and timer overflow; unused so far.
 pub const IRQ_LEDC: u8 = 45;
 
+/// Timer-group alarms. One source per timer, not one per group — from
+/// `ETS_TG0_T0_LEVEL_INTR_SOURCE` onward in esp-idf `soc/periph_defs.h`.
+///
+/// The `_LEVEL_` sources, not the `_EDGE_` ones: the kernel's crossbar only
+/// hands out level-triggered CPU inputs, and `intr_map::route` refuses the
+/// rest rather than routing something it could not service.
+pub const IRQ_TIMG0_T0: u8 = 14;
+pub const IRQ_TIMG0_T1: u8 = 15;
+pub const IRQ_TIMG1_T0: u8 = 18;
+pub const IRQ_TIMG1_T1: u8 = 19;
+
 // ── Instance lookup ─────────────────────────────────────────────────────────
 //
 // Drivers are constructed from a base address (that is what the board manifest

@@ -214,6 +214,15 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **`esp32-timg`**: TIMG0/TIMG1, four independent 64-bit timers with a 16-bit
+  prescaler, one-shot and periodic alarms, and a microsecond clock. Verified on
+  hardware against the scheduler tick — two independent clocks, neither
+  confirming itself.
+
+  The kernel's `timer::once`/`every` are unchanged and still ride the tick.
+  This is the hardware for anything that needs to be accurate rather than
+  coarse; nothing has been moved onto it yet.
+
 - **DMA descriptors** (`soc_esp32::dma::Descriptor`, `build_chain`). The
   12-byte linked-list descriptor the engine actually walks, laid out from the
   ROM header, with the buffer's reachability and alignment checked before an
