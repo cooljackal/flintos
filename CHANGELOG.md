@@ -21,6 +21,13 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Fixed
 
+- **`dma_broker::submit` and `await_transfer` no longer pretend.** They
+  returned `NotImplemented` and always had. `submit` is replaced by `begin`,
+  which mints a transfer id and checks buffer ownership; `await_transfer`
+  takes a timeout and actually waits. Programming the engine belongs to the
+  driver that owns the peripheral — there is no portable engine for the kernel
+  to program, which is why the old signature could never have been implemented.
+
 - **The DMA pool was zero bytes on hardware.** `.dma_pool` in the linker
   script contained only `*(.dma_buffer)`, and nothing in the tree emits that
   section — the region is handed out at runtime, not declared by a static. So

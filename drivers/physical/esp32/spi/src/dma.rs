@@ -39,11 +39,12 @@ use hal::bus::{BusError, BusResult};
 use soc_esp32::dma;
 
 use super::{Esp32Spi, SPI_CMD, SPI_CMD_USR, SPI_DOUTDIN, SPI_MISO_DLEN, SPI_MOSI_DLEN,
-            SPI_TIMEOUT_SPINS, SPI_USER, SPI_USR_MISO, SPI_USR_MOSI};
+            SPI_SLAVE, SPI_TIMEOUT_SPINS, SPI_USER, SPI_USR_MISO, SPI_USR_MOSI};
 
 const SPI_DMA_CONF: u32 = 0x100;
 const SPI_DMA_OUT_LINK: u32 = 0x104;
 const SPI_DMA_IN_LINK: u32 = 0x108;
+const SPI_DMA_INT_ENA: u32 = 0x110;
 const SPI_DMA_INT_RAW: u32 = 0x114;
 const SPI_DMA_INT_CLR: u32 = 0x11C;
 
@@ -61,6 +62,18 @@ const SPI_INLINK_START: u32 = 1 << 29;
 pub const SPI_IN_SUC_EOF: u32 = 1 << 5;
 /// `SPI_OUT_EOF_INT_RAW`: the transmit chain hit end-of-frame.
 pub const SPI_OUT_EOF: u32 = 1 << 7;
+
+/// `SPI_TRANS_DONE`, `SPI_SLAVE_REG` bit 4: the transaction finished.
+///
+/// A *second* contributor to the same interrupt line as the DMA flags, and the
+/// one that is easy to miss — `SPI_INT_EN` ([9:5]) has a reset default of
+/// `1_0000`, so this interrupt is **enabled before anyone asks for it**.
+///
+/// It is write-zero-to-clear, not write-one. Acknowledging the DMA flags alone
+/// leaves this asserted, the peripheral keeps the line high, and the top-half
+/// re-enters forever: the board goes silent partway through a transfer with no
+/// fault and no panic.
+const SPI_TRANS_DONE: u32 = 1 << 4;
 
 impl Esp32Spi {
     /// Put the host's DMA engine back to a known state.
@@ -133,6 +146,80 @@ impl Esp32Spi {
         Ok(())
     }
 
+    /// Enable DMA completion interrupts for this host.
+    ///
+    /// The peripheral only *raises* the line. Getting it to a CPU still needs
+    /// `soc_esp32::intr_map::route` and a handler — this crate cannot do
+    /// either, because a physical driver may depend on `hal` and `soc/*` only
+    /// and the crossbar is the kernel's to hand out. Enabling here and
+    /// forgetting to route is a transfer whose interrupt never arrives, which
+    /// looks exactly like a transfer that never finished.
+    ///
+    /// # Safety
+    /// The host must be clocked.
+    pub unsafe fn dma_int_enable(&self, mask: u32) {
+        self.reg(SPI_DMA_INT_ENA).write_volatile(mask);
+    }
+
+    /// Acknowledge DMA interrupt flags. **A top-half must call this.**
+    ///
+    /// These are level-triggered at the peripheral. Returning from the handler
+    /// without clearing them re-enters it immediately and forever, which
+    /// presents as a board that boots and then goes silent.
+    ///
+    /// # Safety
+    /// The host must be clocked.
+    pub unsafe fn dma_int_clear(&self, mask: u32) {
+        self.reg(SPI_DMA_INT_CLR).write_volatile(mask);
+    }
+
+    /// Acknowledge **everything** this host can be interrupting for.
+    ///
+    /// The DMA end-of-frame flags and `SPI_TRANS_DONE`, which share one
+    /// interrupt source. A top-half that clears only the flags it was waiting
+    /// for leaves the other asserted and never returns.
+    ///
+    /// # Safety
+    /// The host must be clocked.
+    pub unsafe fn ack_interrupts(&self) {
+        self.reg(SPI_DMA_INT_CLR).write_volatile(u32::MAX);
+        // Write-zero-to-clear, and only this bit: the rest of SPI_SLAVE_REG
+        // holds mode configuration that a blind write would flatten.
+        let slave = self.reg(SPI_SLAVE);
+        slave.write_volatile(slave.read_volatile() & !SPI_TRANS_DONE);
+    }
+
+    /// Arm both links and start the transaction, without waiting.
+    ///
+    /// The counterpart to [`Esp32Spi::transfer_dma`] for a caller that would
+    /// rather block on an interrupt than spin. Completion is
+    /// `SPI_IN_SUC_EOF` in [`Esp32Spi::dma_int_raw`], or the interrupt if one
+    /// is routed.
+    ///
+    /// # Safety
+    /// Both chains and their buffers must stay valid and untouched until the
+    /// transfer completes. The host must own a DMA channel.
+    pub unsafe fn start_dma(&self, tx_chain: u32, rx_chain: u32, len: usize) -> BusResult<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        if !dma::reachable(tx_chain) || !dma::reachable(rx_chain) {
+            return Err(BusError::InvalidConfig);
+        }
+        self.dma_reset();
+        self.reg(SPI_DMA_IN_LINK)
+            .write_volatile(dma::link_addr(rx_chain) | SPI_INLINK_START);
+        self.reg(SPI_DMA_OUT_LINK)
+            .write_volatile(dma::link_addr(tx_chain) | SPI_OUTLINK_START);
+        let bits = (len as u32) * 8 - 1;
+        self.reg(SPI_MOSI_DLEN).write_volatile(bits);
+        self.reg(SPI_MISO_DLEN).write_volatile(bits);
+        self.reg(SPI_USER)
+            .write_volatile(SPI_DOUTDIN | SPI_USR_MOSI | SPI_USR_MISO);
+        self.reg(SPI_CMD).write_volatile(SPI_CMD_USR);
+        Ok(())
+    }
+
     /// Raw DMA end-of-frame flags, for a caller that wants to know *why* a
     /// transfer looks wrong.
     ///
@@ -167,6 +254,7 @@ mod tests {
         assert_eq!(SPI_DMA_CONF, 0x100);
         assert_eq!(SPI_DMA_OUT_LINK, 0x104);
         assert_eq!(SPI_DMA_IN_LINK, 0x108);
+        assert_eq!(SPI_DMA_INT_ENA, 0x110);
         assert_eq!(SPI_DMA_INT_RAW, 0x114);
         assert_eq!(SPI_DMA_INT_CLR, 0x11C);
     }

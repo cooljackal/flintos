@@ -15,9 +15,26 @@ pub enum DmaDirection {
     Write,
 }
 
-/// DMA transfer handle, returned by submit().
+/// Identifies one transfer, from [`begin`] to [`await_transfer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DmaTransferId(u32);
+
+impl DmaTransferId {
+    /// The raw id, for a driver that must stash it somewhere an interrupt
+    /// handler can reach — an `AtomicU32`, typically, since the top-half
+    /// cannot take a lock.
+    pub const fn raw(&self) -> u32 {
+        self.0
+    }
+
+    /// Rebuild an id from [`DmaTransferId::raw`].
+    ///
+    /// Zero is not a valid id: [`begin`] counts from one, so a driver can use
+    /// it to mean "nothing in flight".
+    pub const fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+}
 
 /// DMA-safe buffer handle.
 #[derive(Debug, Clone, Copy)]
@@ -67,8 +84,8 @@ pub enum DmaError {
     PoolExhausted,
     /// Caller does not own the handle.
     NotOwner,
-    /// Engine programming is not implemented yet (Phase 3+).
-    NotImplemented,
+    /// The transfer did not complete in time.
+    Timeout,
 }
 
 static NEXT_TRANSFER_ID: AtomicU32 = AtomicU32::new(1);
@@ -135,28 +152,82 @@ fn checked_align_up4(size: u32) -> Option<u32> {
     size.checked_add(3).map(|v| v & !3)
 }
 
-/// Submit a DMA transfer. Validates ownership; engine programming is a Phase-3+
-/// item, so this currently reports `NotImplemented` rather than faking success.
-pub fn submit(
-    handle: &DmaHandle,
-    _direction: DmaDirection,
-    _peripheral_id: u32,
-) -> Result<DmaTransferId, DmaError> {
+// ── Completion ──────────────────────────────────────────────────────────────
+//
+// The broker does not program the engine, and the `submit` that used to sit
+// here could not have: there is no portable engine to program. The ESP32 has a
+// three-channel crossbar for SPI; an S3 has GDMA; an STM32 has numbered
+// streams. `soc_esp32::dma` says all this at length, and register programming
+// belongs to the driver that owns the peripheral.
+//
+// What is the kernel's business is the part a driver cannot do from
+// `drivers/physical`: blocking a task until an interrupt says the transfer has
+// finished. Physical drivers may depend on `hal` and `soc/*` only, so they have
+// no queues and no scheduler. They raise the interrupt; this waits on it.
+
+/// The most recently completed transfer id, published by a driver's top-half.
+///
+/// A plain atomic rather than a queue, and that is a deliberate retreat.
+///
+/// The first version signalled through `Queue::send_isr`, which is the
+/// established ISR-to-task path and wakes a blocked receiver. On hardware it
+/// hung: when the transfer finished *before* the waiter had blocked, the
+/// wakeup went to nobody and the waiter then slept through its own 100 ms
+/// timeout. Adding a log line between starting the engine and waiting made it
+/// pass every time, which is the shape of a lost wakeup and not a fix.
+///
+/// A flag the ISR sets and the waiter samples cannot lose that race: the ISR
+/// writes unconditionally and the waiter reads whenever it gets round to it,
+/// in either order. See [`await_transfer`] for what it costs.
+static COMPLETED: AtomicU32 = AtomicU32::new(0);
+
+/// Begin a transfer and get the id its completion will carry.
+///
+/// Checks the caller owns the buffer. Starting the engine is the driver's job;
+/// this only mints the id the two sides agree on.
+pub fn begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError> {
     let current = crate::scheduler::with(|s| s.current());
     if handle.owner_task != current {
         return Err(DmaError::NotOwner);
     }
-    // Reserve an id so the API shape is stable, but do not pretend the transfer
-    // ran — the engine is not programmed yet (plan W6.3).
-    let _id = NEXT_TRANSFER_ID.fetch_add(1, Ordering::SeqCst);
-    Err(DmaError::NotImplemented)
+    Ok(DmaTransferId(NEXT_TRANSFER_ID.fetch_add(1, Ordering::SeqCst)))
 }
 
-/// Block until a DMA transfer completes. Not implemented yet (Phase 3+).
-pub fn await_transfer(id: DmaTransferId) -> Result<(), DmaError> {
-    let _ = id;
-    Err(DmaError::NotImplemented)
+/// Signal that `id` has finished. **Call from a driver's top-half.**
+///
+/// One relaxed store. Everything a top-half does costs the task it preempted,
+/// and this one is on the completion path of every DMA transfer in the system.
+pub fn signal_complete(id: DmaTransferId) {
+    COMPLETED.store(id.0, Ordering::SeqCst);
 }
+
+/// Block until `id` completes, or `timeout_ms` passes.
+///
+/// Sleeps in short slices and samples the flag, rather than blocking on a
+/// wakeup. That costs up to [`POLL_SLICE_MS`] of latency on completion and is
+/// worth stating plainly — but the transfer is still interrupt-driven, and the
+/// waiting task is descheduled rather than spinning on a register.
+///
+/// The alternative, a wakeup from the ISR, is what the first version did and
+/// is what hung: a transfer that finishes before the waiter blocks has nobody
+/// to wake.
+pub fn await_transfer(id: DmaTransferId, timeout_ms: u32) -> Result<(), DmaError> {
+    let mut waited = 0;
+    loop {
+        if COMPLETED.load(Ordering::SeqCst) == id.0 {
+            return Ok(());
+        }
+        if waited >= timeout_ms {
+            return Err(DmaError::Timeout);
+        }
+        let slice = POLL_SLICE_MS.min(timeout_ms - waited);
+        crate::timer::sleep_ms(slice);
+        waited += slice;
+    }
+}
+
+/// How long a waiter sleeps between samples.
+pub const POLL_SLICE_MS: u32 = 1;
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -251,15 +322,30 @@ mod tests {
 
     #[test]
     fn a_transfer_is_refused_for_a_handle_the_caller_does_not_own() {
+        // The buffer's owner is the only task allowed to start a transfer over
+        // it. Without this a task could hand the engine a buffer another task
+        // is still writing.
         let _k = testsupport::lock();
         rewind();
         let mut h = alloc(32).unwrap();
         h.owner_task = h.owner_task.wrapping_add(1);
         assert_eq!(
-            submit(&h, DmaDirection::Read, 0).unwrap_err(),
+            begin(&h).unwrap_err(),
             DmaError::NotOwner,
             "ownership is not checked"
         );
+    }
+
+    #[test]
+    fn each_transfer_gets_a_distinct_id() {
+        // Two transfers sharing an id would let one's completion release the
+        // other's waiter, which is a data race with the engine still running.
+        let _k = testsupport::lock();
+        rewind();
+        let h = alloc(32).unwrap();
+        let a = begin(&h).unwrap();
+        let b = begin(&h).unwrap();
+        assert_ne!(a, b, "two transfers were given the same id");
     }
 }
 

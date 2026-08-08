@@ -40,11 +40,13 @@
 #![no_std]
 #![no_main]
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use api::task;
 use hal::bus::{BusConfig, BusSpeed, PhysicalBus, SpiMode};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::types::Priority;
-use soc_esp32::{addr, dma, Esp32PinMux};
+use soc_esp32::{addr, dma, intr_map, Esp32PinMux};
 
 kernel::flint_app!(main, abi = 1);
 
@@ -66,6 +68,38 @@ const SPI2: u8 = 2;
 /// Bytes per transfer. Deliberately past the 64-byte FIFO limit: at 64 or
 /// under, a "DMA" path that quietly fell back to the data buffer would pass.
 const LEN: usize = 512;
+
+/// CPU interrupt the SPI2 source is routed onto.
+///
+/// 13 is external, level 1, and not claimed by the kernel's own timer or
+/// software interrupts. `intr_map::route` refuses anything it could not
+/// service, so a wrong choice here is an error rather than a silence.
+const SPI_CPU_INT: u8 = 13;
+
+/// The transfer in flight, for the top-half to complete.
+static PENDING: AtomicU32 = AtomicU32::new(0);
+
+/// End-of-frame flags as the top-half saw them.
+///
+/// Captured there because acknowledging clears them: a task reading
+/// `dma_int_raw` afterwards sees zero and cannot tell a clean transfer from
+/// one that never raised anything.
+static ISR_FLAGS: AtomicU32 = AtomicU32::new(0);
+
+/// Top-half. Runs in trap context: acknowledge the peripheral and hand the id
+/// to the waiting task. Nothing else belongs here.
+fn spi_dma_isr() {
+    // Level-triggered at the peripheral. Returning without clearing re-enters
+    // this handler immediately and forever.
+    let spi = unsafe { esp32_spi::Esp32Spi::new(addr::SPI2_BASE) };
+    ISR_FLAGS.store(unsafe { spi.dma_int_raw() }, Ordering::SeqCst);
+    unsafe { spi.ack_interrupts() };
+
+    let id = PENDING.swap(0, Ordering::SeqCst);
+    if id != 0 {
+        kernel::dma_broker::signal_complete(kernel::dma_broker::DmaTransferId::from_raw(id));
+    }
+}
 
 /// Run the 8-byte FIFO loopback before the DMA one.
 ///
@@ -168,10 +202,29 @@ fn attempt() -> Result<(), &'static str> {
         (t, r)
     };
 
-    // 5. Go.
-    unsafe { spi.transfer_dma(tx_head, rx_head, LEN) }.map_err(|_| "transfer failed")?;
+    // 5. Point SPI2's interrupt at a CPU input and take the handler. Enabling
+    //    the peripheral's interrupt without routing it is a transfer whose
+    //    completion never arrives, which is indistinguishable from one that
+    //    never finished.
+    unsafe { intr_map::route(addr::IRQ_SPI2, SPI_CPU_INT) }
+        .map_err(|_| "cannot route SPI2 interrupt")?;
+    if !kernel::interrupt::register(SPI_CPU_INT, spi_dma_isr) {
+        return Err("CPU interrupt already has a handler");
+    }
+    unsafe { kernel::arch::registers::enable_interrupt(SPI_CPU_INT as u32) };
+    unsafe { spi.dma_int_enable(esp32_spi::SPI_IN_SUC_EOF) };
 
-    let raw = unsafe { spi.dma_int_raw() };
+    // 6. Go, and block. The id is published before the engine starts: the
+    //    transfer can complete before the next instruction retires, and a
+    //    top-half that found no id would drop the completion on the floor.
+    let id = kernel::dma_broker::begin(&rx_buf).map_err(|_| "could not begin")?;
+    PENDING.store(id.raw(), Ordering::SeqCst);
+    unsafe { spi.start_dma(tx_head, rx_head, LEN) }.map_err(|_| "could not start")?;
+
+    kernel::dma_broker::await_transfer(id, 100).map_err(|_| "transfer never completed")?;
+    api::log_info!("[spidma] completed by interrupt");
+
+    let raw = ISR_FLAGS.load(Ordering::SeqCst);
     let received = unsafe {
         let rx = core::slice::from_raw_parts(rx_desc.addr() as *const dma::Descriptor, descs);
         dma::received_len(rx)

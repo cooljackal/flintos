@@ -50,7 +50,7 @@ const SPI_USER2: u32 = 0x24;
 pub(crate) const SPI_MOSI_DLEN: u32 = 0x28;
 pub(crate) const SPI_MISO_DLEN: u32 = 0x2C;
 const SPI_PIN: u32 = 0x34;
-const SPI_SLAVE: u32 = 0x38;
+pub(crate) const SPI_SLAVE: u32 = 0x38;
 const SPI_W0: u32 = 0x80; // Data buffer: 16 words (W0..W15), 64 bytes.
 
 /// SPI_CMD_REG: start a user-defined transaction. bitpos [18], confirmed
