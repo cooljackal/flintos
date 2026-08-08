@@ -214,6 +214,15 @@ A kernel that provides a different one refuses to build and points here.
 - **`#![forbid(unsafe_code)]` in every logical driver.** The dependency check
   cannot stop a driver writing to a register, because raw MMIO needs no
   dependency. This is the lint that makes the guarantee real.
+- **`lib/kvstore`**: an append-only key/value store that survives a torn
+  write. Newest entry wins, a half-written entry fails its checksum and the
+  scan stops there, and everything written before it is untouched. Reports a
+  full or corrupt store rather than failing quietly.
+
+  **No flash backend yet.** It talks to a `Storage` trait, which nothing on the
+  ESP32 implements so far, so nothing is actually persisted across a reboot.
+  The format and the recovery are done and tested; the flash driver is not.
+
 - **`esp32-timg`**: TIMG0/TIMG1, four independent 64-bit timers with a 16-bit
   prescaler, one-shot and periodic alarms, and a microsecond clock. Verified on
   hardware against the scheduler tick — two independent clocks, neither

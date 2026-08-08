@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "kvstore"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Append-only key/value store that survives a torn write"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No dependencies at all, not even api: this is a byte format and a scan over
+# a `Storage` the caller supplies. It knows nothing about flash controllers,
+# cache lines or chips, which is what lets the tearing behaviour be tested
+# against a fake at every byte offset.
+[dependencies]
