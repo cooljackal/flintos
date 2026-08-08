@@ -21,6 +21,15 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Fixed
 
+- **Every blocking queue send or receive panicked.** `queue::deadline_for`
+  read the tick through `scheduler::with` while `block_send`/`block_recv` were
+  already holding that lock. Reentrancy on a `Spinlock` is a panic, not a wait,
+  so any `recv` on an empty queue or `send` on a full one died on the spot —
+  from the moment the scheduler became a spinlock. Nothing caught it: the
+  queue's tests exercise `try_send`/`try_recv`, which never block, and the
+  on-target suite runs in boot context where blocking is refused anyway.
+  The tick is now read before the lock is taken.
+
 - **`dma_broker::submit` and `await_transfer` no longer pretend.** They
   returned `NotImplemented` and always had. `submit` is replaced by `begin`,
   which mints a transfer id and checks buffer ownership; `await_transfer`

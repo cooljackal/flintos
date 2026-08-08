@@ -358,3 +358,4 @@ pub fn mutex_cycle_under_ticks_leaves_no_residue() -> Check {
     }
     Ok(())
 }
+

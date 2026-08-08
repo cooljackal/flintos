@@ -145,11 +145,22 @@ fn waiters() -> &'static mut QueueWaiters {
 
 /// Deadline for a timeout: 0 = forever (never tick-woken); else now+timeout
 /// (never 0, so it is distinguishable from "forever").
-fn deadline_for(timeout_ms: u32) -> u64 {
+/// Absolute tick a timeout expires at, given the current tick.
+///
+/// `now` is passed in rather than read here, and that is the whole point.
+/// This used to call `scheduler::with` to read the tick — from inside
+/// `block_send`/`block_recv`, which were already holding that lock. Since the
+/// scheduler became a `Spinlock`, taking it twice on one core is a panic
+/// rather than a wait, so **every blocking send or receive on a full or empty
+/// queue panicked**. The queue's own tests never caught it because they
+/// exercise `try_send`/`try_recv`, which never block.
+///
+/// `0` means "no timeout"; the tick never wakes such a waiter.
+fn deadline_for(timeout_ms: u32, now: u64) -> u64 {
     if timeout_ms == u32::MAX {
         0
     } else {
-        scheduler::with(|s| s.ticks()).wrapping_add(timeout_ms as u64).max(1)
+        now.wrapping_add(timeout_ms as u64).max(1)
     }
 }
 
@@ -166,9 +177,13 @@ pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
         );
         return false;
     }
+    // Outside the lock below: `deadline_for` needs the tick, and reading it
+    // through `scheduler::with` while already inside one is the reentrancy
+    // that panicked.
+    let now = scheduler::with(|s| s.ticks());
     let cur = scheduler::with(|sched| {
         let cur = sched.current();
-        let dl = deadline_for(timeout_ms);
+        let dl = deadline_for(timeout_ms, now);
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
             tcb.sleep_until = dl;
         }
@@ -210,9 +225,13 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
         );
         return false;
     }
+    // Outside the lock below: `deadline_for` needs the tick, and reading it
+    // through `scheduler::with` while already inside one is the reentrancy
+    // that panicked.
+    let now = scheduler::with(|s| s.ticks());
     let cur = scheduler::with(|sched| {
         let cur = sched.current();
-        let dl = deadline_for(timeout_ms);
+        let dl = deadline_for(timeout_ms, now);
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
             tcb.sleep_until = dl;
         }

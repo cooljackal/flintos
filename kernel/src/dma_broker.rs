@@ -165,21 +165,13 @@ fn checked_align_up4(size: u32) -> Option<u32> {
 // finished. Physical drivers may depend on `hal` and `soc/*` only, so they have
 // no queues and no scheduler. They raise the interrupt; this waits on it.
 
-/// The most recently completed transfer id, published by a driver's top-half.
+/// Completion ids, published by a driver's top-half and consumed by the task
+/// that started the transfer.
 ///
-/// A plain atomic rather than a queue, and that is a deliberate retreat.
-///
-/// The first version signalled through `Queue::send_isr`, which is the
-/// established ISR-to-task path and wakes a blocked receiver. On hardware it
-/// hung: when the transfer finished *before* the waiter had blocked, the
-/// wakeup went to nobody and the waiter then slept through its own 100 ms
-/// timeout. Adding a log line between starting the engine and waiting made it
-/// pass every time, which is the shape of a lost wakeup and not a fix.
-///
-/// A flag the ISR sets and the waiter samples cannot lose that race: the ISR
-/// writes unconditionally and the waiter reads whenever it gets round to it,
-/// in either order. See [`await_transfer`] for what it costs.
-static COMPLETED: AtomicU32 = AtomicU32::new(0);
+/// Depth 4 rather than 1: a task that gives up on a timeout leaves its
+/// completion to arrive afterwards, and a queue with no room for it would hand
+/// that stale one to the next transfer's wait.
+static COMPLETIONS: api::queue::Queue<u32, 4> = api::queue::Queue::new();
 
 /// Begin a transfer and get the id its completion will carry.
 ///
@@ -195,39 +187,38 @@ pub fn begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError> {
 
 /// Signal that `id` has finished. **Call from a driver's top-half.**
 ///
-/// One relaxed store. Everything a top-half does costs the task it preempted,
-/// and this one is on the completion path of every DMA transfer in the system.
+/// The queue's ISR path, which wakes a blocked receiver. A full queue drops
+/// the message rather than retrying: an ISR that spins waiting for a task to
+/// drain something is an ISR that never returns.
 pub fn signal_complete(id: DmaTransferId) {
-    COMPLETED.store(id.0, Ordering::SeqCst);
+    let _ = COMPLETIONS.send_isr(id.0);
 }
 
 /// Block until `id` completes, or `timeout_ms` passes.
 ///
-/// Sleeps in short slices and samples the flag, rather than blocking on a
-/// wakeup. That costs up to [`POLL_SLICE_MS`] of latency on completion and is
-/// worth stating plainly — but the transfer is still interrupt-driven, and the
-/// waiting task is descheduled rather than spinning on a register.
+/// A real block, not a poll. It was a 1 ms sampling loop for exactly as long
+/// as `queue::deadline_for` was taking the scheduler lock recursively and
+/// panicking every blocking receive; with that fixed the task can be
+/// descheduled properly and woken by the interrupt.
 ///
-/// The alternative, a wakeup from the ISR, is what the first version did and
-/// is what hung: a transfer that finishes before the waiter blocks has nobody
-/// to wake.
+/// Completions for *other* transfers are discarded rather than put back. A
+/// stale id belongs to a transfer whose waiter has already given up, and
+/// returning it to the queue would spin this loop against something that never
+/// drains.
 pub fn await_transfer(id: DmaTransferId, timeout_ms: u32) -> Result<(), DmaError> {
-    let mut waited = 0;
+    let deadline = api::timer::now_ms().saturating_add(timeout_ms as u64);
     loop {
-        if COMPLETED.load(Ordering::SeqCst) == id.0 {
-            return Ok(());
-        }
-        if waited >= timeout_ms {
+        let left = deadline.saturating_sub(api::timer::now_ms());
+        if left == 0 {
             return Err(DmaError::Timeout);
         }
-        let slice = POLL_SLICE_MS.min(timeout_ms - waited);
-        crate::timer::sleep_ms(slice);
-        waited += slice;
+        match api::queue::recv(&COMPLETIONS, left as u32) {
+            Ok(got) if got == id.0 => return Ok(()),
+            Ok(_) => continue,
+            Err(_) => return Err(DmaError::Timeout),
+        }
     }
 }
-
-/// How long a waiter sleeps between samples.
-pub const POLL_SLICE_MS: u32 = 1;
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
