@@ -52,7 +52,7 @@ use esp32_gpio::{Esp32Gpio, PinMode};
 use soc_esp32::dport::{self, ClockBit};
 use soc_esp32::pinmux::Esp32PinMux;
 use esp32_rmt::{self as rmt, Entry, Refill, Rmt};
-use soc_esp32::{addr, intr_map};
+use soc_esp32::addr;
 use led_matrix::Layout;
 use ws2812::{LedStrip, PulseEmitter, Rgb, StripError, Ws2812};
 
@@ -402,15 +402,10 @@ unsafe fn led_init() -> Option<()> {
     // Point the peripheral at a CPU interrupt. Without this the RMT's own
     // interrupt enables set happily and nothing is ever delivered -- there was
     // no crossbar routing in this kernel at all before streaming needed one.
-    if let Err(e) = intr_map::route(addr::IRQ_RMT, LED_CPU_INT) {
-        api::log_error!("[blink] cannot route RMT to CPU interrupt {}: {:?}", LED_CPU_INT, e);
+    if let Err(e) = kernel::interrupt::connect(addr::IRQ_RMT, LED_CPU_INT, rmt_isr) {
+        api::log_error!("[blink] cannot connect RMT to CPU interrupt {}: {:?}", LED_CPU_INT, e);
         return None;
     }
-    if !kernel::interrupt::register(LED_CPU_INT, rmt_isr) {
-        api::log_error!("[blink] CPU interrupt {} already has a handler", LED_CPU_INT);
-        return None;
-    }
-    kernel::arch::registers::enable_interrupt(LED_CPU_INT as u32);
 
     STREAM = Some(Stream {
         rmt,

@@ -97,7 +97,7 @@ fn alarm_isr() {
 #[cfg(target_os = "none")]
 pub(crate) fn a_timg_alarm_fires_once_from_the_isr() -> Check {
     use esp32_timg::{Group, Mode, Timer, Timg};
-    use soc_esp32::{addr, intr_map};
+    use soc_esp32::addr;
 
     ALARM_HITS.store(0, Ordering::SeqCst);
 
@@ -105,13 +105,9 @@ pub(crate) fn a_timg_alarm_fires_once_from_the_isr() -> Check {
         Ok(t) => t,
         Err(_) => return Err("could not configure TIMG0 T1"),
     };
-    if unsafe { intr_map::route(addr::IRQ_TIMG0_T1, TIMG_CPU_INT) }.is_err() {
-        return Err("could not route the timer interrupt");
+    if unsafe { crate::interrupt::connect(addr::IRQ_TIMG0_T1, TIMG_CPU_INT, alarm_isr) }.is_err() {
+        return Err("could not connect the timer interrupt");
     }
-    if !crate::interrupt::register(TIMG_CPU_INT, alarm_isr) {
-        return Err("that CPU interrupt already has a handler");
-    }
-    unsafe { crate::arch::registers::enable_interrupt(TIMG_CPU_INT as u32) };
 
     // 5 ms, well inside the window below.
     if unsafe { t.start_alarm(5_000, Mode::OneShot) }.is_err() {
@@ -180,7 +176,7 @@ fn periodic_isr() {
 #[cfg(target_os = "none")]
 pub(crate) fn a_periodic_alarm_keeps_firing_at_its_rate() -> Check {
     use esp32_timg::{Group, Mode, Timer, Timg};
-    use soc_esp32::{addr, intr_map};
+    use soc_esp32::addr;
 
     PERIODIC_HITS.store(0, Ordering::SeqCst);
 
@@ -188,13 +184,11 @@ pub(crate) fn a_periodic_alarm_keeps_firing_at_its_rate() -> Check {
         Ok(t) => t,
         Err(_) => return Err("could not configure TIMG1 T0"),
     };
-    if unsafe { intr_map::route(addr::IRQ_TIMG1_T0, PERIODIC_CPU_INT) }.is_err() {
-        return Err("could not route the periodic timer interrupt");
+    if unsafe { crate::interrupt::connect(addr::IRQ_TIMG1_T0, PERIODIC_CPU_INT, periodic_isr) }
+        .is_err()
+    {
+        return Err("could not connect the periodic timer interrupt");
     }
-    if !crate::interrupt::register(PERIODIC_CPU_INT, periodic_isr) {
-        return Err("that CPU interrupt already has a handler");
-    }
-    unsafe { crate::arch::registers::enable_interrupt(PERIODIC_CPU_INT as u32) };
 
     if unsafe { t.start_alarm(PERIODIC_US, Mode::Periodic) }.is_err() {
         return Err("could not arm the periodic alarm");

@@ -46,7 +46,7 @@ use api::task;
 use hal::bus::{BusConfig, BusSpeed, PhysicalBus, SpiMode};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::types::Priority;
-use soc_esp32::{addr, dma, intr_map, Esp32PinMux};
+use soc_esp32::{addr, dma, Esp32PinMux};
 
 kernel::flint_app!(main, abi = 1);
 
@@ -206,12 +206,8 @@ fn attempt() -> Result<(), &'static str> {
     //    the peripheral's interrupt without routing it is a transfer whose
     //    completion never arrives, which is indistinguishable from one that
     //    never finished.
-    unsafe { intr_map::route(addr::IRQ_SPI2, SPI_CPU_INT) }
-        .map_err(|_| "cannot route SPI2 interrupt")?;
-    if !kernel::interrupt::register(SPI_CPU_INT, spi_dma_isr) {
-        return Err("CPU interrupt already has a handler");
-    }
-    unsafe { kernel::arch::registers::enable_interrupt(SPI_CPU_INT as u32) };
+    unsafe { kernel::interrupt::connect(addr::IRQ_SPI2, SPI_CPU_INT, spi_dma_isr) }
+        .map_err(|_| "cannot connect the SPI2 interrupt")?;
     unsafe { spi.dma_int_enable(esp32_spi::SPI_IN_SUC_EOF) };
 
     // 6. Go, and block. The id is published before the engine starts: the
