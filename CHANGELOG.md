@@ -21,6 +21,28 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Fixed
 
+- **The DMA pool was zero bytes on hardware.** `.dma_pool` in the linker
+  script contained only `*(.dma_buffer)`, and nothing in the tree emits that
+  section — the region is handed out at runtime, not declared by a static. So
+  `_dma_pool_start` and `_dma_pool_end` were the same address and every
+  `dma_broker::alloc` failed with `PoolExhausted`. On the target only: the
+  broker's host tests state a pool size rather than deriving one from the
+  linker symbols, so they had always passed. The section now claims its whole
+  region, and a link-time `ASSERT` fails the build if it is ever empty again.
+
+- **SPI was never full duplex.** `transfer(tx, rx)` promises a simultaneous
+  exchange, which is what every SPI device expects, but `SPI_DOUTDIN` was
+  never set — so the MOSI and MISO phases ran one after the other and the
+  read clocked in a line nothing was driving. Loopback returned zeros; a real
+  device would have returned garbage.
+
+- **GPIO16 and GPIO17 are not free on the Atom.** `board` advertised them as
+  `PSRAM_FREE_GPIOS`, reasoning that the ESP32-PICO-D4 has no external PSRAM.
+  It has no external *flash* either — the flash is inside the SiP, and those
+  two pins are part of reaching it. Routing a peripheral onto GPIO16 kills the
+  running image mid-instruction, with no fault and no reset. Renamed to
+  `RESERVED_GPIOS` and documented.
+
 - **DPORT was accessed unsafely from both cores.** Two independent hazards, and
   neither was reachable until the scheduler started running on core 1.
 

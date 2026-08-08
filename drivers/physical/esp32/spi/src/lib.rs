@@ -10,6 +10,14 @@ use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 /// ESP32 SPI2 (HSPI) / SPI3 (VSPI) physical driver (polled mode).
 ///
 /// Bases: SPI2/HSPI 0x3FF64000, SPI3/VSPI 0x3FF65000.
+// DMA transfers. Own file: the FIFO path above is complete in itself and the
+// engine is a separate contract with separate registers, so interleaving them
+// would make both harder to check against the header.
+#[path = "dma.rs"]
+mod dma_impl;
+
+pub use dma_impl::{SPI_IN_SUC_EOF, SPI_OUT_EOF};
+
 pub struct Esp32Spi {
     base: u32,
 }
@@ -22,7 +30,7 @@ pub struct Esp32Spi {
 // USER1=0x14, PIN=0x18, SLAVE=0x1C), which is really CTRL1/RD_STATUS/CTRL2/
 // CLOCK/USER -- every one of those writes landed on the wrong register.
 
-const SPI_CMD: u32 = 0x00;
+pub(crate) const SPI_CMD: u32 = 0x00;
 #[allow(dead_code)] // Not needed for the byte-oriented polled transfer this driver implements.
 const SPI_ADDR: u32 = 0x04;
 #[allow(dead_code)]
@@ -34,13 +42,13 @@ const SPI_RD_STATUS: u32 = 0x10;
 #[allow(dead_code)]
 const SPI_CTRL2: u32 = 0x14;
 const SPI_CLOCK: u32 = 0x18;
-const SPI_USER: u32 = 0x1C;
+pub(crate) const SPI_USER: u32 = 0x1C;
 #[allow(dead_code)] // Superseded by MOSI_DLEN/MISO_DLEN for byte-length transfers.
 const SPI_USER1: u32 = 0x20;
 #[allow(dead_code)]
 const SPI_USER2: u32 = 0x24;
-const SPI_MOSI_DLEN: u32 = 0x28;
-const SPI_MISO_DLEN: u32 = 0x2C;
+pub(crate) const SPI_MOSI_DLEN: u32 = 0x28;
+pub(crate) const SPI_MISO_DLEN: u32 = 0x2C;
 const SPI_PIN: u32 = 0x34;
 const SPI_SLAVE: u32 = 0x38;
 const SPI_W0: u32 = 0x80; // Data buffer: 16 words (W0..W15), 64 bytes.
@@ -49,11 +57,20 @@ const SPI_W0: u32 = 0x80; // Data buffer: 16 words (W0..W15), 64 bytes.
 /// against esp-idf `soc/spi_reg.h` (`SPI_USR`). A prior revision wrote/polled
 /// bit 0, which is `SPI_DOUTDIN` (a mode bit, not the start-transaction
 /// strobe) -- the poll loop could spin forever since nothing ever clears it.
-const SPI_CMD_USR: u32 = 1 << 18;
+pub(crate) const SPI_CMD_USR: u32 = 1 << 18;
 
 /// SPI_USER_REG bits (bitpos confirmed against esp-idf `soc/spi_reg.h`).
-const SPI_USR_MISO: u32 = 1 << 28;
-const SPI_USR_MOSI: u32 = 1 << 27;
+pub(crate) const SPI_USR_MISO: u32 = 1 << 28;
+pub(crate) const SPI_USR_MOSI: u32 = 1 << 27;
+
+/// `SPI_DOUTDIN`, bitpos [0]: "Set the bit to enable full duplex
+/// communication." Without it the MOSI and MISO phases run one after the
+/// other, so a full-duplex `transfer` sends all its bytes and *then* clocks in
+/// the reply -- reading a line nothing is driving.
+///
+/// The signature of `transfer(tx, rx)` promises simultaneous exchange, which
+/// is what every SPI device expects. This bit is what makes that true.
+pub(crate) const SPI_DOUTDIN: u32 = 1 << 0;
 
 /// Data buffer capacity: 16 32-bit words.
 const SPI_DATA_BUF_WORDS: usize = 16;
@@ -64,7 +81,7 @@ const SPI_MAX_BYTES: usize = SPI_DATA_BUF_WORDS * 4;
 /// millisecond; this bound is generous enough to absorb scheduling jitter
 /// while still failing a genuinely wedged peripheral instead of hanging
 /// forever.
-const SPI_TIMEOUT_SPINS: u32 = 1_000_000;
+pub(crate) const SPI_TIMEOUT_SPINS: u32 = 1_000_000;
 
 // ── Pin routing ──────────────────────────────────────────────────────────────
 //
@@ -136,7 +153,7 @@ impl Esp32Spi {
         Self { base: base_addr }
     }
 
-    fn reg(&self, offset: u32) -> *mut u32 {
+    pub(crate) fn reg(&self, offset: u32) -> *mut u32 {
         (self.base + offset) as *mut u32
     }
 
@@ -165,10 +182,11 @@ impl Esp32Spi {
             self.reg(SPI_MOSI_DLEN).write_volatile(bits);
             self.reg(SPI_MISO_DLEN).write_volatile(bits);
 
-            // Configure the transfer: MOSI + MISO phases, byte order left at
-            // its little-endian reset default (bits 10/11 unset) to match
-            // `pack_word`/`unpack_word`.
-            self.reg(SPI_USER).write_volatile(SPI_USR_MOSI | SPI_USR_MISO);
+            // Configure the transfer: full duplex, MOSI + MISO phases, byte
+            // order left at its little-endian reset default (bits 10/11 unset)
+            // to match `pack_word`/`unpack_word`.
+            self.reg(SPI_USER)
+                .write_volatile(SPI_DOUTDIN | SPI_USR_MOSI | SPI_USR_MISO);
 
             // Start the transfer (SPI_USR, bit 18 -- not bit 0).
             self.reg(SPI_CMD).write_volatile(SPI_CMD_USR);

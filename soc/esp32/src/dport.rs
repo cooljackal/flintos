@@ -55,6 +55,10 @@ pub const PERIP_RST_EN: u32 = DPORT_BASE + 0xC4;
 /// its effect on the bus matters. This is UART0's `DATE` register, which is
 /// what esp-idf uses (as the bare literal `0x3ff40078`) and which is
 /// read-only, always powered, and never gated.
+// Used by the asm below on the chip, and by a test that pins the address.
+// Neither exists in a plain host build, which is a configuration that only
+// exists so the rest of this crate can be tested.
+#[cfg_attr(not(target_arch = "xtensa"), allow(dead_code))]
 const APB_PREREAD: u32 = UART0_BASE + 0x78;
 
 /// Interrupt level masked around a DPORT read and around a locked sequence.

@@ -237,6 +237,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spidma"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "esp32-spi",
+ "hal",
+ "kernel",
+ "soc-esp32",
+]
+
+[[package]]
 name = "ssd1306"
 version = "0.1.0"
 dependencies = [

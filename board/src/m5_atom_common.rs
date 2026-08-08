@@ -29,9 +29,22 @@ use soc_esp32::addr;
 pub const TICK_PERIOD_US: u32 = 1000;
 pub const DMA_POOL_BYTES: usize = 8192;
 
-/// ESP32-PICO-D4 has no external PSRAM (it's not part of the SiP), so unlike
-/// WROVER, GPIO16/GPIO17 are ordinary free GPIOs here too.
-pub const PSRAM_FREE_GPIOS: [u8; 2] = [16, 17];
+/// **Do not use GPIO16 or GPIO17 on this board.**
+///
+/// This constant used to be `PSRAM_FREE_GPIOS = [16, 17]`, on the reasoning
+/// that the ESP32-PICO-D4 has no external PSRAM and so, unlike a WROVER, was
+/// free to use them. The reasoning was wrong and the constant was worse than
+/// useless: it invited exactly the thing that breaks.
+///
+/// The PICO-D4 is a SiP with the flash *inside the package*, and GPIO16 and
+/// GPIO17 are part of how the die talks to it. Routing a peripheral onto
+/// either one kills the running image mid-instruction — the console output
+/// garbles halfway through a line and the chip goes silent, with no fault, no
+/// panic and no reset. Found the direct way, by doing it.
+///
+/// Free pins on the Atom's headers are GPIO 19, 22, 23 and 33. GPIO 21 and 25
+/// are the IMU; see [`super::m5_atom_matrix`].
+pub const RESERVED_GPIOS: [u8; 2] = [16, 17];
 
 // ── Onboard peripherals (not yet bus-backed) ───────────────────────────────
 //

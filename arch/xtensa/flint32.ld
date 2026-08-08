@@ -146,9 +146,23 @@ SECTIONS
   {
     _dma_pool_start = ABSOLUTE(.);
     *(.dma_buffer)
+    /* Claim the whole region, not just whatever landed in `.dma_buffer`.
+     *
+     * Nothing in the tree emits that section -- the pool is handed out at
+     * runtime by `kernel::dma_broker`, not declared by a static -- so without
+     * this the section was empty, start and end were the same address, and
+     * every allocation failed with PoolExhausted. On the target only: the
+     * broker's host tests state a pool size rather than deriving one from
+     * these symbols, so they passed throughout. */
+    . = ORIGIN(dma_pool) + LENGTH(dma_pool);
     _dma_pool_end = ABSOLUTE(.);
   } > dma_pool
 }
+
+/* Guard: an empty pool makes every DMA allocation fail, on hardware only, in
+ * a way no host test can see. Cheaper to catch at link time. */
+ASSERT(_dma_pool_end - _dma_pool_start >= 4096,
+       "DMA pool is empty or too small -- see .dma_pool in this script");
 
 /* Guard: data RAM must not overflow into the task stack pool. */
 ASSERT(_kernel_stack_end <= ORIGIN(task_stacks),
