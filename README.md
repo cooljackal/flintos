@@ -112,8 +112,8 @@ own — see [Architecture](https://github.com/cooljackal/flintos/wiki/Architectu
 
 | | |
 |---|---|
-| Host unit tests | ✅ 375 passing, kernel included |
-| On-target self-tests | ✅ 11 passing on an ESP32-PICO — `make test-target` |
+| Host unit tests | ✅ 423 passing, kernel included |
+| On-target self-tests | ✅ 17 passing on an ESP32-PICO — `make test-target` |
 | Layer boundary and package naming | ✅ enforced in CI |
 | Image size reporting | ✅ `make size` |
 | ABI versioning and upgrade path | ✅ `make upgrade` |
@@ -591,7 +591,7 @@ host, because there is nothing to mask — so races, priority inversion and
 register-window corruption are not merely untested there, they are unreachable.
 A green host run means the logic is consistent, not that the kernel works.
 
-**`make test-target`** is the other half: five checks that run on real silicon,
+**`make test-target`** is the other half: seventeen checks that run on real silicon,
 each picked because a host cannot fail it — a trap corrupting the interrupted
 task's register windows, a window spilled past the physical register file, and
 whether a critical section genuinely masks the timer. It flashes the board,
@@ -657,9 +657,11 @@ Debug features are additive and compile out entirely:
   ([#50](https://github.com/cooljackal/flintos/issues/50)) — and found two that
   could not.
 - **Now** — [v1](https://github.com/cooljackal/flintos/milestone/1): every
-  documented ESP32 peripheral, driven and tested on silicon. DMA has channels
-  and buffers but no transfer engine
-  ([#18](https://github.com/cooljackal/flintos/issues/18)).
+  documented ESP32 peripheral, driven and tested on silicon. SPI, DMA and the
+  general-purpose timers landed for it; ADC1
+  ([#24](https://github.com/cooljackal/flintos/issues/24)) and persistent
+  configuration ([#32](https://github.com/cooljackal/flintos/issues/32)) are
+  the ones in flight.
 - **Later** — Layer-1 drivers as isolated tasks with one-IPC-hop request/reply;
   `nsh` shell; Cortex-M port for STM32F3/F4.
 

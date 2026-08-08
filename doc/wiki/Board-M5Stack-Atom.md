@@ -50,8 +50,19 @@ preemption, timed wakeup and the register-window fix were all verified here.
 ## The PICO-D4 difference
 
 The flash is inside the SiP, but it still uses **GPIO 6–11** — same restriction
-as every other ESP32. No PSRAM, so **GPIO16 and GPIO17 are free**
-(`PSRAM_FREE_GPIOS` in the manifest).
+as every other ESP32.
+
+**GPIO16 and GPIO17 are reserved too, and this page used to say otherwise.**
+The reasoning was that the PICO-D4 has no external PSRAM, so unlike a WROVER
+those pins were free. It has no external *flash* either: the flash is in the
+package, and 16 and 17 are part of how the die reaches it.
+
+Routing a peripheral onto GPIO16 kills the running image mid-instruction. The
+console garbles halfway through a line and the chip goes silent — no fault, no
+panic, no reset. Found the direct way, by doing it.
+
+The manifest says `RESERVED_GPIOS = [16, 17]`. Free pins on the headers are
+**GPIO 19, 22, 23 and 33**.
 
 ## Onboard hardware
 
