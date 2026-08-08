@@ -6,6 +6,7 @@ use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
+use soc_esp32::reg;
 
 /// ESP32 I2C master driver (polled mode).
 ///
@@ -320,7 +321,7 @@ impl Esp32I2c {
     /// (in particular, `I2C_MS_MODE` set during `init`).
     unsafe fn start_transfer(&self) {
         let ctr = self.reg(I2C_CTR);
-        ctr.write_volatile(ctr.read_volatile() | I2C_TRANS_START);
+        reg::set(ctr, I2C_TRANS_START);
     }
 
     /// Clear stale status and empty both FIFOs before staging a transaction.

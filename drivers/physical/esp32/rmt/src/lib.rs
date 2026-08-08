@@ -70,6 +70,7 @@
 #![no_std]
 
 use soc_esp32::addr::RMT_BASE;
+use soc_esp32::reg;
 
 /// APB clock feeding the RMT divider.
 pub const APB_HZ: u32 = soc_esp32::APB_HZ;
@@ -252,7 +253,7 @@ impl Rmt {
         // driver uses the FIFO, but it does mean a caller mixing this with
         // FIFO writes elsewhere would break them.
         let apb = APB_CONF as *mut u32;
-        apb.write_volatile(apb.read_volatile() | APB_FIFO_MASK);
+        reg::set(apb, APB_FIFO_MASK);
 
         Some(Self { ch })
     }
@@ -418,7 +419,7 @@ impl Rmt {
         // FIFO_MASK; harmless for one-shot users because a terminator stops
         // them before the end of the block is ever reached.
         let apb = APB_CONF as *mut u32;
-        apb.write_volatile(apb.read_volatile() | APB_MEM_TX_WRAP_EN);
+        reg::set(apb, APB_MEM_TX_WRAP_EN);
 
         // Fire the threshold once per half consumed.
         (ch_tx_lim(self.ch) as *mut u32).write_volatile(HALF_BLOCK as u32);
@@ -444,7 +445,7 @@ impl Rmt {
         // transmitter has not reached.
         (INT_CLR as *mut u32).write_volatile(tx_thr_bit(self.ch) | tx_end_bit(self.ch));
         let ena = INT_ENA as *mut u32;
-        ena.write_volatile(ena.read_volatile() | tx_thr_bit(self.ch));
+        reg::set(ena, tx_thr_bit(self.ch));
 
         c1.write_volatile(base | CONF1_TX_START);
         refill
@@ -485,7 +486,7 @@ impl Rmt {
                 // Nothing left to feed. Stop the interrupt, or it repeats for
                 // as long as the tail plays out.
                 let ena = INT_ENA as *mut u32;
-                ena.write_volatile(ena.read_volatile() & !tx_thr_bit(self.ch));
+                reg::clear(ena, tx_thr_bit(self.ch));
                 true
             }
         }

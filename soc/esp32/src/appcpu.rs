@@ -72,10 +72,10 @@ const SW_STALL_C1_MASK: u32 = 0x3F;
 /// Writes RTC registers.
 unsafe fn unstall() {
     let opt = RTC_OPTIONS0 as *mut u32;
-    opt.write_volatile(opt.read_volatile() & !(SW_STALL_C0_MASK << SW_STALL_C0_SHIFT));
+    crate::reg::clear(opt, SW_STALL_C0_MASK << SW_STALL_C0_SHIFT);
 
     let sw = RTC_SW_CPU_STALL as *mut u32;
-    sw.write_volatile(sw.read_volatile() & !(SW_STALL_C1_MASK << SW_STALL_C1_SHIFT));
+    crate::reg::clear(sw, SW_STALL_C1_MASK << SW_STALL_C1_SHIFT);
 }
 
 /// Whether the APP CPU is currently held stalled by the RTC.

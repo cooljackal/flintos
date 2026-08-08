@@ -37,6 +37,7 @@
 
 use hal::bus::{BusError, BusResult};
 use soc_esp32::dma;
+use soc_esp32::reg;
 
 use super::{Esp32Spi, SPI_CMD, SPI_CMD_USR, SPI_DOUTDIN, SPI_MISO_DLEN, SPI_MOSI_DLEN,
             SPI_SLAVE, SPI_TIMEOUT_SPINS, SPI_USER, SPI_USR_MISO, SPI_USR_MOSI};
@@ -88,8 +89,8 @@ impl Esp32Spi {
     pub unsafe fn dma_reset(&self) {
         let conf = self.reg(SPI_DMA_CONF);
         let bits = SPI_IN_RST | SPI_OUT_RST | SPI_AHBM_FIFO_RST | SPI_AHBM_RST;
-        conf.write_volatile(conf.read_volatile() | bits);
-        conf.write_volatile(conf.read_volatile() & !bits);
+        reg::set(conf, bits);
+        reg::clear(conf, bits);
         // Stale end-of-frame flags would make the very first poll succeed.
         self.reg(SPI_DMA_INT_CLR)
             .write_volatile(SPI_IN_SUC_EOF | SPI_OUT_EOF);
@@ -186,7 +187,7 @@ impl Esp32Spi {
         // Write-zero-to-clear, and only this bit: the rest of SPI_SLAVE_REG
         // holds mode configuration that a blind write would flatten.
         let slave = self.reg(SPI_SLAVE);
-        slave.write_volatile(slave.read_volatile() & !SPI_TRANS_DONE);
+        reg::clear(slave, SPI_TRANS_DONE);
     }
 
     /// Arm both links and start the transaction, without waiting.

@@ -39,6 +39,7 @@
 #![no_std]
 
 use soc_esp32::addr::{TIMG0_BASE, TIMG1_BASE};
+use soc_esp32::reg;
 
 /// Which timer group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,7 +259,7 @@ impl Timg {
     /// Read-modify-writes a register shared with the group's other timer.
     pub unsafe fn enable_interrupt(&self) {
         let r = (self.group + INT_ENA) as *mut u32;
-        r.write_volatile(r.read_volatile() | self.int_bit);
+        reg::set(r, self.int_bit);
     }
 
     /// Has this timer's alarm fired?
@@ -317,7 +318,7 @@ pub unsafe fn clear_interrupt(group: Group, timer: Timer) {
 pub unsafe fn rearm(group: Group, timer: Timer) {
     let base = timer_base(group, timer);
     let r = (base + CONFIG) as *mut u32;
-    r.write_volatile(r.read_volatile() | CONFIG_ALARM_EN);
+    reg::set(r, CONFIG_ALARM_EN);
 }
 
 /// Base of one timer's register set.

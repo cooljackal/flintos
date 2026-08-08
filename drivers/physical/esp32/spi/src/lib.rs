@@ -6,6 +6,7 @@ use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, SpiMode};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
+use soc_esp32::reg;
 
 /// ESP32 SPI2 (HSPI) / SPI3 (VSPI) physical driver (polled mode).
 ///
@@ -269,7 +270,7 @@ impl PhysicalBus for Esp32Spi {
 
                     // Enable master mode, disable slave.
                     let slave = self.reg(SPI_SLAVE);
-                    slave.write_volatile(slave.read_volatile() & !1);
+                    reg::clear(slave, 1);
                 }
                 Ok(())
             }

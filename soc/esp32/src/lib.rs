@@ -55,6 +55,7 @@ pub mod gpio_matrix;
 pub mod intr_map;
 pub mod io_mux;
 pub mod pinmux;
+pub mod reg;
 pub mod reset;
 
 pub use pinmux::Esp32PinMux;
