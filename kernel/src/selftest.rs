@@ -42,6 +42,9 @@ mod dport;
 #[path = "selftest_timg.rs"]
 mod timg;
 
+#[path = "selftest_adc.rs"]
+mod adc;
+
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
 pub(crate) type Check = Result<(), &'static str>;
@@ -79,6 +82,9 @@ pub fn run() {
     check("a_timg_alarm_fires_once_from_the_isr", timg::a_timg_alarm_fires_once_from_the_isr(), &mut pass, &mut fail);
 
     check("a_periodic_alarm_keeps_firing_at_its_rate", timg::a_periodic_alarm_keeps_firing_at_its_rate(), &mut pass, &mut fail);
+
+    check("adc1_follows_the_pin_it_is_pointed_at", adc::adc1_follows_the_pin_it_is_pointed_at(), &mut pass, &mut fail);
+    check("every_adc1_channel_converts", adc::every_adc1_channel_converts(), &mut pass, &mut fail);
 
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
 

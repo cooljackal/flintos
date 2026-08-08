@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-adc"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "ADC1: eight channels of analog input on GPIO 32-39"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+soc-esp32 = { path = "../../../../soc/esp32" }
