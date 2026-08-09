@@ -35,7 +35,7 @@ pub fn init() {
                 );
             }
             // Print a boot banner.
-            console_write(b"Flint RTOS booting...\r\n");
+            console_write(b"FlintOS booting...\r\n");
             break;
         }
     }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Board manifest for Flint RTOS.
+//! Board manifest for FlintOS.
 //!
 //! Each supported board is a submodule that exports:
 //! - `TARGET_BUSES` — physical bus definitions

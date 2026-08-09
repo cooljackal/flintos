@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Build-script helper for Flint applications.
+//! Build-script helper for FlintOS applications.
 //!
-//! A Flint application is an ordinary `no_std` binary crate, but it links
+//! A FlintOS application is an ordinary `no_std` binary crate, but it links
 //! against a linker script that lays out ESP32 IRAM, DRAM, the task stack pool
 //! and the vector table. Cargo does not propagate `rustc-link-arg` from a
 //! dependency's build script to the binary that depends on it, so every
@@ -21,7 +21,7 @@ use std::path::PathBuf;
 /// Relative path of the linker script from the workspace root.
 const LD_SCRIPT: &str = "arch/xtensa/flint32.ld";
 
-/// Pass Flint's linker script to the final link of the calling binary.
+/// Pass FlintOS's linker script to the final link of the calling binary.
 ///
 /// Call this from an application's `build.rs`. Does nothing on host targets, so
 /// `cargo test` and `cargo check` against the host toolchain still work.
@@ -33,7 +33,7 @@ pub fn link() {
     let script = find_ld_script().unwrap_or_else(|| {
         panic!(
             "build: could not find {LD_SCRIPT} in any ancestor of \
-             CARGO_MANIFEST_DIR. An application must live inside the Flint \
+             CARGO_MANIFEST_DIR. An application must live inside the FlintOS \
              workspace, or supply its own linker script instead of calling \
              build::link()."
         )

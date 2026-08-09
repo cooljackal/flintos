@@ -1,4 +1,4 @@
-# Flint RTOS — Cargo build configuration.
+# FlintOS — Cargo build configuration.
 #
 # Board selection is a Cargo feature on kernel, not a setting here:
 #   (default)                                          ESP32-WROVER

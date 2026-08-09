@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The smallest useful Flint application: one task, logging on a timer.
+//! The smallest useful FlintOS application: one task, logging on a timer.
 //!
 //! Copy this directory to start your own. Everything you need to change is in
 //! this file and `Cargo.toml`.

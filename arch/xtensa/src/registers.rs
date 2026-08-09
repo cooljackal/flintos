@@ -50,7 +50,7 @@ pub const INT_SOFTWARE_MASK: u32 = 1 << INT_SOFTWARE;
 pub mod rtc_cntl {
     //! RTC timer registers, used solely by `tick::XtensaTick::init` to
     //! measure the actual CPU clock against the RTC slow clock (issue #6) --
-    //! Flint does not otherwise touch the clock tree.
+    //! FlintOS does not otherwise touch the clock tree.
     //!
     //! VERIFIED against the espressif/esp-idf `master` branch (fetched
     //! 2026-08-05):
@@ -68,13 +68,13 @@ pub mod rtc_cntl {
     //!     ESP-IDF's own `rtc_time_get()` (`esp_hw_support/port/esp32/
     //!     rtc_time.c` and predecessors). We skip ESP-IDF's follow-up write
     //!     to `RTC_CNTL_INT_CLR_REG`: that only clears a stale "time valid"
-    //!     RTC interrupt flag, and Flint never enables that interrupt, so
+    //!     RTC interrupt flag, and FlintOS never enables that interrupt, so
     //!     there is nothing to clear.
     //!
     //! UNVERIFIED: the RTC slow-clock source and its nominal rate (150 kHz
     //! internal RC oscillator by default, per the ESP32 TRM) were taken on
     //! the task's word rather than independently re-derived from a register
-    //! read of `RTC_CNTL_CLK_CONF_REG`. Flint's boot path never switches the
+    //! read of `RTC_CNTL_CLK_CONF_REG`. FlintOS's boot path never switches the
     //! slow-clock source, so the reset default should hold, but this is the
     //! one link in the chain not directly confirmed against a header dump.
 

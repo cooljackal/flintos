@@ -2,7 +2,7 @@
 
 //! A key/value store that survives being interrupted.
 //!
-//! Nothing in Flint outlives a reboot today. Calibration constants, a device
+//! Nothing in FlintOS outlives a reboot today. Calibration constants, a device
 //! identity, a Wi-Fi credential later — all of it needs somewhere to live, and
 //! that somewhere is flash, which has two awkward properties: you can only
 //! clear bits by erasing a whole sector, and the power can go away in the

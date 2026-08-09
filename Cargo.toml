@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-# Package names carry no prefix, because nothing here is published. Flint is
+# Package names carry no prefix, because nothing here is published. FlintOS is
 # not a pure-Rust library -- it ships a linker script and a flashed image
 # alongside the crates -- so it will never go to crates.io, and a package name
 # therefore only has to be unique within this workspace. Every package sets

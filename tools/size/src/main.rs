@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Report where a Flint image's bytes went, per memory region.
+//! Report where a FlintOS image's bytes went, per memory region.
 //!
 //! # Why this is a Rust program and not two lines of shell
 //!
@@ -299,7 +299,7 @@ fn render(elf_path: &str, sections: &[Section], regions: &[Region]) -> String {
         .map_or(elf_path, |n| n.to_str().unwrap_or(elf_path));
 
     let _ = writeln!(out);
-    let _ = writeln!(out, "  Flint image: {name}");
+    let _ = writeln!(out, "  FlintOS image: {name}");
     let _ = writeln!(out, "{}", rule());
     let _ = write!(out, "{}", row("REGION", "USED", "CAPACITY", "USAGE", "FULL"));
     let _ = writeln!(out, "{}", rule());

@@ -4,7 +4,7 @@
 //!
 //! # Semantics: a panic halts the system
 //!
-//! Flint runs in a single protection domain. Every task shares one address
+//! FlintOS runs in a single protection domain. Every task shares one address
 //! space with no MPU enforcement, so a task that panicked may already have
 //! written through a bad pointer, left a mutex held, or corrupted a queue
 //! another task is about to read. Killing just the offender and carrying on

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Pull the latest Flint and report which applications it broke.
+# Pull the latest FlintOS and report which applications it broke.
 #
 # The layout already protects application code: applications are separate
 # crates and a pull never touches `apps/<yours>/`. What it does not do is tell
@@ -143,8 +143,8 @@ for app in "${BROKEN[@]}"; do
 
     # An ABI mismatch is the expected, well-diagnosed case: show it and stop,
     # because every other error is downstream of it.
-    if grep -q "Flint ABI mismatch" "$log"; then
-        sed -n '/Flint ABI mismatch/,/^$/p' "$log" | head -12 | sed 's/^/  /'
+    if grep -q "FlintOS ABI mismatch" "$log"; then
+        sed -n '/FlintOS ABI mismatch/,/^$/p' "$log" | head -12 | sed 's/^/  /'
         echo "  ${dim}Apply the Breaking entries above, then bump the abi in flint_app!.${off}"
         continue
     fi

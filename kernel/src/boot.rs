@@ -42,7 +42,7 @@ extern "C" {
 
 /// Declare a function as this build's application entry point.
 ///
-/// A Flint application is a `no_std` binary crate that links the kernel and
+/// A FlintOS application is a `no_std` binary crate that links the kernel and
 /// names one function to run once the system is up. That function spawns the
 /// application's tasks and returns; the kernel then unmasks interrupts and
 /// becomes the idle task.
@@ -61,12 +61,12 @@ extern "C" {
 macro_rules! flint_app {
     ($main:path, abi = $abi:literal) => {
         // Checked at compile time, so an application written against an older
-        // Flint fails to build with something that names the problem, instead
+        // FlintOS fails to build with something that names the problem, instead
         // of erroring deep inside a call it did not change.
         const _: () = {
             if $abi != $crate::ABI {
                 ::core::panic!(::core::concat!(
-                    "Flint ABI mismatch: this application declares `abi = ",
+                    "FlintOS ABI mismatch: this application declares `abi = ",
                     ::core::stringify!($abi),
                     "`, which is not the ABI this kernel provides (see `api::ABI`).\n",
                     "The application-facing API changed incompatibly since it was \
@@ -149,7 +149,7 @@ pub extern "C" fn FlintMain() -> ! {
     unsafe { flint_app_main() };
 
     #[cfg(feature = "flint-log")]
-    api::log_info!("[kernel] Flint RTOS boot complete, entering idle");
+    api::log_info!("[kernel] FlintOS boot complete, entering idle");
 
     // A build with logging compiled out looks exactly like a board that boots
     // and then dies: the banner appears, the tasks run, and nothing they print

@@ -2,7 +2,7 @@
 
 //! Core identity, for kernels that run on more than one.
 //!
-//! **Symmetric cores only.** Every core Flint runs on is assumed to be a peer:
+//! **Symmetric cores only.** Every core FlintOS runs on is assumed to be a peer:
 //! same instruction set, same speed, same view of memory. That covers the
 //! ESP32's two LX6s and an RP2040's two M0s.
 //!
@@ -53,7 +53,7 @@ pub trait MultiCore {
     /// Xtensa it is two instructions.
     fn current_core() -> CoreId;
 
-    /// How many cores this part has running Flint. Not how many exist.
+    /// How many cores this part has running FlintOS. Not how many exist.
     fn cores() -> u8;
 
     /// Identifies the calling *execution context* for lock ownership.

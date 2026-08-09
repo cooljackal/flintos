@@ -356,7 +356,7 @@ Real output from an ESP32-PICO, trimmed:
 [FLINT] startup::init done
 [FLINT] cpu_hz=80000000 (measured: CCOUNT timed against RTC slow clock)
 [FLINT] tick period=80000 CCOUNT ticks
-[    0][task:0] INFO  [kernel] Flint RTOS boot complete, entering idle
+[    0][task:0] INFO  [kernel] FlintOS boot complete, entering idle
 [FLINT] interrupts unmasked, entering idle
 [    2][task:1] INFO  [sensor] prio=Normal(1) n=1
 [    5][task:2] INFO  [consumer] prio=Normal(5) n=1
@@ -613,7 +613,7 @@ memories with wildly different budgets, and the one that runs out is IRAM or
 DRAM long before flash.
 
 ```
-  Flint image: demo
+  FlintOS image: demo
 +----------------+------------+------------+----------------------+--------+
 | REGION         |       USED |   CAPACITY | USAGE                |   FULL |
 +----------------+------------+------------+----------------------+--------+

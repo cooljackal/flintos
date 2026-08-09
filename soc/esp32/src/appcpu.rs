@@ -93,14 +93,14 @@ pub unsafe fn is_stalled() -> bool {
 ///
 /// # What the started core may touch
 ///
-/// **Not the kernel.** Flint's scheduler is single-core: `scheduler::global()`
+/// **Not the kernel.** FlintOS's scheduler is single-core: `scheduler::global()`
 /// hands out `&mut` to a `static`, and a critical section masks interrupts on
 /// the calling core only. Two cores in that code is a data race in the
 /// language's own terms, not merely a logical one.
 ///
 /// So `entry` may use its own stack and memory it owns, and may read or write
 /// `AtomicU32`s shared with the PRO CPU. It must not call into `kernel`, take a
-/// Flint mutex, send on a Flint queue, or spawn a task. Making any of that safe
+/// FlintOS mutex, send on a FlintOS queue, or spawn a task. Making any of that safe
 /// is the rest of #19, and it is a much larger job than this function.
 ///
 /// # Safety

@@ -2,7 +2,7 @@
 
 //! Kernel dispatch ABI (plan W5.1, Option A).
 //!
-//! Flint is a single protection domain: `api` calls these `#[no_mangle]`
+//! FlintOS is a single protection domain: `api` calls these `#[no_mangle]`
 //! functions directly via `extern "Rust"` linkage — there is no `syscall`
 //! instruction. Each function that mutates scheduler/IPC state does so inside a
 //! critical section (`scheduler::with` / `cs_with`) so it cannot race the trap

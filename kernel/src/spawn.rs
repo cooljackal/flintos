@@ -174,7 +174,7 @@ unsafe fn init_context(ctx: &mut hal::TaskContext, entry: usize, stack_top: u32)
 
     ctx.pc = _flint_task_start as *const () as usize as u32;
 
-    // Kernel mode: Flint is a single protection domain and startup.S runs the
+    // Kernel mode: FlintOS is a single protection domain and startup.S runs the
     // kernel with PS.UM clear, so tasks run at the same level as the handlers
     // that serve them. CALLINC is left at 0 -- the trampoline's `callx4` sets
     // it, rather than this function pretending a call already happened.

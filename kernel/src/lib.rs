@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The Flint RTOS kernel.
+//! The FlintOS kernel.
 //!
-//! This crate is a library, not a binary. A Flint *application* is the binary:
+//! This crate is a library, not a binary. A FlintOS *application* is the binary:
 //! it links this crate, names an entry point with [`flint_app!`], and spawns
 //! its own tasks. See `apps/` for worked examples and `apps/README.md` for how
 //! to start one of your own.

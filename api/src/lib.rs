@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Flint RTOS public API crate.
+//! FlintOS public API crate.
 //!
 //! This crate provides the user-facing primitives:
 //! - `api::task::spawn`, `sleep_ms`, `yield_now`
@@ -23,7 +23,7 @@
 ///
 /// Applications declare the version they were written against
 /// (`flint_app!(main, abi = N)`), and the kernel refuses to build against a
-/// declaration it does not match. Flint moves fast and applications live in
+/// declaration it does not match. FlintOS moves fast and applications live in
 /// their own crates, so `git pull` routinely updates the kernel underneath one
 /// written against something older. Without this the result is a type error
 /// somewhere in the application — or worse, a silent change in behaviour.

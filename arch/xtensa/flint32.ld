@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 /*
- * ESP32 (PICO-D4 / WROVER) Linker Script for Flint RTOS — flash-XIP layout.
+ * ESP32 (PICO-D4 / WROVER) Linker Script for FlintOS — flash-XIP layout.
  *
  * The ESP-IDF 2nd-stage bootloader requires flash-mapped code/rodata segments
  * (IROM/DROM) — a pure-IRAM image makes it abort() in set_cache_and_start_app.

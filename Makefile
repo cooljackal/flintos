@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-# Flint RTOS — Developer Makefile
+# FlintOS — Developer Makefile
 # ================================
 # Targets: env, check, build, clean, lint
 
@@ -390,7 +390,7 @@ test-watchdog: ## Prove a watchdog actually resets the board (WDT=kernel|idle)
 #   make upgrade            # pull, rebuild every app, report what broke
 #   make upgrade PULL=0     # check against what is already checked out
 .PHONY: upgrade
-upgrade: ## Pull the latest Flint and report which applications it broke
+upgrade: ## Pull the latest FlintOS and report which applications it broke
 	@PULL="$(PULL)" BOARD="$(BOARD)" DEBUG="$(DEBUG)" \
 	CARGO="$(CARGO)" XTENSA_TARGET="$(XTENSA_TARGET)" \
 	$(BASH) tools/upgrade.sh
@@ -434,7 +434,7 @@ clean: ## Remove all build artifacts
 # The `##@ Group` lines elsewhere in this file set the section headings.
 .PHONY: help
 help: ## Show this help message
-	@printf 'Flint RTOS — Make targets:\n'
+	@printf 'FlintOS — Make targets:\n'
 	@awk 'BEGIN { FS = ":.*## " } \
 	     /^##@ / { printf "\n  %s\n", substr($$0, 5); next } \
 	     /^[a-zA-Z0-9_-]+:.*## / { printf "    make %-16s %s\n", $$1, $$2 }' \

@@ -13,7 +13,7 @@
 //! The RNG harvests entropy from the RF subsystem's thermal noise and, failing
 //! that, from an internal fast oscillator sampled against the slower RTC clock.
 //! Espressif's own guidance is that the output is **only** suitable for
-//! cryptographic use when the WiFi or Bluetooth radio is running. Flint does not
+//! cryptographic use when the WiFi or Bluetooth radio is running. FlintOS does not
 //! bring up the radio (see #36), so on this kernel today:
 //!
 //! - Fine for a random backoff, a jittered retry, a test seed, a nonce whose

@@ -2,7 +2,7 @@
 
 //! MPU manager — OPTIONAL (may never ship).
 //!
-//! Per the locked architecture decision, Flint is a **single protection
+//! Per the locked architecture decision, FlintOS is a **single protection
 //! domain**: there is no hardware memory isolation between tasks, and the
 //! kernel's correctness does not depend on any. This type exists only as an
 //! inert seam so the option of adding ESP32 PMS/PID-based protection later

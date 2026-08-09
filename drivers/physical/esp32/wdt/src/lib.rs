@@ -6,7 +6,7 @@
 //! (MWDT0, MWDT1). `startup.S` disables all three during boot, because a
 //! half-initialised kernel being reset mid-bring-up is worse than no watchdog —
 //! but nothing re-armed them afterwards, which left the chip *less* protected
-//! under Flint than it is under the ROM.
+//! under FlintOS than it is under the ROM.
 //!
 //! # Two watchdogs, two different failures
 //!

@@ -28,7 +28,7 @@ CHANGELOG.md changed. Breaking entries now present:
 1 application(s) broke.
 
 --- hello ---
-  error: Flint ABI mismatch: this application declares `abi = 1`, ...
+  error: FlintOS ABI mismatch: this application declares `abi = 1`, ...
   Apply the Breaking entries above, then bump the abi in flint_app!.
 ```
 
@@ -54,7 +54,7 @@ The kernel checks it at compile time. A mismatch fails the build naming the
 cause, instead of erroring somewhere in your own code:
 
 ```
-error: Flint ABI mismatch: this application declares `abi = 1`, which is not
+error: FlintOS ABI mismatch: this application declares `abi = 1`, which is not
        the ABI this kernel provides (see `api::ABI`).
        Read the Breaking entries in CHANGELOG.md, apply them, then update the
        declaration in flint_app!.

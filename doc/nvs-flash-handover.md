@@ -15,7 +15,7 @@ host tests — has somewhere to live. Issue #32.
 
 | | |
 |---|---|
-| OS | Flint: `no_std` Rust, **no ESP-IDF**, no vendor SDK |
+| OS | FlintOS: `no_std` Rust, **no ESP-IDF**, no vendor SDK |
 | Board | M5Stack Atom Matrix, ESP32-PICO-D4 |
 | Flash | GigaDevice `0xC84016`, 4 MB, in-package (SiP) |
 | Image | ESP-IDF bootloader format, flashed with `espflash` |

@@ -16,7 +16,7 @@ pub struct XtensaTick;
 
 /// CPU clock feeding CCOUNT, in Hz -- **fallback only**.
 ///
-/// Nothing in Flint's boot path programs the clock tree, so historically this
+/// Nothing in FlintOS's boot path programs the clock tree, so historically this
 /// constant was a guess at whatever frequency the second-stage bootloader left
 /// the part at (issue #6). `init` now *measures* the real frequency at boot by
 /// timing CCOUNT against the RTC slow clock (see `measure_cpu_hz` below) and
@@ -28,14 +28,14 @@ pub struct XtensaTick;
 /// 80 MHz is used here because that's what the stock ESP-IDF 2nd-stage
 /// bootloader (which espflash writes) configures before handing off; it
 /// expects the *application* to raise the clock during its own init, which
-/// Flint does not do. The previous value of 240 MHz was the figure an
+/// FlintOS does not do. The previous value of 240 MHz was the figure an
 /// ESP-IDF application would see only *after* calling `esp_clk_init()`.
 const CPU_HZ: u64 = 80_000_000;
 
 /// Nominal RTC slow-clock rate used to measure the CPU frequency. The ESP32
 /// defaults `RTC_SLOW_CLK` to the internal 150 kHz RC oscillator (untrimmed,
 /// commonly ±(5-10)% off) unless something has switched it to the external
-/// 32 kHz crystal or the 8 MHz/256 divider -- Flint's boot path does neither.
+/// 32 kHz crystal or the 8 MHz/256 divider -- FlintOS's boot path does neither.
 /// The oscillator's imprecision is fine here: the only question being asked
 /// is "80, 160, or 240 MHz?", and a clock good to 10% resolves that easily.
 const RTC_SLOW_HZ_NOMINAL: u64 = 150_000;
