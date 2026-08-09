@@ -76,6 +76,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-flash"
+version = "0.1.0"
+dependencies = [
+ "soc-esp32",
+]
+
+[[package]]
 name = "esp32-gpio"
 version = "0.1.0"
 dependencies = [
@@ -143,6 +150,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "flashprobe"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "esp32-flash",
+ "hal",
+ "kernel",
+ "kvstore",
+ "soc-esp32",
+]
+
+[[package]]
 name = "hal"
 version = "0.1.0"
 
@@ -186,11 +206,13 @@ dependencies = [
  "arch-xtensa",
  "board",
  "esp32-adc",
+ "esp32-flash",
  "esp32-rng",
  "esp32-timg",
  "esp32-uart",
  "esp32-wdt",
  "hal",
+ "kvstore",
  "soc-esp32",
 ]
 

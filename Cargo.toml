@@ -68,6 +68,7 @@ members = [
     "drivers/physical/esp32/rng",
     "drivers/physical/esp32/timg",
     "drivers/physical/esp32/adc",
+    "drivers/physical/esp32/flash",
     "drivers/bus/spi-bus",
     "drivers/bus/i2c-bus",
     "drivers/bus/uart-bus",

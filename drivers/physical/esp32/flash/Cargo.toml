@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-flash"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Raw SPI flash access through the ROM driver, with the cache off"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+soc-esp32 = { path = "../../../../soc/esp32" }
