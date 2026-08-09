@@ -14,6 +14,10 @@ hal = { path = "../hal" }
 api = { path = "../api" }
 board = { path = "../board", default-features = false }
 
+# The key/value format. Portable and host-testable, unlike the flash under it,
+# which is why the two are separate crates and this one is not target-scoped.
+kvstore = { path = "../lib/kvstore" }
+
 # The console UART is the one driver the kernel itself names: `startup::init`
 # constructs it from the board manifest so log and panic have somewhere to go
 # before any application code runs.
@@ -51,6 +55,9 @@ arch-xtensa = { path = "../arch/xtensa" }
 # tests run there), but the kernel only reaches it from `watchdog`, which writes
 # real registers and so is target-only too.
 soc-esp32 = { path = "../soc/esp32" }
+# Target-only: it calls ROM routines at fixed addresses and runs with the
+# instruction cache off, neither of which means anything on a host.
+esp32-flash = { path = "../drivers/physical/esp32/flash" }
 # Driven by the on-target self-tests; not used by the kernel proper.
 esp32-timg = { path = "../drivers/physical/esp32/timg" }
 esp32-adc = { path = "../drivers/physical/esp32/adc" }

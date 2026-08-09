@@ -44,7 +44,6 @@ mod timg;
 
 #[path = "selftest_adc.rs"]
 mod adc;
-
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
 pub(crate) type Check = Result<(), &'static str>;

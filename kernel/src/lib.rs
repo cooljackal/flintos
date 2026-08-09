@@ -19,6 +19,7 @@ pub mod arch;
 pub mod board;
 pub mod debug;
 pub mod dma_broker;
+pub mod nvs;
 pub mod interrupt;
 pub mod mutex;
 
