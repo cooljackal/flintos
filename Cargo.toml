@@ -57,6 +57,7 @@ members = [
     "apps/pwm",
     "apps/smp",
     "apps/spidma",
+    "apps/flashprobe",
 
     "drivers/physical/esp32/uart",
     "drivers/physical/esp32/gpio",
