@@ -108,6 +108,32 @@ fn round_trip() -> Result<(), &'static str> {
         return Ok(());
     }
 
+    // Straight at the driver, away from kvstore: a known pattern into an
+    // erased part of the same sector, then back. kvstore's header is the only
+    // thing that has ever looked wrong, and this says whether the driver or
+    // the format is responsible.
+    {
+        use kvstore::Storage;
+        let mut st = unsafe { FlashStorage::nvs() };
+        let pattern: [u8; 16] = [
+            0xc3, 0xa5, 0x07, 0x05, 0x11, 0x22, 0x33, 0x44,
+            0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+        ];
+        match st.write(0x100, &pattern) {
+            Ok(()) => {
+                let mut back = [0u8; 16];
+                match st.read(0x100, &mut back) {
+                    Ok(()) => {
+                        api::log_info!("[probe] direct wrote {:02x?}", pattern);
+                        api::log_info!("[probe] direct read  {:02x?}", back);
+                    }
+                    Err(_) => api::log_error!("[probe] direct read failed"),
+                }
+            }
+            Err(_) => api::log_error!("[probe] direct write failed"),
+        }
+    }
+
     // Dump what actually landed, before asking kvstore to interpret it.
     {
         use kvstore::Storage;

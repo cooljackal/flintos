@@ -151,6 +151,44 @@ Branch `wip/nvs-flash`, on top of `main`. Nothing is on `main`.
 Reproduce with `make flash APP=flashprobe BOARD=board-m5-atom-matrix PORT=COM5`.
 Recover a boot-looping board with `make flash APP=demo BOARD=board-m5-atom-matrix`.
 
+## Correction: reads have never worked
+
+Most of this document, and several commit messages, say reads work and only
+erase and program fail. That is wrong, and the way it was wrong is worth
+keeping.
+
+A native `SPI_CMD` read whose address register is written unshifted transfers
+**nothing**. The loop that follows then copies out `W0..W15` — the controller's
+data buffer — which still holds whatever the last page program put there. So a
+read returns the bytes most recently written. It looks exactly like a working
+round trip.
+
+Measured, by writing a known pattern at `0x100` and then reading both `0x100`
+and `0`:
+
+```text
+direct wrote [c3, a5, 07, 05, 11, 22, 33, 44, 55, 66, 77, ...]  at 0x100
+direct read  [80, 00, 00, 00, 11, 22, 33, 44, 55, 66, 77, ...]  at 0x100
+raw@0        [80, 00, 00, 00, 11, 22, 33, 44, 55, 66, 77, ...]  at 0x000
+```
+
+Two different addresses returning identical bytes is the tell. `opened, 0 bytes
+used` — quoted all week as evidence the read path was sound — never read the
+partition at all.
+
+The three native commands do not agree on how the address register is loaded,
+which is what made this survive so long:
+
+```c
+erase:   WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, addr & 0xffffff);
+program: WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, (addr & 0xffffff) | (len << 24));
+read:    WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, temp_addr << 8);
+```
+
+Shifting the read address to match has **not** fixed it — the symptom is
+unchanged — so the transfer is still not happening for some further reason.
+Erase and program are believed good; the read is the open item.
+
 ## What would most help
 
 A logic analyser on SPI1's clock and data. Every failure so far has been "the
