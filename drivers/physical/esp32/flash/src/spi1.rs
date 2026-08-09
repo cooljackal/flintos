@@ -105,6 +105,16 @@ const RD_STATUS: u32 = SPI1_BASE + 0x10;
 const USER1: u32 = SPI1_BASE + 0x20;
 const W0: u32 = SPI1_BASE + 0x80;
 
+/// SPI0 — the controller the *cache* fetches through, a separate peripheral
+/// from SPI1.
+const SPI0_BASE: u32 = 0x3FF4_3000;
+
+/// `SPI_EXT2_REG`, offset `0xF8`, with the state machine in `SPI_ST` `[2:0]`.
+/// Non-zero means that controller is mid-transaction.
+const SPI1_EXT2: u32 = SPI1_BASE + 0xF8;
+const SPI0_EXT2: u32 = SPI0_BASE + 0xF8;
+const SPI_ST_MASK: u32 = 0x7;
+
 /// **SPI1 knows the SPI-NOR protocol natively.**
 ///
 /// This is the thing three previous attempts missed. `SPI_CMD` has dedicated
@@ -170,6 +180,11 @@ const STATUS2_QE: u32 = 1 << 9;
 
 /// Status register 1, bit 0: a program or erase is in progress.
 const STATUS_WIP: u32 = 1 << 0;
+
+/// The chip's status mask, which `apps/flashprobe` reads off the board as
+/// 0xFFFF. esp-idf masks every status read with it rather than assuming one
+/// byte.
+const STATUS_MASK: u32 = 0xFFFF;
 
 /// Bound on a command's completion. A transaction is microseconds.
 const XFER_SPINS: u32 = 200_000;
@@ -320,6 +335,46 @@ unsafe fn trace(slot: usize, first: bool) {
     }
 }
 
+/// Wait for both SPI controllers' state machines to go idle.
+///
+/// **This is the step that was missing**, and it is the first thing esp-idf's
+/// patched `esp_rom_spiflash_wait_idle` does:
+///
+/// ```c
+/// while ((REG_READ(SPI_EXT2_REG(1)) & SPI_ST)) { }
+/// while ((REG_READ(SPI_EXT2_REG(0)) & SPI_ST)) { }
+/// ```
+///
+/// Two things worth separating. `SPI_CMD` clearing means the *command* bit has
+/// self-cleared; `SPI_ST` going to zero means the controller's state machine
+/// has actually finished. They are not the same, and only the second is safe
+/// to reconfigure against.
+///
+/// And the second wait is on **SPI0**, which is not this peripheral at all —
+/// it is the one the instruction cache fetches through. Issuing a flash
+/// command while SPI0's FSM is still running is where the two collide, and
+/// nothing in the previous four attempts looked at SPI0 once.
+///
+/// # Safety
+/// Reads two peripherals' status registers.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+unsafe fn wait_spi_fsm_idle() -> Result<(), FlashError> {
+    let start = cycles();
+    while rd(SPI1_EXT2) & SPI_ST_MASK != 0 {
+        if cycles().wrapping_sub(start) > BUSY_CYCLES {
+            return Err(FlashError::Timeout);
+        }
+    }
+    let start = cycles();
+    while rd(SPI0_EXT2) & SPI_ST_MASK != 0 {
+        if cycles().wrapping_sub(start) > BUSY_CYCLES {
+            return Err(FlashError::Timeout);
+        }
+    }
+    Ok(())
+}
+
 /// Wait for whatever command is running to self-clear.
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
@@ -376,6 +431,7 @@ unsafe fn clear_dummy_no_addr() {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn command(bit: u32) -> Result<(), FlashError> {
+    wait_spi_fsm_idle()?;
     wait_cmd()?;
     // Drain the address and length writes before the command starts.
     let _ = rd(USER);
@@ -395,13 +451,17 @@ unsafe fn status() -> Result<u32, FlashError> {
     // looks shifted.
     wr(RD_STATUS, 0);
     command(CMD_FLASH_RDSR)?;
-    Ok(rd(RD_STATUS) & 0xFF)
+    // Masked with the chip's own status mask, as esp-idf does
+    // (`status_value & spi->status_mask`). The board reports 0xFFFF, so a
+    // hardcoded 0xFF would discard the second byte a two-byte read returns.
+    Ok(rd(RD_STATUS) & STATUS_MASK)
 }
 
 /// Wait until no program or erase is in progress.
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn wait_ready() -> Result<(), FlashError> {
+    wait_spi_fsm_idle()?;
     let start = cycles();
     loop {
         if status()? & STATUS_WIP == 0 {
@@ -443,22 +503,36 @@ unsafe fn unlock() -> Result<(), FlashError> {
     if UNLOCKED.load(Ordering::Relaxed) {
         return Ok(());
     }
+    // Progress marker: whatever value survives says how far this got, which is
+    // the only way to see inside a function that returns early with `?`.
+    STATUS_TRACE[0].store(0x1000, Ordering::Relaxed);
     wait_ready()?;
+    STATUS_TRACE[0].store(0x1001, Ordering::Relaxed);
     let st = status()?;
+    STATUS_TRACE[1].store(st | 0x100, Ordering::Relaxed);
     if st & (STATUS_SRP0 | STATUS_BP_MASK) == 0 {
         // Nothing protected. Do not write the status register for no reason.
         UNLOCKED.store(true, Ordering::Relaxed);
         return Ok(());
     }
 
+    STATUS_TRACE[0].store(0x1002, Ordering::Relaxed);
     wr(CTRL, rd(CTRL) | CTRL_WRSR_2B);
     command(CMD_FLASH_WREN)?;
+    STATUS_TRACE[0].store(0x1003, Ordering::Relaxed);
     // After the last status read, because a status read clears this register.
     wr(RD_STATUS, STATUS2_QE);
     command(CMD_FLASH_WRSR)?;
+    STATUS_TRACE[0].store(0x1004, Ordering::Relaxed);
+    // Two bytes was for the write only. Left set, a status *read* returns two
+    // bytes as well, and the busy bit is then not where this looks for it.
+    wr(CTRL, rd(CTRL) & !CTRL_WRSR_2B);
     wait_ready()?;
+    STATUS_TRACE[0].store(0x1005, Ordering::Relaxed);
+    STATUS_TRACE[2].store(status().unwrap_or(0x999) | 0x100, Ordering::Relaxed);
     // The write-enable latch must not be left set.
     command(CMD_FLASH_WRDI)?;
+    STATUS_TRACE[0].store(0x1006, Ordering::Relaxed);
     UNLOCKED.store(true, Ordering::Relaxed);
     Ok(())
 }
@@ -649,6 +723,17 @@ mod tests {
             let to_page_end = (PAGE_SIZE - (at % PAGE_SIZE)) / 4;
             assert_eq!(to_page_end, want, "at {at:#x}");
         }
+    }
+
+    #[test]
+    fn both_controllers_state_machines_are_waited_on() {
+        // SPI_EXT2 at 0xF8 on each, state in [2:0]. SPI0 is a different
+        // peripheral -- the cache's -- and waiting only on SPI1 is what four
+        // earlier attempts did.
+        assert_eq!(SPI1_EXT2, 0x3FF4_20F8);
+        assert_eq!(SPI0_EXT2, 0x3FF4_30F8);
+        assert_ne!(SPI0_BASE, SPI1_BASE, "these are two peripherals");
+        assert_eq!(SPI_ST_MASK, 0x7);
     }
 
     #[test]
