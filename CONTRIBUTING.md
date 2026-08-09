@@ -1,13 +1,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Contributing to Flint
+# Contributing to FlintOS
 
-Thanks for your interest. Flint is early — the fastest way to help right now is
-bring-up on real hardware and driver register audits against the ESP32 TRM.
+Thanks for your interest. FlintOS is early — the fastest way to help right now
+is bring-up on real hardware and driver register audits against the ESP32 TRM.
 
 ## Developer Certificate of Origin
 
-Flint requires a **DCO sign-off** on every commit. This is a lightweight
+FlintOS requires a **DCO sign-off** on every commit. This is a lightweight
 alternative to a CLA: you keep your copyright, and you assert that you have the
 right to submit the code under Apache-2.0 — including the patent grant in
 [section 3 of the licence](LICENSE).
@@ -82,7 +82,7 @@ If you genuinely need something from a lower layer, the fix is to widen the
 
 ## Hardware claims
 
-Flint's history includes drivers that looked plausible but had wrong register
+FlintOS's history includes drivers that looked plausible but had wrong register
 offsets, and asm that compiled cleanly but could not have run. So:
 
 - Cite the ESP32 TRM section or the `esp-idf` header for any register offset,

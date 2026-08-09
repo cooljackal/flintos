@@ -7,8 +7,8 @@ make upgrade
 Pulls, rebuilds every application in `apps/`, and tells you which ones broke
 and why.
 
-Flint moves fast. Your application is a separate crate, so a pull never touches
-`apps/<yours>/` — what it does change is the kernel underneath it.
+FlintOS moves fast. Your application is a separate crate, so a pull never
+touches `apps/<yours>/` — what it does change is the kernel underneath it.
 
 ## What you get
 
@@ -80,7 +80,7 @@ application claim compatibility nobody checked.
 ## Pinning instead
 
 If you'd rather upgrade on your own schedule, keep your application in its own
-repository and depend on Flint by git rev:
+repository and depend on FlintOS by git rev:
 
 ```toml
 kernel = { git = "https://github.com/cooljackal/flintos", rev = "990ff28", package = "kernel" }

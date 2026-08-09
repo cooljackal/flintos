@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Flint RTOS — Review Findings
+# FlintOS — Review Findings
 
 Consolidated output of an adversarial review of the entire tree, conducted
 before the first public release. Six independent reviewers covered the
@@ -22,8 +22,8 @@ claim did not survive verification, it is recorded in
 > source of truth.** This document is the historical record of the review; it is
 > not updated as work lands, so check the
 > [issue list](https://github.com/cooljackal/flintos/issues) for what is
-> actually still open. Notably #1 and #15 are closed: Flint boots, schedules and
-> preempts on an ESP32-PICO.
+> actually still open. Notably #1 and #15 are closed: FlintOS boots, schedules
+> and preempts on an ESP32-PICO.
 >
 > | Issue | Item |
 > |---|---|

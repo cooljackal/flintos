@@ -2,7 +2,7 @@
 
 # Applications
 
-The Flint kernel is a library. The thing you flash is an **application**: a
+The FlintOS kernel is a library. The thing you flash is an **application**: a
 small `no_std` binary crate that links the kernel, names an entry point, and
 spawns its own tasks.
 

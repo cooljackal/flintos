@@ -45,7 +45,7 @@ driver carries `#![cfg_attr(not(test), forbid(unsafe_code))]`. Put it in yours.
 
 ## Layer 3 — a device
 
-Knows a part number, not a chip. Works on any MCU Flint supports, unchanged.
+Knows a part number, not a chip. Works on any MCU FlintOS supports, unchanged.
 
 If a device class already exists in `lib/` — `LedStrip`, and more later —
 implement it rather than inventing an interface. That is what lets an

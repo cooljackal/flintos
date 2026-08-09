@@ -1,7 +1,7 @@
 # ESP32
 
 Classic ESP32 (and the PICO-D4 SiP built on it). Xtensa LX6 dual-core, and
-Flint runs the scheduler on both — see [Multicore](Multicore).
+FlintOS runs the scheduler on both — see [Multicore](Multicore).
 
 Crate: `soc/esp32` (`soc-esp32`). Everything below is in code — `addr.rs`,
 `io_mux.rs`, `gpio_matrix.rs`, `dport.rs`, `pinmux.rs`, `intr_map.rs`,
@@ -115,7 +115,7 @@ without exception.
 SPI3 CS is 68, not 66 or 67 — those are HD and WP. The four SPI signals are not
 contiguous.
 
-## What Flint drives, and how far
+## What FlintOS drives, and how far
 
 The README's table says only whether a peripheral works. This is the detail
 behind each cell.
@@ -216,8 +216,8 @@ Neither hazard was reachable while one core ran. Both are live now.
 
 - **APB = 80 MHz**, fixed. Every peripheral divisor derives from this, *not*
   from the CPU frequency.
-- **CPU** = 80/160/240 MHz. Flint measures it at boot against the RTC slow clock
-  rather than assuming — see the `cpu_hz=` banner line.
+- **CPU** = 80/160/240 MHz. FlintOS measures it at boot against the RTC slow
+  clock rather than assuming — see the `cpu_hz=` banner line.
 
 ## Memory
 

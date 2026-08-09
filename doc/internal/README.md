@@ -4,9 +4,9 @@
 
 **Not authoritative. Do not build anything on these.**
 
-These are planning documents from before Flint ran on hardware. They contradict
-the current tree in both directions — claiming things work that never did, and
-marking things unverified that now run on silicon every day.
+These are planning documents from before FlintOS ran on hardware. They
+contradict the current tree in both directions — claiming things work that never
+did, and marking things unverified that now run on silicon every day.
 
 They are kept because they record *why* some decisions were made, which is
 sometimes worth knowing. Nothing more.

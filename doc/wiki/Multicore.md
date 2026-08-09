@@ -1,7 +1,7 @@
 # Multicore
 
-Flint runs one scheduler across every core. A task is a task; the core it lands
-on is a scheduling decision, not a property of the code.
+FlintOS runs one scheduler across every core. A task is a task; the core it
+lands on is a scheduling decision, not a property of the code.
 
 That is the whole design, and it only works for **symmetric** cores — identical
 instruction set, identical memory view, identical clock. Asymmetric packages (a

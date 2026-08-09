@@ -23,9 +23,9 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` → `make fl
 
 ## Status
 
-**Pre-alpha. Do not put this in a product.** Flint boots, schedules and preempts
-on real silicon — verified on an ESP32-PICO — but it is young, most drivers are
-thin, and the API will change.
+**Pre-alpha. Do not put this in a product.** FlintOS boots, schedules and
+preempts on real silicon — verified on an ESP32-PICO — but it is young, most
+drivers are thin, and the API will change.
 
 Read the columns as "does this work on that instruction set". Only Xtensa has a
 port today, so the ARM32 column is an honest row of blanks rather than a
@@ -134,7 +134,7 @@ ESP32-PICO and tell us what happens. A garbled serial dump is a useful result.
 
 ## What it is
 
-Flint is a small preemptive RTOS built around three ideas:
+FlintOS is a small preemptive RTOS built around three ideas:
 
 1. **A scheduler that preempts from the first line of code.** 48 priority levels,
    round-robin inside a level, priority inheritance on mutexes, 1 ms tick. Not a
@@ -151,12 +151,12 @@ Flint is a small preemptive RTOS built around three ideas:
 ## What it isn't
 
 - **Not POSIX.** No `fork`, no `pthread`, no libc shim. The API fits the hardware.
-- **Not memory-isolated.** Flint runs in a *single protection domain* — all tasks
-  share one address space with no MPU enforcement. Tasks are cooperatively
-  trusted. If you need hardware isolation between untrusted components, Flint is
-  the wrong tool and may always be.
+- **Not memory-isolated.** FlintOS runs in a *single protection domain* — all
+  tasks share one address space with no MPU enforcement. Tasks are cooperatively
+  trusted. If you need hardware isolation between untrusted components, FlintOS
+  is the wrong tool and may always be.
 - **Not multicore.** The ESP32's second core is currently unused.
-- **Not 64-bit, and not going to be.** Flint targets 32-bit parts. The
+- **Not 64-bit, and not going to be.** FlintOS targets 32-bit parts. The
   assumption runs deeper than a few type aliases: the trap frame is a
   `#[repr(C)]` of `u32`s that `vectors.S` indexes by fixed byte offsets, the
   memory map and linker script are 32-bit throughout, and every driver takes a
@@ -254,7 +254,7 @@ oversight — which is why a blank there must never break the build.
 
 ### 1. Install the toolchain (~5 minutes)
 
-Flint targets Xtensa, which needs Espressif's Rust fork. `espup` handles it:
+FlintOS targets Xtensa, which needs Espressif's Rust fork. `espup` handles it:
 
 ```bash
 cargo install espup espflash
@@ -495,14 +495,14 @@ The point is not having to go looking somewhere else.
 
 ---
 
-## When to use Flint · When to skip it
+## When to use FlintOS · When to skip it
 
-**Reach for Flint when** you want a preemptive scheduler and typed IPC without
+**Reach for FlintOS when** you want a preemptive scheduler and typed IPC without
 adopting an entire vendor ecosystem; when you value being able to read the whole
 kernel in an afternoon; when you're writing device drivers you'd like to keep
 when you change MCU.
 
-**Skip Flint when** you need memory isolation between untrusted tasks (no MPU
+**Skip FlintOS when** you need memory isolation between untrusted tasks (no MPU
 enforcement, possibly ever); when you need a network stack, filesystem, or BLE
 today (none exist yet); when you need something production-proven — use
 [FreeRTOS](https://www.freertos.org), [Zephyr](https://zephyrproject.org), or

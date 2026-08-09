@@ -2,7 +2,7 @@
 
 # Wi-Fi and BLE — implementation plan
 
-How Flint gets a radio: by linking Espressif's binary blobs and providing the
+How FlintOS gets a radio: by linking Espressif's binary blobs and providing the
 OS services they call back into.
 
 **This supersedes issue #39**, which recorded the position that radios were not
@@ -45,7 +45,7 @@ Decide these once, at the start. Changing any of them later is a rewrite.
    allocated. Only the blob and its adapter allocate. This keeps real-time
    behaviour a property of the kernel rather than a hope about the radio.
 4. **The blob does not get to define the public API.** The adapter is an
-   internal crate. Applications see Flint's API, not FreeRTOS shapes.
+   internal crate. Applications see FlintOS's API, not FreeRTOS shapes.
 5. **`no vendor SDK` leaves the README** when step 6.1 lands. Say it plainly
    rather than quietly dropping the line.
 
@@ -70,7 +70,7 @@ merits — which is exactly how this phase was meant to be paid for.
 
 ## Phase 1 — A heap
 
-The blob allocates constantly. Flint currently has no allocator at all.
+The blob allocates constantly. FlintOS currently has no allocator at all.
 
 | Step | Work | Done when |
 |---|---|---|
@@ -87,7 +87,7 @@ true for everything else.
 
 ## Phase 2 — Dynamic kernel objects
 
-The largest piece of work. Flint's primitives are compile-time sized
+The largest piece of work. FlintOS's primitives are compile-time sized
 (`Queue<T, const N: usize>`); the blob creates and destroys them at runtime with
 sizes it chooses.
 
@@ -98,7 +98,7 @@ sizes it chooses.
 | 2.3 | **Recursive mutexes** — a *second* type; the existing mutex deliberately refuses re-entry and logs it | Nested lock/unlock by one owner, with the non-recursive mutex unchanged. |
 | 2.4 | **Task lifecycle** — delete, delay-in-ticks, current-task handle, max priority, yield-from-ISR | Each callable from the adapter; task delete proven not to leak its stack. |
 | 2.5 | **Event groups** — 24-bit, wait-for-any and wait-for-all | Host tests for both wait modes and for clear-on-exit. |
-| 2.6 | **Spinlocks as opaque handles** — create/delete, wrapping the existing `Spinlock` | The blob's lock/unlock pairs map onto Flint's, with the interrupt-masking order preserved. |
+| 2.6 | **Spinlocks as opaque handles** — create/delete, wrapping the existing `Spinlock` | The blob's lock/unlock pairs map onto FlintOS's, with the interrupt-masking order preserved. |
 
 Everything here is testable on the host. None of it needs a radio, and none of
 it should wait for one.
@@ -179,7 +179,7 @@ a statically placed heap does not fit and never will.
 It does not need to. The linker script already records the way out: memory
 above the bound is the ROM's during boot and **reclaimable afterwards**. That
 is SRAM2 up to `0x3FFDFFFF` plus SRAM1 (`0x3FFE0000`–`0x3FFFFFFF`, 128 KiB),
-which Flint does not touch at all today. Espressif's own builds put the heap
+which FlintOS does not touch at all today. Espressif's own builds put the heap
 there for exactly this reason.
 
 So the heap is reclaimed at runtime, not placed at link time — see step 1.1.
@@ -197,7 +197,7 @@ unrelated.
 - **Asymmetric-core packages.** Out of scope for the whole project.
 - **Mesh, ESP-NOW, Wi-Fi Direct.** Not until station mode is solid.
 - **PSRAM-backed radio buffers.** Internal RAM only, at least at first.
-- **Matching ESP-IDF's API.** Flint's applications see Flint's API.
+- **Matching ESP-IDF's API.** FlintOS's applications see FlintOS's API.
 
 ---
 

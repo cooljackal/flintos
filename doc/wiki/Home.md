@@ -1,4 +1,4 @@
-# Flint RTOS
+# FlintOS
 
 A preemptive real-time OS for **32-bit** microcontrollers, in `no_std` Rust.
 

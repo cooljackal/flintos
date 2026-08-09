@@ -4,7 +4,7 @@
 
 What changed, and — where it matters — what you have to do about it.
 
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Flint
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). FlintOS
 is pre-1.0 and moves fast, so **Breaking** is the section that earns this file
 its place. Every entry there should say what to change, not only what changed.
 
@@ -306,7 +306,7 @@ A kernel that provides a different one refuses to build and points here.
   longer strings need refill-on-interrupt.
 - **Hardware RNG** as `kernel::rng`. Suitable for backoffs, jitter and test
   seeds; **not** for keys or tokens — the generator is only cryptographically
-  useful with the radio running, and Flint does not bring the radio up. Said
+  useful with the radio running, and FlintOS does not bring the radio up. Said
   plainly in the module docs rather than hidden behind a reassuring name.
 - Six on-target tests for task-versus-ISR races, including a queue fed from the
   timer ISR and drained by a task.

@@ -1,6 +1,6 @@
 # Adding a Board
 
-One file, plus three lines of registration. If your board uses a chip Flint
+One file, plus three lines of registration. If your board uses a chip FlintOS
 already supports, that's the whole job — the SoC crate already knows the
 peripheral addresses, the IRQ numbers and how to route pins.
 
@@ -133,7 +133,7 @@ assert!(mux.can_route(Signal::I2cSda(0), 26).is_ok());
 
 `can_route` is pure — no registers touched — so it works in a unit test.
 
-## A board on a chip Flint doesn't support yet
+## A board on a chip FlintOS doesn't support yet
 
 That's a new SoC crate, not a board file. See
 [Architecture](Architecture#hardware-arch--soc--board). You'd write `soc/<chip>`

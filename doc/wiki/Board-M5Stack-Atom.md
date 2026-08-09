@@ -44,7 +44,7 @@ Draws a column sweeping right, a row sweeping down, then a diagonal, then walks
 the chain logging each index. A correct layout draws straight lines; a wrong one
 scatters the same lit cells.
 
-**This is the board Flint's bring-up was done on.** Boot, scheduling,
+**This is the board FlintOS's bring-up was done on.** Boot, scheduling,
 preemption, timed wakeup and the register-window fix were all verified here.
 
 ## The PICO-D4 difference
