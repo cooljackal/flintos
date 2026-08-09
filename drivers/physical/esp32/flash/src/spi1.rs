@@ -149,10 +149,16 @@ const STATUS_WIP: u32 = 1 << 0;
 
 /// Bound on a command's completion. A transaction is microseconds.
 const XFER_SPINS: u32 = 200_000;
-/// Bound on the busy poll. A sector erase is tens of milliseconds; this exists
-/// so a chip that never reports ready fails instead of hanging with interrupts
-/// masked.
-const BUSY_SPINS: u32 = 50_000_000;
+/// Bound on the busy poll, **in CPU cycles rather than iterations**.
+///
+/// An iteration count is the wrong unit here: each turn of that loop is a whole
+/// status transaction, so fifty million of them is minutes, and a failure that
+/// takes minutes is indistinguishable from a hang. It was read as one.
+///
+/// Two seconds at 80 MHz. A sector erase is tens of milliseconds and a page
+/// program well under one, so this only fires for a chip that has genuinely
+/// stopped answering.
+const BUSY_CYCLES: u32 = 160_000_000;
 
 /// A native flash command's address field is 24 bits.
 const ADDRESS_MASK_24BIT: u32 = 0x00FF_FFFF;
@@ -180,6 +186,24 @@ struct Saved {
     addr: u32,
     miso_dlen: u32,
     mosi_dlen: u32,
+}
+
+/// The cycle counter, for bounding a wait in time.
+///
+/// `inline(always)`: this is called from inside the cache-off window, and a
+/// real call would go to flash.
+#[inline(always)]
+unsafe fn cycles() -> u32 {
+    #[cfg(target_arch = "xtensa")]
+    {
+        let c: u32;
+        core::arch::asm!("rsr.ccount {0}", out(reg) c);
+        c
+    }
+    #[cfg(not(target_arch = "xtensa"))]
+    {
+        0
+    }
 }
 
 #[inline(always)]
@@ -341,6 +365,11 @@ unsafe fn command(bit: u32) -> Result<(), FlashError> {
 unsafe fn status() -> Result<u32, FlashError> {
     // A status read has no address and no dummy phase either.
     clear_dummy_no_addr();
+    // Clear the result register before asking, as NuttX does. Left alone it
+    // holds whatever the last read put there, and the controller only writes
+    // the bits it received -- so a stale high bit survives and every reading
+    // looks shifted.
+    wr(RD_STATUS, 0);
     command(CMD_FLASH_RDSR)?;
     Ok(rd(RD_STATUS) & 0xFF)
 }
@@ -349,13 +378,14 @@ unsafe fn status() -> Result<u32, FlashError> {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn wait_ready() -> Result<(), FlashError> {
-    let mut spins: u32 = 0;
+    let start = cycles();
     loop {
         if status()? & STATUS_WIP == 0 {
             return Ok(());
         }
-        spins += 1;
-        if spins > BUSY_SPINS {
+        // Wrapping: CCOUNT is 32 bits and rolls over every 54 seconds at
+        // 80 MHz, which is well inside the window this bounds.
+        if cycles().wrapping_sub(start) > BUSY_CYCLES {
             LAST_CACHE_STATE.store(0xDEAD_0001, Ordering::Relaxed);
             return Err(FlashError::Timeout);
         }
@@ -413,10 +443,7 @@ pub unsafe fn write(addr: u32, src: &[u32]) -> Result<(), FlashError> {
             let to_page_end = (PAGE_SIZE - (at % PAGE_SIZE)) / 4;
             let n = (src.len() - done).min(16).min(to_page_end as usize);
             wait_ready()?;
-            let first = TRACED.fetch_add(1, Ordering::Relaxed) == 0;
-            trace(0, first);
             command(CMD_FLASH_WREN)?;
-            trace(1, first);
             set_addr_bitlen_24();
             // No dummy phase on a program. See USR_DUMMY.
             wr(USER, rd(USER) & !USR_DUMMY);
@@ -428,12 +455,9 @@ pub unsafe fn write(addr: u32, src: &[u32]) -> Result<(), FlashError> {
             // in the previous attempts.
             wr(ADDR, (at & ADDRESS_MASK_24BIT) | ((n as u32 * 4) << 24));
             command(CMD_FLASH_PP)?;
-            trace(2, first);
             done += n;
         }
-        wait_ready()?;
-        trace(3, TRACED.load(Ordering::Relaxed) == 1);
-        Ok(())
+        wait_ready()
     })();
     restore(&saved);
     r
@@ -448,14 +472,20 @@ pub unsafe fn write(addr: u32, src: &[u32]) -> Result<(), FlashError> {
 pub unsafe fn erase_sector(addr: u32) -> Result<(), FlashError> {
     let saved = save();
     let r = (|| {
+        let first = TRACED.fetch_add(1, Ordering::Relaxed) == 0;
         wait_ready()?;
+        trace(0, first);
         command(CMD_FLASH_WREN)?;
+        trace(1, first);
         set_addr_bitlen_24();
         // esp-idf clears CTRL entirely before a sector erase.
         wr(CTRL, 0);
         wr(ADDR, (addr & !(4096 - 1)) & ADDRESS_MASK_24BIT);
         command(CMD_FLASH_SE)?;
-        wait_ready()
+        trace(2, first);
+        let r = wait_ready();
+        trace(3, first);
+        r
     })();
     restore(&saved);
     r
@@ -539,12 +569,16 @@ mod tests {
     }
 
     #[test]
-    fn the_busy_wait_is_bounded() {
-        // A sector erase is tens of milliseconds and this runs with interrupts
-        // masked. Unbounded, a chip that never reports ready is a dead board
-        // rather than an error -- which is the failure this whole module
-        // exists to replace.
-        assert!(BUSY_SPINS > 0);
+    fn the_busy_wait_is_bounded_in_time_not_iterations() {
+        // Each iteration is a whole status transaction, so an iteration count
+        // says nothing about how long the bound actually is. Fifty million of
+        // them was minutes, and a failure taking minutes reads as a hang --
+        // which is exactly how it was read.
+        assert_eq!(BUSY_CYCLES, 160_000_000, "two seconds at 80 MHz");
+        // Comfortably longer than a sector erase, comfortably shorter than a
+        // CCOUNT rollover at 80 MHz, which is about 54 seconds.
+        assert!(BUSY_CYCLES > 80_000_000 / 2, "shorter than a sector erase");
+        assert!(BUSY_CYCLES < u32::MAX / 2, "risks a rollover ambiguity");
         assert!(XFER_SPINS > 0);
     }
 }

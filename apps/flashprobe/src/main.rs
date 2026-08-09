@@ -47,7 +47,15 @@ fn run() {
 
     // The struct is fine, so the ROM is not the problem. Try the real thing
     // from here, where the scheduler is running and a task has a stack.
-    match round_trip() {
+    let outcome = round_trip();
+    {
+        use core::sync::atomic::Ordering;
+        for i in 0..4 {
+            let v = esp32_flash::STATUS_TRACE[i].load(Ordering::Relaxed);
+            api::log_info!("[probe] status[{}] = {:#05x}", i, v);
+        }
+    }
+    match outcome {
         Ok(()) => api::log_info!("[probe] PASS"),
         Err(e) => api::log_error!("[probe] FAIL: {}", e),
     }
@@ -120,14 +128,6 @@ fn round_trip() -> Result<(), &'static str> {
             if a != z {
                 api::log_info!("[probe] DIFF {} first={:#010x} later={:#010x}", names[i], a, z);
             }
-        }
-    }
-
-    {
-        use core::sync::atomic::Ordering;
-        for i in 0..4 {
-            let v = esp32_flash::STATUS_TRACE[i].load(Ordering::Relaxed);
-            api::log_info!("[probe] status[{}] = {:#05x}", i, v);
         }
     }
 
