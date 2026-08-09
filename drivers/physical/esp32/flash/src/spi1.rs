@@ -140,9 +140,33 @@ const CMD_FLASH_WREN: u32 = 1 << 30;
 const CMD_FLASH_RDSR: u32 = 1 << 27;
 const CMD_FLASH_PP: u32 = 1 << 25;
 const CMD_FLASH_SE: u32 = 1 << 24;
+const CMD_FLASH_WRDI: u32 = 1 << 29;
+const CMD_FLASH_WRSR: u32 = 1 << 26;
 
 /// Any command bit set means a transaction is running; all self-clear.
-const CMD_ANY: u32 = CMD_FLASH_READ | CMD_FLASH_WREN | CMD_FLASH_RDSR | CMD_FLASH_PP | CMD_FLASH_SE;
+const CMD_ANY: u32 = CMD_FLASH_READ
+    | CMD_FLASH_WREN
+    | CMD_FLASH_RDSR
+    | CMD_FLASH_PP
+    | CMD_FLASH_SE
+    | CMD_FLASH_WRDI
+    | CMD_FLASH_WRSR;
+
+/// `SPI_WRSR_2B`, `SPI_CTRL` bit 22: a status write sends two bytes.
+const CTRL_WRSR_2B: u32 = 1 << 22;
+
+/// Status register 1: `SRP0` at bit 7, block-protect at [6:2]. Together these
+/// are what refuses an erase.
+const STATUS_SRP0: u32 = 1 << 7;
+const STATUS_BP_MASK: u32 = 0x7C;
+
+/// Status register 2's `QE`, at bit 1 — bit 9 of the two-byte value.
+///
+/// Preserved deliberately. A one-byte `WRSR` on a GigaDevice part can zero
+/// status register 2, and QE lives there; clearing it breaks QIO boot. That is
+/// recoverable by reflashing, but not worth risking, so the write is two bytes
+/// with QE set.
+const STATUS2_QE: u32 = 1 << 9;
 
 /// Status register 1, bit 0: a program or erase is in progress.
 const STATUS_WIP: u32 = 1 << 0;
@@ -392,6 +416,53 @@ unsafe fn wait_ready() -> Result<(), FlashError> {
     }
 }
 
+/// Whether the protection bits have been cleared this boot.
+static UNLOCKED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Clear the chip's write protection.
+///
+/// The chip comes up with `SRP0` set — measured, not assumed: a status read
+/// before any of this returns 0x80. With protection on, an erase is refused,
+/// `WIP` never clears, and the busy-wait times out waiting for something that
+/// will not happen.
+///
+/// This is the job of `esp_rom_spiflash_unlock`, the second function esp-idf
+/// always replaces and whose address the ROM linker script declines to record.
+/// Sequence transliterated from `spi_flash_rom_patch.c`: enable a two-byte
+/// status write, WREN, write the new status, then WRDI so the write-enable
+/// latch does not stay set.
+///
+/// Runs once per boot; repeating it would wear the status register for nothing.
+///
+/// # Safety
+/// Cache disabled, caller in IRAM.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+unsafe fn unlock() -> Result<(), FlashError> {
+    if UNLOCKED.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    wait_ready()?;
+    let st = status()?;
+    if st & (STATUS_SRP0 | STATUS_BP_MASK) == 0 {
+        // Nothing protected. Do not write the status register for no reason.
+        UNLOCKED.store(true, Ordering::Relaxed);
+        return Ok(());
+    }
+
+    wr(CTRL, rd(CTRL) | CTRL_WRSR_2B);
+    command(CMD_FLASH_WREN)?;
+    // After the last status read, because a status read clears this register.
+    wr(RD_STATUS, STATUS2_QE);
+    command(CMD_FLASH_WRSR)?;
+    wait_ready()?;
+    // The write-enable latch must not be left set.
+    command(CMD_FLASH_WRDI)?;
+    UNLOCKED.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
 /// Read `dest.len()` words from `addr`.
 ///
 /// # Safety
@@ -437,6 +508,7 @@ pub unsafe fn read(addr: u32, dest: &mut [u32]) -> Result<(), FlashError> {
 pub unsafe fn write(addr: u32, src: &[u32]) -> Result<(), FlashError> {
     let saved = save();
     let r = (|| {
+        unlock()?;
         let mut done = 0usize;
         while done < src.len() {
             let at = addr + done as u32 * 4;
@@ -473,6 +545,7 @@ pub unsafe fn erase_sector(addr: u32) -> Result<(), FlashError> {
     let saved = save();
     let r = (|| {
         let first = TRACED.fetch_add(1, Ordering::Relaxed) == 0;
+        unlock()?;
         wait_ready()?;
         trace(0, first);
         command(CMD_FLASH_WREN)?;
@@ -551,12 +624,22 @@ mod tests {
         assert_eq!(CMD_FLASH_RDSR, 1 << 27);
         assert_eq!(CMD_FLASH_PP, 1 << 25);
         assert_eq!(CMD_FLASH_SE, 1 << 24);
+        assert_eq!(CMD_FLASH_WRDI, 1 << 29);
+        assert_eq!(CMD_FLASH_WRSR, 1 << 26);
         // The idle test ORs them all; a bit left out is a command whose
         // completion nobody waits for.
-        for b in [CMD_FLASH_READ, CMD_FLASH_WREN, CMD_FLASH_RDSR, CMD_FLASH_PP, CMD_FLASH_SE] {
+        for b in [
+            CMD_FLASH_READ,
+            CMD_FLASH_WREN,
+            CMD_FLASH_RDSR,
+            CMD_FLASH_PP,
+            CMD_FLASH_SE,
+            CMD_FLASH_WRDI,
+            CMD_FLASH_WRSR,
+        ] {
             assert_ne!(CMD_ANY & b, 0);
         }
-        assert_eq!(CMD_ANY.count_ones(), 5);
+        assert_eq!(CMD_ANY.count_ones(), 7);
     }
 
     #[test]
@@ -566,6 +649,27 @@ mod tests {
             let to_page_end = (PAGE_SIZE - (at % PAGE_SIZE)) / 4;
             assert_eq!(to_page_end, want, "at {at:#x}");
         }
+    }
+
+    #[test]
+    fn the_protection_bits_are_the_ones_that_refuse_an_erase() {
+        // SRP0 at 7 and block-protect at [6:2]. The chip was measured holding
+        // 0x80, which is SRP0 alone.
+        assert_eq!(STATUS_SRP0, 1 << 7);
+        assert_eq!(STATUS_BP_MASK, 0x7C);
+        assert_eq!(STATUS_SRP0 & STATUS_BP_MASK, 0, "overlapping fields");
+        // WEL and WIP are not protection and must not be cleared as if they
+        // were -- they are status, not configuration.
+        assert_eq!((STATUS_SRP0 | STATUS_BP_MASK) & 0x03, 0);
+    }
+
+    #[test]
+    fn the_status_write_is_two_bytes_and_keeps_qe() {
+        // A one-byte write can zero status register 2 on a GigaDevice part,
+        // and QE lives there. Losing it breaks QIO boot.
+        assert_eq!(CTRL_WRSR_2B, 1 << 22);
+        assert_eq!(STATUS2_QE, 1 << 9, "QE is bit 1 of the second byte");
+        assert_eq!(STATUS2_QE & 0xFF, 0, "QE must not land in the first byte");
     }
 
     #[test]
