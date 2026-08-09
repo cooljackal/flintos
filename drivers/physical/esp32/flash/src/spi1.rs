@@ -103,6 +103,7 @@ const MOSI_DLEN: u32 = SPI1_BASE + 0x28;
 const MISO_DLEN: u32 = SPI1_BASE + 0x2C;
 const RD_STATUS: u32 = SPI1_BASE + 0x10;
 const USER1: u32 = SPI1_BASE + 0x20;
+const USER2: u32 = SPI1_BASE + 0x24;
 const W0: u32 = SPI1_BASE + 0x80;
 
 /// SPI0 — the controller the *cache* fetches through, a separate peripheral
@@ -165,6 +166,16 @@ const CMD_ANY: u32 = CMD_FLASH_READ
 /// `SPI_WRSR_2B`, `SPI_CTRL` bit 22: a status write sends two bytes.
 const CTRL_WRSR_2B: u32 = 1 << 22;
 
+/// `SPI_CTRL`'s fast-read mode bits: `FREAD_QIO` 24, `FREAD_DIO` 23,
+/// `FREAD_QUAD` 20, `FREAD_DUAL` 14, `FASTRD_MODE` 13.
+///
+/// The bootloader leaves these describing however it configured the chip, and
+/// a native flash command inherits them the same way it inherits the dummy
+/// count. A status read issued while the controller believes it is in QIO does
+/// not return status — it returns whatever four idle lines look like, offset by
+/// the dummy cycles that mode implies.
+const CTRL_FREAD_MASK: u32 = (1 << 24) | (1 << 23) | (1 << 20) | (1 << 14) | (1 << 13);
+
 /// Status register 1: `SRP0` at bit 7, block-protect at [6:2]. Together these
 /// are what refuses an erase.
 const STATUS_SRP0: u32 = 1 << 7;
@@ -205,6 +216,8 @@ const ADDRESS_MASK_24BIT: u32 = 0x00FF_FFFF;
 /// `SPI_USR_ADDR_BITLEN` [31:26] in `USER1`, and `SPI_USR_ADDR` bit 30 in
 /// `USER`.
 const ADDR_BITLEN_SHIFT: u32 = 26;
+/// A 24-bit address, as `ESP_ROM_SPIFLASH_W_SIO_ADDR_BITSLEN` + 1.
+const ADDR_BITS: u32 = 24;
 const USR_ADDR: u32 = 1 << 30;
 /// `SPI_USR_DUMMY` bit 29. esp-idf's `spi_flash_ll_program_page` clears it
 /// explicitly: a page program has no dummy phase, and inheriting the cache's
@@ -212,6 +225,17 @@ const USR_ADDR: u32 = 1 << 30;
 const USR_DUMMY: u32 = 1 << 29;
 /// `SPI_USR_DUMMY_CYCLELEN` [7:0] in `USER1`.
 const DUMMY_CYCLELEN_MASK: u32 = 0xFF;
+/// `SPI_USR_COMMAND` bit 31, `SPI_USR_MISO` bit 28, `SPI_USR_MOSI` bit 27.
+const USR_COMMAND: u32 = 1 << 31;
+const USR_MISO: u32 = 1 << 28;
+const USR_MOSI: u32 = 1 << 27;
+/// `SPI_USR` bit 18 in `SPI_CMD` — fire a user-defined transaction.
+const CMD_USR: u32 = 1 << 18;
+/// `SPI_USR_COMMAND_BITLEN` sits at [31:28] of `USER2` and holds n−1, so an
+/// eight-bit opcode is 7.
+const COMMAND_BITLEN_8: u32 = 7 << 28;
+/// SPI-NOR `RDSR`, as an opcode rather than a controller command bit.
+const OPCODE_RDSR: u32 = 0x05;
 
 /// Page size. A program may not cross one — the chip wraps to the start of the
 /// page rather than continuing, silently corrupting both ends.
@@ -408,6 +432,12 @@ unsafe fn wait_cmd() -> Result<(), FlashError> {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn set_addr_bitlen_24() {
+    // Cleared, deliberately not set to 23. esp-idf's `erase_sector` does
+    // `REG_SET_FIELD(USRREG1, SPI_USR_ADDR_BITLEN, 23)`, but writing 23 here
+    // hangs the very next read on this part, twice in a row, on a
+    // freshly-flashed board -- so a native flash command takes its address
+    // length from the command, not from this field, and only the user-defined
+    // transactions esp-idf also issues need it. Left at zero it is ignored.
     let mut u1 = rd(USER1) & !(0x3F << ADDR_BITLEN_SHIFT);
     // And zero the dummy cycles. Inheriting the cache's is one extra clock,
     // and one extra clock shifts every bit read: a status of 0x02 comes back
@@ -417,6 +447,17 @@ unsafe fn set_addr_bitlen_24() {
     u1 &= !DUMMY_CYCLELEN_MASK;
     wr(USER1, u1);
     wr(USER, (rd(USER) | USR_ADDR) & !USR_DUMMY);
+    single_line();
+}
+
+/// Drop the controller back to one data line for a native command.
+///
+/// `save`/`restore` put `SPI_CTRL` back, so the cache gets its mode returned
+/// intact.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+unsafe fn single_line() {
+    wr(CTRL, rd(CTRL) & !CTRL_FREAD_MASK);
 }
 
 /// The same, for a command with no address phase.
@@ -425,6 +466,7 @@ unsafe fn set_addr_bitlen_24() {
 unsafe fn clear_dummy_no_addr() {
     wr(USER1, rd(USER1) & !DUMMY_CYCLELEN_MASK);
     wr(USER, rd(USER) & !(USR_DUMMY | USR_ADDR));
+    single_line();
 }
 
 /// Run one native flash command.
@@ -439,22 +481,75 @@ unsafe fn command(bit: u32) -> Result<(), FlashError> {
     wait_cmd()
 }
 
-/// Status register 1 via the controller's own read-status command.
+/// Status register 1.
+///
+/// Uses the user-defined `0x05` rather than the controller's native `RDSR`,
+/// which does not work on this part. Measured side by side straight after a
+/// `WREN`, with the controller in single-line mode: native reports 0x81, the
+/// user command reports 0x00. 0x81 is not a status this chip can be in — `WIP`
+/// set with nothing in progress — and a permanently-set `WIP` is exactly the
+/// hang this driver has been chasing.
+///
+/// esp-idf keeps the same escape hatch for what is presumably the same reason:
+///
+/// ```c
+/// if (g_rom_spiflash_dummy_len_plus[1] == 0) { ... native RDSR ... }
+/// else { esp_rom_spiflash_read_user_cmd(&status_value, 0x05); }
+/// ```
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn status() -> Result<u32, FlashError> {
-    // A status read has no address and no dummy phase either.
-    clear_dummy_no_addr();
-    // Clear the result register before asking, as NuttX does. Left alone it
-    // holds whatever the last read put there, and the controller only writes
-    // the bits it received -- so a stale high bit survives and every reading
-    // looks shifted.
-    wr(RD_STATUS, 0);
-    command(CMD_FLASH_RDSR)?;
-    // Masked with the chip's own status mask, as esp-idf does
-    // (`status_value & spi->status_mask`). The board reports 0xFFFF, so a
-    // hardcoded 0xFF would discard the second byte a two-byte read returns.
-    Ok(rd(RD_STATUS) & STATUS_MASK)
+    status_user_cmd()
+}
+
+/// Status register 1 the other way: opcode `0x05` as a user transaction.
+///
+/// esp-idf keeps both and picks between them:
+///
+/// ```c
+/// if (g_rom_spiflash_dummy_len_plus[1] == 0) {
+///     ... native RDSR ...
+/// } else {
+///     esp_rom_spiflash_read_user_cmd(&status_value, 0x05);
+/// }
+/// ```
+///
+/// So the native command is not unconditionally correct — when the chip is
+/// running with extra dummy cycles, esp-idf refuses to use it. This driver has
+/// only ever used the native one. Reading both and comparing is the cheapest
+/// way to find out whether that choice matters here, and it is a measurement
+/// rather than an argument.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+unsafe fn status_user_cmd() -> Result<u32, FlashError> {
+    wait_spi_fsm_idle()?;
+    wait_cmd()?;
+    // A user transaction rewrites the phase configuration, and the cache reads
+    // through its own copy of these. Put them back regardless of the outcome.
+    let (user, user1, user2, miso, ctrl) =
+        (rd(USER), rd(USER1), rd(USER2), rd(MISO_DLEN), rd(CTRL));
+
+    wr(USER, (user & !(USR_ADDR | USR_DUMMY | USR_MOSI)) | USR_COMMAND | USR_MISO);
+    wr(USER1, user1 & !DUMMY_CYCLELEN_MASK);
+    // One line here too. Inheriting QIO reports 0xc0 for a status of 0x00 --
+    // the whole byte arrives shifted, which is what made this look like SRP0.
+    single_line();
+    wr(USER2, COMMAND_BITLEN_8 | OPCODE_RDSR);
+    // Length fields hold n−1: one byte in, eight bits.
+    wr(MISO_DLEN, 7);
+    wr(W0, 0);
+    let _ = rd(USER);
+    wr(CMD, CMD_USR);
+    let fired = wait_cmd();
+    let value = rd(W0) & 0xFF;
+
+    wr(USER, user);
+    wr(USER1, user1);
+    wr(USER2, user2);
+    wr(MISO_DLEN, miso);
+    wr(CTRL, ctrl);
+    fired?;
+    Ok(value)
 }
 
 /// Wait until no program or erase is in progress.
@@ -520,6 +615,15 @@ unsafe fn unlock() -> Result<(), FlashError> {
     wr(CTRL, rd(CTRL) | CTRL_WRSR_2B);
     command(CMD_FLASH_WREN)?;
     STATUS_TRACE[0].store(0x1003, Ordering::Relaxed);
+    // Both readings of the same register, at the one moment their contents are
+    // known: WREN has just run, so WEL is set and SR1 must be 0x02. Whichever
+    // of these does not say 0x02 is the one that has been lying all along.
+    // Bit 31 marks the slot as written; user read in [23:16], native in [15:0].
+    {
+        let native = status().unwrap_or(0xEE);
+        let user = status_user_cmd().unwrap_or(0xEE);
+        STATUS_TRACE[3].store(0x8000_0000 | ((user & 0xFF) << 16) | (native & 0xFFFF), Ordering::Relaxed);
+    }
     // After the last status read, because a status read clears this register.
     wr(RD_STATUS, STATUS2_QE);
     command(CMD_FLASH_WRSR)?;
@@ -557,9 +661,21 @@ pub unsafe fn read(addr: u32, dest: &mut [u32]) -> Result<(), FlashError> {
         let mut done = 0usize;
         while done < dest.len() {
             let n = (dest.len() - done).min(16);
-            // Unshifted: the native command's address register is not the
-            // user-mode one.
-            wr(ADDR, (addr + done as u32 * 4) & ADDRESS_MASK_24BIT);
+            // Shifted, and this one really is shifted. The three native
+            // commands do not agree with each other, which is why assuming
+            // cost so long:
+            //
+            // ```c
+            // erase: WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, addr & 0xffffff);
+            // program: ... (temp_addr & 0xffffff) | (len << 24));
+            // read: WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, temp_addr << 8);
+            // ```
+            //
+            // Left unshifted the controller transfers nothing at all, and the
+            // loop below then reads back the data buffer's previous contents.
+            // Which is a read that returns the bytes most recently *written* --
+            // it looks like a working round trip and is not one.
+            wr(ADDR, ((addr + done as u32 * 4) & ADDRESS_MASK_24BIT) << 8);
             wr(MISO_DLEN, (n as u32 * 4) * 8 - 1);
             command(CMD_FLASH_READ)?;
             for i in 0..n {
@@ -593,13 +709,23 @@ pub unsafe fn write(addr: u32, src: &[u32]) -> Result<(), FlashError> {
             set_addr_bitlen_24();
             // No dummy phase on a program. See USR_DUMMY.
             wr(USER, rd(USER) & !USR_DUMMY);
-            for i in 0..n {
-                wr(W0 + (i as u32 * 4), src[done + i]);
-            }
+            // Address first, then the data, in esp-idf's order:
+            //
+            // ```c
+            // WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, (temp_addr & 0xffffff) |
+            //     (temp_bl << ESP_ROM_SPIFLASH_BYTES_LEN));
+            // for (i = 0; i < (len >> 2); i++) {
+            //     WRITE_PERI_REG(PERIPHS_SPI_FLASH_C0 + i * 4, *addr_source++);
+            // }
+            // ```
+            //
             // Length rides in the top byte of the address register for a page
             // program. That is not a user-mode convention and has no analogue
             // in the previous attempts.
             wr(ADDR, (at & ADDRESS_MASK_24BIT) | ((n as u32 * 4) << 24));
+            for i in 0..n {
+                wr(W0 + (i as u32 * 4), src[done + i]);
+            }
             command(CMD_FLASH_PP)?;
             done += n;
         }
