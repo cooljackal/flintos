@@ -111,7 +111,12 @@ ifdef WINDOWS
 endif
 
 # The memory map, read by `make size` to name and bound each region.
-LD_SCRIPT      := arch/xtensa/flint32.ld
+# The template, and the resolved copy `build::link()` leaves behind. The two
+# are identical unless a radio feature moved the memory map, so `size` prefers
+# the resolved one and falls back to the template before the first build.
+LD_TEMPLATE    := arch/xtensa/flint32.ld
+LD_GENERATED   := target/flint32.generated.ld
+LD_SCRIPT       = $(if $(wildcard $(LD_GENERATED)),$(LD_GENERATED),$(LD_TEMPLATE))
 
 # Every workspace member builds and tests on the host EXCEPT these three, so name
 # the exceptions rather than listing the other sixteen. A crate added tomorrow is

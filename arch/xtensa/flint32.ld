@@ -49,14 +49,45 @@ MEMORY
    *   0x3FFD8000  panic_region   4K   postmortem snapshot
    *   0x3FFD9000  dma_pool       8K   DMA-safe buffers
    *   0x3FFDB000  (4.5K spare up to the 0x3FFDC200 bound)
+   *
+   * That is the map for a build with no Bluetooth, which is every build today
+   * and every Wi-Fi-only build — Wi-Fi costs no static DRAM. A `radio-ble` or
+   * `radio-bt-classic` build instead reserves the bottom 56K for the
+   * controller and shifts the rest up:
+   *
+   *   0x3FFB0000  (bt_reserve)  56K   CONFIG_BTDM_RESERVE_DRAM = 0xdb5c
+   *   0x3FFBE000  dram_seg      28K
+   *   0x3FFC5000  task_stacks   80K   <- the reservation is paid for here
+   *   0x3FFD9000  panic_region   4K
+   *   0x3FFDA000  dma_pool       8K
+   *   0x3FFDC000  (512B spare up to the bound)
+   *
+   * Both are generated; the table lives in tools/build/src/map.rs.
    */
-  dram_seg    (RW) : ORIGIN = 0x3FFB0000, LENGTH = 0x10000    /* 64K data/bss/kstack */
-  task_stacks (RW) : ORIGIN = 0x3FFC0000, LENGTH = 0x18000    /* 96K task stacks */
-  /* 8-byte aligned so the u64 in PanicSnapshot is legally placed. */
-  panic_region(RW) : ORIGIN = 0x3FFD8000, LENGTH = 0x1000     /* survives soft reset */
-  /* Must be inside SRAM2 (0x3FFAE000-0x3FFDFFFF) to be reachable by the DMA
-   * engines. The old location at 0x3FFF1000 was chosen without regard to that. */
-  dma_pool    (RW) : ORIGIN = 0x3FFD9000, LENGTH = 0x2000     /* DMA-safe buffers */
+  /* The four lines below are REGENERATED at build time by
+   * `tools/build::link()` from `tools/build/src/map.rs`. Edit the table there,
+   * not here — an edit here is overwritten, and the markers must survive or
+   * the build fails with a message saying so.
+   *
+   * They are written out rather than left as placeholders so this file stays a
+   * valid linker script on its own: `make size` parses it, and the values
+   * below are exactly what a build without Bluetooth produces.
+   *
+   * With `radio-bt` the whole map shifts up by 56 KiB to leave the Bluetooth
+   * controller the bottom of DRAM, and `task_stacks` shrinks 96K -> 80K to pay
+   * for it. See map.rs for why the cost is the same for BLE, BR/EDR and both
+   * at once, and why Wi-Fi alone pays nothing.
+   *
+   * 8-byte aligned so the u64 in PanicSnapshot is legally placed. `dma_pool`
+   * must be inside SRAM2 (0x3FFAE000-0x3FFDFFFF) to be reachable by the DMA
+   * engines; the old location at 0x3FFF1000 was chosen without regard to that.
+   */
+  /* @FLINT-DRAM-MAP-BEGIN */
+  dram_seg    (RW) : ORIGIN = 0x3FFB0000, LENGTH = 0x10000    /*  64K .data + .bss + kernel/boot stack */
+  task_stacks (RW) : ORIGIN = 0x3FFC0000, LENGTH = 0x18000    /*  96K per-task stacks */
+  panic_region(RW) : ORIGIN = 0x3FFD8000, LENGTH = 0x1000     /*   4K survives soft reset */
+  dma_pool    (RW) : ORIGIN = 0x3FFD9000, LENGTH = 0x2000     /*   8K DMA-safe buffers, must stay in SRAM2 */
+  /* @FLINT-DRAM-MAP-END */
 }
 
 SECTIONS
@@ -167,3 +198,15 @@ ASSERT(_dma_pool_end - _dma_pool_start >= 4096,
 /* Guard: data RAM must not overflow into the task stack pool. */
 ASSERT(_kernel_stack_end <= ORIGIN(task_stacks),
        "dram_seg overflowed into task_stacks - reduce static data or kernel stack")
+
+/* Nothing statically placed may cross 0x3FFDC200: above it is the ROM's own
+ * data and stack during boot. Enabling `radio-bt` moves every region up by
+ * 56 KiB, so this is the check that turns a map that no longer fits into a
+ * link error instead of a board that boots and then behaves strangely. */
+ASSERT(ORIGIN(dma_pool) + LENGTH(dma_pool) <= 0x3FFDC200,
+       "static DRAM crosses the 0x3FFDC200 ROM bound - see tools/build/src/map.rs")
+
+/* The DMA engines cannot address past the end of SRAM2. Outside it a transfer
+ * fails silently rather than erroring, so this is a link error by choice. */
+ASSERT(ORIGIN(dma_pool) + LENGTH(dma_pool) <= 0x3FFE0000,
+       "dma_pool is outside SRAM2 and unreachable by DMA")
