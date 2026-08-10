@@ -52,7 +52,6 @@ pub const UNIMPLEMENTED: &[(&str, &str)] = &[
     ("_phy_* ", "PHY enable and init data (step 3.6); the calibration store itself is done, see crate::calibration"),
     ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
     ("_nvs_*", "maps onto kvstore, but the blob's key namespace needs deciding"),
-    ("_timer_*", "esp_timer equivalents; TIMG exists, the shim does not"),
     ("_log_write / _log_writev", "variadic C logging into api::log"),
     ("_event_post", "the esp_event loop, which FlintOS has no equivalent of"),
 ];
@@ -401,6 +400,13 @@ unsafe extern "C" fn osi_spin_lock_delete(handle: *mut c_void) {
 /// a diagnosable crash at a known address; a wrong function is not.
 pub fn table() -> WifiOsiFuncs {
     let mut t = WifiOsiFuncs::empty();
+
+    t._timer_setfn = Some(crate::ets_timer::timer_setfn);
+    t._timer_arm = Some(crate::ets_timer::timer_arm);
+    t._timer_arm_us = Some(crate::ets_timer::timer_arm_us);
+    t._timer_disarm = Some(crate::ets_timer::timer_disarm);
+    t._timer_done = Some(crate::ets_timer::timer_done);
+    t._esp_timer_get_time = Some(crate::ets_timer::esp_timer_get_time);
 
     t._set_intr = Some(crate::interrupts::set_intr);
     t._clear_intr = Some(crate::interrupts::clear_intr);

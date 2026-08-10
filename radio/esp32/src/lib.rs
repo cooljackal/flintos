@@ -43,6 +43,7 @@
 
 pub mod adapter;
 pub mod calibration;
+pub mod ets_timer;
 pub mod interrupts;
 pub mod osi;
 

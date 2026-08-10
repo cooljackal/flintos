@@ -14,6 +14,8 @@ use crate::arch::Tick;
 use hal::tick::TickSource;
 
 use crate::{board, debug, scheduler};
+#[cfg(target_os = "none")]
+use crate::clock;
 
 /// Print the boot banner over raw UART0.
 ///
@@ -133,6 +135,16 @@ pub extern "C" fn FlintMain() -> ! {
     // measured *here* rather than inside the tick source -- see
     // `measure_cpu_hz`. Report what it found before anything whose timing
     // depends on it runs.
+    // The microsecond clock, before the tick: `clock::init` claims TIMG1/T1
+    // and nothing else may drive it, and doing it here means it is running
+    // before any second core exists to race the one write it makes.
+    #[cfg(target_os = "none")]
+    if !unsafe { clock::init() } {
+        debug::fault::raw_print("[FLINT] TIMG1/T1 unavailable: now_us() will read 0
+
+");
+    }
+
     let (cpu_hz, measured) = measure_cpu_hz();
     CPU_HZ_MEASURED.store(measured, core::sync::atomic::Ordering::Relaxed);
     Tick::init(board::active::TICK_PERIOD_US, cpu_hz);
