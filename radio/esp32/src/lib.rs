@@ -40,6 +40,5 @@
 
 pub mod adapter;
 pub mod osi;
-pub mod shim;
 
 pub use osi::{WifiOsiFuncs, IDF_VERSION, MAGIC, VERSION};

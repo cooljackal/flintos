@@ -19,6 +19,14 @@
 //! `dynobj` speaks milliseconds. `OSI_FUNCS_TIME_BLOCKING` maps to
 //! `dynobj::FOREVER`; anything else is converted.
 //!
+//! # Two kinds of symbol, one file
+//!
+//! The table is what Espressif made replaceable. Further down, under
+//! `by_name`, are the symbols the archives call directly instead — `malloc`,
+//! the logging hooks, the mesh stubs. That distinction is Espressif's rather
+//! than a real one, and keeping the two in separate files is what let `malloc`
+//! end up implemented twice.
+//!
 //! # Handles
 //!
 //! The blob holds `void*` handles it never dereferences. Each object is
@@ -433,6 +441,168 @@ pub fn table() -> WifiOsiFuncs {
     t._spin_lock_delete = Some(osi_spin_lock_delete);
 
     t
+}
+
+// ── Symbols the blobs call by name ──────────────────────────────────────────
+//
+// Everything above answers `wifi_osi_funcs_t`, which is what Espressif chose
+// to make replaceable. What follows answers what they did not: symbols the
+// archives call directly and expect the surrounding system to define.
+//
+// These lived in a separate file for a while. That split followed Espressif's
+// distinction rather than a real one, and left `malloc` implemented twice --
+// once in each file, three commits apart. One file, one implementation.
+//
+// A module rather than a run of `#[cfg]` attributes, because the gating is the
+// point: defining `malloc` in a host test binary collides with the system
+// libc, and the collision surfaces as a link error in the middle of an
+// unrelated test run.
+#[cfg(target_os = "none")]
+mod by_name {
+    use core::ffi::{c_char, c_int, c_void};
+
+    // Allocation delegates rather than reimplementing. Two copies of "take it
+    // from the radio heap" would be two places to change the alignment, and
+    // the second would be missed -- which is exactly what happened.
+
+    /// # Safety
+    /// C calling convention; `size` is the caller's.
+    #[no_mangle]
+    pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
+        unsafe { super::osi_malloc(size) }
+    }
+
+    /// # Safety
+    /// `p` must have come from [`malloc`], or be null.
+    #[no_mangle]
+    pub unsafe extern "C" fn free(p: *mut c_void) {
+        unsafe { super::osi_free(p) }
+    }
+
+    /// The erratum-safe DPORT read.
+    ///
+    /// Not a convenience: a plain load from DPORT can return the value of an
+    /// unrelated APB read performed by the *other* core. `dport::read` is the
+    /// workaround — an APB pre-read with the two loads adjacent and interrupts
+    /// masked — and the blobs go through it for the same reason everything
+    /// else does. A bare `read_volatile` here would work almost always, which
+    /// is the worst way for it to be wrong.
+    ///
+    /// # Safety
+    /// `reg` must be a DPORT register address.
+    #[no_mangle]
+    pub unsafe extern "C" fn esp_dport_access_reg_read(reg: u32) -> u32 {
+        unsafe { soc_esp32::dport::read(reg) }
+    }
+
+    // ── Logging ─────────────────────────────────────────────────────────────
+    //
+    // `phy_printf`, `rtc_printf`, `net80211_printf` and `coexist_printf` are
+    // variadic C functions, and Rust cannot *define* a variadic function --
+    // only declare one.
+    //
+    // So these take the format string alone. On the windowed ABI the caller
+    // passes arguments in a2-a7 and on the stack and cleans up after itself,
+    // so a callee reading fewer than it was given is well defined: it ignores
+    // the rest. What is lost is the formatting -- "rate %d" logs as `rate %d`
+    // rather than `rate 6`.
+    //
+    // Worth stating plainly rather than leaving to be discovered from puzzling
+    // output. These are paths the blob takes when something has already gone
+    // wrong, and the format string still says which one. Doing better means a
+    // C `vsnprintf` against `va_list`: a great deal of work for a message
+    // nobody reads in normal operation.
+
+    /// # Safety
+    /// `fmt` must be a nul-terminated C string, which every caller here is.
+    unsafe fn log_c_str(tag: &str, fmt: *const c_char) -> c_int {
+        if fmt.is_null() {
+            return 0;
+        }
+        // Bounded: a string with no terminator would otherwise walk memory
+        // until it faulted, and a diagnostic path must not be able to make
+        // things worse.
+        const MAX: usize = 256;
+        let mut len = 0;
+        while len < MAX && unsafe { *fmt.add(len) } != 0 {
+            len += 1;
+        }
+        let bytes = unsafe { core::slice::from_raw_parts(fmt as *const u8, len) };
+        match core::str::from_utf8(bytes) {
+            Ok(s) => api::log_info!("[{}] {}", tag, s),
+            // Not worth reporting as an error: a corrupt format string in a
+            // diagnostic path says the same thing either way.
+            Err(_) => api::log_info!("[{}] <non-utf8 message>", tag),
+        }
+        len as c_int
+    }
+
+    macro_rules! blob_printf {
+        ($name:ident, $tag:literal) => {
+            /// # Safety
+            /// Variadic in C; see the note above. `fmt` must be nul-terminated.
+            #[no_mangle]
+            pub unsafe extern "C" fn $name(fmt: *const c_char) -> c_int {
+                unsafe { log_c_str($tag, fmt) }
+            }
+        };
+    }
+
+    blob_printf!(phy_printf, "phy");
+    blob_printf!(rtc_printf, "rtc");
+    blob_printf!(net80211_printf, "net80211");
+    blob_printf!(coexist_printf, "coex");
+
+    // ── Mesh, stubbed ───────────────────────────────────────────────────────
+    //
+    // `libnet80211.a` references these thirteen unconditionally, so leaving
+    // `libmesh.a` out of the link is not free -- the symbols still have to
+    // exist. Linking mesh instead resolves them and pulls in seven more,
+    // including `esp_event_handler_register`, which wants an event loop
+    // FlintOS does not have. Thirteen stubs are the smaller surface.
+    //
+    // Unreachable in a station-only build: nothing starts mesh, and these are
+    // reached only from code paths mesh enables. Reaching one means that
+    // assumption has broken, so they say so loudly rather than returning a
+    // plausible zero and letting the radio continue into undefined behaviour.
+
+    macro_rules! mesh_stub {
+        ($($name:ident),* $(,)?) => {
+            $(
+                /// Unreachable in a station-only build. See the note above.
+                ///
+                /// # Safety
+                /// Never called. Deliberately argument-free: the real
+                /// signatures differ, and since reaching this is already a
+                /// fault, only the symbol and the panic matter.
+                #[no_mangle]
+                pub unsafe extern "C" fn $name() -> ! {
+                    panic!(concat!(
+                        "radio: mesh entry point ", stringify!($name),
+                        " was called. Mesh is not supported and libmesh.a is ",
+                        "not linked, so reaching this means the radio was ",
+                        "configured for mesh somewhere it should not have been."
+                    ))
+                }
+            )*
+        };
+    }
+
+    mesh_stub!(
+        ieee80211_init_mesh_assoc_ie,
+        ieee80211_vnd_mesh_quick_get,
+        ieee80211_vnd_mesh_quick_set,
+        ieee80211_vnd_mesh_roots_get,
+        ieee80211_vnd_mesh_roots_set,
+        mesh_clear_parent_candidate,
+        mesh_get_parent_candidate,
+        mesh_get_parent_monitor_config,
+        mesh_get_rssi_threshold,
+        mesh_set_ie_crypto_config,
+        mesh_set_parent_candidate,
+        mesh_set_parent_monitor_config,
+        mesh_set_rssi_threshold,
+    );
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
