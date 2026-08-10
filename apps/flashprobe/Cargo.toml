@@ -17,6 +17,8 @@ api = { path = "../../api" }
 hal = { path = "../../hal" }
 
 soc-esp32 = { path = "../../soc/esp32" }
+# For the second core's entry trampoline; see `second_core`.
+arch-xtensa = { path = "../../arch/xtensa" }
 esp32-flash = { path = "../../drivers/physical/esp32/flash" }
 kvstore = { path = "../../lib/kvstore" }
 

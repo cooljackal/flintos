@@ -78,6 +78,55 @@ unsafe fn unstall() {
     crate::reg::clear(sw, SW_STALL_C1_MASK << SW_STALL_C1_SHIFT);
 }
 
+/// Hold the APP CPU stalled.
+///
+/// The inverse of [`unstall`], and the pair encodes a magic value rather than
+/// a flag: `0x21` in the C1 field and `0x2` in C0 is what the hardware reads
+/// as stalled. Writing anything else leaves the core running.
+///
+/// # When this is the right instrument
+///
+/// esp-idf deliberately does **not** stall the other core for flash
+/// operations while its scheduler is running; it uses a task handshake
+/// instead, because stalling a core that holds a spinlock deadlocks whoever
+/// wants that lock next.
+///
+/// FlintOS can stall, but the reason is narrower than it first looks, and the
+/// obvious justification is wrong: the APP CPU *does* run kernel tasks and
+/// *does* take the scheduler spinlock — `apps/smp` calls `join_scheduler` on
+/// it. [`start`]'s doc comment still says otherwise and predates that.
+///
+/// What makes it safe is the caller, not the core: the flash driver takes no
+/// lock between stalling and releasing. Core 1 may be stalled holding the
+/// scheduler lock, and nothing on core 0 asks for it during that window.
+///
+/// **That is a property of the flash path, and a fragile one.** Add a lock
+/// acquisition anywhere inside a flash operation and this deadlocks — core 0
+/// waiting for a lock held by a core that cannot run. If that ever becomes
+/// awkward to guarantee, the answer is NuttX's shape in
+/// `esp32_spiflash_opstart`: signal the other core, wait for it to park
+/// itself, and never stall hardware that might be holding something.
+///
+/// # Safety
+/// Writes RTC registers. The caller must unstall: a core left stalled fetches
+/// nothing and looks exactly like a core that crashed.
+pub unsafe fn stall() {
+    let opt = RTC_OPTIONS0 as *mut u32;
+    crate::reg::modify(opt, SW_STALL_C0_MASK << SW_STALL_C0_SHIFT, 0x2 << SW_STALL_C0_SHIFT);
+
+    let sw = RTC_SW_CPU_STALL as *mut u32;
+    crate::reg::modify(sw, SW_STALL_C1_MASK << SW_STALL_C1_SHIFT, 0x21 << SW_STALL_C1_SHIFT);
+}
+
+/// Release the stall. Public counterpart to the private helper used by
+/// [`start`], for callers that stalled with [`stall`].
+///
+/// # Safety
+/// Writes RTC registers.
+pub unsafe fn unstall_now() {
+    unsafe { unstall() }
+}
+
 /// Whether the APP CPU is currently held stalled by the RTC.
 ///
 /// # Safety
@@ -92,6 +141,12 @@ pub unsafe fn is_stalled() -> bool {
 /// Start the APP CPU at `entry`.
 ///
 /// # What the started core may touch
+///
+/// **Historically not the kernel**, and this paragraph is now out of date:
+/// `kernel::boot::join_scheduler` brings the APP CPU into the scheduler, and
+/// `apps/smp` does exactly that. What follows described the state before that
+/// existed and is kept because the constraints it lists still apply to a core
+/// started *without* joining.
 ///
 /// **Not the kernel.** FlintOS's scheduler is single-core: `scheduler::global()`
 /// hands out `&mut` to a `static`, and a critical section masks interrupts on

@@ -23,8 +23,36 @@ use hal::types::Priority;
 
 kernel::flint_app!(main, abi = 1);
 
+/// Bumped by a task on the *second* core, so a flash operation can be checked
+/// against a core that is genuinely running rather than one parked at boot.
+static CORE1_TICKS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 fn main() {
+    // Start the APP CPU and bring it into the scheduler. Without this the
+    // second core is stalled from reset, `with_cache_off` sees nothing to
+    // stall, and the cross-core path -- the whole point of #69's second half
+    // -- is never exercised.
+    unsafe {
+        arch_xtensa::appcpu::prepare(second_core);
+        soc_esp32::appcpu::start(arch_xtensa::appcpu::_flint_appcpu_entry);
+    }
+    task::spawn_on(1, "core1", core1_counter, Priority::Normal(2), 4096);
     task::spawn("probe", run, Priority::Normal(2), 4096);
+}
+
+/// The second core's entry. In IRAM: it runs before reaching anything in
+/// flash, and its cache is enabled from the other core.
+#[link_section = ".iram1.second_core"]
+extern "C" fn second_core() -> ! {
+    unsafe { kernel::boot::join_scheduler() }
+}
+
+/// Something for core 1 to be doing while core 0 erases and writes flash.
+fn core1_counter() {
+    loop {
+        CORE1_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        task::sleep_ms(1);
+    }
 }
 
 fn run() {
@@ -108,6 +136,16 @@ fn round_trip() -> Result<(), &'static str> {
         return Ok(());
     }
 
+    // The cross-core check. Core 1 is running kernel tasks on the other side
+    // of a hardware stall: if `with_cache_off` fails to stall it, it keeps
+    // fetching through a cache that is about to go away and stops dead; if it
+    // fails to *release* it, it never runs again. Either way this counter
+    // stops moving, and either way the board otherwise looks fine.
+    let before_core1 = CORE1_TICKS.load(core::sync::atomic::Ordering::Relaxed);
+    if before_core1 == 0 {
+        api::log_error!("[probe] core 1 never started -- the cross-core path is untested");
+    }
+
     // 3: erase.
     store.erase_all().map_err(|_| "erase")?;
     api::log_info!("[probe] erased");
@@ -178,5 +216,22 @@ fn round_trip() -> Result<(), &'static str> {
         return Err("value came back wrong");
     }
     api::log_info!("[probe] read back {} bytes", n);
+
+    // Give core 1 a few of its milliseconds to prove it survived.
+    task::sleep_ms(20);
+    let after_core1 = CORE1_TICKS.load(core::sync::atomic::Ordering::Relaxed);
+    if after_core1 > before_core1 {
+        api::log_info!(
+            "[probe] core 1 ran across the flash writes: {} -> {}",
+            before_core1,
+            after_core1
+        );
+    } else {
+        api::log_error!(
+            "[probe] core 1 STOPPED at {} -- stall or release is wrong",
+            after_core1
+        );
+        return Err("core 1 did not survive the flash operation");
+    }
     Ok(())
 }

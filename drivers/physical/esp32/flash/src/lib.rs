@@ -25,10 +25,15 @@
 //! # The other core
 //!
 //! It is executing from flash too, and disabling the cache stops it just as
-//! dead. **Nothing here stalls it.** Call these only while the second core is
-//! parked — before `appcpu::start`, or after `appcpu::stop`. Doing otherwise
-//! hangs that core silently, which looks exactly like a task that stopped
-//! being scheduled.
+//! dead. **This now stalls it** for the duration, and disables its cache as
+//! well — a running APP CPU is detected and put back exactly as it was found.
+//!
+//! The stall is a hardware one, which esp-idf deliberately avoids while its
+//! scheduler is running: stalling a core that holds a spinlock deadlocks
+//! whoever wants it next, so esp-idf uses a task handshake and NuttX does the
+//! same in `esp32_spiflash_opstart`. FlintOS can stall precisely because the
+//! APP CPU may not call into `kernel` at all — it holds no kernel lock. Lift
+//! that restriction (#19) and this has to become a handshake.
 //!
 //! Stalling it properly belongs with whoever adds the first caller that needs
 //! both, and wants `RTC_CNTL`'s stall rather than a reset.
@@ -151,6 +156,16 @@ pub enum FlashError {
 const DPORT_BASE: u32 = 0x3FF0_0000;
 /// `DPORT_PRO_CACHE_CTRL_REG`, with `PRO_CACHE_ENABLE` at bit 3.
 const PRO_CACHE_CTRL: u32 = DPORT_BASE + 0x040;
+/// `DPORT_APP_CACHE_CTRL_REG` and `..._CTRL1_REG`, the second core's pair.
+/// Same bit layout as the PRO ones; confirmed against esp-idf's `dport_reg.h`.
+///
+/// Read only on the target — a host build has no second core to stall — but
+/// the tests pin the addresses either way, since a wrong one here disables
+/// nothing and corrupts whatever core 1 was executing.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+const APP_CACHE_CTRL: u32 = DPORT_BASE + 0x058;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+const APP_CACHE_CTRL1: u32 = DPORT_BASE + 0x05C;
 const PRO_CACHE_ENABLE: u32 = 1 << 3;
 /// `DPORT_PRO_CACHE_CTRL1_REG`. The mask bits say which windows the cache
 /// serves; they are saved and restored around the operation rather than
@@ -384,6 +399,23 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
         core::arch::asm!("wsr.ps {0}", "rsync", in(reg) saved);
         return Err(FlashError::CacheBusy);
     }
+    // Stall the second core before its cache goes away. Order matters: a core
+    // still fetching when the cache dies stops mid-instruction, and nothing
+    // reports it.
+    #[cfg(target_os = "none")]
+    let app_was_running = !soc_esp32::appcpu::is_stalled();
+    #[cfg(target_os = "none")]
+    let app_saved_mask = if app_was_running {
+        soc_esp32::appcpu::stall();
+        let c1 = APP_CACHE_CTRL1 as *mut u32;
+        let saved = c1.read_volatile() & PRO_CACHE_MASK;
+        let c = APP_CACHE_CTRL as *mut u32;
+        c.write_volatile(c.read_volatile() & !PRO_CACHE_ENABLE);
+        saved
+    } else {
+        0
+    };
+
     let ctrl = PRO_CACHE_CTRL as *mut u32;
     ctrl.write_volatile(ctrl.read_volatile() & !PRO_CACHE_ENABLE);
 
@@ -401,6 +433,18 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
 
     ctrl.write_volatile(ctrl.read_volatile() | PRO_CACHE_ENABLE);
     ctrl1.write_volatile((ctrl1.read_volatile() & !PRO_CACHE_MASK) | saved_mask);
+
+    // And the second core, in the reverse order: cache back first, then let it
+    // run. Released before its cache is restored, it would fetch through a
+    // disabled one.
+    #[cfg(target_os = "none")]
+    if app_was_running {
+        let c = APP_CACHE_CTRL as *mut u32;
+        c.write_volatile(c.read_volatile() | PRO_CACHE_ENABLE);
+        let c1 = APP_CACHE_CTRL1 as *mut u32;
+        c1.write_volatile((c1.read_volatile() & !PRO_CACHE_MASK) | app_saved_mask);
+        soc_esp32::appcpu::unstall_now();
+    }
 
     #[cfg(target_os = "none")]
     kernel_interrupt_restore(saved_intenable);
@@ -482,6 +526,22 @@ mod tests {
 
     fn region() -> FlashRegion {
         unsafe { FlashRegion::new(BASE, LEN) }
+    }
+
+    #[test]
+    fn the_app_core_cache_registers_are_where_dport_says() {
+        // From esp-idf's dport_reg.h, which is also where the PRO pair below
+        // came from. A wrong address here disables nothing and the second core
+        // keeps fetching through a cache the flash write is about to
+        // invalidate -- which corrupts whatever it was executing, arbitrarily
+        // far from this line.
+        assert_eq!(APP_CACHE_CTRL, 0x3FF0_0058);
+        assert_eq!(APP_CACHE_CTRL1, 0x3FF0_005C);
+        // Same layout as the PRO registers, which is why they share the
+        // enable bit and window mask.
+        assert_eq!(APP_CACHE_CTRL - PRO_CACHE_CTRL, 0x18);
+        assert_eq!(APP_CACHE_CTRL1 - APP_CACHE_CTRL, 0x4);
+        assert_eq!(PRO_CACHE_CTRL1 - PRO_CACHE_CTRL, 0x4);
     }
 
     #[test]
