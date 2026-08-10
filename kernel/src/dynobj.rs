@@ -765,7 +765,9 @@ mod lifecycle_tests {
         // which looks like a timing bug, not a constant.
         assert_eq!(HIGHEST_PRIORITY, 0);
         assert_eq!(LOWEST_PRIORITY, crate::scheduler::MAX_PUBLIC_PRIORITY);
-        assert!(HIGHEST_PRIORITY < LOWEST_PRIORITY, "smaller must mean more urgent");
+        // Const, so it belongs at compile time: a runtime assert on two
+        // constants proves nothing the compiler has not already settled.
+        const _: () = assert!(HIGHEST_PRIORITY < LOWEST_PRIORITY);
         assert_eq!(hal::types::Priority::Background(15).numeric(), LOWEST_PRIORITY);
     }
 

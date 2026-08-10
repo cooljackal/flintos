@@ -275,7 +275,7 @@ impl Scheduler {
     /// that window would free a stack still being executed on. Checking both
     /// costs one comparison per core.
     pub fn is_current_anywhere(&self, id: u32) -> bool {
-        self.current_per_core.iter().any(|&c| c == id)
+        self.current_per_core.contains(&id)
     }
 
     /// The task the *calling* core is running.

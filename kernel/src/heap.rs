@@ -128,7 +128,7 @@ pub unsafe fn init(free_from: u32) -> usize {
         let _ = free_from;
         const TEST_HEAP: usize = 256 * 1024;
         static mut BUF: [u8; TEST_HEAP] = [0; TEST_HEAP];
-        return POOL.with(|pool| unsafe { pool.add_region((&raw mut BUF) as *mut u8, TEST_HEAP) });
+        POOL.with(|pool| unsafe { pool.add_region((&raw mut BUF) as *mut u8, TEST_HEAP) })
     }
 
     #[cfg(target_os = "none")]

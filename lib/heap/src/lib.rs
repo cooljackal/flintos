@@ -245,7 +245,7 @@ impl Heap {
             (*node).size += (*next).size;
             (*node).next = (*next).next;
         }
-        if prev != &mut self.head as *mut *mut Free {
+        if !core::ptr::eq(prev, &mut self.head as *mut *mut Free) {
             // `prev` points at some block's `next` field; recover that block.
             let before = (prev as usize - core::mem::offset_of!(Free, next)) as *mut Free;
             if before as usize + (*before).size as usize == start {

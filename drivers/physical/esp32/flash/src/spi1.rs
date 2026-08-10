@@ -103,6 +103,12 @@ use crate::{FlashError, LAST_CACHE_STATE};
 /// SPI1, the flash controller.
 const SPI1_BASE: u32 = 0x3FF4_2000;
 
+// `+ 0x00` is an identity operation and clippy says so. Kept, and silenced
+// here, because these are a transcription of the technical reference manual's
+// offset table: reading down the column and checking it against the datasheet
+// is how a wrong address gets caught, and dropping the one zero breaks the
+// alignment that makes that possible.
+#[allow(clippy::identity_op)]
 const CMD: u32 = SPI1_BASE + 0x00;
 const ADDR: u32 = SPI1_BASE + 0x04;
 const CTRL: u32 = SPI1_BASE + 0x08;
@@ -1007,8 +1013,8 @@ mod tests {
         assert_eq!(BUSY_CYCLES, 160_000_000, "two seconds at 80 MHz");
         // Comfortably longer than a sector erase, comfortably shorter than a
         // CCOUNT rollover at 80 MHz, which is about 54 seconds.
-        assert!(BUSY_CYCLES > 80_000_000 / 2, "shorter than a sector erase");
-        assert!(BUSY_CYCLES < u32::MAX / 2, "risks a rollover ambiguity");
-        assert!(XFER_SPINS > 0);
+        const _: () = assert!(BUSY_CYCLES > 80_000_000 / 2);
+        const _: () = assert!(BUSY_CYCLES < u32::MAX / 2);
+        const _: () = assert!(XFER_SPINS > 0);
     }
 }

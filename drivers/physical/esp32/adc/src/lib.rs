@@ -51,6 +51,12 @@
 /// SENS peripheral base.
 const SENS_BASE: u32 = 0x3FF4_8800;
 
+// `+ 0x00` is an identity operation and clippy says so. Kept, and silenced
+// here, because these are a transcription of the technical reference manual's
+// offset table: reading down the column and checking it against the datasheet
+// is how a wrong address gets caught, and dropping the one zero breaks the
+// alignment that makes that possible.
+#[allow(clippy::identity_op)]
 const SAR_READ_CTRL: u32 = SENS_BASE + 0x00;
 const SAR_ATTEN1: u32 = SENS_BASE + 0x34;
 const SAR_MEAS_START1: u32 = SENS_BASE + 0x54;
@@ -256,6 +262,7 @@ const PAD_RDE: u32 = 1 << 28;
 
 /// RTC GPIO state, for [`Adc1::pad_debug`]. Indexed from **bit 14** by *RTC*
 /// GPIO number, which is a third numbering scheme — see [`rtc_gpio_of`].
+#[allow(clippy::identity_op)]
 const RTC_GPIO_OUT: u32 = RTCIO_BASE + 0x00;
 const RTC_GPIO_ENABLE: u32 = RTCIO_BASE + 0x0C;
 const RTC_GPIO_IN: u32 = RTCIO_BASE + 0x24;
@@ -551,7 +558,12 @@ mod tests {
 
     #[test]
     fn the_rtc_gpio_registers_are_where_the_header_says() {
-        assert_eq!(RTC_GPIO_OUT, RTCIO_BASE + 0x00);
+        // Same reason as the declarations: the point is the column read
+        // against the datasheet, so the zero stays.
+        #[allow(clippy::identity_op)]
+        {
+            assert_eq!(RTC_GPIO_OUT, RTCIO_BASE + 0x00);
+        }
         assert_eq!(RTC_GPIO_ENABLE, RTCIO_BASE + 0x0C);
         assert_eq!(RTC_GPIO_IN, RTCIO_BASE + 0x24);
         // The field starts at 14, not 0. Indexing from 0 would drive a pin

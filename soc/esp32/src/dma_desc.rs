@@ -229,13 +229,13 @@ pub unsafe fn build_chain(
 
     let stride = core::mem::size_of::<Descriptor>() as u32;
     let mut remaining = len;
-    for i in 0..needed {
+    for (i, slot) in descs.iter_mut().enumerate().take(needed) {
         let chunk = remaining.min(Descriptor::MAX_LEN);
         let last = i + 1 == needed;
         // Zero terminates the chain; otherwise point at the following slot.
         let next = if last { 0 } else { head + (i as u32 + 1) * stride };
         let offset = len - remaining;
-        descs[i] = match direction {
+        *slot = match direction {
             Direction::Transmit => Descriptor::tx(buf + offset, chunk, last, next)?,
             Direction::Receive => Descriptor::rx(buf + offset, chunk, next)?,
         };

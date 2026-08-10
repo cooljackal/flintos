@@ -37,28 +37,26 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
-use kernel::heap::{self, Caps};
-
 // ── Allocation ──────────────────────────────────────────────────────────────
 //
 // Called by name rather than through the table, so the OSI entries are not
-// enough on their own. Same radio heap either way, which is the point: there
-// is one pool and it stays confined to the radio.
+// enough on their own -- but they are the *same* functions, delegated to
+// rather than reimplemented. Two copies of "allocate from the radio heap"
+// would be two places to change the alignment, and the second one would be
+// missed.
 
 /// # Safety
 /// C calling convention; `size` is the caller's.
 #[no_mangle]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
-    unsafe { heap::alloc(size, 8) as *mut c_void }
+    unsafe { crate::adapter::osi_malloc(size) }
 }
 
 /// # Safety
 /// `p` must have come from [`malloc`] here, or be null.
 #[no_mangle]
 pub unsafe extern "C" fn free(p: *mut c_void) {
-    if !p.is_null() {
-        unsafe { heap::free(p as *mut u8, Caps::Internal) };
-    }
+    unsafe { crate::adapter::osi_free(p) }
 }
 
 // ── DPORT ───────────────────────────────────────────────────────────────────

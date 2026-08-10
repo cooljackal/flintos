@@ -19,6 +19,55 @@ A kernel that provides a different one refuses to build and points here.
 
 ## [Unreleased]
 
+### Added
+
+- **Persistent configuration in flash.** `kvstore` over the `nvs` partition:
+  a value written one boot is read back the next. `kernel::nvs::FlashStorage`
+  is the joint; the driver underneath drives SPI1 directly, because the ROM's
+  flash routines are the two Espressif themselves replace.
+
+- **A heap, confined to the radio.** `lib/heap` is a free-list allocator and
+  `kernel::heap` gives it the memory reclaimed above the static map — about
+  126 KiB. It is deliberately **not** a `#[global_allocator]`: registering one
+  would put `alloc::` in reach of every crate and end the no-allocation
+  property that makes latency bounded. Nothing in the kernel calls it.
+
+- **Runtime-created kernel objects**, for the same reason: `kernel::dynobj`
+  has byte-copying queues, counting semaphores, recursive mutexes, event
+  groups and heap-backed tasks that can be deleted. A second object model
+  beside the static one, not a replacement — `Queue<T, N>` and friends are
+  unchanged.
+
+- **Radio configuration as features.** `radio-wifi`, `radio-ble` and
+  `radio-bt-classic`, selected the same way as boards and debug levels:
+
+  ```bash
+  make flash APP=demo BOARD=board-m5-atom-matrix EXTRA_FEATURES=radio-wifi,radio-ble
+  ```
+
+  Boards declare `HAS_WIFI` and `HAS_BT`, and asking for a radio the board has
+  not got is a build error rather than a runtime disappointment.
+
+- **`make blobs`** fetches Espressif's Wi-Fi and BLE archives (Apache-2.0,
+  ~4.3 MB), pinned to the revisions esp-idf references. They are fetched
+  rather than committed. **`make blob-symbols`** reports what they still need
+  from us.
+
+### Changed
+
+- **The memory map is generated.** `arch/xtensa/flint32.ld` still contains the
+  numbers, and `tools/build::link()` rewrites them when a radio feature needs
+  the map moved. **A build without Bluetooth is byte-for-byte what it was** —
+  there is a test pinning the literal addresses. With `radio-ble` the map
+  shifts up 56 KiB to leave the controller the bottom of DRAM, and the
+  per-task stack pool shrinks from 96 KiB to 80 KiB to pay for it.
+
+- **DMA reaches all of internal DRAM**, not just SRAM2. `soc_esp32::dma`'s
+  reachability check stopped at `0x3FFDFFFF` and had been rejecting valid
+  buffers in SRAM1 since the DMA work landed. esp-idf's `SOC_DMA_HIGH` is
+  `0x40000000`. Nothing you wrote was wrong; some things you could not do now
+  work.
+
 ### Fixed
 
 - **Every blocking queue send or receive panicked.** `queue::deadline_for`

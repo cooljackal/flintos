@@ -244,7 +244,10 @@ mod tests {
         // Reserving less than CONFIG_BTDM_RESERVE_DRAM gives memory that works
         // until the controller initialises and then corrupts static data --
         // the failure this whole computation exists to prevent.
-        assert!(BT_RESERVE >= BTDM_RESERVE_DRAM);
+        // `assert!` on two consts is a lint error, and rightly: it is checked
+        // at compile time and proves nothing at run time. A const assertion
+        // says the same thing where it belongs, and fails the *build*.
+        const _: () = assert!(BT_RESERVE >= BTDM_RESERVE_DRAM);
         assert_eq!(DramMap::new(true).bt_reserve, BT_RESERVE);
         assert_eq!(DramMap::new(false).bt_reserve, 0);
     }

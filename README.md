@@ -41,6 +41,12 @@ starts one.
 
 ✅ verified on hardware  ·  🧪 written and host-tested, not yet on silicon  ·  🚧 partial  ·  ⛔ not started  ·  — not applicable
 
+The radios are 🚧 rather than ⛔ because the groundwork is done and the
+radio itself is not: the heap, the runtime-created kernel objects and the
+adapter crate exist and are tested, the vendor blobs fetch and the ABI is
+confirmed, and no packet has been sent. See
+[doc/plan-radio.md](doc/plan-radio.md) for what is left.
+
 Per-peripheral detail — which registers, which pins, what is untested — lives
 in the wiki: [Xtensa LX6](https://github.com/cooljackal/flintos/wiki/Arch-Xtensa-LX6),
 [ESP32](https://github.com/cooljackal/flintos/wiki/SoC-ESP32),
@@ -82,16 +88,17 @@ The chip's own blocks, in the order most projects reach for them.
 | SPI | ✅ | ⛔ |
 | PWM / LEDC | ✅ | ⛔ |
 | Timers (TIMG) | ✅ | ⛔ |
-| ADC | ⛔ | ⛔ |
+| ADC | ✅ | ⛔ |
 | DAC, touch | ⛔ | ⛔ |
 | RMT pulse generator | ✅ | — |
 | Hardware RNG | ✅ | ⛔ |
+| Flash storage (key/value) | ✅ | ⛔ |
 | CAN (TWAI) | ⛔ | ⛔ |
 | I2S | ⛔ | ⛔ |
 | SD / SDIO | ⛔ | ⛔ |
 | Ethernet MAC | ⛔ | ⛔ |
-| Wi-Fi | ⛔ | — |
-| Bluetooth / BLE | ⛔ | — |
+| Wi-Fi | 🚧 | — |
+| Bluetooth / BLE | 🚧 | — |
 | USB | — | ⛔ |
 
 ### Device drivers

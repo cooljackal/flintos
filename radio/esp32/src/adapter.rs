@@ -113,7 +113,7 @@ pub fn priority_from_freertos(prio: u32) -> hal::types::Priority {
 /// All three are the same here: everything the radio heap holds is internal
 /// RAM and DMA-capable, so there is nothing for the variants to distinguish.
 /// They stay separate entries because the blob calls them by name.
-unsafe extern "C" fn osi_malloc(size: usize) -> *mut c_void {
+pub(crate) unsafe extern "C" fn osi_malloc(size: usize) -> *mut c_void {
     unsafe { heap::alloc(size, 8) as *mut c_void }
 }
 
@@ -141,7 +141,7 @@ unsafe extern "C" fn osi_zalloc(size: usize) -> *mut c_void {
     unsafe { osi_calloc(1, size) }
 }
 
-unsafe extern "C" fn osi_free(p: *mut c_void) {
+pub(crate) unsafe extern "C" fn osi_free(p: *mut c_void) {
     if !p.is_null() {
         unsafe { heap::free(p as *mut u8, Caps::Internal) };
     }
