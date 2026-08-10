@@ -17,6 +17,9 @@ board = { path = "../board", default-features = false }
 # The key/value format. Portable and host-testable, unlike the flash under it,
 # which is why the two are separate crates and this one is not target-scoped.
 kvstore = { path = "../lib/kvstore" }
+# The radio heap. See kernel/src/heap.rs -- present for the blobs, not
+# registered as a global allocator.
+heap = { path = "../lib/heap" }
 
 # The console UART is the one driver the kernel itself names: `startup::init`
 # constructs it from the board manifest so log and panic have somewhere to go

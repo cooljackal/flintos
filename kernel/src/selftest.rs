@@ -44,6 +44,9 @@ mod timg;
 
 #[path = "selftest_adc.rs"]
 mod adc;
+
+#[path = "selftest_heap.rs"]
+mod heap;
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
 pub(crate) type Check = Result<(), &'static str>;
@@ -86,6 +89,15 @@ pub fn run() {
     check("every_adc1_channel_converts", adc::every_adc1_channel_converts(), &mut pass, &mut fail);
 
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
+
+    // The radio heap. The allocator is host-tested; what needs the chip is
+    // that the reclaimed regions are real, writable, and nobody else's.
+    check("reclaimed_memory_is_available", heap::reclaimed_memory_is_available(), &mut pass, &mut fail);
+    check("general_memory_holds_a_pattern", heap::general_memory_holds_a_pattern(), &mut pass, &mut fail);
+    check("two_allocations_do_not_overlap", heap::two_allocations_do_not_overlap(), &mut pass, &mut fail);
+    check("dma_memory_is_where_dma_can_reach", heap::dma_memory_is_where_dma_can_reach(), &mut pass, &mut fail);
+    check("general_memory_is_not_in_the_dma_region", heap::general_memory_is_not_in_the_dma_region(), &mut pass, &mut fail);
+    check("the_pool_returns_to_full_after_use", heap::the_pool_returns_to_full_after_use(), &mut pass, &mut fail);
 
     raw_print("[FLINT] SELFTEST END pass=");
     print_u32(pass);
