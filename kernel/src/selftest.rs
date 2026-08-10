@@ -106,7 +106,8 @@ pub fn run() {
     // the chip because a task's stack_base is a u32 and the host heap is not.
     check("a_dynamic_task_returns_its_stack", dynobj::a_dynamic_task_returns_its_stack(), &mut pass, &mut fail);
     check("task_churn_does_not_leak", dynobj::task_churn_does_not_leak(), &mut pass, &mut fail);
-    check("deleting_a_running_task_is_refused", dynobj::deleting_a_running_task_is_refused(), &mut pass, &mut fail);
+    check("the_reaper_returns_a_deleted_task_s_stack", dynobj::the_reaper_returns_a_deleted_task_s_stack(), &mut pass, &mut fail);
+    check("the_reaper_skips_a_task_a_core_is_on", dynobj::the_reaper_skips_a_task_a_core_is_on(), &mut pass, &mut fail);
     check("a_dynamic_queue_round_trips_on_hardware", dynobj::a_dynamic_queue_round_trips_on_hardware(), &mut pass, &mut fail);
     check("semaphores_and_event_bits_work_on_target", dynobj::semaphores_and_event_bits_work_on_target(), &mut pass, &mut fail);
 

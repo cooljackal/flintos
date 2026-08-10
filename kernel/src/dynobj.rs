@@ -824,25 +824,27 @@ pub enum DeleteError {
 
 /// Delete a task and return its stack to the heap.
 ///
-/// # What this deliberately refuses
+/// Deleting the *calling* task never returns — see [`delete_self`].
 ///
-/// **Self-delete.** A task cannot delete itself here: it is executing on the
-/// stack that would be freed, and the next interrupt would write into memory
-/// the heap had already handed to someone else. FreeRTOS handles this with a
-/// reaper that runs in the idle task, and that is the right shape for it — but
-/// it is a scheduler change with its own failure modes and belongs in its own
-/// piece of work. Until then this returns [`DeleteError::StillRunning`], which
-/// is a refusal the caller can see rather than corruption it cannot.
+/// # What this refuses
+///
+/// **A task running on the other core.** It cannot be made to switch away
+/// synchronously, and freeing the stack under it would corrupt it
+/// mid-instruction. [`DeleteError::StillRunning`].
 ///
 /// **Pool-backed tasks.** Nothing to reclaim; see [`DeleteError::NotDeletable`].
 ///
-/// # What it does handle
+/// # What it handles
 ///
 /// Removing the task from every queue waiter list. A deleted task left listed
 /// gets unblocked by a later `wake_one_*`, by which point the slot may belong
 /// to a different task — which then returns from a wait it never entered, far
 /// from the delete that caused it.
 pub fn delete_task(id: u32) -> Result<(), DeleteError> {
+    // Self-delete has entirely different mechanics and does not return.
+    if id == current_task() {
+        delete_self();
+    }
     // Take the stack details and clear the slot under one lock, so nothing can
     // schedule the task between deciding it is idle and removing it.
     let stack = crate::scheduler::with(|sched| {
@@ -879,8 +881,24 @@ pub fn delete_task(id: u32) -> Result<(), DeleteError> {
 
 #[cfg(test)]
 mod task_tests {
+    extern crate std;
+
     use super::*;
     use hal::types::Priority;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Serialise the tests that mutate the scheduler.
+    ///
+    /// The TCB table is global and the harness runs tests in parallel, so
+    /// without this one test's reaper clears another's slots and the counts
+    /// stop meaning anything. Poisoning is ignored: a panicking test has
+    /// already failed, and blocking every later one behind it hides that.
+    fn serial() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 
     fn heap_ready() {
         unsafe { heap::init(0) };
@@ -934,6 +952,7 @@ mod task_tests {
 
     #[test]
     fn a_pool_backed_task_cannot_be_deleted() {
+        let _serial = serial();
         // The static tasks. Their stacks come from a bump allocator with
         // nothing to return them to, so refusing is the honest answer —
         // freeing would hand the heap a pointer it never owned.
@@ -958,6 +977,7 @@ mod task_tests {
 
     #[test]
     fn a_running_task_cannot_be_deleted() {
+        let _serial = serial();
         // Freeing the stack a task is executing on corrupts it mid-instruction,
         // and the next interrupt writes into memory the heap has already given
         // to someone else. Self-delete lands here too, deliberately — see the
@@ -975,6 +995,131 @@ mod task_tests {
         crate::scheduler::with(|sched| sched.tasks[id as usize] = None);
     }
 
+    /// Build a TCB already in `Deleting`, as `delete_self` would leave it.
+    ///
+    /// Constructed rather than reached through `delete_self`, which never
+    /// returns and would hang the test process — the reaper is the half that
+    /// can be checked from here.
+    fn deleting_tcb(heap_stack: bool, stack_base: u32) -> u32 {
+        crate::scheduler::with(|sched| {
+            let id = sched.alloc_id().expect("a free TCB slot");
+            if let Some(tcb) = &mut sched.tasks[id as usize] {
+                tcb.state = crate::scheduler::TaskState::Deleting;
+                tcb.heap_stack = heap_stack;
+                tcb.stack_base = stack_base;
+                tcb.stack_size = 1024;
+            }
+            id
+        })
+    }
+
+    #[test]
+    fn the_reaper_frees_a_deleted_task_s_slot() {
+        let _serial = serial();
+        // Slot bookkeeping only. The stack half needs a genuine 32-bit
+        // address, so it lives on the target — see `selftest_dynobj.rs`.
+        // Fabricating a `heap_stack` TCB here would truncate a 64-bit pointer
+        // into `stack_base` and hand the heap something it never issued, which
+        // is the same trap the spawn path refuses.
+        heap_ready();
+        let id = deleting_tcb(false, 0x1000);
+        assert_eq!(reap_deleted(), 1, "the reaper should have taken exactly one");
+        assert!(
+            crate::scheduler::with(|s| s.tasks[id as usize].is_none()),
+            "the slot must be free for reuse"
+        );
+    }
+
+    #[test]
+    fn the_reaper_leaves_a_task_that_is_still_some_core_s_current() {
+        let _serial = serial();
+        // The other-core case, and the check that makes the whole scheme safe.
+        // While a core is still executing the dying task — or saving its
+        // context on the way out — `current_per_core` names it, and freeing
+        // the stack then would corrupt it mid-instruction.
+        heap_ready();
+        let id = deleting_tcb(false, 0x1000);
+        let previous = crate::scheduler::with(|sched| {
+            let prev = sched.current();
+            sched.set_current(id);
+            // `set_current` marks it Running; put it back to what a pending
+            // self-delete actually looks like.
+            if let Some(tcb) = &mut sched.tasks[id as usize] {
+                tcb.state = crate::scheduler::TaskState::Deleting;
+            }
+            prev
+        });
+
+        let reaped = reap_deleted();
+        let survived = crate::scheduler::with(|s| s.tasks[id as usize].is_some());
+
+        // Put things back before asserting, so a failure does not cascade.
+        //
+        // The slot is left *allocated*, deliberately. On host there is no
+        // previous current task to restore to — it is the `u32::MAX` sentinel,
+        // and `set_current` would index with it — so this core keeps pointing
+        // here. Freeing the slot would then let a later test reuse the id
+        // while `current_per_core` still names it, and that test's tasks would
+        // be silently skipped by the reaper. Parking one TCB for the life of
+        // the process is the cheaper trade. Its state is set to something the
+        // reaper ignores.
+        crate::scheduler::with(|sched| {
+            if let Some(tcb) = &mut sched.tasks[id as usize] {
+                tcb.state = crate::scheduler::TaskState::Suspended;
+            }
+            if previous != u32::MAX {
+                sched.set_current(previous);
+            }
+        });
+        assert_eq!(reaped, 0, "nothing else was deleting, so nothing should be reaped");
+        assert!(survived, "must not reap a task a core is still current on");
+    }
+
+    #[test]
+    fn the_reaper_does_nothing_when_nothing_is_deleting() {
+        let _serial = serial();
+        heap_ready();
+        // Idle calls this every loop, so "cheap and silent when idle" is the
+        // behaviour that matters.
+        assert_eq!(reap_deleted(), 0);
+        assert_eq!(reap_deleted(), 0);
+    }
+
+    #[test]
+    fn the_reaper_takes_several_in_one_pass() {
+        let _serial = serial();
+        // Idle calls this once per loop, so several deletions between two
+        // passes must all be cleared rather than one per pass.
+        heap_ready();
+        let ids = [
+            deleting_tcb(false, 0x1000),
+            deleting_tcb(false, 0x2000),
+            deleting_tcb(false, 0x3000),
+        ];
+        assert_eq!(reap_deleted(), 3, "one pass must clear all of them");
+        for id in ids {
+            assert!(crate::scheduler::with(|s| s.tasks[id as usize].is_none()));
+        }
+    }
+
+    #[test]
+    fn a_pool_backed_task_is_reaped_without_freeing_anything() {
+        let _serial = serial();
+        // Its stack came from the bump allocator, which has nothing to give
+        // back to. The slot still has to be released, or a self-deleting
+        // static task would hold a TCB forever.
+        heap_ready();
+        let before = heap::free_bytes(Caps::Internal);
+        let id = deleting_tcb(false, 0x1000);
+        assert_eq!(reap_deleted(), 1);
+        assert!(crate::scheduler::with(|s| s.tasks[id as usize].is_none()));
+        assert_eq!(
+            heap::free_bytes(Caps::Internal),
+            before,
+            "nothing should have been handed to the heap"
+        );
+    }
+
     #[test]
     fn forgetting_a_task_clears_it_from_every_waiter_list() {
         // The hazard `delete_task` guards: a deleted id left listed is woken
@@ -983,5 +1128,93 @@ mod task_tests {
         assert!(!crate::queue::is_waiting_anywhere(id));
         crate::queue::forget_task(id);
         assert!(!crate::queue::is_waiting_anywhere(id), "purging must be idempotent");
+    }
+}
+
+/// End the calling task. Never returns.
+///
+/// A task cannot free the stack it is executing on: the moment the heap
+/// reissued those bytes, the next interrupt on this core would write its frame
+/// into somebody else's allocation. So this does the half that is safe from
+/// here — leave the ready set, stop being a queue waiter — and hands the rest
+/// to [`reap_deleted`], which runs on the idle task's stack.
+///
+/// The task stays in [`TaskState::Deleting`] with its stack intact until then.
+/// Nothing schedules it: every transition back into the ready set matches on
+/// the blocked states by name, and this is not one of them.
+///
+/// # Why the loop at the end
+///
+/// `request_switch` marks a switch pending; it does not perform one. Until the
+/// scheduler acts, this core is still executing here, on a stack that must
+/// stay valid. Parking is what keeps that true — returning would run the
+/// caller's epilogue on a task the scheduler has already written off.
+pub fn delete_self() -> ! {
+    let me = current_task();
+
+    crate::scheduler::with(|sched| {
+        if let Some(tcb) = &mut sched.tasks[me as usize] {
+            let prio = tcb.priority;
+            tcb.state = crate::scheduler::TaskState::Deleting;
+            // Out of the run set, or `schedule` keeps finding it at this
+            // priority level and this core never leaves.
+            sched.recompute_ready_bit(prio);
+        }
+    });
+
+    // Outside the scheduler lock: `forget_task` takes its own critical
+    // section, and nesting the two is the reentrancy that panics.
+    crate::queue::forget_task(me);
+
+    crate::scheduler::request_switch();
+
+    // Never scheduled again. `wait_for_interrupt` rather than a spin so the
+    // core parks instead of burning the tick until the switch lands.
+    loop {
+        crate::arch::wait_for_interrupt();
+    }
+}
+
+/// Free the stacks and slots of tasks that have deleted themselves.
+///
+/// Called from the idle loop, which is the one context guaranteed not to be
+/// running on a dying task's stack: idle runs on the boot stack and is only
+/// reached when nothing else is ready.
+///
+/// Returns how many were reaped, which is what the tests assert on.
+///
+/// # The check that makes this safe
+///
+/// A task is only freed once it is [`TaskState::Deleting`] *and* is not any
+/// core's current task. The second condition is what covers the other core:
+/// while it is still executing the dying task — or saving its context on the
+/// way out — `current_per_core` still names it, and this skips it for now.
+/// Idle runs often; there is no hurry.
+pub fn reap_deleted() -> usize {
+    let mut reaped = 0;
+    loop {
+        // One per pass, each with its own lock, so idle never holds the
+        // scheduler while freeing and the other core is not kept waiting.
+        let victim = crate::scheduler::with(|sched| {
+            for i in 0..crate::scheduler::MAX_TASKS {
+                let Some(tcb) = &sched.tasks[i] else { continue };
+                if tcb.state != crate::scheduler::TaskState::Deleting {
+                    continue;
+                }
+                if sched.is_current_anywhere(i as u32) {
+                    continue;
+                }
+                let stack = if tcb.heap_stack { Some(tcb.stack_base) } else { None };
+                sched.tasks[i] = None;
+                return Some((i as u32, stack));
+            }
+            None
+        });
+        let Some((id, stack)) = victim else { return reaped };
+        crate::queue::forget_task(id);
+        if let Some(base) = stack {
+            unsafe { heap::free(base as *mut u8, Caps::Internal) };
+        }
+        reaped += 1;
     }
 }

@@ -299,6 +299,16 @@ fn idle_loop() -> ! {
         // it feeds is the only thing that notices -- the tick keeps running
         // throughout, so nothing else in the system sees a problem.
         crate::watchdog::feed_from_idle();
+
+        // Reap tasks that deleted themselves. Idle is the one context that is
+        // provably not running on a dying task's stack — it runs on the boot
+        // stack, and is only reached when nothing else is ready — which is
+        // what makes freeing safe here and nowhere else.
+        //
+        // Cheap when there is nothing to do: one pass over the TCBs looking
+        // for a state that is almost never set.
+        crate::dynobj::reap_deleted();
+
         crate::arch::wait_for_interrupt();
     }
 }

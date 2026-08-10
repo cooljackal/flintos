@@ -64,6 +64,19 @@ pub enum TaskState {
     BlockedMutex,
     BlockedSleep,
     Suspended,
+    /// The task has deleted itself and is waiting to be reaped. Terminal:
+    /// nothing moves a task out of this state, and nothing schedules it.
+    ///
+    /// It exists because a task cannot free the stack it is executing on. A
+    /// self-delete marks this, drops out of the ready set and switches away;
+    /// the idle task frees the stack and the slot afterwards, from a context
+    /// that is provably not the dying task's.
+    ///
+    /// Every transition out of a blocked state — `unblock`, `on_tick`,
+    /// `make_ready` — matches on the blocked states by name, so none of them
+    /// resurrect a task in this one. That is what makes "terminal" true rather
+    /// than merely intended.
+    Deleting,
     /// The task panicked. Terminal: nothing moves a task out of this state.
     ///
     /// A panic halts the whole system (see `debug::panic`), so no scheduling
