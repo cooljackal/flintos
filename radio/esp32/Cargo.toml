@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "radio-esp32"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Adapter between Espressif's Wi-Fi/BLE blobs and FlintOS"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# The only crate in the tree allowed to name `kernel`. The blobs call out
+# through a table of function pointers expecting FreeRTOS's object model —
+# tasks, queues, semaphores, event groups, malloc — and something has to
+# answer. Confining that to one tier is what stops the blob's demands leaking
+# into the drivers; see tools/check-layers.sh.
+[dependencies]
+hal = { path = "../../hal" }
+api = { path = "../../api" }
+kernel = { path = "../../kernel", default-features = false }
+
+# Board selection forwards through, exactly as an application's does: `kernel`
+# refuses to build without one, and this crate is the only thing between the
+# blob and it.
+
+soc-esp32 = { path = "../../soc/esp32" }
+
+[features]
+board-esp32-wrover = ["kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
+board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]

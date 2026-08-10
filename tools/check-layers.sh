@@ -11,12 +11,25 @@
 #   drivers/bus/*        api, lib/*         transport
 #   drivers/logical/*    api, lib/*         one part number
 #   lib/*                lib/*              no hardware at all
+#   radio/*              hal, api, kernel,  the vendor blobs and their adapter
+#                        soc/*, lib/*
 #
 # arch and soc hold what is specific to a CPU core or a chip *and shared*.
 # Anything that is one peripheral is a driver, wherever it happens to sit
 # today: RMT, the watchdogs and the RNG were modules of soc-esp32 and are
 # drivers now. The test is whether a second peripheral driver would want it --
 # an address map and a pin router yes, a pulse generator no.
+#
+# `radio/*` is the exception that proves the rule, and it is deliberately the
+# only one. Espressif's Wi-Fi and BLE blobs are precompiled against FreeRTOS's
+# object model and call out through a table of 121 function pointers -- tasks,
+# queues, semaphores, event groups, malloc. Satisfying that means naming
+# `kernel`, which nothing else in the tree may do.
+#
+# Confining it to one tier is what keeps the concession honest: the blob's
+# demands stop at this boundary instead of leaking into the drivers. If a
+# second crate ever wants `kernel`, that is the signal to ask why rather than
+# to widen this list.
 #
 # `lib/*` is not drivers at all: no registers, no part numbers, values rather
 # than anything destined for a pin. It gets no `api`, because api re-exports
@@ -82,6 +95,7 @@ def category(r):
 
 TIERS = {
     "arch":             "CPU-core crate",
+    "radio":            "radio adapter",
     "soc":              "SoC crate",
     "drivers/physical": "Layer-1 physical driver",
     "drivers/bus":      "Layer-2 bus abstraction",
@@ -104,6 +118,7 @@ ALLOWED = {
     "drivers/bus":      {"api"} | LIBS,
     "drivers/logical":  {"api"} | LIBS,
     "lib":              LIBS,
+    "radio":            {"hal", "api", "kernel"} | SOCS | LIBS,
 }
 DESCRIBE = {
     "arch":             "hal",
@@ -112,6 +127,7 @@ DESCRIBE = {
     "drivers/bus":      "api and lib/ crates",
     "drivers/logical":  "api and lib/ crates",
     "lib":              "other lib/ crates only",
+    "radio":            "hal, api, kernel, soc/ and lib/ crates",
 }
 
 violations = []

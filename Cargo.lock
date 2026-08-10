@@ -254,6 +254,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "radio-esp32"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "hal",
+ "kernel",
+ "soc-esp32",
+]
+
+[[package]]
 name = "size"
 version = "0.1.0"
 

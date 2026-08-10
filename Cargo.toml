@@ -88,6 +88,7 @@ members = [
     "lib/led-matrix",
     "lib/kvstore",
     "lib/heap",
+    "radio/esp32",
     "lib/led-strip",
 ]
 
