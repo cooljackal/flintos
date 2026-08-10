@@ -81,6 +81,15 @@ board-m5-atom-matrix = ["board/board-m5-atom-matrix"]
 # Retired; forwards so `board` can print which of the two to use.
 board-m5-atom = ["board/board-m5-atom"]
 
+# ── Radios ──────────────────────────────────────────────────────────────────
+# `radio-bt` is what the DRAM reservation is keyed on, because the reservation
+# is the same for every Bluetooth mode. It is turned on by a mode rather than
+# selected directly; see kernel/src/radio.rs.
+radio-wifi = []
+radio-bt = []
+radio-ble = ["radio-bt"]
+radio-bt-classic = ["radio-bt"]
+
 debug-level-0 = []
 debug-level-1 = ["flint-log", "flint-metrics", "flint-panic"]
 debug-level-2 = ["debug-level-1", "flint-trace"]

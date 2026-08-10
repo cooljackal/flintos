@@ -40,5 +40,16 @@ debug-level-1 = ["kernel/debug-level-1"]
 debug-level-2 = ["kernel/debug-level-2"]
 debug-level-3 = ["kernel/debug-level-3"]
 
+# `radio-bt` is declared here as well as in the kernel because
+# `build::link()` runs in *this* crate's build script and reads
+# CARGO_FEATURE_*, so the memory map keys off the application's own view of
+# whether Bluetooth is on. A mode that forwarded only to the kernel would
+# reserve nothing.
+radio-wifi = ["kernel/radio-wifi"]
+radio-bt = []
+radio-ble = ["radio-bt", "kernel/radio-ble"]
+radio-bt-classic = ["radio-bt", "kernel/radio-bt-classic"]
+
+
 # Boot-time register-window self-test. Off by default; `make ... EXTRA_FEATURES=self-test`.
 self-test = ["kernel/self-test"]

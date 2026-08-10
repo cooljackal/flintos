@@ -116,3 +116,17 @@ pub const TARGET_SERVICES: &[ServiceMapping] = &[
     ServiceMapping { name: "procfs", always: false },
     ServiceMapping { name: "debug", always: false },
 ];
+
+/// Radios this board's module physically carries.
+///
+/// A fact about the hardware, in the same way a pin number is — which is why
+/// it lives in the manifest rather than being assumed from the SoC family.
+/// Every ESP32 part FlintOS supports today has both, but the ESP32-S2 has no
+/// Bluetooth at all and would declare `HAS_BT = false`, so applications that
+/// ask for a radio the board has not got fail to build instead of failing to
+/// connect.
+///
+/// The kernel checks these against the `radio-*` features; see
+/// `kernel/src/radio.rs`.
+pub const HAS_WIFI: bool = true;
+pub const HAS_BT: bool = true;
