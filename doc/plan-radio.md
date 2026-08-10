@@ -84,12 +84,31 @@ DMA-capable. Internal-only and general are the same thing until PSRAM exists,
 which is a non-goal, so a third that aliased the first would only invite a
 caller to pick the wrong one.
 
-**DMA cannot reach the big pool.** SRAM1 is the roomy region and the DMA
-engines cannot address it — a descriptor pointing there does not error, the
-transfer silently moves the wrong bytes. So `Caps::Dma` allocates from the
-SRAM2 tail instead, which is small (about 16 KiB). If the radio needs more
-DMA-capable memory than that, the static map has to give some back, and that
-is a real constraint to check early in phase 3 rather than discover in phase 5.
+**And all of it is DMA-capable**, so `Caps` is an API shape rather than two
+different pools. This was got wrong first: the heap was built as two pools on
+the belief that the DMA engines could not reach SRAM1, and an earlier revision
+of this section warned that DMA memory was scarce at about 16 KiB. It is not.
+esp-idf:
+
+```c
+#define SOC_DMA_LOW  0x3FFAE000
+#define SOC_DMA_HIGH 0x40000000
+
+inline static bool IRAM_ATTR esp_ptr_dma_capable(const void *p)
+{
+    return (intptr_t)p >= SOC_DMA_LOW && (intptr_t)p < SOC_DMA_HIGH;
+}
+```
+
+Its heap marks the SRAM1 regions `MALLOC_CAP_DMA`, and NuttX puts ordinary
+heap regions at `0x3ffe0450` onward. The belief came from a comment in
+FlintOS's own linker script that had said "must be inside SRAM2 to be reachable
+by the DMA engines" since the DMA work, and `soc-esp32`'s `reachable()` had
+been rejecting valid SRAM1 buffers on the strength of it. Both are corrected;
+the whole ~126 KiB is available to the adapter for DMA, not 16 KiB.
+
+The lesson is the same one #32 taught: **check the claim against esp-idf rather
+than against this repository's own comments.**
 
 **Note.** Static allocation is a real-time *feature* — no fragmentation, bounded
 latency. Confining the heap to the radio (ground rule 3) is what keeps that
