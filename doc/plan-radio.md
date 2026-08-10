@@ -59,7 +59,7 @@ Independent of the radio. Do these anyway.
 |---|---|---|
 | 0.1 | ✅ **DPORT cross-core stall** (#56) | Done. Not a stall in the end — the documented workaround is an APB pre-read. Both cores hammer DPORT without a lost update. |
 | 0.2 | ✅ **General-purpose timers** (#25) | Done. `esp32-timg` gives 64-bit microseconds. A monotonic `esp_timer_get_time` on top is still to write. |
-| 0.3 | ⬜ **Persistent config (#32)** | Key/value in flash, blob values included. PHY calibration lives here — load-bearing, not a nicety. **The one Phase 0 item left.** |
+| 0.3 | ✅ **Persistent config (#32)** | Done. `kvstore` over the `nvs` partition, round-tripping across a reboot. Three faults in one driver: reads driven as native commands transferred nothing and returned the stale data buffer, `CMD_ANY` never waited for user transactions, and every user transaction needs one dummy cycle. See `doc/nvs-flash-handover.md`. |
 | 0.4 | ✅ **DMA transfer engine** (#18) | Done. Descriptor chains, start/stop, completion by interrupt, proven over SPI. |
 
 Steps 0.2–0.4 were already P1 issues. The radio was one more reason to do
@@ -183,8 +183,53 @@ which FlintOS does not touch at all today. Espressif's own builds put the heap
 there for exactly this reason.
 
 So the heap is reclaimed at runtime, not placed at link time — see step 1.1.
-Confirm how much of SRAM1 the BT controller permanently reserves before
-sizing it.
+
+**How much of SRAM1 does the BT controller reserve? None.** That question is
+answered, and the answer inverts it. esp-idf takes the reservation off the
+*bottom of SRAM2*, not SRAM1:
+
+```text
+dram0_0_seg (RW) : org = 0x3FFB0000 + CONFIG_BTDM_RESERVE_DRAM,
+                   len = DRAM0_0_SEG_LEN - CONFIG_BTDM_RESERVE_DRAM
+
+config BTDM_RESERVE_DRAM
+    hex
+    default 0xdb5c if BT_ENABLED
+    default 0
+```
+
+`0x3FFB0000` is exactly where FlintOS's `dram_seg` starts, so Bluetooth
+collides with the static map rather than with the heap. SRAM1 loses only the
+ROM's own data — `0x3FFE0000`–`0x3FFE0440` and `0x3FFE3F20`–`0x3FFE4350`, about
+2 KiB together — plus 32 KiB of trace memory if trace is enabled, which it is
+not. That leaves roughly **126 KiB** for the heap against Wi-Fi's ~50 KB.
+
+Two consequences, both good:
+
+- **The cost is binary, not additive.** `0xdb5c` is the same for BLE-only,
+  BR/EDR-only and dual-mode, and Wi-Fi adds nothing. Wi-Fi + BLE costs no more
+  static DRAM than BLE alone.
+- **Wi-Fi-only pays nothing.** Phase 5 needs no change to the static map, so
+  the map surgery is deferred to whenever Bluetooth actually lands.
+
+That surgery is implemented and behind a feature already — see
+`tools/build/src/map.rs` and `kernel/src/radio.rs`. A `radio-ble` or
+`radio-bt-classic` build reserves the bottom 56 KiB and shifts everything up,
+paying for it out of the task stack pool (96 KiB → 80 KiB); a default or
+`radio-wifi` build produces byte-for-byte the map that shipped before.
+
+**Configuring it.** Radios are Cargo features, like boards and debug levels:
+
+```bash
+make flash APP=demo BOARD=board-m5-atom-matrix EXTRA_FEATURES=radio-wifi,radio-ble
+```
+
+`radio-ble` and `radio-bt-classic` both imply the internal `radio-bt`, which is
+what the memory map keys on — the reservation is caused by the controller being
+enabled, not by which mode it runs. Boards declare `HAS_WIFI` / `HAS_BT` in
+their manifest, and asking for a radio the board has not got is a build error.
+BLE Mesh is not a flag at this layer: it is a host stack above BLE, so it costs
+heap rather than static DRAM.
 
 **IRAM is not a constraint.** 766 bytes of 127 KiB are used, so the blob's
 ISR paths have room. `vectors_seg` at 94 % is tight but fixed-size and

@@ -25,6 +25,13 @@ pub const BOARD_NAME: &str = "My Board";
 pub const TICK_PERIOD_US: u32 = 1000;
 pub const DMA_POOL_BYTES: usize = 8192;
 
+// Which radios the module physically carries. A fact about the hardware, like
+// a pin number — not an assumption from the SoC family. An application that
+// enables `radio-ble` against a board declaring `HAS_BT = false` fails to
+// build rather than failing to connect.
+pub const HAS_WIFI: bool = true;
+pub const HAS_BT: bool = true;
+
 pub const TARGET_BUSES: &[BusMapping] = &[
     BusMapping {
         name: "uart0",
