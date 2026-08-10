@@ -27,12 +27,13 @@ impl CriticalSection for XtensaCriticalSection {
 
     #[inline(always)]
     fn enter() -> Self::Token {
-        let saved_ps: u32;
-        unsafe {
-            // rsil writes the new level and returns the previous PS.
-            core::arch::asm!("rsil {0}, {1}", out(reg) saved_ps, const CRITICAL_SECTION_PRIORITY);
+        // The token is the raw pair with a `Drop` bolted on, rather than a
+        // second copy of the same `rsil`. There is exactly one instruction
+        // sequence for entering and one for leaving, in `enter_raw` and
+        // `exit_raw` below.
+        XtensaCsToken {
+            saved_ps: unsafe { enter_raw() },
         }
-        XtensaCsToken { saved_ps }
     }
 }
 
@@ -46,9 +47,7 @@ impl CriticalSectionToken for XtensaCsToken {
 impl Drop for XtensaCsToken {
     #[inline(always)]
     fn drop(&mut self) {
-        unsafe {
-            core::arch::asm!("wsr.ps {0}", "rsync", in(reg) self.saved_ps);
-        }
+        unsafe { exit_raw(self.saved_ps) }
     }
 }
 

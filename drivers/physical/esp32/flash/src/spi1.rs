@@ -100,8 +100,8 @@ use core::sync::atomic::Ordering;
 
 use crate::{FlashError, LAST_CACHE_STATE};
 
-/// SPI1, the flash controller.
-const SPI1_BASE: u32 = 0x3FF4_2000;
+// SPI1, the flash controller. From the SoC crate rather than redeclared here.
+use soc_esp32::addr::SPI1_BASE;
 
 // `+ 0x00` is an identity operation and clippy says so. Kept, and silenced
 // here, because these are a transcription of the technical reference manual's
@@ -407,18 +407,22 @@ unsafe fn trace(slot: usize, first: bool) {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn wait_spi_fsm_idle() -> Result<(), FlashError> {
-    let start = cycles();
-    while rd(SPI1_EXT2) & SPI_ST_MASK != 0 {
-        if cycles().wrapping_sub(start) > BUSY_CYCLES {
-            return Err(FlashError::Timeout);
+    // Same loop, two peripherals. `#[inline(never)]` and the IRAM section are
+    // inherited by the helper for the reason in the module docs: a call out of
+    // IRAM with the cache off does not return.
+    #[inline(never)]
+    #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+    unsafe fn poll_st_idle(reg: u32) -> Result<(), FlashError> {
+        let start = cycles();
+        while rd(reg) & SPI_ST_MASK != 0 {
+            if cycles().wrapping_sub(start) > BUSY_CYCLES {
+                return Err(FlashError::Timeout);
+            }
         }
+        Ok(())
     }
-    let start = cycles();
-    while rd(SPI0_EXT2) & SPI_ST_MASK != 0 {
-        if cycles().wrapping_sub(start) > BUSY_CYCLES {
-            return Err(FlashError::Timeout);
-        }
-    }
+    poll_st_idle(SPI1_EXT2)?;
+    poll_st_idle(SPI0_EXT2)?;
     Ok(())
 }
 

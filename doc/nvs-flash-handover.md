@@ -134,15 +134,20 @@ the `USR` bit.
 
 Also boot-loops, at the same place.
 
-## The contradiction in B, which is probably the lead
+## The contradiction in B, which was thought to be the lead
 
 B reuses the cache's transaction configuration **while still disabling the
 cache around the transaction**. Those two ideas are in tension and it was not
 noticed while implementing.
 
 NuttX wraps its transactions in `esp32_spiflash_opstart()` / `opdone()`. Those
-were assumed to be equivalent to the cache disable here and **have never been
-read**. That is the single most likely place the answer is.
+were assumed to be equivalent to the cache disable here and had never been
+read, which made them "the single most likely place the answer is".
+
+**It was not the answer**, though reading them was still worth it. The fix was
+in the transaction convention (see the correction below); `opstart` turned out
+to matter for a different reason entirely, and is now cited in the flash
+driver's module docs as the model for cross-core coordination.
 
 ## Reference implementations, ranked by usefulness
 
@@ -177,16 +182,17 @@ Cache control: `DPORT_PRO_CACHE_CTRL` `0x3FF00040` (`ENABLE` bit 3),
 
 ## Where the code is
 
-Branch `wip/nvs-flash`, on top of `main`. Nothing is on `main`.
+All on `main`. This section used to say "Branch `wip/nvs-flash`. Nothing is on
+`main`", which stopped being true when the work merged.
 
 - `drivers/physical/esp32/flash/src/spi1.rs` — the SPI-NOR commands
 - `drivers/physical/esp32/flash/src/lib.rs` — region bounds, cache window
 - `kernel/src/nvs.rs` — the `Storage` impl (a newtype: orphan rules)
-- `apps/flashprobe/` — the venue for testing this
-- `lib/kvstore/` — finished, on `main`, 16 host tests
+- `apps/flashprobe/` — still the venue for exercising this
+- `lib/kvstore/` — 16 host tests
 
-Reproduce with `make flash APP=flashprobe BOARD=board-m5-atom-matrix PORT=COM5`.
-Recover a boot-looping board with `make flash APP=demo BOARD=board-m5-atom-matrix`.
+Exercise it with `make flash APP=flashprobe`. Recover a boot-looping board with
+`make flash APP=demo`.
 
 ## Correction: reads have never worked
 
@@ -226,8 +232,12 @@ Shifting the read address alone did not fix it. The transfer was not happening
 because the read was being driven as a native command at all; see the
 resolution at the top.
 
-## What would most help
+## What would have helped
 
-A logic analyser on SPI1's clock and data. Every failure so far has been "the
-board stopped and I inferred why." Two probes would show in seconds whether the
-transaction is even well-formed.
+A logic analyser on SPI1's clock and data. Every failure here was "the board
+stopped and I inferred why", and the inference was wrong for a week. Two probes
+would have shown in seconds whether the transaction was even well-formed.
+
+Kept as the lesson rather than as a request: the thing that eventually worked
+was reading esp-idf's `spi_flash_rom_patch.c` instead of reasoning from this
+tree's own comments, several of which were wrong.

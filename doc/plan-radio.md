@@ -10,10 +10,29 @@ coming. That position was correct while the cost was unexamined; this document
 is the examined version. The route is viable, the price is known, and the price
 is high.
 
-**Status:** not started as a radio. Three of Phase 0's four prerequisites have
-landed for their own reasons — the DPORT stall (#56), general-purpose timers
-(#25) and the DMA engine (#18). Persistent configuration (#32) is the one
-left, and nothing in Phase 1 onward has been attempted.
+**Status:** Phase 0, Phase 1 and Phase 2 are done, and Phase 3 is at 3.5.
+
+Phase 0's four prerequisites all landed — the DPORT stall (#56), general-purpose
+timers (#25), the DMA engine (#18) and persistent configuration (#32). Phase 1
+gave the kernel a heap (`lib/heap`, `kernel::heap`); Phase 2 gave it the runtime
+object model the blobs demand (`kernel::dynobj`: dynamic queues, semaphores,
+recursive mutexes, event groups, and deletable heap-backed tasks). In Phase 3
+the `radio/esp32` crate exists with its own tier in `check-layers`, `make blobs`
+fetches the libraries at pinned revisions, the 115-pointer OSI table is
+generated and implemented, the C-library and RTC symbols the blobs import are
+answered, and their interrupt paths are placed in IRAM.
+
+**What is left is 3.6** — PHY enable/disable, PHY init data, RF calibration and
+persisting that calibration to flash — plus the two prerequisites this document
+used to list under "before 3.6", both of which have since landed:
+IRAM-safe interrupt registration (`kernel::interrupt::register_iram_safe` and
+`mask_non_iram_safe`, so a flash write no longer masks everything) and
+cross-core coordination (the APP CPU is stalled and its cache disabled across a
+flash operation, #69).
+
+Per-step ticks below are accurate; this header is the summary. It previously
+read "nothing in Phase 1 onward has been attempted", which had been wrong for
+some time.
 
 ---
 
@@ -117,7 +136,7 @@ merits — which is exactly how this phase was meant to be paid for.
 
 ## Phase 1 — A heap
 
-The blob allocates constantly. FlintOS currently has no allocator at all.
+The blob allocates constantly. FlintOS had no allocator at all; `lib/heap` and `kernel::heap` are the answer, and this phase is done.
 
 | Step | Work | Done when |
 |---|---|---|
@@ -214,7 +233,7 @@ from:
 
 | Source | Count | Notes |
 |---|---|---|
-| ESP32 ROM | 9 | `ets_delay_us`, `uart_div_modify`, `phy_get_romfuncs`, `roundup2`, `crc32_le`, and four libgcc routines. FlintOS does not yet include a ROM symbol script — adding one covers all nine at once |
+| ESP32 ROM | 9 | `ets_delay_us`, `uart_div_modify`, `phy_get_romfuncs`, `roundup2`, `crc32_le`, and four libgcc routines. Covered by `arch/xtensa/esp32.rom.ld`, which provides four of them; the rest resolve elsewhere |
 | `compiler_builtins` | 10 | the remaining `__divdi3`-style routines, plus `memcpy`/`memset`/`memmove`/`memcmp` |
 | Mesh stubs | 13 | see below |
 | PHY and RTC | 9 | `phy_enter_critical`, `rtc_init_clk`, `rtc_get_xtal` and friends — step 3.6 |
@@ -243,12 +262,12 @@ acceptance criterion — *calibration data persists across a reboot* — means
 writing to flash while the radio is up, which is exactly the case below.
 
 **First, a correction.** An earlier note here said the danger was ISRs fetching
-from flash while the cache is off. That is not what happens: FlintOS's
-`with_cache_off` opens with `rsil 5`, masking every maskable interrupt, so
-nothing fetches anything. The real cost is **latency** — a flash operation
-blocks the tick and every driver interrupt for its whole duration, and a
-sector erase is tens of milliseconds. Wi-Fi will not survive that: missed
-beacons, and a link that drops under any write load.
+from flash while the cache is off. That is not what happens: `with_cache_off`
+used to open with `rsil 5`, masking every maskable interrupt, so nothing
+fetched anything. The real cost was **latency** — a flash operation blocked
+the tick and every driver interrupt for its whole duration, and a sector erase
+is tens of milliseconds. Wi-Fi would not have survived that: missed beacons,
+and a link that drops under any write load.
 
 **Both reference implementations solve it the same way, and it is not "put
 everything in IRAM".** They mask *selectively*:
@@ -277,21 +296,27 @@ operation. The radio's handlers are IRAM-safe and keep running throughout.
 4. `esp_intr_noniram_disable()`;
 5. disable the cache on **both** cores.
 
-FlintOS disables only core 0's cache and states the other core as a caller
-obligation in the driver's module docs. That obligation is fine today, when
-flash is written from a single-core bring-up app. It is not fine once the radio
-is running, because blob tasks are scheduled on either core.
+**Both of the changes this section called for landed under #69**, and 3.6 is no
+longer blocked on either:
 
-**So two kernel changes stand between here and a working 3.6**, and neither is
-radio code:
+- **Selective masking.** `kernel::interrupt::register_iram_safe` records the
+  promise and `mask_non_iram_safe` masks only the interrupts that did not make
+  it, through `INTENABLE`. `PS.INTLEVEL` is still raised, but only across the
+  two short windows where `INTENABLE` and the cache registers are changed.
+  Nothing has opted in yet, so the behaviour is unchanged until something does
+  — the mechanism is in place, the first caller is not.
+- **Cross-core.** `with_cache_off` detects a running APP CPU, stalls it,
+  disables its cache too, and restores both in reverse order. Proven on
+  hardware by `apps/flashprobe`, which starts core 1, joins it to the
+  scheduler, and fails the run if it stopped counting across the writes.
 
-- An IRAM-safe flag per interrupt, and masking only the others during a flash
-  operation, instead of `rsil 5`.
-- Cross-core coordination in the flash driver: park the other core and disable
-  both caches, rather than documenting it as somebody else's problem.
-
-Filed rather than folded into 3.6, because they belong to the kernel and the
-flash driver and would be wanted even without a radio.
+FlintOS's stall is a **hardware** stall rather than NuttX's voluntary park, and
+that is the one place this still differs from both references. It is safe only
+because nothing between the stall and the release takes a lock. The flash
+driver's module docs say so and name `esp32_spiflash_opstart` as the shape to
+adopt when that stops being true — and scheduling blob tasks on either core is
+the most likely thing to make it stop being true, so expect to revisit this
+during 3.6 rather than after it.
 
 ---
 

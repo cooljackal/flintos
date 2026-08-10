@@ -6,10 +6,22 @@ The FlintOS kernel is a library. The thing you flash is an **application**: a
 small `no_std` binary crate that links the kernel, names an entry point, and
 spawns its own tasks.
 
-| App | What it does |
-|---|---|
-| [`hello`](hello/) | One task, logging once a second. The minimal template. |
-| [`demo`](demo/) | Three tasks at three priorities on three periods. What the kernel is verified against. |
+`make apps` prints this list from each crate's `description`, and is the copy
+that cannot go stale. This table adds the board each one needs.
+
+| App | What it does | Board |
+|---|---|---|
+| [`hello`](hello/) | One task, logging once a second. The minimal template. | any |
+| [`demo`](demo/) | Three tasks at three priorities on three periods. What the kernel is verified against. | any |
+| [`smp`](smp/) | Starts the APP CPU and joins it to the scheduler, proving both cores run tasks. | any |
+| [`spidma`](spidma/) | Moves bytes through the DMA engine, over SPI looped back through the GPIO matrix. | any |
+| [`flashprobe`](flashprobe/) | Erases, programs and reads back the `nvs` partition — with core 1 running throughout, which is the only cover the cross-core flash path has. | any |
+| [`blink`](blink/) | Drives the onboard addressable LED over RMT. | Atom Lite or Matrix |
+| [`pwm`](pwm/) | Drives LEDC and measures its own duty cycle by reading the pin back. | Atom Lite or Matrix |
+| [`imu`](imu/) | Reads the onboard IMU — the first Layer 1-2-3 assembly. | Atom Matrix |
+
+The last three refuse to build for a board whose manifest does not declare the
+hardware they drive, and say which board to use instead.
 
 ```bash
 make apps                                  # list what's here

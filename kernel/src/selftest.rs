@@ -279,3 +279,19 @@ pub(crate) fn spin_cycles(cycles: u32) {
         core::hint::spin_loop();
     }
 }
+
+/// Busy-wait `ticks` timer ticks. The coarse twin of [`spin_cycles`], for
+/// waits long enough that the tick is the right unit — a pull settling, a
+/// watchdog window.
+///
+/// Only for waiting. The loops that *measure* elapsed ticks keep their own
+/// start value and do not call this: they look similar, but what they want is
+/// the reading, not the delay.
+#[cfg(target_os = "none")]
+pub(crate) fn spin_ticks(ticks: u64) {
+    use hal::tick::TickSource;
+    let start = crate::arch::Tick::now();
+    while crate::arch::Tick::now().saturating_sub(start) < ticks {
+        core::hint::spin_loop();
+    }
+}

@@ -78,6 +78,11 @@
 
 use core::sync::atomic::Ordering;
 
+// From the SoC crate rather than redeclared here. This file used to carry its
+// own `DPORT_BASE = 0x3FF0_0000`, and `spi1.rs` its own `SPI1_BASE`, both of
+// which `soc_esp32::addr` already had.
+use soc_esp32::addr::DPORT_BASE;
+
 // The SPI-NOR commands, because the ROM's driver cannot be called. See the
 // module docs above.
 #[path = "spi1.rs"]
@@ -115,7 +120,6 @@ pub enum FlashError {
 // idle before switching it off. Disabling a cache mid-operation is what wedged
 // the first version of this file: the board went silent with no fault, which is
 // what a CPU fetching from a cache that has gone away looks like.
-const DPORT_BASE: u32 = 0x3FF0_0000;
 /// `DPORT_PRO_CACHE_CTRL_REG`, with `PRO_CACHE_ENABLE` at bit 3.
 const PRO_CACHE_CTRL: u32 = DPORT_BASE + 0x040;
 /// `DPORT_APP_CACHE_CTRL_REG` and `..._CTRL1_REG`, the second core's pair.

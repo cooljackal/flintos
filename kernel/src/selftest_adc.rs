@@ -116,11 +116,7 @@ pub(crate) fn adc1_follows_the_pin_it_is_pointed_at() -> Check {
 /// Busy-wait long enough for a pull to settle, using the tick.
 #[cfg(target_os = "none")]
 fn settle() {
-    use hal::tick::TickSource;
-    let start = crate::arch::Tick::now();
-    while crate::arch::Tick::now().saturating_sub(start) < 5 {
-        core::hint::spin_loop();
-    }
+    super::selftest::spin_ticks(5);
 }
 
 /// Every channel must convert, and not all to the same number.
