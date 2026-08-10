@@ -49,7 +49,6 @@ use crate::osi::{WifiOsiFuncs, TIME_BLOCKING};
 /// yet or that need hardware to mean anything. Kept here so the gap is
 /// countable rather than discovered one crash at a time.
 pub const UNIMPLEMENTED: &[(&str, &str)] = &[
-    ("_set_intr / _clear_intr / _set_isr", "interrupt routing onto the ESP32 interrupt matrix; the IRAM placement it waited on is done"),
     ("_phy_* ", "PHY enable and init data (step 3.6); the calibration store itself is done, see crate::calibration"),
     ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
     ("_nvs_*", "maps onto kvstore, but the blob's key namespace needs deciding"),
@@ -402,6 +401,10 @@ unsafe extern "C" fn osi_spin_lock_delete(handle: *mut c_void) {
 /// a diagnosable crash at a known address; a wrong function is not.
 pub fn table() -> WifiOsiFuncs {
     let mut t = WifiOsiFuncs::empty();
+
+    t._set_intr = Some(crate::interrupts::set_intr);
+    t._clear_intr = Some(crate::interrupts::clear_intr);
+    t._set_isr = Some(crate::interrupts::set_isr);
 
     t._malloc = Some(osi_malloc_uint);
     t._malloc_internal = Some(osi_malloc);
