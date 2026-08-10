@@ -189,6 +189,22 @@ const STATUS_BP_MASK: u32 = 0x7C;
 /// with QE set.
 const STATUS2_QE: u32 = 1 << 9;
 
+/// JEDEC manufacturer ids whose status-register layout [`unlock`] is correct
+/// for.
+///
+/// GigaDevice and Winbond both put QE at bit 1 of status register 2, reached
+/// by the two-byte `WRSR` that `unlock` issues. **Macronix (`0xC2`) and ISSI
+/// (`0x9D`) put QE at bit 6 of status register *one***, where that same write
+/// clears it — and a board that boots QIO with QE cleared does not boot at
+/// all, recoverable only with an external programmer.
+///
+/// esp-idf does not paper over this either: it ships separate chip drivers
+/// (`chip_gd`, `chip_winbond`, `chip_mxic`, `chip_issi`, `chip_boya`) whose
+/// main job is exactly this divergence. Two entries here is not a shortcut, it
+/// is the honest extent of what has been checked.
+const MFR_GIGADEVICE: u32 = 0xC8;
+const MFR_WINBOND: u32 = 0xEF;
+
 /// Status register 1, bit 0: a program or erase is in progress.
 const STATUS_WIP: u32 = 1 << 0;
 
@@ -231,6 +247,8 @@ const CMD_USR: u32 = 1 << 18;
 const COMMAND_BITLEN_8: u32 = 7 << 28;
 /// SPI-NOR `RDSR`, as an opcode rather than a controller command bit.
 const OPCODE_RDSR: u32 = 0x05;
+/// `RDID`. Three bytes back: manufacturer, memory type, capacity.
+const OPCODE_RDID: u32 = 0x9F;
 /// Dummy cycles between a user command's opcode and its data phase.
 ///
 /// The ROM carries the same quantity as `g_rom_spiflash_dummy_len_plus`, and
@@ -356,9 +374,10 @@ unsafe fn snapshot() {
 /// the first program: 0 before WREN, 1 after WREN, 2 after the program
 /// command, 3 once the chip reports ready, each `| 0x100` to mark it written.
 /// [`unlock`] runs earlier and uses slot 0 as a progress counter
-/// (`0x1000..=0x1006`) with its own readings in slots 1 and 2. Whichever ran
-/// last is what `apps/flashprobe` prints, so read a `0x1nnn` in slot 0 as
-/// unlock progress and anything else as a status byte.
+/// (`0x1000..=0x1006`), its own status readings in slots 1 and 2, and the
+/// JEDEC manufacturer byte in slot 3. Whichever ran last is what
+/// `apps/flashprobe` prints, so read a `0x1nnn` in slot 0 as unlock progress
+/// and anything else as a status byte.
 ///
 /// This is bring-up scaffolding, kept because the unlock path is the one that
 /// can brick a board, and deliberately not tidied into something prettier
@@ -620,6 +639,48 @@ unsafe fn status_user_cmd() -> Result<u32, FlashError> {
     Ok(value)
 }
 
+/// Read the chip's JEDEC id: manufacturer in bits [7:0], memory type in
+/// [15:8], capacity in [23:16].
+///
+/// A user transaction, built exactly as [`status_user_cmd`] builds its own,
+/// including the dummy cycle — this part needs one on every user transaction,
+/// and a wrong dummy here reads rubbish rather than misbehaving, which
+/// [`unlock`] then treats as an unknown chip. Failing closed is the point.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+unsafe fn jedec_id() -> Result<u32, FlashError> {
+    let dummy = EXTRA_DUMMY;
+    wait_spi_fsm_idle()?;
+    wait_cmd()?;
+    let (user, user1, user2, miso, ctrl) =
+        (rd(USER), rd(USER1), rd(USER2), rd(MISO_DLEN), rd(CTRL));
+
+    reset_user_ctrl();
+    wr(USER, USR_COMMAND | USR_MISO | if dummy > 0 { USR_DUMMY } else { 0 });
+    wr(
+        USER1,
+        (user1 & !DUMMY_CYCLELEN_MASK) | dummy.saturating_sub(1),
+    );
+    wr(USER2, COMMAND_BITLEN_8 | OPCODE_RDID);
+    // Three bytes in, so 24 bits, and the field holds n−1.
+    wr(MISO_DLEN, 23);
+    wr(W0, 0);
+    let _ = rd(USER);
+    wr(CMD, CMD_USR);
+    let fired = wait_cmd();
+    // First byte on the wire is the manufacturer, and it lands in the low
+    // byte of W0.
+    let value = rd(W0) & 0x00FF_FFFF;
+
+    wr(USER, user);
+    wr(USER1, user1);
+    wr(USER2, user2);
+    wr(MISO_DLEN, miso);
+    wr(CTRL, ctrl);
+    fired?;
+    Ok(value)
+}
+
 /// Wait until no program or erase is in progress.
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
@@ -675,8 +736,22 @@ unsafe fn unlock() -> Result<(), FlashError> {
     STATUS_TRACE[1].store(st | 0x100, Ordering::Relaxed);
     if st & (STATUS_SRP0 | STATUS_BP_MASK) == 0 {
         // Nothing protected. Do not write the status register for no reason.
+        //
+        // This is also why an unrecognised chip is usable at all: the common
+        // case reaches here and never gets as far as the check below.
         UNLOCKED.store(true, Ordering::Relaxed);
         return Ok(());
+    }
+
+    // Past this point the status register gets written, and where QE lives
+    // depends on who made the chip. Refuse rather than guess: losing the
+    // ability to *write* flash on an unrecognised board is recoverable by
+    // adding its manufacturer here, and losing QE is recoverable only with an
+    // external programmer.
+    let mfr = jedec_id()? & 0xFF;
+    STATUS_TRACE[3].store(mfr | 0x100, Ordering::Relaxed);
+    if mfr != MFR_GIGADEVICE && mfr != MFR_WINBOND {
+        return Err(FlashError::UnknownChip);
     }
 
     STATUS_TRACE[0].store(0x1002, Ordering::Relaxed);
@@ -983,6 +1058,49 @@ mod tests {
             let to_page_end = (PAGE_SIZE - (at % PAGE_SIZE)) / 4;
             assert_eq!(to_page_end, want, "at {at:#x}");
         }
+    }
+
+    #[test]
+    fn only_chips_whose_qe_bit_is_known_may_be_unlocked() {
+        // The whole point of the gate. GigaDevice and Winbond hold QE at bit 1
+        // of status register 2, which `STATUS2_QE` addresses through a
+        // two-byte WRSR. Macronix and ISSI hold it at bit 6 of status register
+        // *one* -- inside the first byte, where `unlock`'s write would clear
+        // it and leave a QIO-boot board unbootable.
+        assert_eq!(MFR_GIGADEVICE, 0xC8);
+        assert_eq!(MFR_WINBOND, 0xEF);
+        const MFR_MACRONIX: u32 = 0xC2;
+        const MFR_ISSI: u32 = 0x9D;
+        for unknown in [MFR_MACRONIX, MFR_ISSI, 0x00, 0xFF] {
+            assert!(
+                unknown != MFR_GIGADEVICE && unknown != MFR_WINBOND,
+                "{unknown:#x} must not be treated as known"
+            );
+        }
+        // Macronix's QE would sit here, in the byte a one-byte WRSR writes.
+        const SR1_QE_MACRONIX: u32 = 1 << 6;
+        assert_ne!(
+            SR1_QE_MACRONIX, STATUS2_QE,
+            "the two layouts must not be confused"
+        );
+        assert_eq!(
+            SR1_QE_MACRONIX & 0xFF,
+            SR1_QE_MACRONIX,
+            "Macronix QE is in the first status byte, unlike GigaDevice's"
+        );
+    }
+
+    #[test]
+    fn rdid_reads_three_bytes_and_the_manufacturer_is_the_first() {
+        assert_eq!(OPCODE_RDID, 0x9F);
+        // MISO_DLEN holds n-1, so 24 bits is 23. Getting this wrong reads a
+        // short id, whose low byte is still the manufacturer -- which is why
+        // the length is pinned rather than trusted.
+        let bits_minus_one = 23u32;
+        assert_eq!((bits_minus_one + 1) / 8, 3);
+        // The manufacturer arrives first and lands in the low byte.
+        let sample = 0x0016_40C8u32; // capacity, type, GigaDevice
+        assert_eq!(sample & 0xFF, MFR_GIGADEVICE);
     }
 
     #[test]

@@ -77,6 +77,23 @@ fn run() {
         api::log_error!("[probe] not populated: the ROM would build commands from this");
     }
 
+    // The manufacturer byte of the ROM's device id, which is the same thing
+    // `unlock` reads for itself with RDID. Printed because it decides whether
+    // this board can be unlocked at all: 0xC8 GigaDevice and 0xEF Winbond are
+    // known, and anything else makes a protected chip refuse rather than have
+    // its status register written on a guess. First thing to check on a board
+    // this driver has not seen before.
+    let mfr = c.device_id & 0xFF;
+    match mfr {
+        0xC8 => api::log_info!("[probe] flash vendor {:#04x} (GigaDevice), unlock supported", mfr),
+        0xEF => api::log_info!("[probe] flash vendor {:#04x} (Winbond), unlock supported", mfr),
+        _ => api::log_warn!(
+            "[probe] flash vendor {:#04x} is not known to this driver: a protected \
+             chip will report UnknownChip rather than risk clearing QE",
+            mfr
+        ),
+    }
+
     // What the bootloader left SPI1 configured as. Every theory about where an
     // extra clock comes from has been an inference from behaviour; this is the
     // configuration itself.

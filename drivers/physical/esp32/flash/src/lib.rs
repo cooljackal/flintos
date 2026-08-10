@@ -107,6 +107,13 @@ pub enum FlashError {
     /// pointers; a byte-aligned call reads or writes the wrong place rather
     /// than refusing.
     Misaligned,
+    /// The flash chip's JEDEC manufacturer id is not one whose status-register
+    /// layout this driver knows, and the chip arrived with its block-protect
+    /// bits set — so unlocking it would mean writing a status register blind.
+    ///
+    /// Refusing loses the ability to write flash on that board. Guessing can
+    /// lose the ability to boot it: see [`spi1::unlock`].
+    UnknownChip,
 }
 
 // The ROM's Cache_Read_Disable/Enable are **not** used, and that is the fix.
