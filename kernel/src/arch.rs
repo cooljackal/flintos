@@ -340,7 +340,7 @@ pub mod host {
     /// Register-level stand-ins. Same names and signatures as the Xtensa ones,
     /// so no call site needs a `cfg`.
     pub mod registers {
-        use super::{Ordering, SWITCH_REQUESTS};
+        use super::{AtomicU32, Ordering, SWITCH_REQUESTS};
 
         /// PS.WOE — Window Overflow Enable, bit 18. A bit pattern, not a
         /// machine action, so the real value is used: `spawn` writes it into
@@ -359,6 +359,26 @@ pub mod host {
         /// # Safety
         /// Sound on a host; `unsafe` matches the Xtensa signature.
         pub unsafe fn intclear(_mask: u32) {}
+
+        /// Stand-in `INTENABLE`, so the selective-masking logic can be tested.
+        ///
+        /// A real one masks interrupts; this one is a number the tests can
+        /// read back — which is enough to check that `mask_non_iram_safe`
+        /// keeps the right bits and puts the right value back, which is the
+        /// part that can be got wrong.
+        static INTENABLE: AtomicU32 = AtomicU32::new(u32::MAX);
+
+        /// # Safety
+        /// Sound on a host; `unsafe` matches the Xtensa signature.
+        pub unsafe fn read_intenable() -> u32 {
+            INTENABLE.load(Ordering::SeqCst)
+        }
+
+        /// # Safety
+        /// Sound on a host; `unsafe` matches the Xtensa signature.
+        pub unsafe fn write_intenable(val: u32) {
+            INTENABLE.store(val, Ordering::SeqCst);
+        }
 
         /// # Safety
         /// Sound on a host; `unsafe` matches the Xtensa signature.

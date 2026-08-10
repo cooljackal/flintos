@@ -72,6 +72,12 @@ struct Handler {
     irq: u8,
     /// Top-half: runs in the trap context, must be tiny and non-blocking.
     isr: fn(),
+    /// Whether this handler may run with the instruction cache disabled.
+    ///
+    /// False by default, and that default is the safe one: a handler that
+    /// says yes and is not is a core that stops dead mid-flash-write, with
+    /// nothing to show for it. See [`register_iram_safe`].
+    iram_safe: bool,
 }
 
 static mut HANDLERS: [Option<Handler>; MAX_HANDLERS] = [None; MAX_HANDLERS];
@@ -86,6 +92,37 @@ fn handlers() -> &'static mut [Option<Handler>; MAX_HANDLERS] {
 /// first match), which is exactly the "plausible-looking wrong result" the
 /// project's error-handling philosophy forbids (item 10a).
 pub fn register(irq: u8, isr: fn()) -> bool {
+    register_inner(irq, isr, false)
+}
+
+/// Register a top-half that may run while the instruction cache is off.
+///
+/// A flash erase or program runs with the cache disabled, and anything fetched
+/// from flash during that window fetches nothing at all — the core stops. So
+/// FlintOS masks interrupts for the duration. Blanket masking is safe but
+/// costs the whole operation in latency, and a sector erase is tens of
+/// milliseconds: long enough to drop a Wi-Fi link.
+///
+/// This is the opt-out. A handler registered here stays enabled through a
+/// flash operation, and in exchange it promises that **it and everything it
+/// calls** live in IRAM. esp-idf spells the same promise `ESP_INTR_FLAG_IRAM`
+/// and NuttX honours it in `esp32_spiflash_opstart`.
+///
+/// # The promise is not checked
+///
+/// Nothing here can verify it. `#[link_section]` places a function body and
+/// says nothing about a copy the optimiser folded into a caller — a trap this
+/// project has fallen into three times in the flash driver alone. Check the
+/// built ELF, not the attributes.
+///
+/// Breaking it does not fault. The core simply stops fetching, which presents
+/// as a board that went silent during a flash write, nowhere near the handler
+/// that caused it.
+pub fn register_iram_safe(irq: u8, isr: fn()) -> bool {
+    register_inner(irq, isr, true)
+}
+
+fn register_inner(irq: u8, isr: fn(), iram_safe: bool) -> bool {
     cs_with(|| {
         let h = handlers();
         if h.iter().flatten().any(|handler| handler.irq == irq) {
@@ -97,7 +134,7 @@ pub fn register(irq: u8, isr: fn()) -> bool {
         }
         for slot in h.iter_mut() {
             if slot.is_none() {
-                *slot = Some(Handler { irq, isr });
+                *slot = Some(Handler { irq, isr, iram_safe });
                 return true;
             }
         }
@@ -208,3 +245,138 @@ unsafe fn unmask(cpu_int: u8) {
 
 #[cfg(not(target_os = "none"))]
 unsafe fn unmask(_cpu_int: u8) {}
+
+// ── Masking for flash operations ────────────────────────────────────────────
+
+/// Mask every interrupt that is *not* safe to run with the cache off.
+///
+/// Returns the previous `INTENABLE`, which [`restore_mask`] puts back. The
+/// handlers registered through [`register_iram_safe`] stay enabled; everything
+/// else — including any CPU interrupt with no handler at all, since an
+/// unregistered one has nothing promising anything — is masked.
+///
+/// This replaces raising `PS.INTLEVEL`, which masked the lot. Both esp-idf and
+/// NuttX mask selectively for exactly this reason: a sector erase is tens of
+/// milliseconds, and stopping every interrupt for that long is a real-time
+/// defect whether or not a radio is involved.
+///
+/// # Safety
+/// Must be paired with [`restore_mask`] on the same core. Interrupts stay
+/// masked until it is, and a driver whose interrupt never fires again looks
+/// like a dead peripheral rather than a missing call.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.intr")]
+pub unsafe fn mask_non_iram_safe() -> u32 {
+    let previous = unsafe { registers::read_intenable() };
+    let mut keep = 0u32;
+    // Deliberately not `cs_with`: the caller is already inside a critical
+    // section, and taking another would nest a lock this must not depend on
+    // while the cache is about to go away.
+    for handler in handlers().iter().flatten() {
+        if handler.iram_safe && handler.irq < 32 {
+            keep |= 1u32 << handler.irq;
+        }
+    }
+    unsafe { registers::write_intenable(previous & keep) };
+    previous
+}
+
+/// Put back what [`mask_non_iram_safe`] returned.
+///
+/// # Safety
+/// `previous` must be the value that call returned, on this core.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.intr")]
+pub unsafe fn restore_mask(previous: u32) {
+    unsafe { registers::write_intenable(previous) };
+}
+
+/// Whether `irq` has a handler that promised to be IRAM-safe. Test support.
+pub fn is_iram_safe(irq: u8) -> bool {
+    cs_with(|| {
+        handlers()
+            .iter()
+            .flatten()
+            .any(|h| h.irq == irq && h.iram_safe)
+    })
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy() {}
+
+    /// Serialise: the handler table is global and the suite runs in parallel.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn a_plain_registration_is_not_iram_safe() {
+        // The default has to be the safe one. A handler that is wrongly
+        // believed IRAM-safe stops the core mid-flash-write, and there is
+        // nothing to see afterwards.
+        let _s = serial();
+        assert!(register(20, dummy));
+        assert!(!is_iram_safe(20), "register must not imply IRAM-safe");
+        clear_for_test(20);
+    }
+
+    #[test]
+    fn an_iram_safe_registration_says_so() {
+        let _s = serial();
+        assert!(register_iram_safe(21, dummy));
+        assert!(is_iram_safe(21));
+        clear_for_test(21);
+    }
+
+    #[test]
+    fn masking_keeps_only_the_iram_safe_bits() {
+        let _s = serial();
+        assert!(register_iram_safe(22, dummy));
+        assert!(register(23, dummy));
+        unsafe { registers::write_intenable(u32::MAX) };
+
+        let previous = unsafe { mask_non_iram_safe() };
+        let now = unsafe { registers::read_intenable() };
+
+        assert_eq!(previous, u32::MAX, "the old mask must be reported back");
+        assert_ne!(now & (1 << 22), 0, "an IRAM-safe handler must stay enabled");
+        assert_eq!(now & (1 << 23), 0, "everything else must be masked");
+        // An interrupt with no handler at all promised nothing, so it goes too.
+        assert_eq!(now & (1 << 24), 0, "an unregistered interrupt must be masked");
+
+        unsafe { restore_mask(previous) };
+        assert_eq!(unsafe { registers::read_intenable() }, u32::MAX, "restore must be exact");
+        clear_for_test(22);
+        clear_for_test(23);
+    }
+
+    #[test]
+    fn masking_with_nothing_iram_safe_masks_everything() {
+        // The common case today: no handler has opted in, so this is the old
+        // blanket behaviour and the change is inert until something does.
+        let _s = serial();
+        unsafe { registers::write_intenable(u32::MAX) };
+        let previous = unsafe { mask_non_iram_safe() };
+        assert_eq!(unsafe { registers::read_intenable() }, 0);
+        unsafe { restore_mask(previous) };
+    }
+
+    /// Free a slot so tests do not exhaust the table or collide.
+    fn clear_for_test(irq: u8) {
+        cs_with(|| {
+            for slot in handlers().iter_mut() {
+                if slot.is_some_and(|h| h.irq == irq) {
+                    *slot = None;
+                }
+            }
+        });
+    }
+}

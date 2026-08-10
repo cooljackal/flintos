@@ -316,14 +316,32 @@ impl FlashRegion {
     }
 }
 
-/// Run `f` with the instruction cache disabled and interrupts masked.
+/// Run `f` with the instruction cache disabled and unsafe interrupts masked.
 ///
 /// The masking is not about atomicity. An interrupt handler is code, and code
 /// is in flash unless it says otherwise — taking one here fetches through a
-/// cache that is switched off.
+/// cache that is switched off, and the core stops.
+///
+/// # Selective, not blanket
+///
+/// This used to raise `PS.INTLEVEL` to 5, masking everything. Safe, and a
+/// real-time defect: a sector erase is tens of milliseconds, and for all of it
+/// the tick stopped and no driver interrupt was serviced. Long enough to drop
+/// a Wi-Fi link, and poor behaviour even without one.
+///
+/// Now only the interrupts that have *not* promised to be IRAM-safe are
+/// masked, through `INTENABLE`. A handler registered with
+/// `interrupt::register_iram_safe` keeps running throughout. esp-idf
+/// (`esp_intr_noniram_disable`) and NuttX (`esp32_spiflash_opstart`) both do
+/// exactly this, and for the same reason.
+///
+/// `PS.INTLEVEL` is still raised, but only across the two short windows where
+/// `INTENABLE` and the cache registers are being changed — a handful of
+/// instructions rather than the whole operation.
 ///
 /// # Safety
-/// `f` and everything it calls must be in IRAM or ROM.
+/// `f` and everything it calls must be in IRAM or ROM. So must any handler
+/// registered as IRAM-safe, which is a promise this cannot check.
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(), FlashError> {
@@ -332,10 +350,14 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     if SKIP_CACHE {
         return f();
     }
+    // Briefly, to make the INTENABLE read-modify-write atomic against an
+    // interrupt arriving between the read and the write.
     #[cfg(target_arch = "xtensa")]
     let saved: u32;
     #[cfg(target_arch = "xtensa")]
     core::arch::asm!("rsil {0}, 5", out(reg) saved);
+    #[cfg(target_os = "none")]
+    let saved_intenable = kernel_interrupt_mask();
 
     // Save which windows the cache serves, wait for it to go idle, then switch
     // it off. The wait is the part that cannot be skipped.
@@ -365,15 +387,88 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     let ctrl = PRO_CACHE_CTRL as *mut u32;
     ctrl.write_volatile(ctrl.read_volatile() & !PRO_CACHE_ENABLE);
 
+    // Back to the caller's interrupt level for the long part. Everything
+    // unsafe to run now is masked in INTENABLE; anything still enabled said it
+    // could cope with the cache being off.
+    #[cfg(target_arch = "xtensa")]
+    core::arch::asm!("wsr.ps {0}", "rsync", in(reg) saved);
+
     let r = f();
+
+    // And masked again for the restore, which is another read-modify-write.
+    #[cfg(target_arch = "xtensa")]
+    core::arch::asm!("rsil {0}, 5", out(reg) _);
 
     ctrl.write_volatile(ctrl.read_volatile() | PRO_CACHE_ENABLE);
     ctrl1.write_volatile((ctrl1.read_volatile() & !PRO_CACHE_MASK) | saved_mask);
+
+    #[cfg(target_os = "none")]
+    kernel_interrupt_restore(saved_intenable);
 
     #[cfg(target_arch = "xtensa")]
     core::arch::asm!("wsr.ps {0}", "rsync", in(reg) saved);
 
     r
+}
+
+// ── The interrupt hook ──────────────────────────────────────────────────────
+//
+// This driver is Layer 1 and may not name `kernel` — `make check-layers`
+// enforces it, and rightly: a physical driver reaching into the scheduler is
+// how a driver stops being portable. But deciding *which* interrupts are safe
+// to leave enabled means knowing which handlers promised to be IRAM-safe, and
+// that register lives in the kernel.
+//
+// So the kernel installs a pair of functions at startup and this calls them if
+// they are there. Two atomics and a setter; the indirection buys the layer
+// boundary and costs one indirect call per flash operation, which against tens
+// of milliseconds of erase is nothing.
+//
+// Uninstalled, `mask` returns `u32::MAX` — the sentinel for "no hook" — and
+// the operation runs with only the `rsil 5` it always had. That is the old
+// behaviour exactly, which is what makes installing the hook a change that can
+// be reverted by not calling the setter.
+
+use core::sync::atomic::AtomicUsize;
+
+static MASK_HOOK: AtomicUsize = AtomicUsize::new(0);
+static RESTORE_HOOK: AtomicUsize = AtomicUsize::new(0);
+
+/// Tell the driver how to mask interrupts that cannot survive the cache going
+/// away, and how to put them back.
+///
+/// Call once, from the kernel, before any flash operation. Without it flash
+/// still works and simply masks everything for the duration.
+///
+/// # Safety
+/// `mask` must return a value `restore` accepts, and neither may touch flash
+/// — they are called with the cache on, but the second is called immediately
+/// before it comes back, so keeping both in IRAM is the safe habit.
+pub unsafe fn set_interrupt_hooks(mask: unsafe fn() -> u32, restore: unsafe fn(u32)) {
+    MASK_HOOK.store(mask as usize, Ordering::Relaxed);
+    RESTORE_HOOK.store(restore as usize, Ordering::Relaxed);
+}
+
+/// Mask what cannot run with the cache off. `u32::MAX` means no hook.
+#[cfg(target_os = "none")]
+#[inline(always)]
+unsafe fn kernel_interrupt_mask() -> u32 {
+    let f = MASK_HOOK.load(Ordering::Relaxed);
+    if f == 0 {
+        return u32::MAX;
+    }
+    unsafe { core::mem::transmute::<usize, unsafe fn() -> u32>(f)() }
+}
+
+/// Put back what [`kernel_interrupt_mask`] returned.
+#[cfg(target_os = "none")]
+#[inline(always)]
+unsafe fn kernel_interrupt_restore(saved: u32) {
+    let f = RESTORE_HOOK.load(Ordering::Relaxed);
+    if f == 0 {
+        return;
+    }
+    unsafe { core::mem::transmute::<usize, unsafe fn(u32)>(f)(saved) }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

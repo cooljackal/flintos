@@ -140,6 +140,24 @@ pub extern "C" fn FlintMain() -> ! {
 
     unsafe { registers::enable_interrupt(registers::INT_SOFTWARE) };
 
+    // Step 2b: tell the flash driver which interrupts it may leave enabled.
+    //
+    // Before this, a flash erase masked everything for its whole duration --
+    // tens of milliseconds with no tick and no driver interrupt, which is a
+    // real-time defect on its own terms and fatal to a radio link. The driver
+    // is Layer 1 and may not name `kernel`, so the register of IRAM-safe
+    // handlers is handed over rather than reached for.
+    //
+    // Installed before any task runs, so no flash operation can happen with
+    // the hook half-set.
+    #[cfg(target_os = "none")]
+    unsafe {
+        esp32_flash::set_interrupt_hooks(
+            crate::interrupt::mask_non_iram_safe,
+            crate::interrupt::restore_mask,
+        );
+    }
+
     // Step 3: install the idle task as TCB 0 and make it `current`. It runs on
     // the current (kernel/boot) stack — `FlintMain` itself becomes idle once
     // interrupts are enabled.

@@ -205,6 +205,16 @@ pub unsafe fn read_interrupt() -> u32 {
 }
 
 /// Read INTENABLE (enabled interrupt mask, special register).
+///
+/// One bit per CPU interrupt, and the finer instrument beside `PS.INTLEVEL`:
+/// raising the level masks everything below it, while clearing a bit here
+/// masks one interrupt and leaves the rest live.
+///
+/// That distinction is what lets a flash operation keep servicing handlers
+/// safe to run with the instruction cache off, rather than stopping the world
+/// for the tens of milliseconds a sector erase takes. esp-idf
+/// (`esp_intr_noniram_disable`) and NuttX (`esp32_spiflash_opstart`) both work
+/// this way; see `kernel::interrupt::mask_non_iram_safe`.
 pub unsafe fn read_intenable() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.intenable {0}", out(reg) val);
