@@ -261,6 +261,7 @@ dependencies = [
  "api",
  "hal",
  "kernel",
+ "kvstore",
  "soc-esp32",
 ]
 

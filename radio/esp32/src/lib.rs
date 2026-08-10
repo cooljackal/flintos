@@ -42,6 +42,7 @@
 #![no_std]
 
 pub mod adapter;
+pub mod calibration;
 pub mod osi;
 
 pub use osi::{WifiOsiFuncs, IDF_VERSION, MAGIC, VERSION};

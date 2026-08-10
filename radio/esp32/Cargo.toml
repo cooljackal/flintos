@@ -27,6 +27,10 @@ kernel = { path = "../../kernel", default-features = false }
 
 soc-esp32 = { path = "../../soc/esp32" }
 
+# The key/value store the RF calibration is persisted through. A `lib/*` crate
+# with no hardware in it, so this costs the layer check nothing.
+kvstore = { path = "../../lib/kvstore" }
+
 [features]
 # Link Espressif's archives. Off by default so the crate builds and tests with
 # no binaries present -- `make blobs` fetches them. Turning this on is step 3.3
