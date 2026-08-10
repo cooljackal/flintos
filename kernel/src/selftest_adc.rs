@@ -7,10 +7,12 @@
 //! wrong pad, and on a result that is stuck at whatever the last conversion
 //! left. Averaged noise on a floating pin looks especially convincing.
 //!
-//! So the input is made to change and the reading has to follow. GPIO 33 gets
-//! a pull-up and then a pull-down, and the two readings must sit at opposite
-//! ends of the scale. Nothing is wired to that pin on the Atom; the pad's own
-//! pull is the whole signal source.
+//! So the input is made to change and the reading has to follow: GPIO 33 is
+//! pulled down internally and a pin the *board* holds high is read alongside
+//! it, and the two must sit at opposite ends of the scale. The high end has to
+//! come from the board -- see `ADC_EXTERNAL_HIGH_GPIO` -- because a pad in
+//! analog mode cannot be driven by the chip and its internal pull-up managed
+//! only 4% of full scale.
 //!
 //! That also catches the inversion. `SENS_SAR1_DATA_INV` unset gives a count
 //! that falls as the voltage rises, and every individual reading still looks
@@ -29,7 +31,7 @@ const SAMPLES: u16 = 64;
 
 /// A pull-up must read high and a pull-down must read low.
 #[cfg(target_os = "none")]
-pub(crate) fn adc1_follows_the_pin_it_is_pointed_at() -> Check {
+pub(crate) fn adc1_follows_the_pin_it_is_pointed_at(high_gpio: u8) -> Check {
     use esp32_adc::{Adc1, Attenuation, Channel, Pull, FULL_SCALE};
 
     let ch = match Channel::from_gpio(TEST_GPIO) {
@@ -50,8 +52,10 @@ pub(crate) fn adc1_follows_the_pin_it_is_pointed_at() -> Check {
     // survive analog mode but is tens of kilohms into the SAR's sampling
     // capacitor, and measured 4% of full scale rather than 80.
     //
-    // GPIO 39 is the Atom's button, held up by an external resistor, and it is
-    // ADC1 channel 3. That is a real low-impedance high. GPIO 33 pulled down
+    // The *board* names the high pin, as `ADC_EXTERNAL_HIGH_GPIO`. On the Atom
+    // that is GPIO39 -- the button, held up by an external resistor, and ADC1
+    // channel 3. That is a real low-impedance high, and a board without one
+    // skips this test rather than reading a floating pin. GPIO 33 pulled down
     // internally is a real low — a pull-down only has to sink leakage, which
     // is why that end read correctly all along.
     //
@@ -64,9 +68,9 @@ pub(crate) fn adc1_follows_the_pin_it_is_pointed_at() -> Check {
     // distinguishes a high pin from a low one; it does not prove the pad
     // configuration path, which wants a board with something driving an ADC
     // pin low-impedance from outside.
-    let button = match Channel::from_gpio(39) {
+    let button = match Channel::from_gpio(high_gpio) {
         Some(c) => c,
-        None => return Err("GPIO39 is not an ADC1 channel"),
+        None => return Err("the board's ADC_EXTERNAL_HIGH_GPIO is not an ADC1 channel"),
     };
     unsafe { adc.set_attenuation(button, Attenuation::Db11) };
 
@@ -78,7 +82,7 @@ pub(crate) fn adc1_follows_the_pin_it_is_pointed_at() -> Check {
         .map_err(|_| "the conversion never completed")?;
     {
         use crate::debug::fault::{raw_dec, raw_print};
-        raw_print("[FLINT]   adc button(39)=");
+        raw_print("[FLINT]   adc high-pin=");
         raw_dec(high as u32);
         raw_print(" pulled-down(33)=");
         raw_dec(low as u32);
@@ -116,7 +120,7 @@ pub(crate) fn adc1_follows_the_pin_it_is_pointed_at() -> Check {
 /// Busy-wait long enough for a pull to settle, using the tick.
 #[cfg(target_os = "none")]
 fn settle() {
-    super::selftest::spin_ticks(5);
+    super::spin_ticks(5);
 }
 
 /// Every channel must convert, and not all to the same number.
@@ -151,7 +155,7 @@ pub(crate) fn every_adc1_channel_converts() -> Check {
 
 // Host stand-ins: there is no SAR to drive.
 #[cfg(not(target_os = "none"))]
-pub(crate) fn adc1_follows_the_pin_it_is_pointed_at() -> Check {
+pub(crate) fn adc1_follows_the_pin_it_is_pointed_at(_high_gpio: u8) -> Check {
     Ok(())
 }
 #[cfg(not(target_os = "none"))]

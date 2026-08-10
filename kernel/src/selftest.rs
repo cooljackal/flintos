@@ -88,7 +88,20 @@ pub fn run() {
 
     check("a_periodic_alarm_keeps_firing_at_its_rate", timg::a_periodic_alarm_keeps_firing_at_its_rate(), &mut pass, &mut fail);
 
-    check("adc1_follows_the_pin_it_is_pointed_at", adc::adc1_follows_the_pin_it_is_pointed_at(), &mut pass, &mut fail);
+    // Needs a pin the *board* holds high; the chip cannot supply one. See
+    // `board::active::ADC_EXTERNAL_HIGH_GPIO`.
+    match crate::board::active::ADC_EXTERNAL_HIGH_GPIO {
+        Some(gpio) => check(
+            "adc1_follows_the_pin_it_is_pointed_at",
+            adc::adc1_follows_the_pin_it_is_pointed_at(gpio),
+            &mut pass,
+            &mut fail,
+        ),
+        None => skip(
+            "adc1_follows_the_pin_it_is_pointed_at",
+            "this board declares no externally-held-high ADC1 pin",
+        ),
+    }
     check("every_adc1_channel_converts", adc::every_adc1_channel_converts(), &mut pass, &mut fail);
 
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
@@ -115,6 +128,25 @@ pub fn run() {
     print_u32(pass);
     raw_print(" fail=");
     print_u32(fail);
+    raw_print("\r\n");
+}
+
+/// Report a test that could not run here, without counting it either way.
+///
+/// A test that needs hardware this board has not got is not a pass and not a
+/// failure. Counting it as a pass claims coverage that does not exist; as a
+/// failure it trains people to ignore red. Dropping it silently is worse than
+/// both, because the suite then reports a smaller total and nothing says why.
+///
+/// The line is deliberately not `PASS` or ` FAIL `, which is what keeps
+/// `tools/target-test.sh` from counting it — that harness reconciles the
+/// summary against the lines that actually arrived, so a skip must match
+/// neither pattern.
+fn skip(name: &str, reason: &str) {
+    raw_print("[FLINT] TEST ");
+    raw_print(name);
+    raw_print(" SKIP ");
+    raw_print(reason);
     raw_print("\r\n");
 }
 

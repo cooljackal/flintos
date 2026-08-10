@@ -24,6 +24,21 @@ pub const BOARD_NAME: &str = "ESP32-WROVER";
 pub const HAS_WIFI: bool = true;
 pub const HAS_BT: bool = true;
 
+
+/// A GPIO this board holds at a hard, low-impedance high, or `None`.
+///
+/// The ADC self-test needs one, and the chip cannot supply it: a pad in analog
+/// mode has its digital buffers bypassed, and the internal pull-up is tens of
+/// kilohms into the SAR's sampling capacitor -- measured at 4% of full scale
+/// rather than 80. So the *board* has to provide the high, which makes it a
+/// manifest fact rather than something the test can assume.
+///
+/// A board without one is not broken; the test skips, and says so.
+///
+/// Nothing on this board holds an ADC1 pin high. As on the DevKitC,
+/// GPIO34-39 are input-only with no internal pull.
+pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = None;
+
 pub const TICK_PERIOD_US: u32 = 1000;
 pub const DMA_POOL_BYTES: usize = 8192;
 

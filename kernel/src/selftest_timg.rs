@@ -125,7 +125,7 @@ pub(crate) fn a_timg_alarm_fires_once_from_the_isr() -> Check {
 
     // Give a runaway handler room to prove itself. A single acknowledged alarm
     // stays at one; an unacknowledged one climbs without limit.
-    super::selftest::spin_ticks(20);
+    super::spin_ticks(20);
     let hits = ALARM_HITS.load(Ordering::SeqCst);
     unsafe { t.stop() };
 
