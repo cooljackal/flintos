@@ -24,14 +24,15 @@ The last three refuse to build for a board whose manifest does not declare the
 hardware they drive, and say which board to use instead.
 
 ```bash
-make apps                                  # list what's here
-make flash                                 # demo, on an ESP32-WROVER
-make flash APP=hello                       # hello instead
-make flash APP=demo BOARD=board-m5-atom-lite   # different board
-make flash APP=hello DEBUG=debug-level-0   # no logging at all
+make apps                                                    # list what's here
+make flash BOARD=board-esp32-devkitc                         # demo, on a WROOM-32
+make flash APP=hello BOARD=board-esp32-devkitc               # hello instead
+make flash APP=demo  BOARD=board-m5-atom-lite                # different board
+make flash APP=hello BOARD=board-esp32-devkitc DEBUG=debug-level-0   # no logging
 ```
 
-`BOARD` and `DEBUG` default to `board-esp32-wrover` and `debug-level-1`.
+`DEBUG` defaults to `debug-level-1`. **`BOARD` has no default** — name it, or
+the build stops and lists the choices.
 
 ---
 
@@ -93,7 +94,7 @@ hal = { path = "../../hal" }
 build = { path = "../../tools/build" }
 
 [features]
-default = ["board-esp32-wrover", "debug-level-1"]
+default = ["debug-level-1"]          # no default board, deliberately
 board-esp32-wrover = ["kernel/board-esp32-wrover"]
 board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
 board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
@@ -104,11 +105,11 @@ debug-level-3 = ["kernel/debug-level-3"]
 ```
 
 Copy the feature block verbatim. Exactly one `board-*` feature must reach
-`board`, which is why the app sets `default-features = false` on the
-kernel and why `make` passes `--no-default-features`: Cargo unions features, so
-without that the default board would stay enabled alongside the one you asked
-for, and a binary with two board manifests merged in is not a build for either
-board.
+`board`: none stops the build with the list of choices, and two is a compile
+error, because a binary with two board manifests merged in is not a build for
+either board. No board is a default feature anywhere in the tree, and `make`
+still passes `--no-default-features` so that a feature added to some crate's
+defaults later cannot quietly change what you built.
 
 ---
 

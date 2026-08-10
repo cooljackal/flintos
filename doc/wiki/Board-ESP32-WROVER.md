@@ -1,7 +1,7 @@
 # ESP32-WROVER
 
 ```bash
-make flash                       # this is the default board
+make flash BOARD=board-esp32-wrover
 ```
 
 Feature: `board-esp32-wrover`. Manifest: `board/src/esp32_wrover.rs`.
@@ -9,11 +9,11 @@ Feature: `board-esp32-wrover`. Manifest: `board/src/esp32_wrover.rs`.
 SoC: ESP32 — see [ESP32](SoC-ESP32) for the full pin table and peripheral map.
 Tick: 1 ms.
 
-> **Never flashed.** This is the default board and the *least* tested one —
-> the manifest is written and its invariant tests pass, but nobody has held
-> the hardware. The verified board is the
-> [DevKitC / WROOM-32](Board-ESP32-DevKitC); pass
-> `BOARD=board-esp32-devkitc` for the path that has been run.
+> **Never flashed.** The manifest is written and its invariant tests pass,
+> but nobody has held the hardware. This used to be the default board, which
+> meant `make flash` with no argument built for the least tested board in the
+> tree; there is no default any more. The verified board is the
+> [DevKitC / WROOM-32](Board-ESP32-DevKitC).
 >
 > Same silicon and same image format, so this should work. If you have one,
 > please report either way — bringing up the WROOM-32 found two real bugs in

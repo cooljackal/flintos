@@ -138,6 +138,17 @@ LD_SCRIPT       = $(if $(wildcard $(LD_GENERATED)),$(LD_GENERATED),$(LD_TEMPLATE
 HOST_EXCLUDE   := arch-xtensa hello demo blink imu pwm smp spidma flashprobe
 HOST_SELECT    := --workspace $(addprefix --exclude ,$(HOST_EXCLUDE))
 
+# The host suite still has to compile `board` and `kernel`, and both need a
+# manifest. This names one for them.
+#
+# It is not a default board: nothing here is flashed, and `make test-boards`
+# runs every manifest's invariant tests one board at a time regardless of what
+# this says. It exists so the workspace build has *a* pin map, and naming it in
+# one place beats scattering `--features` across four recipes.
+# `=` not `:=`: HOST_BOARD is defined further down, and immediate expansion
+# here would resolve it to nothing.
+HOST_BOARD_FEATURES = --features board/$(HOST_BOARD),kernel/$(HOST_BOARD)
+
 # espflash target/serial parameters (classic ESP32: PICO-D4 and WROVER alike --
 # both are esp-idf-format images on the same silicon, so one set of flags
 # covers both boards; see the flash-mode note below).
@@ -188,13 +199,24 @@ FLASH_MODE     := dio
 #   make flash APP=hello DEBUG=debug-level-0      # no logging at all
 #   make apps                                     # what is available
 #
-# --no-default-features is not optional. Cargo unions features, so without it
-# the default board stays enabled alongside the requested one and the board
-# crate's compile_error! rejects the build -- deliberately, because a binary
-# with two board manifests merged in is not a build for either board.
+# --no-default-features is kept even though no board is a default feature any
+# more: it keeps the feature set to exactly what is named here, so a debug
+# level added to some crate's defaults later cannot quietly change a build.
+#
+# **BOARD has no default and must be given.** A board manifest is the pin map,
+# the bus map and the IRQ numbers; defaulting it means flashing a board you did
+# not choose, and the default that used to be here was the one board nobody had
+# ever flashed. `require-board` below fails with the list rather than picking.
 APP            ?= demo
-BOARD          ?= board-esp32-wrover
+BOARD          ?=
 DEBUG          ?= debug-level-1
+
+# Which manifest the *host* suite compiles against. Not a default board: no
+# host test flashes anything, and `make test-boards` runs every manifest's
+# invariant tests one board at a time regardless of this. Something has to be
+# selected for `board` and `kernel` to compile at all on the host, and this
+# names it in one place instead of scattering it.
+HOST_BOARD     ?= board-esp32-devkitc
 
 # Anything else the app forwards, comma-separated. Currently just:
 #   make build EXTRA_FEATURES=self-test   # boot-time register-window check
@@ -253,7 +275,41 @@ export PATH := $(ESP_GCC_DIR):$(CARGO_BIN_DIR):$(PATH)
 
 ##@ Build and flash
 .PHONY: build
-build: ## Build the selected app (APP=demo BOARD=board-esp32-wrover DEBUG=debug-level-1)
+# Refuse to guess a board.
+#
+# Printed rather than defaulted, because the failure a default produces is
+# silent: the build succeeds, the image flashes, and the first symptom is a
+# peripheral on the wrong pin. One word on the command line is cheaper than
+# that. The list is ordered by how well tested each board is, and says so.
+# Refuse to guess a board.
+#
+# Reported through make's own $(error) rather than a shell recipe: it fires
+# before anything is built, needs no escaping, and cannot be defeated by the
+# `-k` flag. Only for goals that actually produce an image -- `make help`,
+# `make test-host` and `make apps` have no business demanding one.
+#
+# A default here would be a board you flash without choosing it, and the
+# default that used to be here was the one board nobody had ever flashed.
+define BOARD_HELP
+
+No board selected, and there is no default.
+
+  make <target> BOARD=<board>
+
+    board-esp32-devkitc     ESP32-DevKitC / WROOM-32   verified on hardware
+    board-m5-atom-matrix    M5Stack Atom Matrix        verified on hardware
+    board-m5-atom-lite      M5Stack Atom Lite          verified on hardware
+    board-esp32-wrover      ESP32-WROVER               never flashed
+
+endef
+
+BOARD_GOALS := build build-release flash flash-dev flash-release test-target test-watchdog check-features
+ifneq ($(filter $(BOARD_GOALS),$(MAKECMDGOALS)),)
+  ifeq ($(strip $(BOARD)),)
+    $(error $(BOARD_HELP))
+  endif
+endif
+build: ## Build the selected app (APP=demo BOARD=board-esp32-devkitc DEBUG=debug-level-1)
 	$(CARGO) build $(APP_FLAGS)
 	@$(MAKE) --no-print-directory size
 
@@ -321,7 +377,7 @@ monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
 ##@ Check and test
 .PHONY: check
 check: ## Check every host-compatible crate
-	cargo check $(HOST_SELECT) --target $(HOST_TARGET)
+	cargo check $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 
 # Applications that refuse to build for the default board, and the board each
 # one wants. `blink`, `imu` and `pwm` need hardware only the Atoms declare, and
@@ -333,6 +389,14 @@ check: ## Check every host-compatible crate
 # So: everything else against the default, then each of these against the board
 # it asks for. Coverage goes up, not down -- before this they were excluded from
 # the Xtensa check by failing it.
+# Which manifest the workspace-wide Xtensa check compiles against. As with
+# HOST_BOARD, not a default board: it is the pin map the crates that need
+# one get checked against, and CI builds every application for every board
+# separately. The board-specific apps below override it with the one they
+# require.
+XTENSA_BOARD   ?= board-esp32-devkitc
+XTENSA_BOARD_FEATURES = --features board/$(XTENSA_BOARD),kernel/$(XTENSA_BOARD),demo/$(XTENSA_BOARD),hello/$(XTENSA_BOARD),smp/$(XTENSA_BOARD),spidma/$(XTENSA_BOARD),flashprobe/$(XTENSA_BOARD)
+
 BOARD_SPECIFIC_APPS := blink imu pwm
 ATOM_BOARD          := board-m5-atom-matrix
 
@@ -340,7 +404,8 @@ ATOM_BOARD          := board-m5-atom-matrix
 check-all: ## Full check including arch (requires Xtensa toolchain)
 	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
 		--workspace --exclude build --exclude size \
-		$(addprefix --exclude ,$(BOARD_SPECIFIC_APPS))
+		$(addprefix --exclude ,$(BOARD_SPECIFIC_APPS)) \
+		$(XTENSA_BOARD_FEATURES)
 	@for a in $(BOARD_SPECIFIC_APPS); do \
 		echo "== $$a ($(ATOM_BOARD))"; \
 		$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
@@ -402,7 +467,7 @@ check-names: ## Enforce the package naming and layout convention
 
 .PHONY: test-host
 test-host: test-boards ## Run host-side unit tests (every board manifest included)
-	cargo test $(HOST_SELECT) --target $(HOST_TARGET)
+	cargo test $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 
 # Every board this tree can build for. A manifest's invariant tests only run
 # for the board that is selected, so testing the default board alone leaves
@@ -480,7 +545,7 @@ test-harness: ## Test the on-target harness's judging logic (no board needed)
 ##@ Quality
 .PHONY: lint
 lint: ## Run clippy on every host crate, tests included, warnings denied
-	cargo clippy $(HOST_SELECT) --target $(HOST_TARGET) \
+	cargo clippy $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES) \
 		--all-targets -- -D warnings
 
 # ─── Info ───────────────────────────────────────────────────────────────────────

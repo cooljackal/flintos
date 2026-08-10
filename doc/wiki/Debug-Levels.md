@@ -4,7 +4,7 @@ Additive. Everything above your level compiles out entirely — no runtime check
 no dead branch, no string in the binary.
 
 ```bash
-make flash DEBUG=debug-level-2
+make flash BOARD=board-esp32-devkitc DEBUG=debug-level-2
 ```
 
 Default is `debug-level-1`.

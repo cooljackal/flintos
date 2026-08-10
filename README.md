@@ -11,8 +11,8 @@
 
 **A preemptive real-time OS for 32-bit microcontrollers, in `no_std` Rust.**
 
-No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` → `make flash`
-→ three tasks running on an ESP32.
+No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` →
+`make flash BOARD=<your board>` → three tasks running on an ESP32.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
@@ -299,10 +299,15 @@ Then activate the environment in your shell:
 ```bash
 git clone https://github.com/cooljackal/flintos
 cd flintos
-make flash
+make flash BOARD=board-esp32-devkitc
 ```
 
 That builds `apps/demo`, flashes over USB serial, and opens a monitor.
+
+**`BOARD` is required and has no default.** A board manifest is the pin map,
+the bus map and the IRQ numbers, so defaulting it means flashing a board you
+did not choose — and a wrong pin map presents as the board being broken, not
+as a build error. `make flash` with no board lists them and stops.
 
 The kernel is a library; the thing you flash is an **application** from
 [`apps/`](apps/). Pick a different one, a different board, or a different amount
@@ -310,7 +315,7 @@ of logging:
 
 ```bash
 make apps                                  # what's available
-make flash APP=hello                       # the minimal one-task template
+make flash APP=hello BOARD=board-esp32-devkitc   # the minimal one-task template
 make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
 make flash APP=blink BOARD=board-m5-atom-matrix  # the Atom Matrix's 5x5 panel
 make flash APP=imu   BOARD=board-m5-atom-matrix  # the onboard IMU, over I²C
@@ -322,10 +327,11 @@ make flash APP=smp   BOARD=board-m5-atom-matrix  # starts the second core
 `debug-level-0` compiles logging out entirely — the tasks still run, they just
 print nothing, so leave it alone until you are shipping.
 
-Board features: `board-esp32-wrover` (default), `board-esp32-devkitc`,
-`board-m5-atom-lite`, `board-m5-atom-matrix`. Enabling two is a compile error,
-not a warning — a silently
-wrong pin map presents as the board being broken.
+Board features: `board-esp32-devkitc`, `board-m5-atom-lite`,
+`board-m5-atom-matrix`, `board-esp32-wrover`. There is no default; enabling
+none stops the build with the list, and enabling two is a compile error rather
+than a warning — a silently wrong pin map presents as the board being
+broken.
 
 Writing your own application is copying `apps/hello/` and adding a line to the
 workspace `Cargo.toml`. See [`apps/README.md`](apps/README.md).
@@ -338,7 +344,7 @@ baud switch failed. This is the common one. Flashing defaults to 115200 for
 that reason; if you raised it, put it back:
 
 ```bash
-make flash FLASH_BAUD=115200
+make flash BOARD=board-esp32-devkitc FLASH_BAUD=115200
 ```
 
 **`Error while connecting to device`, before the stub** — the board isn't in
@@ -509,9 +515,9 @@ The reference board for on-target work, checked on an ESP32 rev v3.0 module
 | Check | Result |
 |---|---|
 | `make test-target` | 30 pass, 0 fail, 1 skip |
-| `make flash APP=flashprobe` | erase, program and read back the `nvs` partition, with core 1 running throughout |
-| `make flash APP=smp` | both cores scheduling, pinned and floating tasks, no lost DPORT writes |
-| `make flash APP=demo` | three tasks at three priorities, stable |
+| `make flash APP=flashprobe BOARD=board-esp32-devkitc` | erase, program and read back the `nvs` partition, with core 1 running throughout |
+| `make flash APP=smp BOARD=board-esp32-devkitc` | both cores scheduling, pinned and floating tasks, no lost DPORT writes |
+| `make flash APP=demo BOARD=board-esp32-devkitc` | three tasks at three priorities, stable |
 
 The skip is `adc1_follows_the_pin_it_is_pointed_at`. It needs a pin the board
 holds hard high, which a bare DevKitC has not got — GPIO34-39 are input-only
@@ -519,8 +525,8 @@ with no internal pull. The Atoms declare their button, so it runs there.
 Jumper GPIO39 to 3V3 and set `ADC_EXTERNAL_HIGH_GPIO` in the manifest to run
 it here. A test that cannot run says so rather than passing or failing.
 
-**Note the default board is the WROVER**, which is the one nobody has flashed.
-Pass `BOARD=board-esp32-devkitc` for the verified path.
+`BOARD` has no default, so nothing picks this for you — name the board that
+matches your hardware. `board-esp32-devkitc` is the verified path.
 
 **The 🟡 row is the honest one:** the manifest is written and its tests pass,
 but no one has held the board. **That is the contribution we want most** —
@@ -640,9 +646,9 @@ reads the serial output and exits non-zero if anything failed, so it is usable
 from a script rather than only by eye.
 
 Set `PORT` when more than one serial device is attached, or espflash will stop
-to ask which one and the harness has no terminal to answer with. `BOARD` must
-match your hardware — the default is `board-esp32-wrover`, so an ESP32-PICO
-board such as the M5Stack Atom Matrix needs `BOARD=board-m5-atom-matrix`.
+to ask which one and the harness has no terminal to answer with. `BOARD` has no
+default and must match your hardware: an M5Stack Atom Matrix needs
+`BOARD=board-m5-atom-matrix`, a WROOM-32 devboard `BOARD=board-esp32-devkitc`.
 
 `make test-harness` checks the parsing logic that decides whether a board
 passed, without needing a board. It runs in CI, because a harness that reports

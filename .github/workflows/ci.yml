@@ -224,7 +224,7 @@ jobs:
       - name: Lint Xtensa-only code and non-default features
         run: |
           . "$HOME/export-esp.sh"
-          make check-features
+          make check-features BOARD=board-esp32-devkitc
 
       # Build every application, not just one. An app carries its own
       # build.rs and feature pass-through, so a broken one is invisible to a
@@ -238,15 +238,24 @@ jobs:
       - name: Build every application image
         run: |
           . "$HOME/export-esp.sh"
+          # Every application names a board, because none is a default any more.
+          # blink, imu and pwm drive hardware only the Atoms declare and refuse
+          # any other manifest; the rest build against the board the on-target
+          # suite is verified on.
           status=0
           for app in apps/*/; do
             name=$(basename "$app")
-            echo "::group::$name"
+            case "$name" in
+              blink|imu|pwm) board=board-m5-atom-matrix ;;
+              *)             board=board-esp32-devkitc ;;
+            esac
+            echo "::group::$name ($board)"
             set -o pipefail
             cargo +esp build \
               --target xtensa-esp32-none-elf \
               -Z build-std=core,compiler_builtins \
-              -p "$name" 2>&1 | tee "build-$name.log" || status=1
+              -p "$name" --no-default-features \
+              --features "$board,debug-level-1" 2>&1 | tee "build-$name.log" || status=1
             set +o pipefail
             echo "::endgroup::"
             # `warning: N warnings emitted` is a summary line, not a warning.

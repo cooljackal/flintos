@@ -72,15 +72,19 @@ esp32-adc = { path = "../drivers/physical/esp32/adc" }
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs
 # for the "exactly one" enforcement). This is the crate users actually build,
-# so board selection happens here. `board-esp32-wrover` is a default feature,
-# so switching boards needs --no-default-features or the default and the
-# requested board both stay enabled and `board`'s compile_error! rejects the
-# build:
+# so board selection happens here:
 #
-#   cargo build -p kernel   # default: board-esp32-wrover
-#   cargo build -p kernel --no-default-features --features board-esp32-devkitc
-#   cargo build -p kernel --no-default-features --features board-m5-atom-lite
-default = ["board-esp32-wrover"]
+#   cargo build -p kernel --features board-esp32-devkitc
+#   cargo build -p kernel --features board-m5-atom-lite
+#
+# With no board the build fails and names the choices, which is the intended
+# behaviour -- see below.
+# No default board, deliberately. A default is a board you flash without
+# choosing it, and the one that used to be here was the least tested board in
+# the tree -- `make flash` with no argument built for hardware nobody had held.
+# Selecting a board is one word on the command line; getting it silently wrong
+# costs a debugging session against the wrong pin map.
+default = []
 board-esp32-wrover = ["board/board-esp32-wrover"]
 board-esp32-devkitc = ["board/board-esp32-devkitc"]
 board-m5-atom-lite = ["board/board-m5-atom-lite"]

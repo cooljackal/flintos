@@ -55,7 +55,7 @@ hal = { path = "../../hal" }
 build = { path = "../../tools/build" }
 
 [features]
-default = ["board-esp32-wrover", "debug-level-1"]
+default = ["debug-level-1"]          # no default board, deliberately
 board-esp32-wrover = ["kernel/board-esp32-wrover"]
 board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
 board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]

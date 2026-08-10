@@ -22,7 +22,12 @@ hal = { path = "../../hal" }
 build = { path = "../../tools/build" }
 
 [features]
-default = ["board-esp32-wrover", "debug-level-1"]
+# No default board, deliberately. A default is a board you flash without
+# choosing it, and the one that used to be here was the least tested board in
+# the tree -- `make flash` with no argument built for hardware nobody had held.
+# Selecting a board is one word on the command line; getting it silently wrong
+# costs a debugging session against the wrong pin map.
+default = ["debug-level-1"]
 
 board-esp32-wrover = ["kernel/board-esp32-wrover"]
 board-esp32-devkitc = ["kernel/board-esp32-devkitc"]

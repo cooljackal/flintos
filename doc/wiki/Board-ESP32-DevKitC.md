@@ -4,6 +4,8 @@
 make flash BOARD=board-esp32-devkitc
 ```
 
+There is no default board — every build names one.
+
 Feature: `board-esp32-devkitc`. Manifest: `board/src/esp32_devkitc.rs`.
 
 SoC: ESP32 — see [ESP32](SoC-ESP32) for the full pin table and peripheral map.

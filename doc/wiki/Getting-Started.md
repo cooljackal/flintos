@@ -30,11 +30,14 @@ make flash APP=hello                       # one task instead of three
 make flash APP=demo BOARD=board-m5-atom-lite   # different board
 ```
 
-Defaults: `APP=demo`, `BOARD=board-esp32-wrover`, `DEBUG=debug-level-1`.
+Defaults: `APP=demo`, `DEBUG=debug-level-1`.
 
-> The default board, the WROVER, is the one nobody has flashed. If you have a
-> plain ESP32 devboard, use `BOARD=board-esp32-devkitc` — same silicon, and
-> it is the board the on-target suite is verified against. See
+> **`BOARD` has no default and must be given.** A board manifest is the pin
+> map, the bus map and the IRQ numbers; defaulting it means flashing a board
+> you did not choose. `make flash` with no board lists them and stops.
+>
+> For a plain ESP32 devboard use `BOARD=board-esp32-devkitc` — that is the
+> board the on-target suite is verified against. See
 > [ESP32-DevKitC](Board-ESP32-DevKitC).
 
 Enabling two boards is a compile error, not a warning — a wrong pin map looks

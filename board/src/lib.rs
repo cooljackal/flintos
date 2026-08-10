@@ -72,12 +72,19 @@ mod m5_atom_common;
     not(feature = "board-m5-atom")
 ))]
 compile_error!(
-    "board: no board selected. Enable exactly one `board-*` feature, e.g.
-     
-     	cargo build -p kernel --features board-m5-atom-matrix
-     
-     Available boards: board-esp32-wrover (default), board-esp32-devkitc,
-     board-m5-atom-lite, board-m5-atom-matrix."
+    "board: no board selected, and there is no default.
+
+     A board manifest is the pin map, the bus map and the IRQ numbers. A
+     default would mean flashing one of those without having chosen it, so
+     there isn't one -- name the board:
+
+     	make flash BOARD=board-esp32-devkitc
+     	cargo build -p kernel --features board-esp32-devkitc
+
+     	board-esp32-devkitc     ESP32-DevKitC / WROOM-32   (verified on hardware)
+     	board-m5-atom-matrix    M5Stack Atom Matrix        (verified on hardware)
+     	board-m5-atom-lite      M5Stack Atom Lite          (verified on hardware)
+     	board-esp32-wrover      ESP32-WROVER               (never flashed)"
 );
 
 #[cfg(any(
