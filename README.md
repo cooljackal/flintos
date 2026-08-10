@@ -41,6 +41,11 @@ starts one.
 
 ✅ verified on hardware  ·  🧪 written and host-tested, not yet on silicon  ·  🚧 partial  ·  ⛔ not started  ·  — not applicable
 
+ADC2 is listed separately and deliberately unimplemented: it shares its SAR
+with the Wi-Fi radio and is unusable whenever the radio is up. An API handing
+out ADC2 channels invites a bug that appears the day someone turns on
+networking and not before.
+
 The radios are 🚧 rather than ⛔ because the groundwork is done and the
 radio itself is not: the heap, the runtime-created kernel objects and the
 adapter crate exist and are tested, the vendor blobs fetch and the ABI is
@@ -88,7 +93,8 @@ The chip's own blocks, in the order most projects reach for them.
 | SPI | ✅ | ⛔ |
 | PWM / LEDC | ✅ | ⛔ |
 | Timers (TIMG) | ✅ | ⛔ |
-| ADC | ✅ | ⛔ |
+| ADC1 | ✅ | ⛔ |
+| ADC2 | ⛔ | ⛔ |
 | DAC, touch | ⛔ | ⛔ |
 | RMT pulse generator | ✅ | — |
 | Hardware RNG | ✅ | ⛔ |
