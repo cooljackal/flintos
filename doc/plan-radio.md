@@ -32,6 +32,53 @@ The blobs reach the OS through one struct of function pointers
 
 ---
 
+## Sourcing the blobs
+
+Researched for step 3.2, because "vendor or fetch" was the one open question
+that was not technical.
+
+**Every archive is Apache-2.0 — the same licence as FlintOS.** esp-idf pulls
+them from four submodules, and each carries a plain Apache-2.0 `LICENSE`:
+
+| Submodule | Repository | ESP32 archives |
+|---|---|---|
+| `components/esp_wifi/lib` | `espressif/esp32-wifi-lib` | 3.53 MB, 7 files |
+| `components/esp_phy/lib` | `espressif/esp-phy-lib` | 3.54 MB, 4 files |
+| `components/bt/controller/lib_esp32` | `espressif/esp32-bt-lib` | 0.86 MB, `libbtdm_app.a` |
+| `components/esp_coex/lib` | `espressif/esp-coex-lib` | small |
+
+They are ordinary `ar` archives, not Git LFS pointers — checked, they begin
+`!<arch>`. So roughly **8 MB** for everything, and less for a station-only
+Wi-Fi plus BLE build: `libmesh.a`, `libespnow.a` and `libsmartconfig.a` are
+about 1.2 MB of that and are not needed.
+
+So the licence does not decide this. What decides it is what belongs in a
+source repository, and the projects nearest to us both **fetch rather than
+vendor**:
+
+- **NuttX** clones `esp-hal-3rdparty` and runs `git submodule update --init`
+  for `esp_phy/lib`, `esp_wifi/lib`, `bt/controller/lib_esp32` and
+  `esp_coex/lib` from its `Make.defs`.
+- **Zephyr** declares them in a blob manifest and pulls them with
+  `west blobs fetch`, recording a licence and a checksum per file.
+- **Arduino** vendors them, but arduino-esp32 ships a *distribution* rather
+  than a source tree, which is a different problem.
+
+**Recommendation: fetch at build, pinned by revision and checksum.** Eight
+megabytes of binaries in git history is permanent — every clone pays it
+forever, and each update pays it again — and fetching also means we are not
+redistributing someone else's binaries, so the Apache-2.0 attribution
+obligations stay with Espressif where they already are.
+
+It also satisfies this issue's own bar directly: *a clean clone builds without
+a manual download step, or fails with a clear message saying why*. A fetch step
+that pins a commit and verifies a checksum does both, and a checksum mismatch
+is exactly the warning wanted for step 3.4, where a version skew otherwise
+shows up as a radio that corrupts memory.
+
+None of the above is legal advice; it is what the licences say and what three
+other projects do with them.
+
 ## Ground rules
 
 Decide these once, at the start. Changing any of them later is a rewrite.
