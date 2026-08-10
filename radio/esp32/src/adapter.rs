@@ -553,6 +553,166 @@ mod by_name {
     blob_printf!(net80211_printf, "net80211");
     blob_printf!(coexist_printf, "coex");
 
+    // ── PHY critical section ────────────────────────────────────────────────
+    //
+    // esp-idf's pair, which has a trap in it:
+    //
+    //     uint32_t IRAM_ATTR phy_enter_critical(void) {
+    //         ...
+    //         // Interrupt level will be stored in current tcb, so always
+    //         // return zero.
+    //         return 0;
+    //     }
+    //     void IRAM_ATTR phy_exit_critical(uint32_t level) {
+    //         // Param level don't need any more, ignore it.
+    //
+    // The level does **not** round-trip. `enter` returns zero and `exit`
+    // discards what it is given, because FreeRTOS keeps the saved state in the
+    // task control block. So we cannot hand the saved `PS` out through the
+    // return value and expect it back -- the blob is entitled to pass zero,
+    // and restoring zero to `PS` would unmask everything including levels the
+    // kernel never unmasks.
+    //
+    // It is kept here instead, per core, with a nesting count so only the
+    // outermost exit restores. Same shape as the FreeRTOS original, minus the
+    // task control block.
+
+    /// Saved `PS` and nesting depth, one slot per core.
+    ///
+    /// Two cores never share a slot, and a core cannot preempt itself between
+    /// the store and the mask, so no lock is needed around it — the mask is
+    /// what makes the region exclusive in the first place.
+    static PHY_CS: [core::sync::atomic::AtomicU32; 2] = [
+        core::sync::atomic::AtomicU32::new(0),
+        core::sync::atomic::AtomicU32::new(0),
+    ];
+    static PHY_CS_DEPTH: [core::sync::atomic::AtomicU32; 2] = [
+        core::sync::atomic::AtomicU32::new(0),
+        core::sync::atomic::AtomicU32::new(0),
+    ];
+
+    /// # Safety
+    /// Must be matched by exactly one [`phy_exit_critical`] on the same core.
+    #[no_mangle]
+    pub unsafe extern "C" fn phy_enter_critical() -> u32 {
+        let core = kernel::smp::current_core().index();
+        let saved = unsafe { kernel::arch::cs_enter() };
+        // Only the outermost entry's `PS` is the one worth restoring; an inner
+        // one was taken with interrupts already masked.
+        if PHY_CS_DEPTH[core].fetch_add(1, core::sync::atomic::Ordering::Acquire) == 0 {
+            PHY_CS[core].store(saved, core::sync::atomic::Ordering::Relaxed);
+        }
+        // Zero, as esp-idf does. The blob is documented not to use it.
+        0
+    }
+
+    /// # Safety
+    /// Must match a [`phy_enter_critical`] on this core. The argument is
+    /// ignored, as it is in esp-idf.
+    #[no_mangle]
+    pub unsafe extern "C" fn phy_exit_critical(_level: u32) {
+        let core = kernel::smp::current_core().index();
+        let depth = PHY_CS_DEPTH[core].load(core::sync::atomic::Ordering::Relaxed);
+        if depth == 0 {
+            // Unbalanced. Restoring a `PS` we never saved would be worse than
+            // doing nothing, and saying so is better than either.
+            api::log_error!("radio: phy_exit_critical without a matching enter");
+            return;
+        }
+        PHY_CS_DEPTH[core].store(depth - 1, core::sync::atomic::Ordering::Release);
+        if depth == 1 {
+            let saved = PHY_CS[core].load(core::sync::atomic::Ordering::Relaxed);
+            unsafe { kernel::arch::cs_exit(saved) };
+        }
+    }
+
+    // ── RTC ─────────────────────────────────────────────────────────────────
+
+    /// `RTC_CNTL_TIME_UPDATE_REG`, offset `0xC`. Bit 31 asks for a sample,
+    /// bit 30 says the sample is ready.
+    const RTC_TIME_UPDATE: u32 = soc_esp32::addr::RTC_CNTL_BASE + 0x0C;
+    const RTC_TIME_UPDATE_REQ: u32 = 1 << 31;
+    const RTC_TIME_VALID: u32 = 1 << 30;
+    /// `RTC_CNTL_TIME0_REG` / `TIME1_REG`, offsets `0x10` and `0x14`.
+    const RTC_TIME0: u32 = soc_esp32::addr::RTC_CNTL_BASE + 0x10;
+    const RTC_TIME1: u32 = soc_esp32::addr::RTC_CNTL_BASE + 0x14;
+
+    /// The 48-bit RTC counter.
+    ///
+    /// The counter is latched rather than read live: ask with `TIME_UPDATE`,
+    /// wait for `TIME_VALID`, then read the halves. Reading them without the
+    /// latch can straddle a carry and produce a time that never happened.
+    ///
+    /// The wait is bounded. It depends on the RTC slow clock running, and a
+    /// clock that is not running would otherwise hang the caller — which, on
+    /// this path, means hanging the radio inside PHY initialisation with
+    /// nothing pointing at the cause.
+    #[no_mangle]
+    pub unsafe extern "C" fn rtc_time_get() -> u64 {
+        unsafe {
+            (RTC_TIME_UPDATE as *mut u32).write_volatile(RTC_TIME_UPDATE_REQ);
+            // Generous: the slow clock is 150 kHz at its slowest, so a sample
+            // lands in a few microseconds and this is orders of magnitude more.
+            let mut spins = 0u32;
+            while (RTC_TIME_UPDATE as *const u32).read_volatile() & RTC_TIME_VALID == 0 {
+                spins += 1;
+                if spins > 100_000 {
+                    api::log_error!("radio: RTC counter never reported valid");
+                    return 0;
+                }
+            }
+            let lo = (RTC_TIME0 as *const u32).read_volatile() as u64;
+            let hi = (RTC_TIME1 as *const u32).read_volatile() as u64;
+            (hi << 32) | lo
+        }
+    }
+
+    // The five below are RTC clock and sleep entry points that esp-idf v4.4
+    // defines *nowhere* -- not in its source, and not in any of its twelve
+    // ROM linker scripts -- yet esp-idf links. They are referenced by members
+    // of librtc.a that its build never pulls in, because a linker only takes
+    // the archive members it needs.
+    //
+    // So these most likely never link either, and defining them costs nothing
+    // if so. If one ever does get pulled in, a panic naming it is far better
+    // than a plausible zero: `rtc_get_xtal` returning the wrong crystal
+    // frequency would mis-calibrate the radio, and the symptom would be poor
+    // range rather than anything pointing here.
+    //
+    // `rtc_get_xtal` in particular is deliberately not guessed. esp-idf reads
+    // it from a retention register, and which of the STORE registers holds it
+    // is something this has not confirmed from the source. Guessing a register
+    // address is what cost several sessions on the flash driver.
+
+    macro_rules! rtc_unimplemented {
+        ($($name:ident),* $(,)?) => {
+            $(
+                /// Not implemented; see the note above. Part of step 3.6.
+                ///
+                /// # Safety
+                /// Expected never to be linked, let alone called.
+                #[no_mangle]
+                pub unsafe extern "C" fn $name() -> ! {
+                    panic!(concat!(
+                        "radio: ", stringify!($name), " was called. It is an RTC ",
+                        "clock/sleep entry point that esp-idf does not define ",
+                        "either, so this build did not expect the archive member ",
+                        "referencing it to be linked. See doc/plan-radio.md 3.6."
+                    ))
+                }
+            )*
+        };
+    }
+
+    rtc_unimplemented!(
+        rtc_get_xtal,
+        rtc_init_clk,
+        rtc_dbias_cfg,
+        rtc_slowck_cali,
+        rtc_slp_prep,
+        rtc_sleep_set_wakeup_time,
+    );
+
     // ── C library ───────────────────────────────────────────────────────────
     //
     // Only what `compiler_builtins` does not already provide. It supplies

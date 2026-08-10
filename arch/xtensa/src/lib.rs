@@ -26,7 +26,10 @@ pub mod registers;
 pub mod smp;
 pub mod tick;
 
-pub use critical_section::{with as cs_with, XtensaCriticalSection, XtensaCsToken};
+pub use critical_section::{
+    enter_raw as cs_enter, exit_raw as cs_exit, with as cs_with, XtensaCriticalSection,
+    XtensaCsToken,
+};
 
 // ── Trap frame geometry ─────────────────────────────────────────────────────
 //

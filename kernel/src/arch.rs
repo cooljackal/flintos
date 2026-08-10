@@ -29,7 +29,7 @@
 // ── Target: the real thing ──────────────────────────────────────────────────
 
 #[cfg(target_os = "none")]
-pub use arch_xtensa::cs_with;
+pub use arch_xtensa::{cs_enter, cs_exit, cs_with};
 #[cfg(target_os = "none")]
 pub use arch_xtensa::registers;
 #[cfg(target_os = "none")]
@@ -56,7 +56,7 @@ pub fn wait_masked() {
 // ── Host: stand-ins, with the instrumentation the real ones cannot offer ────
 
 #[cfg(not(target_os = "none"))]
-pub use host::{cs_with, registers, HostSmp as Smp, HostTick as Tick};
+pub use host::{cs_enter, cs_exit, cs_with, registers, HostSmp as Smp, HostTick as Tick};
 
 /// On a host these are only reachable by mistake: every caller is a terminal
 /// `loop` in code that only runs on hardware (the idle task, the fault
@@ -186,6 +186,35 @@ pub mod host {
         let _guard = Guard;
 
         f()
+    }
+
+    /// Enter a critical section without a closure, for parity with the target.
+    ///
+    /// Nothing is masked here either; what it does is keep the same counters
+    /// `cs_with` keeps, so `cs_depth` stays truthful whichever form was used.
+    ///
+    /// # Safety
+    /// Must be matched by exactly one [`cs_exit`]. See the target
+    /// implementation for what that contract is really protecting.
+    pub unsafe fn cs_enter() -> u32 {
+        let depth = CS_DEPTH_TLS.with(|d| {
+            d.set(d.get() + 1);
+            d.get()
+        });
+        CS_ENTRIES.fetch_add(1, Ordering::SeqCst);
+        CS_MAX_DEPTH.fetch_max(depth, Ordering::SeqCst);
+        0
+    }
+
+    /// Leave a critical section entered with [`cs_enter`].
+    ///
+    /// # Safety
+    /// `saved` must come from the matching [`cs_enter`].
+    pub unsafe fn cs_exit(_saved: u32) {
+        // Saturating rather than wrapping: an unbalanced exit is a bug, and a
+        // panic here would blame whichever test ran next rather than the one
+        // that unbalanced it. `cs_depth` still shows the imbalance.
+        CS_DEPTH_TLS.with(|d| d.set(d.get().saturating_sub(1)));
     }
 
     /// Critical-section nesting depth right now. Zero outside any `cs_with`.
