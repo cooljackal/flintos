@@ -79,14 +79,17 @@ MEMORY
    * at once, and why Wi-Fi alone pays nothing.
    *
    * 8-byte aligned so the u64 in PanicSnapshot is legally placed. `dma_pool`
-   * must be inside SRAM2 (0x3FFAE000-0x3FFDFFFF) to be reachable by the DMA
-   * engines; the old location at 0x3FFF1000 was chosen without regard to that.
+   * must be inside internal DRAM (0x3FFAE000-0x3FFFFFFF) to be reachable by
+   * the DMA engines. An earlier version of this comment said SRAM2 only, which
+   * is wrong -- esp-idf's SOC_DMA_HIGH is 0x40000000 and its heap hands out
+   * SRAM1 for MALLOC_CAP_DMA. The bound that matters for placement here is
+   * still 0x3FFDC200, which is the ROM's, not the DMA engines'.
    */
   /* @FLINT-DRAM-MAP-BEGIN */
   dram_seg    (RW) : ORIGIN = 0x3FFB0000, LENGTH = 0x10000    /*  64K .data + .bss + kernel/boot stack */
   task_stacks (RW) : ORIGIN = 0x3FFC0000, LENGTH = 0x18000    /*  96K per-task stacks */
   panic_region(RW) : ORIGIN = 0x3FFD8000, LENGTH = 0x1000     /*   4K survives soft reset */
-  dma_pool    (RW) : ORIGIN = 0x3FFD9000, LENGTH = 0x2000     /*   8K DMA-safe buffers, must stay in SRAM2 */
+  dma_pool    (RW) : ORIGIN = 0x3FFD9000, LENGTH = 0x2000     /*   8K DMA-safe buffers */
   /* @FLINT-DRAM-MAP-END */
 }
 
@@ -206,7 +209,9 @@ ASSERT(_kernel_stack_end <= ORIGIN(task_stacks),
 ASSERT(ORIGIN(dma_pool) + LENGTH(dma_pool) <= 0x3FFDC200,
        "static DRAM crosses the 0x3FFDC200 ROM bound - see tools/build/src/map.rs")
 
-/* The DMA engines cannot address past the end of SRAM2. Outside it a transfer
- * fails silently rather than erroring, so this is a link error by choice. */
-ASSERT(ORIGIN(dma_pool) + LENGTH(dma_pool) <= 0x3FFE0000,
-       "dma_pool is outside SRAM2 and unreachable by DMA")
+/* The DMA engines cannot address past the top of internal DRAM. Outside it a
+ * transfer fails silently rather than erroring, so this is a link error by
+ * choice. The bound is esp-idf's SOC_DMA_HIGH; the tighter 0x3FFDC200 check
+ * above is the ROM's and is what actually constrains placement. */
+ASSERT(ORIGIN(dma_pool) + LENGTH(dma_pool) <= 0x40000000,
+       "dma_pool is outside internal DRAM and unreachable by DMA")

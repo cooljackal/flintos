@@ -141,13 +141,35 @@ impl Descriptor {
     }
 }
 
-/// SRAM the DMA engines can reach: SRAM2, `0x3FFAE000`–`0x3FFDFFFF`.
+/// SRAM the DMA engines can reach: **all internal DRAM**, `0x3FFAE000` up to
+/// but not including `0x40000000`.
+///
+/// This used to stop at `0x3FFDFFFF`, the end of SRAM2, on the belief that
+/// SRAM1 was out of reach. It is not, and esp-idf says so plainly:
+///
+/// ```c
+/// #define SOC_DMA_LOW  0x3FFAE000
+/// #define SOC_DMA_HIGH 0x40000000
+///
+/// inline static bool IRAM_ATTR esp_ptr_dma_capable(const void *p)
+/// {
+///     return (intptr_t)p >= SOC_DMA_LOW && (intptr_t)p < SOC_DMA_HIGH;
+/// }
+/// ```
+///
+/// Its heap agrees: the SRAM1 regions are type 1, whose capability list is
+/// `MALLOC_CAP_DMA|MALLOC_CAP_8BIT|MALLOC_CAP_INTERNAL|MALLOC_CAP_DEFAULT`.
+/// So does NuttX, which puts ordinary heap regions at `0x3ffe0450` onward.
+///
+/// The old bound was safe — it rejected only valid memory, never accepted bad
+/// — but it cost the radio heap 126 KiB of DMA-capable RAM and would have had
+/// the adapter squeezing into 16 KiB for no reason.
 ///
 /// A buffer outside this does not fault. The transfer completes, reports
 /// success, and moves nothing — so every address goes through here before it
 /// reaches a descriptor.
 pub const fn reachable(addr: u32) -> bool {
-    addr >= 0x3FFA_E000 && addr <= 0x3FFD_FFFF
+    addr >= 0x3FFA_E000 && addr < 0x4000_0000
 }
 
 /// The link registers hold 20 bits of descriptor address.
@@ -297,15 +319,19 @@ mod tests {
     fn an_unreachable_buffer_is_refused() {
         // The failure this check exists for is silent: the transfer completes
         // and moves nothing. Flash-mapped, RTC, and just past the end.
-        for addr in [0x4008_0000, 0x3FF4_0000, 0x3FFA_DFFC, 0x3FFE_0000] {
+        for addr in [0x4008_0000, 0x3FF4_0000, 0x3FFA_DFFC, 0x4000_0000] {
             assert_eq!(
                 Descriptor::tx(addr, 16, true, 0).unwrap_err(),
                 DmaError::UnreachableAddress,
                 "{addr:#x} was accepted"
             );
         }
-        assert!(Descriptor::tx(0x3FFA_E000, 16, true, 0).is_ok(), "start of SRAM2 rejected");
-        assert!(Descriptor::tx(0x3FFD_FFFC, 16, true, 0).is_ok(), "end of SRAM2 rejected");
+        assert!(Descriptor::tx(0x3FFA_E000, 16, true, 0).is_ok(), "start of DRAM rejected");
+        // SRAM1. Rejected until esp-idf was checked: `SOC_DMA_HIGH` is
+        // 0x40000000, not the end of SRAM2, and its heap hands out these
+        // addresses for MALLOC_CAP_DMA.
+        assert!(Descriptor::tx(0x3FFE_0000, 16, true, 0).is_ok(), "start of SRAM1 rejected");
+        assert!(Descriptor::tx(0x3FFF_FFFC, 16, true, 0).is_ok(), "end of SRAM1 rejected");
     }
 
     #[test]
@@ -329,6 +355,18 @@ mod tests {
         );
         // Zero is the terminator, not an address, and must stay legal.
         assert!(Descriptor::tx(BUF, 16, true, 0).is_ok());
+    }
+
+    #[test]
+    fn the_link_register_is_unambiguous_across_the_whole_reachable_region() {
+        // `link_addr` keeps 20 bits and the top ones are implied, so widening
+        // the region to include SRAM1 is only sound if every reachable address
+        // still shares those bits. 0x3FFAE000 and 0x3FFFFFFC both sit in the
+        // 0x3FF00000 megabyte, so they do.
+        assert_eq!(0x3FFA_E000u32 & 0xFFF0_0000, 0x3FF0_0000);
+        assert_eq!(0x3FFF_FFFCu32 & 0xFFF0_0000, 0x3FF0_0000);
+        assert!(reachable(0x3FFE_0000), "SRAM1 must be reachable");
+        assert!(!reachable(0x4000_0000), "past the top of DRAM must not be");
     }
 
     #[test]

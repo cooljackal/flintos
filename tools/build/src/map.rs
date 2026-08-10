@@ -55,8 +55,10 @@ pub const DRAM_BASE: u32 = 0x3FFB_0000;
 /// DRAM at exactly `0x3FFB0000 + 0x2C200`.
 pub const SAFE_END: u32 = 0x3FFD_C200;
 
-/// End of SRAM2. The DMA engines cannot reach past here, so `dma_pool` must
-/// stay below it — a DMA buffer outside SRAM2 fails silently.
+/// End of SRAM2. Not a DMA boundary: the engines reach all of internal DRAM,
+/// up to `0x40000000` (esp-idf's `SOC_DMA_HIGH`). This matters here only
+/// because every statically placed region has to sit below the ROM's
+/// `0x3FFDC200` bound anyway, which is tighter than either.
 pub const SRAM2_END: u32 = 0x3FFE_0000;
 
 /// `CONFIG_BTDM_RESERVE_DRAM`, the controller's own static DRAM.
@@ -120,7 +122,7 @@ impl DramMap {
                 place("dram_seg", dram_len, ".data + .bss + kernel/boot stack"),
                 place("task_stacks", stacks_len, "per-task stacks"),
                 place("panic_region", 0x1000, "survives soft reset"),
-                place("dma_pool", 0x2000, "DMA-safe buffers, must stay in SRAM2"),
+                place("dma_pool", 0x2000, "DMA-safe buffers"),
             ],
         }
     }
@@ -154,10 +156,14 @@ impl DramMap {
                 self.end() - SAFE_END
             ));
         }
+        // Not a DMA bound -- the engines reach to 0x40000000. This is here
+        // because a `dma_pool` that had climbed past SRAM2 would mean the
+        // static map had escaped the ROM bound above, and a second, blunter
+        // check costs nothing.
         let dma = self.get("dma_pool");
         if dma.end() > SRAM2_END {
             return Some(format!(
-                "dma_pool ends at {:#x}, outside SRAM2 -- DMA cannot reach it",
+                "dma_pool ends at {:#x}, past the end of SRAM2",
                 dma.end()
             ));
         }

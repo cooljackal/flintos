@@ -173,7 +173,7 @@ fn attempt() -> Result<(), &'static str> {
     }
 
     // 4. Buffers and descriptor chains, all from the DMA pool. A buffer on the
-    //    stack would be outside SRAM2 as often as not, and the transfer would
+    //    stack would be outside internal DRAM as often as not, and the transfer would
     //    report success having moved nothing.
     let tx_buf = kernel::dma_broker::alloc(LEN as u32).map_err(|_| "tx buffer")?;
     let rx_buf = kernel::dma_broker::alloc(LEN as u32).map_err(|_| "rx buffer")?;
