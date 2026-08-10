@@ -453,6 +453,25 @@ use core::sync::atomic::AtomicUsize;
 static MASK_HOOK: AtomicUsize = AtomicUsize::new(0);
 static RESTORE_HOOK: AtomicUsize = AtomicUsize::new(0);
 
+/// The chip's JEDEC id, straight from the chip: manufacturer in bits [7:0],
+/// memory type in [15:8], capacity in [23:16].
+///
+/// This is what [`spi1::unlock`] gates on, so it is the number to look at when
+/// a board reports `UnknownChip` — and the reason it exists separately from
+/// [`ChipInfo::read`], which returns the *ROM's cached* view in a different
+/// byte order (`(mfr << 16) | (type << 8) | capacity`). Two representations of
+/// one fact is exactly the sort of thing to read off the hardware rather than
+/// derive.
+///
+/// # Safety
+/// Runs a flash transaction with the cache disabled, so the same rules as any
+/// other operation in this crate apply.
+pub unsafe fn jedec_id() -> Result<u32, FlashError> {
+    let mut out = 0u32;
+    unsafe { with_cache_off(|| spi1::jedec_id().map(|v| out = v)) }?;
+    Ok(out)
+}
+
 /// Tell the driver how to mask interrupts that cannot survive the cache going
 /// away, and how to put them back.
 ///

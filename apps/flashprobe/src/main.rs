@@ -77,21 +77,33 @@ fn run() {
         api::log_error!("[probe] not populated: the ROM would build commands from this");
     }
 
-    // The manufacturer byte of the ROM's device id, which is the same thing
-    // `unlock` reads for itself with RDID. Printed because it decides whether
-    // this board can be unlocked at all: 0xC8 GigaDevice and 0xEF Winbond are
-    // known, and anything else makes a protected chip refuse rather than have
-    // its status register written on a guess. First thing to check on a board
-    // this driver has not seen before.
-    let mfr = c.device_id & 0xFF;
-    match mfr {
-        0xC8 => api::log_info!("[probe] flash vendor {:#04x} (GigaDevice), unlock supported", mfr),
-        0xEF => api::log_info!("[probe] flash vendor {:#04x} (Winbond), unlock supported", mfr),
-        _ => api::log_warn!(
-            "[probe] flash vendor {:#04x} is not known to this driver: a protected \
-             chip will report UnknownChip rather than risk clearing QE",
-            mfr
-        ),
+
+    // Two views of one fact, printed together because they disagree in byte
+    // order and the difference has already caught me out. `ChipInfo` is the
+    // ROM's cached struct, packed `(mfr << 16) | (type << 8) | capacity`;
+    // `jedec_id` asks the chip with RDID and returns it wire-order, low byte
+    // first. The second is what `unlock` gates on, so it is the one that
+    // decides whether this board can be unlocked.
+    let rom_mfr = (c.device_id >> 16) & 0xFF;
+    match unsafe { esp32_flash::jedec_id() } {
+        Ok(id) => {
+            let mfr = id & 0xFF;
+            api::log_info!(
+                "[probe] jedec id={:#08x} vendor={:#04x} (ROM struct says {:#04x})",
+                id,
+                mfr,
+                rom_mfr
+            );
+            match mfr {
+                0xC8 => api::log_info!("[probe] GigaDevice: unlock supported"),
+                0xEF => api::log_info!("[probe] Winbond: unlock supported"),
+                _ => api::log_warn!(
+                    "[probe] vendor {:#04x} unknown: a protected chip reports UnknownChip rather than risk clearing QE",
+                    mfr
+                ),
+            }
+        }
+        Err(e) => api::log_error!("[probe] could not read the JEDEC id: {:?}", e),
     }
 
     // What the bootloader left SPI1 configured as. Every theory about where an
@@ -124,6 +136,7 @@ fn run() {
             api::log_error!("[probe] cache-off window failed: {:#010x}", cache);
         }
     }
+
     match outcome {
         Ok(()) => api::log_info!("[probe] PASS"),
         Err(e) => api::log_error!("[probe] FAIL: {}", e),

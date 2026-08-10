@@ -648,7 +648,7 @@ unsafe fn status_user_cmd() -> Result<u32, FlashError> {
 /// [`unlock`] then treats as an unknown chip. Failing closed is the point.
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
-unsafe fn jedec_id() -> Result<u32, FlashError> {
+pub(crate) unsafe fn jedec_id() -> Result<u32, FlashError> {
     let dummy = EXTRA_DUMMY;
     wait_spi_fsm_idle()?;
     wait_cmd()?;

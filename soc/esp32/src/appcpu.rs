@@ -76,6 +76,16 @@ unsafe fn unstall() {
 
     let sw = RTC_SW_CPU_STALL as *mut u32;
     crate::reg::clear(sw, SW_STALL_C1_MASK << SW_STALL_C1_SHIFT);
+
+    // Symmetric with `stall`, and for the same reason: this write crosses into
+    // the RTC slow-clock domain, so the core does not resume when it retires
+    // and `is_stalled` can still answer "stalled" afterwards. A second flash
+    // operation soon after the first would then read a stale answer, skip the
+    // stall it needed, and switch off the cache under a running core.
+    let start = cycles();
+    while cycles().wrapping_sub(start) < STALL_SETTLE_CYCLES {
+        core::hint::spin_loop();
+    }
 }
 
 /// Hold the APP CPU stalled.
@@ -116,6 +126,58 @@ pub unsafe fn stall() {
 
     let sw = RTC_SW_CPU_STALL as *mut u32;
     crate::reg::modify(sw, SW_STALL_C1_MASK << SW_STALL_C1_SHIFT, 0x21 << SW_STALL_C1_SHIFT);
+
+    // **The write does not take effect when it retires.** These two registers
+    // live in RTC_CNTL, which runs on the RTC slow clock -- roughly 150 kHz,
+    // against a CPU at 80 or 240 MHz -- so the request crosses a clock domain
+    // and the other core keeps executing for some microseconds afterwards.
+    //
+    // Returning immediately is what made this a bug rather than a race nobody
+    // hit: `esp32_flash::with_cache_off` stalls the APP CPU and then disables
+    // its cache, and for that window the core was still fetching through a
+    // cache that had gone away. It crashed with `EXCCAUSE=0` (illegal
+    // instruction) inside `Scheduler::schedule` -- core 1 executing rubbish,
+    // reported from core 0's fault handler. Timing-dependent, so it survived a
+    // run on one board and failed on the first run on another.
+    //
+    // There is no "stalled" status bit to poll, so this waits. A few RTC slow
+    // cycles is the requirement; at ~150 kHz one cycle is ~6.7 us, and the
+    // budget below is 32768 CPU cycles -- 136 us at 240 MHz, 410 us at 80 MHz,
+    // so tens of slow cycles either way. Against a sector erase of tens of
+    // milliseconds it does not register.
+    //
+    // esp-idf reaches for an IPI and a spin handshake (`esp_ipc_isr_stall_other_cpu`)
+    // rather than this register for exactly this reason, and keeps the RTC
+    // stall for the panic path where a delay is free. That handshake is still
+    // the better answer here; see `esp32_flash`'s module docs.
+    let start = cycles();
+    while cycles().wrapping_sub(start) < STALL_SETTLE_CYCLES {
+        core::hint::spin_loop();
+    }
+}
+
+/// How long [`stall`] waits for the RTC domain to catch up, in CPU cycles.
+const STALL_SETTLE_CYCLES: u32 = 32_768;
+
+/// `CCOUNT`, the cycle counter.
+///
+/// Read here rather than through `arch-xtensa` because a `soc/*` crate may
+/// depend only on `hal` — `make check-layers` enforces it.
+#[inline(always)]
+fn cycles() -> u32 {
+    #[cfg(target_arch = "xtensa")]
+    {
+        let v: u32;
+        unsafe { core::arch::asm!("rsr.ccount {0}", out(reg) v) };
+        v
+    }
+    // No cycle counter on a host, and nothing to stall either. Returning a
+    // constant makes the wait above terminate immediately, which is right:
+    // `stall` on a host is already a no-op against real hardware.
+    #[cfg(not(target_arch = "xtensa"))]
+    {
+        u32::MAX
+    }
 }
 
 /// Release the stall. Public counterpart to the private helper used by
