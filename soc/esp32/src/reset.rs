@@ -12,10 +12,10 @@
 //! Values from esp-idf's `esp_reset_reason_t` mapping over
 //! `RTC_CNTL_RESET_STATE_REG`.
 
-use crate::addr::RTC_CNTL_BASE;
+use crate::rtc;
 
 /// `RTC_CNTL_RESET_STATE_REG`. The PRO CPU's cause is bits [5:0].
-const RTC_CNTL_RESET_STATE: u32 = RTC_CNTL_BASE + 0x34;
+use rtc::RESET_STATE as RTC_CNTL_RESET_STATE;
 const RESET_CAUSE_PROCPU_MASK: u32 = 0x3F;
 
 /// Raw reset cause for the PRO CPU.

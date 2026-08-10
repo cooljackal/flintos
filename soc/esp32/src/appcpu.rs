@@ -29,7 +29,8 @@
 //!
 //! Register facts from `soc/dport_reg.h` and `soc/rtc_cntl_reg.h`.
 
-use crate::addr::{DPORT_BASE, RTC_CNTL_BASE};
+use crate::addr::DPORT_BASE;
+use crate::rtc;
 
 /// `DPORT_APPCPU_CTRL_A_REG`. Bit 0 holds the core in reset.
 const APPCPU_CTRL_A: u32 = DPORT_BASE + 0x02C;
@@ -46,8 +47,8 @@ const APPCPU_RUNSTALL: u32 = 1 << 0;
 /// `DPORT_APPCPU_CTRL_D_REG`. The address the core fetches from on release.
 const APPCPU_CTRL_D: u32 = DPORT_BASE + 0x038;
 
-/// `RTC_CNTL_OPTIONS0_REG`, `SW_STALL_APPCPU_C0` in bits [1:0].
-const RTC_OPTIONS0: u32 = RTC_CNTL_BASE;
+/// `SW_STALL_APPCPU_C0` lives in bits [1:0] of `rtc::OPTIONS0`.
+use rtc::OPTIONS0 as RTC_OPTIONS0;
 const SW_STALL_C0_SHIFT: u32 = 0;
 const SW_STALL_C0_MASK: u32 = 0x3;
 
@@ -56,8 +57,8 @@ const CACHE_FLUSH_ROM: usize = 0x4000_9A14;
 /// ROM `Cache_Read_Enable(int cpu)`, from `esp32.rom.ld`.
 const CACHE_READ_ENABLE_ROM: usize = 0x4000_9A84;
 
-/// `RTC_CNTL_SW_CPU_STALL_REG`, `SW_STALL_APPCPU_C1` in bits [25:20].
-const RTC_SW_CPU_STALL: u32 = RTC_CNTL_BASE + 0xAC;
+/// `SW_STALL_APPCPU_C1` lives in bits [25:20] of `rtc::SW_CPU_STALL`.
+use rtc::SW_CPU_STALL as RTC_SW_CPU_STALL;
 const SW_STALL_C1_SHIFT: u32 = 20;
 const SW_STALL_C1_MASK: u32 = 0x3F;
 

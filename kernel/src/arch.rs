@@ -266,7 +266,7 @@ pub mod host {
     pub struct HostTick;
 
     impl hal::tick::TickSource for HostTick {
-        fn init(_period_us: u32) {}
+        fn init(_period_us: u32, _cpu_hz: u32) {}
 
         fn tick() -> bool {
             NOW.fetch_add(1, Ordering::SeqCst);

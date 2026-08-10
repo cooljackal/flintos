@@ -642,86 +642,55 @@ mod by_name {
 
     // ── RTC ─────────────────────────────────────────────────────────────────
 
-    /// `RTC_CNTL_TIME_UPDATE_REG`, offset `0xC`. Bit 31 asks for a sample,
-    /// bit 30 says the sample is ready.
-    const RTC_TIME_UPDATE: u32 = soc_esp32::addr::RTC_CNTL_BASE + 0x0C;
-    const RTC_TIME_UPDATE_REQ: u32 = 1 << 31;
-    const RTC_TIME_VALID: u32 = 1 << 30;
-    /// `RTC_CNTL_TIME0_REG` / `TIME1_REG`, offsets `0x10` and `0x14`.
-    const RTC_TIME0: u32 = soc_esp32::addr::RTC_CNTL_BASE + 0x10;
-    const RTC_TIME1: u32 = soc_esp32::addr::RTC_CNTL_BASE + 0x14;
-
-    /// The 48-bit RTC counter.
+    /// The 48-bit RTC counter, in RTC slow-clock ticks.
     ///
-    /// The counter is latched rather than read live: ask with `TIME_UPDATE`,
-    /// wait for `TIME_VALID`, then read the halves. Reading them without the
-    /// latch can straddle a carry and produce a time that never happened.
+    /// The registers, the latch-and-read sequence and the bounded wait are all
+    /// `soc_esp32::rtc`'s -- this file used to carry its own copy of every one
+    /// of them, beside a second copy in `arch-xtensa`. Three implementations of
+    /// one 48-bit read.
     ///
-    /// The wait is bounded. It depends on the RTC slow clock running, and a
-    /// clock that is not running would otherwise hang the caller — which, on
-    /// this path, means hanging the radio inside PHY initialisation with
-    /// nothing pointing at the cause.
+    /// The bound matters on this path in particular: it runs inside PHY
+    /// initialisation, and a stopped slow clock would otherwise hang the radio
+    /// with nothing pointing at the cause. 100,000 polls is orders of
+    /// magnitude more than the few microseconds a sample takes.
+    ///
+    /// # Safety
+    /// Reads RTC_CNTL. Called by the blob.
     #[no_mangle]
     pub unsafe extern "C" fn rtc_time_get() -> u64 {
-        unsafe {
-            (RTC_TIME_UPDATE as *mut u32).write_volatile(RTC_TIME_UPDATE_REQ);
-            // Generous: the slow clock is 150 kHz at its slowest, so a sample
-            // lands in a few microseconds and this is orders of magnitude more.
-            let mut spins = 0u32;
-            while (RTC_TIME_UPDATE as *const u32).read_volatile() & RTC_TIME_VALID == 0 {
-                spins += 1;
-                if spins > 100_000 {
-                    api::log_error!("radio: RTC counter never reported valid");
-                    return 0;
-                }
+        match unsafe { soc_esp32::rtc::counter(100_000) } {
+            Some(t) => t,
+            None => {
+                api::log_error!("radio: RTC counter never reported valid");
+                0
             }
-            let lo = (RTC_TIME0 as *const u32).read_volatile() as u64;
-            let hi = (RTC_TIME1 as *const u32).read_volatile() as u64;
-            (hi << 32) | lo
         }
     }
 
-    /// `RTC_XTAL_FREQ_REG`, which is `RTC_CNTL_STORE4_REG` at offset `0xb0`.
-    ///
-    /// A retention register the bootloader writes, not a hardware one.
-    const RTC_XTAL_FREQ: u32 = soc_esp32::addr::RTC_CNTL_BASE + 0xB0;
-
     /// The crystal frequency in MHz, as the bootloader recorded it.
     ///
-    /// The encoding is not obvious and is not guessed. NuttX documents it:
+    /// The decode -- duplicated 16-bit halves, esp-idf's ROM-log flag in the
+    /// low bit -- is `soc_esp32::rtc::xtal_freq_mhz`, which returns `None`
+    /// rather than a default when the register holds nothing credible.
     ///
-    /// > Values of RTC_XTAL_FREQ_REG and RTC_APB_FREQ_REG are stored as two
-    /// > copies in lower and upper 16-bit halves.
+    /// **The fallback is this crate's decision, not the SoC crate's**, which
+    /// is why the split is here. A wrong crystal mis-calibrates the radio and
+    /// the symptom is poor range, nothing pointing at this function -- so the
+    /// answer is the one both supported modules use, said loudly, rather than
+    /// esp-idf's `RTC_XTAL_FREQ_AUTO` (0) and an estimator FlintOS has not
+    /// got.
     ///
-    /// and esp-idf's `rtc_clk_xtal_freq_get` reads the same register at the
-    /// same offset, which two sources agreeing is what makes this safe to
-    /// write. The duplicate-halves trick is the validity check: a register
-    /// never written reads as something whose halves differ.
-    ///
-    /// **A wrong answer here mis-calibrates the radio**, and the symptom is
-    /// poor range rather than anything pointing at this function. So the
-    /// result is checked against the only two crystals the ESP32 supports, and
-    /// anything else is reported rather than passed on.
+    /// # Safety
+    /// Reads one RTC_CNTL register. Called by the blob.
     #[no_mangle]
     pub unsafe extern "C" fn rtc_get_xtal() -> u32 {
-        let reg = unsafe { (RTC_XTAL_FREQ as *const u32).read_volatile() };
-        let lo = reg & 0xFFFF;
-        let hi = (reg >> 16) & 0xFFFF;
-        // esp-idf keeps a "ROM log disabled" flag in bit 16, i.e. bit 0 of the
-        // upper half, and compensates by setting bit 0 of the value too -- so
-        // the halves still match and the low bit may be set spuriously.
-        if lo != 0 && lo == hi {
-            let mhz = lo & !1;
-            if mhz == 40 || mhz == 26 {
-                return mhz;
-            }
-            api::log_error!("radio: RTC_XTAL_FREQ_REG says {} MHz, which is not a crystal the ESP32 has", mhz);
+        if let Some(mhz) = unsafe { soc_esp32::rtc::xtal_freq_mhz() } {
+            return mhz;
         }
-        // esp-idf returns RTC_XTAL_FREQ_AUTO (0) here and lets the caller
-        // estimate. FlintOS has no estimator, and both supported modules --
-        // WROVER and PICO-D4 -- are 40 MHz, so that is the answer, loudly.
-        api::log_error!("radio: falling back to 40 MHz; a 26 MHz board needs this checked");
-        40
+        api::log_error!(
+            "radio: RTC_XTAL_FREQ_REG holds no crystal this chip has;              falling back to 40 MHz, which a 26 MHz board needs checked"
+        );
+        soc_esp32::rtc::XTAL_40_MHZ
     }
 
     // The five below are RTC clock and sleep entry points that esp-idf v4.4

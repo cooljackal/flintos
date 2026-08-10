@@ -28,7 +28,8 @@
 
 #![no_std]
 
-use soc_esp32::addr::{RTC_CNTL_BASE, TIMG0_BASE, TIMG1_BASE};
+use soc_esp32::addr::{TIMG0_BASE, TIMG1_BASE};
+use soc_esp32::rtc;
 
 /// Write-protect key. Both watchdog families use the same value; the config
 /// registers ignore writes until it is present, and re-locking after each
@@ -37,9 +38,9 @@ const WDT_WKEY: u32 = 0x50D8_3AA1;
 
 // ── RTC watchdog ────────────────────────────────────────────────────────────
 
-const RTC_WDTCONFIG0: u32 = RTC_CNTL_BASE + 0x8C;
-const RTC_WDTCONFIG1: u32 = RTC_CNTL_BASE + 0x90;
-const RTC_WDTFEED: u32 = RTC_CNTL_BASE + 0xA0;
+use rtc::WDTCONFIG0 as RTC_WDTCONFIG0;
+use rtc::WDTCONFIG1 as RTC_WDTCONFIG1;
+use rtc::WDTFEED as RTC_WDTFEED;
 /// The feed is bit 31, not bit 0.
 ///
 /// Writing 1 here does nothing at all, and nothing reports that it did nothing:
@@ -49,7 +50,7 @@ const RTC_WDTFEED: u32 = RTC_CNTL_BASE + 0xA0;
 /// five seconds because the timeout expired, not because the deliberate hang
 /// stopped the feeding.
 const RTC_WDT_FEED_BIT: u32 = 1 << 31;
-const RTC_WDTWPROTECT: u32 = RTC_CNTL_BASE + 0xA4;
+use rtc::WDTWPROTECT as RTC_WDTWPROTECT;
 
 const RTC_WDT_EN: u32 = 1 << 31;
 /// Stage 0 action, bits [30:28].

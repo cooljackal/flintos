@@ -57,6 +57,7 @@ pub mod io_mux;
 pub mod pinmux;
 pub mod reg;
 pub mod reset;
+pub mod rtc;
 
 pub use pinmux::Esp32PinMux;
 
