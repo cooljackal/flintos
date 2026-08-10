@@ -9,9 +9,8 @@
 //! task is woken by the tick and discovers the timeout because it is still in
 //! the waiter list on resume (`block_*` returns false).
 //!
-//! All waiter-table access happens inside a critical section.
+//! All waiter-table access happens under one lock, `QUEUE_WAITERS`.
 
-use crate::arch::cs_with;
 use crate::scheduler::{self, TaskState};
 
 const MAX_WAITERS: usize = 16;
@@ -137,10 +136,26 @@ impl QueueWaiters {
     }
 }
 
-static mut QUEUE_WAITERS: QueueWaiters = QueueWaiters::new();
+/// The waiter table, behind a lock that excludes the other core.
+///
+/// This was a bare `static mut` reached through a `waiters()` accessor, and it
+/// was reached under **two different locks**: the paths that also touch the
+/// scheduler took it inside `scheduler::with`, while the resume path,
+/// `forget_task` and `is_waiting_anywhere` took only `cs_with`. A critical
+/// section is `rsil`, which masks the calling core alone, so those two groups
+/// did not exclude each other at all — core 0 resuming from a block could
+/// rewrite a list while core 1 was pushing to it inside the scheduler lock.
+/// One lock, taken by every path, is the fix.
+///
+/// **Lock order: scheduler, then this.** The three sites that need both nest
+/// in that order; nothing takes the scheduler while holding this. Reversing it
+/// anywhere deadlocks a two-core board.
+static QUEUE_WAITERS: crate::smp::Spinlock<QueueWaiters> =
+    crate::smp::Spinlock::new(QueueWaiters::new());
 
-fn waiters() -> &'static mut QueueWaiters {
-    unsafe { &mut *core::ptr::addr_of_mut!(QUEUE_WAITERS) }
+/// Run `f` with the waiter table locked.
+fn with_waiters<R>(f: impl FnOnce(&mut QueueWaiters) -> R) -> R {
+    QUEUE_WAITERS.with(f)
 }
 
 /// Deadline for a timeout: 0 = forever (never tick-woken); else now+timeout
@@ -219,10 +234,10 @@ pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
             tcb.sleep_until = dl;
         }
-        let ok = match waiters().find_or_create(q_addr) {
+        let ok = with_waiters(|w| match w.find_or_create(q_addr) {
             Some(l) => push(&mut l.send_waiters, &mut l.send_count, cur),
             None => false,
-        };
+        });
         if ok {
             sched.block_current(TaskState::BlockedSend);
             Some(cur)
@@ -237,8 +252,8 @@ pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
     scheduler::request_switch();
 
     // Resumed: still listed ⇒ timed out; removed ⇒ woken by a slot.
-    cs_with(|| {
-        if let Some(l) = waiters().find(q_addr) {
+    with_waiters(|w| {
+        if let Some(l) = w.find(q_addr) {
             if contains(&l.send_waiters, l.send_count, cur) {
                 remove(&mut l.send_waiters, &mut l.send_count, cur);
                 return false;
@@ -267,10 +282,10 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
         if let Some(tcb) = &mut sched.tasks[cur as usize] {
             tcb.sleep_until = dl;
         }
-        let ok = match waiters().find_or_create(q_addr) {
+        let ok = with_waiters(|w| match w.find_or_create(q_addr) {
             Some(l) => push(&mut l.recv_waiters, &mut l.recv_count, cur),
             None => false,
-        };
+        });
         if ok {
             sched.block_current(TaskState::BlockedRecv);
             Some(cur)
@@ -284,8 +299,8 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
     };
     scheduler::request_switch();
 
-    cs_with(|| {
-        if let Some(l) = waiters().find(q_addr) {
+    with_waiters(|w| {
+        if let Some(l) = w.find(q_addr) {
             if contains(&l.recv_waiters, l.recv_count, cur) {
                 remove(&mut l.recv_waiters, &mut l.recv_count, cur);
                 return false;
@@ -298,8 +313,15 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
 /// Wake one receiver after a successful send (a message is now available).
 pub fn wake_one_receiver(q_addr: usize) {
     scheduler::with(|sched| {
-        let id = waiters().find(q_addr).and_then(|l| {
-            pop_first_blocked(sched, &mut l.recv_waiters, &mut l.recv_count, TaskState::BlockedRecv)
+        let id = with_waiters(|w| {
+            w.find(q_addr).and_then(|l| {
+                pop_first_blocked(
+                    sched,
+                    &mut l.recv_waiters,
+                    &mut l.recv_count,
+                    TaskState::BlockedRecv,
+                )
+            })
         });
         if let Some(id) = id {
             sched.unblock(id);
@@ -310,8 +332,15 @@ pub fn wake_one_receiver(q_addr: usize) {
 /// Wake one sender after a successful receive (a slot is now free).
 pub fn wake_one_sender(q_addr: usize) {
     scheduler::with(|sched| {
-        let id = waiters().find(q_addr).and_then(|l| {
-            pop_first_blocked(sched, &mut l.send_waiters, &mut l.send_count, TaskState::BlockedSend)
+        let id = with_waiters(|w| {
+            w.find(q_addr).and_then(|l| {
+                pop_first_blocked(
+                    sched,
+                    &mut l.send_waiters,
+                    &mut l.send_count,
+                    TaskState::BlockedSend,
+                )
+            })
         });
         if let Some(id) = id {
             sched.unblock(id);
@@ -327,8 +356,7 @@ pub fn wake_one_sender(q_addr: usize) {
 /// entered. The bug that produces is a task returning from `recv` with nothing
 /// received, arbitrarily far from the delete that caused it.
 pub fn forget_task(id: u32) {
-    cs_with(|| {
-        let table = waiters();
+    with_waiters(|table| {
         for i in 0..table.count as usize {
             let (_, list) = &mut table.entries[i];
             remove(&mut list.send_waiters, &mut list.send_count, id);
@@ -340,8 +368,7 @@ pub fn forget_task(id: u32) {
 /// Whether a task is listed as waiting anywhere. Test support for
 /// [`forget_task`].
 pub fn is_waiting_anywhere(id: u32) -> bool {
-    cs_with(|| {
-        let table = waiters();
+    with_waiters(|table| {
         (0..table.count as usize).any(|i| {
             let (_, list) = &table.entries[i];
             contains(&list.send_waiters, list.send_count, id)

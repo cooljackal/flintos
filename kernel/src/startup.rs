@@ -8,6 +8,16 @@ use hal::bus::{BusKind, PhysicalBus};
 use crate::board::active;
 
 /// Global UART console driver (used by log/panic).
+/// The console UART.
+///
+/// A `static mut` handing out `&`, which is sound only because of when it is
+/// written: once, during boot on the first core, before `join_scheduler` can
+/// bring a second one up. After that it is read-only and shared reads race
+/// with nothing.
+///
+/// What that argument does *not* cover is a second write. There is no path to
+/// one today; adding one -- reconfiguring the console at runtime, say -- needs
+/// this behind a lock first.
 pub static mut CONSOLE_UART: Option<esp32_uart::Esp32Uart> = None;
 
 /// Initialise board-level hardware.

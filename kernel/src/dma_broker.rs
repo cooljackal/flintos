@@ -89,6 +89,11 @@ pub enum DmaError {
 }
 
 static NEXT_TRANSFER_ID: AtomicU32 = AtomicU32::new(1);
+/// Bump allocator offset into the DMA pool.
+///
+/// A `static mut`, and safe for the same reason as `spawn`'s: every access is
+/// inside `scheduler::with` (`alloc` opens with it, and the handle it returns
+/// records `sched.current()`, so the lock is needed regardless).
 static mut DMA_OFFSET: u32 = 0;
 
 /// Base address of the pool.

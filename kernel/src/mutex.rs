@@ -22,6 +22,19 @@ struct MutexEntry {
     waiter_count: u32,
 }
 
+/// The mutex table.
+///
+/// Still a `static mut`, and safe, for a reason worth stating rather than
+/// leaving to be re-derived: **every access is already inside
+/// `scheduler::with`**. `lock` and `unlock` open with it and the helpers take
+/// `&mut Scheduler`, which cannot be produced without it. The scheduler
+/// `Spinlock` excludes the other core, so this table inherits that.
+///
+/// It is protected by convention rather than by type, and the convention is
+/// one line from being broken: a new entry point that touches `table()`
+/// without taking the scheduler lock reintroduces the race. If that happens,
+/// give this its own `Spinlock` nested under the scheduler, as `queue` and
+/// `timer` now have.
 static mut MUTEXES: [MutexEntry; MAX_MUTEXES] = [MutexEntry {
     addr: 0,
     owner: NO_TASK,

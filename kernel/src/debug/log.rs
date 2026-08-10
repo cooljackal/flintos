@@ -16,10 +16,29 @@ struct LogEntry {
 /// Kernel log ring buffer.
 const RING_BUF_SIZE: usize = 32;
 
-static mut RING_BUF: [Option<LogEntry>; RING_BUF_SIZE] = [const { None }; RING_BUF_SIZE];
-static mut RING_HEAD: usize = 0;
-static mut RING_COUNT: usize = 0;
-static mut RING_TAIL: usize = 0;
+/// The ring and its three indices, behind a lock that excludes the other core.
+///
+/// Four bare `static mut`s under `cs_with`, which masks the calling core only.
+/// Both cores log, so two concurrent writers could advance `tail` to the same
+/// slot and lose a line, or leave `count` disagreeing with `head`.
+///
+/// **Lock order: scheduler, then this.** `write` reads the tick through
+/// `scheduler::try_with` *before* taking this lock, and `mutex::log_error`
+/// logs while holding the scheduler — so the scheduler is always the outer
+/// one. Nothing takes the scheduler while holding this.
+struct LogRing {
+    buf: [Option<LogEntry>; RING_BUF_SIZE],
+    head: usize,
+    count: usize,
+    tail: usize,
+}
+
+static RING: crate::smp::Spinlock<LogRing> = crate::smp::Spinlock::new(LogRing {
+    buf: [const { None }; RING_BUF_SIZE],
+    head: 0,
+    count: 0,
+    tail: 0,
+});
 
 /// Write a log message.  Called from the syscall entry.
 pub fn write(level: Level, args: &core::fmt::Arguments<'_>) {
@@ -43,15 +62,15 @@ pub fn write(level: Level, args: &core::fmt::Arguments<'_>) {
     let (tick, task) = crate::scheduler::try_with(|s| (s.ticks(), s.current()))
         .unwrap_or((0, u32::MAX));
 
-    // Store in the ring buffer (under a critical section — shared with readers).
-    crate::arch::cs_with(|| unsafe {
-        let ring = &mut *core::ptr::addr_of_mut!(RING_BUF);
-        ring[RING_TAIL] = Some(LogEntry { tick, level, task, msg: buf, len: len as u8 });
-        RING_TAIL = (RING_TAIL + 1) % RING_BUF_SIZE;
-        if RING_COUNT < RING_BUF_SIZE {
-            RING_COUNT += 1;
+    // Store in the ring buffer, under the lock it shares with readers.
+    RING.with(|r| {
+        let tail = r.tail;
+        r.buf[tail] = Some(LogEntry { tick, level, task, msg: buf, len: len as u8 });
+        r.tail = (tail + 1) % RING_BUF_SIZE;
+        if r.count < RING_BUF_SIZE {
+            r.count += 1;
         } else {
-            RING_HEAD = (RING_HEAD + 1) % RING_BUF_SIZE;
+            r.head = (r.head + 1) % RING_BUF_SIZE;
         }
     });
 
@@ -85,11 +104,10 @@ fn level_str(level: Level) -> &'static str {
 /// N lines that did *not* make it out of the UART.
 pub fn dump() {
     let mut console = crate::debug::console::Console;
-    crate::arch::cs_with(|| unsafe {
-        let ring = &*core::ptr::addr_of!(RING_BUF);
-        for i in 0..RING_COUNT {
-            let idx = (RING_HEAD + i) % RING_BUF_SIZE;
-            if let Some(entry) = &ring[idx] {
+    RING.with(|r| {
+        for i in 0..r.count {
+            let idx = (r.head + i) % RING_BUF_SIZE;
+            if let Some(entry) = &r.buf[idx] {
                 // Same reasoning: draining the ring can be reached from a
                 // context that already holds the scheduler.
                 let task_name = crate::scheduler::try_with(|s| {

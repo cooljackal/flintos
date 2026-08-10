@@ -80,6 +80,27 @@ struct Handler {
     iram_safe: bool,
 }
 
+/// The handler table.
+///
+/// Deliberately **not** behind a `Spinlock`, unlike `queue`'s and `timer`'s.
+/// Two of the three readers cannot take one:
+///
+/// - `mask_non_iram_safe` runs immediately before the instruction cache is
+///   switched off. A spinlock spins until the other core releases it, and the
+///   other core is about to be stalled by the same flash operation — so a
+///   contended lock here is not a delay, it is a board that never comes back.
+/// - `dispatch` runs in trap context on either core, on the hot path.
+///
+/// What makes the reads sound is *when* the writes happen: `register` and
+/// `register_iram_safe` are init-time calls, made before the second core is
+/// brought up, and the table is read-only afterwards. Today nothing in the
+/// tree registers at all outside the self-tests.
+///
+/// **This is the one static here whose safety is a timing argument rather than
+/// a lock**, so it is the one to revisit first if a driver ever registers a
+/// handler at runtime. The fix then is not a lock on the read path — it is to
+/// make the table append-only with atomic slots, so a reader either sees a
+/// complete entry or an empty one.
 static mut HANDLERS: [Option<Handler>; MAX_HANDLERS] = [None; MAX_HANDLERS];
 
 fn handlers() -> &'static mut [Option<Handler>; MAX_HANDLERS] {

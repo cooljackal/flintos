@@ -42,6 +42,13 @@ extern "C" {
 }
 
 /// Bump allocator offset into the task-stack region.
+///
+/// A `static mut`, and safe because its only reader/writer is
+/// `allocate_stack`, which is called from inside `scheduler::with` — the
+/// allocation has to be atomic with the TCB slot claim anyway, so the
+/// scheduler lock is the right one and a second lock here would be wrong.
+/// Calling `allocate_stack` from outside that lock would hand two cores the
+/// same stack.
 static mut STACK_ALLOC_OFFSET: u32 = 0;
 
 fn paint_stack(base: u32, size: u32) {

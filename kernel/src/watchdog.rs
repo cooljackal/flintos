@@ -52,7 +52,10 @@ const IDLE_WDT: wdt::Mwdt = wdt::Mwdt::Group1;
 /// A watchdog is not something to enable behind someone's back: a board that
 /// resets itself every five seconds, for reasons its author never asked for, is
 /// a very confusing first experience. Applications opt in.
-static mut ARMED: bool = false;
+/// Atomic rather than a `static mut` read through `read_volatile`: the tick
+/// feeds the watchdog from both cores, and `is_armed` is a cross-core read of
+/// a flag `arm` writes on one. A volatile read is not a synchronising one.
+static ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// Arm both watchdogs.
 ///
@@ -67,7 +70,7 @@ static mut ARMED: bool = false;
 pub unsafe fn arm() {
     wdt::rwdt_arm(KERNEL_TIMEOUT_MS);
     wdt::mwdt_arm(IDLE_WDT, IDLE_TIMEOUT_MS);
-    ARMED = true;
+    ARMED.store(true, core::sync::atomic::Ordering::Release);
 }
 
 /// Disarm both. Intended for debugging sessions.
@@ -75,14 +78,14 @@ pub unsafe fn arm() {
 /// # Safety
 /// After this nothing recovers a hung system short of a power cycle.
 pub unsafe fn disarm() {
-    ARMED = false;
+    ARMED.store(false, core::sync::atomic::Ordering::Release);
     wdt::rwdt_disable();
     wdt::mwdt_disable(IDLE_WDT);
 }
 
 /// Whether [`arm`] has been called.
 pub fn is_armed() -> bool {
-    unsafe { core::ptr::addr_of!(ARMED).read_volatile() }
+    ARMED.load(core::sync::atomic::Ordering::Acquire)
 }
 
 /// Feed the kernel watchdog. Called from the timer interrupt.

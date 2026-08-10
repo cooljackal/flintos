@@ -7,7 +7,6 @@
 //! whose callbacks fire from the trap handler. Software-timer state is guarded
 //! by a critical section against the trap handler.
 
-use crate::arch::cs_with;
 use crate::scheduler::{self, TaskState};
 
 /// Sleep the current task for `ms` milliseconds.
@@ -44,8 +43,30 @@ pub struct TimerEntry {
 
 const MAX_TIMERS: usize = 16;
 
-static mut TIMERS: [Option<TimerEntry>; MAX_TIMERS] = [const { None }; MAX_TIMERS];
-static mut NEXT_TIMER_ID: u32 = 1;
+/// The timer table and its id counter, behind a lock that excludes the other
+/// core.
+///
+/// These were bare `static mut`s. `register` and `cancel` took `cs_with`,
+/// which masks the calling core only, and `process_timers` took **nothing at
+/// all** — it ran from the trap handler and relied on interrupts already being
+/// masked, which is a one-core argument. Both cores take the tick and both run
+/// tasks that call `once`/`every`, so core 0 firing a timer raced core 1
+/// registering one.
+///
+/// **The lock is not held across a callback.** `process_timers` snapshots a
+/// due entry, releases, calls back, then re-acquires and re-checks the id —
+/// the shape the old code already had for a different reason (a callback may
+/// cancel its own timer and free the slot). Holding the lock across `cb()`
+/// would also deadlock outright the moment a callback called `once`.
+struct Timers {
+    entries: [Option<TimerEntry>; MAX_TIMERS],
+    next_id: u32,
+}
+
+static TIMERS: crate::smp::Spinlock<Timers> = crate::smp::Spinlock::new(Timers {
+    entries: [const { None }; MAX_TIMERS],
+    next_id: 1,
+});
 
 /// Register a one-shot timer. Returns the timer id, or 0 if the table is full.
 pub fn once(ms: u32, callback: fn()) -> u32 {
@@ -61,18 +82,17 @@ fn register(ms: u32, interval: u32, callback: fn()) -> u32 {
     // The tick first, through the lock, before taking the timer table's own
     // critical section: the two must not nest.
     let now = scheduler::with(|s| s.ticks());
-    cs_with(|| unsafe {
-        let timers = &mut *core::ptr::addr_of_mut!(TIMERS);
-        for slot in timers.iter_mut() {
+    TIMERS.with(|t| {
+        let id = t.next_id;
+        for slot in t.entries.iter_mut() {
             if slot.is_none() {
-                let id = NEXT_TIMER_ID;
-                NEXT_TIMER_ID = NEXT_TIMER_ID.wrapping_add(1).max(1);
                 *slot = Some(TimerEntry {
                     id,
                     fire_at: now.wrapping_add(ms as u64),
                     interval,
                     callback: Some(callback),
                 });
+                t.next_id = id.wrapping_add(1).max(1);
                 return id;
             }
         }
@@ -82,9 +102,8 @@ fn register(ms: u32, interval: u32, callback: fn()) -> u32 {
 
 /// Cancel a timer by id.
 pub fn cancel(id: u32) {
-    cs_with(|| unsafe {
-        let timers = &mut *core::ptr::addr_of_mut!(TIMERS);
-        for slot in timers.iter_mut() {
+    TIMERS.with(|t| {
+        for slot in t.entries.iter_mut() {
             if matches!(slot, Some(e) if e.id == id) {
                 *slot = None;
                 break;
@@ -93,8 +112,8 @@ pub fn cancel(id: u32) {
     });
 }
 
-/// Fire any due timers. Called from the trap handler (interrupts already
-/// masked), so no extra critical section is taken.
+/// Fire any due timers. Called from the trap handler, outside the scheduler
+/// lock, taking the timer lock itself for each table access.
 ///
 /// No `&mut` into the static `TIMERS` array is ever held across a callback
 /// invocation (item 6). The original code kept `entry`/`slot` borrowed for
@@ -113,16 +132,15 @@ pub fn process_timers(now: u64) {
         // Snapshot (id, callback, interval) for a due entry, if any, then let
         // the borrow end here — nothing below holds a live reference into
         // `TIMERS` while `cb()` runs.
-        let due = unsafe {
-            let timers = &*core::ptr::addr_of!(TIMERS);
-            timers[i].as_ref().and_then(|e| {
+        let due = TIMERS.with(|t| {
+            t.entries[i].as_ref().and_then(|e| {
                 if e.fire_at <= now {
                     Some((e.id, e.callback, e.interval))
                 } else {
                     None
                 }
             })
-        };
+        });
         let (id, callback, interval) = match due {
             Some(d) => d,
             None => continue,
@@ -140,18 +158,17 @@ pub fn process_timers(now: u64) {
         // canceled this very timer (freeing slot `i`) and a fresh `once()`/
         // `every()` may have already reused it for something else. Only
         // mutate if slot `i` still holds *this* timer.
-        unsafe {
-            let timers = &mut *core::ptr::addr_of_mut!(TIMERS);
-            let still_same = matches!(&timers[i], Some(e) if e.id == id);
+        TIMERS.with(|t| {
+            let still_same = matches!(&t.entries[i], Some(e) if e.id == id);
             if still_same {
                 if interval > 0 {
-                    if let Some(entry) = &mut timers[i] {
+                    if let Some(entry) = &mut t.entries[i] {
                         entry.fire_at = now.wrapping_add(interval as u64);
                     }
                 } else {
-                    timers[i] = None;
+                    t.entries[i] = None;
                 }
             }
-        }
+        });
     }
 }
