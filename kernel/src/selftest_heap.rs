@@ -40,34 +40,27 @@ pub(super) fn reclaimed_memory_is_available() -> Check {
     unsafe extern "C" {
         static _dma_pool_end: u8;
     }
-    let dma_start = (&raw const _dma_pool_end) as u32;
-    let (general, dma) = unsafe { heap::init(dma_start) };
+    let free_from = (&raw const _dma_pool_end) as u32;
+    let total = unsafe { heap::init(free_from) };
 
     // A second call must not hand the same memory out again.
-    let (again_general, again_dma) = unsafe { heap::init(dma_start) };
-    if again_general != 0 || again_dma != 0 {
+    if unsafe { heap::init(free_from) } != 0 {
         return Err("init handed out memory twice");
     }
 
     // Wi-Fi wants roughly 50 KB from the general pool. Less than that and the
     // radio plan does not fit, which is worth knowing here rather than in
     // phase 5.
-    if general < 100 * 1024 {
-        return Err("general pool is smaller than the radio needs");
+    if total < 100 * 1024 {
+        return Err("the pool is smaller than the radio needs");
     }
-    if dma == 0 {
-        return Err("no DMA-capable memory was reclaimed");
-    }
-    if heap::total_bytes(Caps::Internal) != general {
-        return Err("general total disagrees with what init reported");
-    }
-    if heap::total_bytes(Caps::Dma) != dma {
-        return Err("dma total disagrees with what init reported");
+    if heap::total_bytes(Caps::Internal) != total {
+        return Err("total disagrees with what init reported");
     }
     Ok(())
 }
 
-/// Memory from the general pool must hold what is written to it.
+/// Memory from the pool must hold what is written to it.
 ///
 /// The one that catches a region that is not really there: a write to an
 /// unbacked address on this part does not fault, it is simply lost.
@@ -120,11 +113,11 @@ pub(super) fn two_allocations_do_not_overlap() -> Check {
     Ok(())
 }
 
-/// DMA-capable memory must be addressable by the DMA engines.
+/// Memory taken through the DMA path must be addressable by the engines.
 ///
-/// SRAM1 is the big region and the engines cannot reach it. A descriptor built
-/// from an SRAM1 address does not error — the transfer moves the wrong bytes —
-/// so this is checked rather than assumed.
+/// A descriptor built from an address outside the window does not error — the
+/// transfer completes and moves the wrong bytes — so this is checked on the
+/// chip rather than assumed from the constant.
 pub(super) fn dma_memory_is_where_dma_can_reach() -> Check {
     let p = unsafe { heap::alloc_dma(256, 4) };
     if p.is_null() {
@@ -132,7 +125,7 @@ pub(super) fn dma_memory_is_where_dma_can_reach() -> Check {
     }
     if !heap::is_dma_capable(p) {
         unsafe { heap::free(p, Caps::Dma) };
-        return Err("DMA pool returned memory outside SRAM2");
+        return Err("DMA allocation was outside the DMA window");
     }
     for i in 0..256 {
         unsafe { p.add(i).write_volatile(i as u8) };
@@ -147,19 +140,31 @@ pub(super) fn dma_memory_is_where_dma_can_reach() -> Check {
     Ok(())
 }
 
-/// The general pool must not be handing out DMA-reachable memory by accident.
+/// Every allocation must be DMA-capable, including ones taken from SRAM1.
 ///
-/// If it did, the distinction between the two pools would be untested luck,
-/// and a caller could get away with `Caps::Internal` until the day it moved.
-pub(super) fn general_memory_is_not_in_the_dma_region() -> Check {
-    let p = unsafe { heap::alloc(64, 8) };
-    if p.is_null() {
-        return Err("general allocation failed");
+/// This asserted the opposite until esp-idf was checked: SRAM1 was believed
+/// out of the DMA engines' reach, and it is not. Keeping the test — inverted —
+/// means a future narrowing of the window is caught here rather than by a
+/// transfer that silently moves nothing.
+pub(super) fn every_allocation_is_dma_capable() -> Check {
+    // Several, so at least one comes from SRAM1 rather than the small SRAM2
+    // tail that gets used first.
+    let mut held = [core::ptr::null_mut(); 8];
+    let mut bad = false;
+    for slot in held.iter_mut() {
+        *slot = unsafe { heap::alloc(4096, 8) };
+        if slot.is_null() {
+            return Err("allocation failed with memory available");
+        }
+        if !heap::is_dma_capable(*slot) {
+            bad = true;
+        }
     }
-    let overlaps = heap::is_dma_capable(p);
-    unsafe { heap::free(p, Caps::Internal) };
-    if overlaps {
-        return Err("general pool overlaps the DMA region");
+    for slot in held.iter() {
+        unsafe { heap::free(*slot, Caps::Internal) };
+    }
+    if bad {
+        return Err("the pool returned memory outside the DMA window");
     }
     Ok(())
 }

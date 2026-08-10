@@ -18,16 +18,31 @@
 //! So the regions below are added at runtime, once, after boot. Nothing is
 //! placed there at link time and the static map does not move.
 //!
-//! # DMA cannot reach the big region
+//! # All of it is DMA-capable
 //!
-//! The two flavours are not a formality. SRAM1 is the large, comfortable
-//! region — and **the DMA engines cannot address it.** A descriptor pointing
-//! into SRAM1 does not error; the transfer silently moves the wrong bytes,
-//! which is the failure mode already documented for `dma_broker`.
+//! An earlier version of this module split the memory in two, on the belief
+//! that the DMA engines could not reach SRAM1. They can, and esp-idf says so
+//! plainly:
 //!
-//! So DMA-capable allocations come from the SRAM2 tail instead, which is
-//! small. [`alloc_dma`] enforces that by construction rather than by comment,
-//! and [`Caps::Dma`] is checked against the result.
+//! ```c
+//! #define SOC_DMA_LOW  0x3FFAE000
+//! #define SOC_DMA_HIGH 0x40000000
+//!
+//! inline static bool IRAM_ATTR esp_ptr_dma_capable(const void *p)
+//! {
+//!     return (intptr_t)p >= SOC_DMA_LOW && (intptr_t)p < SOC_DMA_HIGH;
+//! }
+//! ```
+//!
+//! Its heap agrees — the SRAM1 regions are type 1, whose capability list is
+//! `MALLOC_CAP_DMA|MALLOC_CAP_8BIT|MALLOC_CAP_INTERNAL|MALLOC_CAP_DEFAULT` —
+//! and NuttX puts ordinary heap regions at `0x3ffe0450` onward. The belief
+//! came from a comment in this project's own linker script and was simply
+//! wrong. The corrected window lives in [`soc_esp32::dma::reachable`].
+//!
+//! So there is one pool and every byte of it can back a DMA descriptor.
+//! [`Caps`] survives because the blob's allocator API asks in those terms and
+//! the adapter has to answer, not because the two mean different memory here.
 //!
 //! # What is *not* here
 //!
@@ -41,7 +56,7 @@ use heap::Heap;
 
 use crate::smp::Spinlock;
 
-/// End of SRAM2, and the last address the DMA engines can reach.
+/// End of SRAM2, where SRAM1 begins. Not a DMA boundary — see the module docs.
 const SRAM2_END: u32 = 0x3FFE_0000;
 
 /// SRAM1, which the ROM uses during boot and FlintOS never places anything in.
@@ -51,13 +66,18 @@ const SRAM1_END: u32 = 0x4000_0000;
 /// The ROM's own data, which stays reserved after boot.
 ///
 /// esp-idf keeps these out of the heap permanently, and they are inside SRAM1
-/// rather than at either end — which is why the general region is added as two
-/// pieces with a hole between them:
+/// rather than at either end — which is why SRAM1 is added as two pieces with
+/// a hole between them:
 ///
 /// ```c
 /// SOC_RESERVE_MEMORY_REGION(0x3ffe0000, 0x3ffe0440, rom_pro_data);
 /// SOC_RESERVE_MEMORY_REGION(0x3ffe3f20, 0x3ffe4350, rom_app_data);
 /// ```
+///
+/// NuttX reserves a little more here than esp-idf does. Where the two differ
+/// this follows esp-idf, which is the narrower claim and the one whose
+/// boundaries are quoted above; if a ROM routine is ever seen scribbling past
+/// them, NuttX's `memory_layout.h` is the place to compare against.
 const ROM_PRO_DATA: (u32, u32) = (0x3FFE_0000, 0x3FFE_0440);
 const ROM_APP_DATA: (u32, u32) = (0x3FFE_3F20, 0x3FFE_4350);
 
@@ -66,15 +86,13 @@ const ROM_APP_DATA: (u32, u32) = (0x3FFE_3F20, 0x3FFE_4350);
 pub enum Caps {
     /// Any internal RAM. What most blob allocations want.
     Internal,
-    /// Reachable by the DMA engines: inside SRAM2, and scarce.
+    /// Reachable by the DMA engines. On this part that is the same memory —
+    /// the distinction is kept because the blob asks in these terms.
     Dma,
 }
 
-/// The general pool: SRAM1, minus the ROM's data.
-static GENERAL: Spinlock<Heap> = Spinlock::new(Heap::new());
-
-/// The DMA-capable pool: whatever of SRAM2 the static map leaves.
-static DMA: Spinlock<Heap> = Spinlock::new(Heap::new());
+/// The heap: the SRAM2 tail plus SRAM1, minus the ROM's data.
+static POOL: Spinlock<Heap> = Spinlock::new(Heap::new());
 
 /// Set once [`init`] has run, so a second call cannot hand the same memory out
 /// twice.
@@ -82,53 +100,47 @@ static READY: AtomicBool = AtomicBool::new(false);
 
 /// Take the reclaimable memory and make it allocatable.
 ///
-/// Call once, after boot, before the radio starts. Returns the bytes taken as
-/// `(general, dma)`.
+/// Call once, after boot, before the radio starts. Returns the bytes taken.
 ///
 /// # Safety
 /// The ROM must be finished with its boot-time data — that is, this must not
 /// run during early startup — and nothing else may be using these regions.
-/// `dma_start` is the first free address above the static map, which the
+/// `free_from` is the first free address above the static map, which the
 /// linker script provides as `_dma_pool_end`.
-pub unsafe fn init(dma_start: u32) -> (usize, usize) {
+pub unsafe fn init(free_from: u32) -> usize {
     if READY.swap(true, Ordering::SeqCst) {
-        return (0, 0);
+        return 0;
     }
 
-    // Two pieces, because the ROM's data sits in the middle. Adding SRAM1 as
-    // one span would hand out allocations straddling memory that is not ours.
-    let taken_general = GENERAL.with(|general| {
+    POOL.with(|pool| {
         let mut taken = 0;
-        for (start, end) in [
-            (ROM_PRO_DATA.1, ROM_APP_DATA.0),
-            (ROM_APP_DATA.1, SRAM1_END),
-        ] {
+
+        // Whatever SRAM2 has left above the static map.
+        if free_from < SRAM2_END {
+            taken +=
+                unsafe { pool.add_region(free_from as *mut u8, (SRAM2_END - free_from) as usize) };
+        }
+
+        // SRAM1 in two pieces, because the ROM's data sits in the middle of
+        // it. Adding it as one span would hand out allocations straddling
+        // memory that is not ours — and the allocator must not coalesce across
+        // the gap either, which is why `add_region` is called twice rather
+        // than once with a hole punched out of it.
+        for (start, end) in [(ROM_PRO_DATA.1, ROM_APP_DATA.0), (ROM_APP_DATA.1, SRAM1_END)] {
             debug_assert!(start >= SRAM1_START && end <= SRAM1_END && start < end);
-            taken += unsafe { general.add_region(start as *mut u8, (end - start) as usize) };
+            taken += unsafe { pool.add_region(start as *mut u8, (end - start) as usize) };
         }
         taken
-    });
-
-    // Whatever SRAM2 has left above the static map. Small, and the only
-    // memory here that DMA can actually reach.
-    let taken_dma = DMA.with(|dma| {
-        if dma_start < SRAM2_END {
-            unsafe { dma.add_region(dma_start as *mut u8, (SRAM2_END - dma_start) as usize) }
-        } else {
-            0
-        }
-    });
-
-    (taken_general, taken_dma)
+    })
 }
 
-/// Allocate from the general pool. Not DMA-capable.
+/// Allocate from the pool.
 ///
 /// # Safety
 /// `align` must be a power of two. The returned pointer must be released with
-/// [`free`] and the same [`Caps`].
+/// [`free`].
 pub unsafe fn alloc(size: usize, align: usize) -> *mut u8 {
-    GENERAL.with(|h| unsafe { h.alloc(size, align) })
+    POOL.with(|h| unsafe { h.alloc(size, align) })
 }
 
 /// Allocate memory a DMA engine can reach.
@@ -136,10 +148,10 @@ pub unsafe fn alloc(size: usize, align: usize) -> *mut u8 {
 /// # Safety
 /// As [`alloc`].
 pub unsafe fn alloc_dma(size: usize, align: usize) -> *mut u8 {
-    let p = DMA.with(|h| unsafe { h.alloc(size, align) });
-    // Belt and braces: the pool is built from SRAM2 only, so this cannot fire
-    // unless `init` was given a bad bound. It is cheap, and the failure it
-    // catches is silent data corruption rather than a fault.
+    let p = POOL.with(|h| unsafe { h.alloc(size, align) });
+    // Every region the pool holds is inside the DMA window, so this cannot
+    // fire unless `init` was given a bad bound. It is cheap, and the failure
+    // it guards against is silent corruption rather than a fault.
     debug_assert!(p.is_null() || is_dma_capable(p));
     p
 }
@@ -150,53 +162,59 @@ pub unsafe fn alloc_dma(size: usize, align: usize) -> *mut u8 {
 /// As [`alloc`].
 pub unsafe fn alloc_caps(size: usize, align: usize, caps: Caps) -> *mut u8 {
     match caps {
-        Caps::Internal => alloc(size, align),
-        Caps::Dma => alloc_dma(size, align),
+        Caps::Internal => unsafe { alloc(size, align) },
+        Caps::Dma => unsafe { alloc_dma(size, align) },
     }
 }
 
-/// Return an allocation to the pool it came from.
+/// Return an allocation to the pool.
 ///
 /// # Safety
-/// `ptr` must have come from the matching allocator and not been freed.
+/// `ptr` must have come from this module and not been freed already.
 pub unsafe fn free(ptr: *mut u8, caps: Caps) {
-    match caps {
-        Caps::Internal => GENERAL.with(|h| unsafe { h.free(ptr) }),
-        Caps::Dma => DMA.with(|h| unsafe { h.free(ptr) }),
-    }
+    // One pool, so the capability does not choose an allocator. It is still
+    // taken, so callers stay in the habit of pairing it with the allocation —
+    // which matters if this ever does split again.
+    let _ = caps;
+    POOL.with(|h| unsafe { h.free(ptr) })
 }
 
 /// Whether an address is one a DMA engine can reach.
+///
+/// Delegates to the SoC crate, so there is one definition of the window rather
+/// than a copy here that can drift away from it.
 pub fn is_dma_capable(ptr: *const u8) -> bool {
-    (ptr as u32) < SRAM2_END
+    #[cfg(target_os = "none")]
+    {
+        soc_esp32::dma::reachable(ptr as u32)
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let a = ptr as usize as u64;
+        (0x3FFA_E000..0x4000_0000).contains(&a)
+    }
 }
 
-/// Free bytes in the general pool.
+/// Free bytes in the pool.
 ///
 /// The sum of the free blocks, which is what `get_free_heap_size` means. It is
 /// not a promise that a request of this size will succeed — see
 /// [`largest_free_block`].
 pub fn free_bytes(caps: Caps) -> usize {
-    match caps {
-        Caps::Internal => GENERAL.with(|h| h.free_bytes()),
-        Caps::Dma => DMA.with(|h| h.free_bytes()),
-    }
+    let _ = caps;
+    POOL.with(|h| h.free_bytes())
 }
 
-/// Total bytes under management for a capability.
+/// Total bytes under management.
 pub fn total_bytes(caps: Caps) -> usize {
-    match caps {
-        Caps::Internal => GENERAL.with(|h| h.total_bytes()),
-        Caps::Dma => DMA.with(|h| h.total_bytes()),
-    }
+    let _ = caps;
+    POOL.with(|h| h.total_bytes())
 }
 
 /// The largest allocation that can currently succeed, ignoring the header.
 pub fn largest_free_block(caps: Caps) -> usize {
-    match caps {
-        Caps::Internal => GENERAL.with(|h| h.largest_free_block()),
-        Caps::Dma => DMA.with(|h| h.largest_free_block()),
-    }
+    let _ = caps;
+    POOL.with(|h| h.largest_free_block())
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -233,28 +251,48 @@ mod tests {
     }
 
     #[test]
-    fn sram1_is_not_dma_capable_and_sram2_is() {
-        // The reason there are two pools at all. An address in SRAM1 must
-        // never pass the DMA check, or a descriptor built from it moves the
-        // wrong bytes without erroring.
-        assert!(!is_dma_capable(SRAM1_START as *const u8));
-        assert!(!is_dma_capable((SRAM1_END - 1) as *const u8));
-        assert!(is_dma_capable((SRAM2_END - 1) as *const u8));
-        assert!(is_dma_capable(0x3FFD_C200 as *const u8));
+    fn every_byte_the_pool_can_hold_is_dma_capable() {
+        // The correction that collapsed two pools into one. SRAM1 was believed
+        // unreachable by DMA; esp-idf's SOC_DMA_HIGH is 0x40000000, so the
+        // whole pool qualifies. If this ever fails, `alloc_dma` has to go back
+        // to a region of its own.
+        for addr in [
+            0x3FFD_C200u32, // the SRAM2 tail, just above the static bound
+            SRAM2_END - 4,
+            SRAM1_START,
+            ROM_PRO_DATA.1,
+            ROM_APP_DATA.1,
+            SRAM1_END - 4,
+        ] {
+            assert!(
+                is_dma_capable(addr as *const u8),
+                "{addr:#x} should be DMA-capable"
+            );
+        }
     }
 
     #[test]
-    fn the_two_pools_do_not_overlap() {
+    fn addresses_outside_internal_dram_are_not_dma_capable() {
+        for addr in [0x3FFA_DFFCu32, 0x4000_0000, 0x4008_0000, 0x3F40_0000] {
+            assert!(
+                !is_dma_capable(addr as *const u8),
+                "{addr:#x} should not be DMA-capable"
+            );
+        }
+    }
+
+    #[test]
+    fn the_two_regions_meet_without_a_gap_or_an_overlap() {
         // SRAM2 ends exactly where SRAM1 begins; a gap or an overlap here
         // would either lose memory or double-issue it.
         assert_eq!(SRAM2_END, SRAM1_START);
     }
 
     #[test]
-    fn a_dma_bound_past_sram2_yields_nothing_rather_than_wrapping() {
-        // `init` computes `SRAM2_END - dma_start`. If the static map ever grew
+    fn a_bound_past_sram2_yields_nothing_rather_than_wrapping() {
+        // `init` computes `SRAM2_END - free_from`. If the static map ever grew
         // past SRAM2 that subtraction would underflow, so the guard matters.
-        let dma_start = SRAM2_END + 0x1000;
-        assert!(dma_start >= SRAM2_END, "the guard's condition");
+        let free_from = SRAM2_END + 0x1000;
+        assert!(free_from >= SRAM2_END, "the guard's condition");
     }
 }
