@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "heap"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Free-list allocator over caller-supplied regions, for the radio blobs"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No dependencies, like `kvstore`: this is pointer arithmetic over regions the
+# caller hands it. It knows nothing about the ESP32's memory map, which is what
+# lets every path -- fragmentation, coalescing, exhaustion -- be tested against
+# an ordinary buffer on the host.
+[dependencies]

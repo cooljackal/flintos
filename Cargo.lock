@@ -167,6 +167,10 @@ name = "hal"
 version = "0.1.0"
 
 [[package]]
+name = "heap"
+version = "0.1.0"
+
+[[package]]
 name = "hello"
 version = "0.1.0"
 dependencies = [
@@ -212,6 +216,7 @@ dependencies = [
  "esp32-uart",
  "esp32-wdt",
  "hal",
+ "heap",
  "kvstore",
  "soc-esp32",
 ]

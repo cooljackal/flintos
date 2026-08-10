@@ -87,6 +87,7 @@ members = [
     # `driver-led-matrix` to make the claim out loud.
     "lib/led-matrix",
     "lib/kvstore",
+    "lib/heap",
     "lib/led-strip",
 ]
 
