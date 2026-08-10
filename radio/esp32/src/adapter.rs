@@ -43,6 +43,55 @@ use kernel::heap::{self, Caps};
 
 use crate::osi::{WifiOsiFuncs, TIME_BLOCKING};
 
+/// `esp_log_level_t`, from esp-idf `esp_log.h`.
+///
+/// Values, not an ordering -- the blob passes these numbers.
+// Used by `by_name::write_log`, which is target-only, and by the tests on a
+// host. Neither cfg alone covers that pair.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+const ESP_LOG_NONE: u32 = 0;
+// Used by `by_name::write_log`, which is target-only, and by the tests on a
+// host. Neither cfg alone covers that pair.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+const ESP_LOG_ERROR: u32 = 1;
+// Used by `by_name::write_log`, which is target-only, and by the tests on a
+// host. Neither cfg alone covers that pair.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+const ESP_LOG_WARN: u32 = 2;
+// Used by `by_name::write_log`, which is target-only, and by the tests on a
+// host. Neither cfg alone covers that pair.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+const ESP_LOG_INFO: u32 = 3;
+// Used by `by_name::write_log`, which is target-only, and by the tests on a
+// host. Neither cfg alone covers that pair.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+const ESP_LOG_DEBUG: u32 = 4;
+// Used by `by_name::write_log`, which is target-only, and by the tests on a
+// host. Neither cfg alone covers that pair.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+const ESP_LOG_VERBOSE: u32 = 5;
+
+/// Map esp-idf's level onto FlintOS's.
+///
+/// `ESP_LOG_NONE` means "do not log", so it is the one value that returns
+/// `None` rather than a level. Anything unrecognised is treated as an
+/// error: a blob logging at a level this does not know is itself worth
+/// seeing, and the alternative -- silently dropping it -- loses the
+/// message that would have explained something.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+fn map_level(level: u32) -> Option<api::debug::log::Level> {
+    use api::debug::log::Level;
+    match level {
+        ESP_LOG_NONE => None,
+        ESP_LOG_ERROR => Some(Level::Error),
+        ESP_LOG_WARN => Some(Level::Warn),
+        ESP_LOG_INFO => Some(Level::Info),
+        ESP_LOG_DEBUG => Some(Level::Debug),
+        ESP_LOG_VERBOSE => Some(Level::Trace),
+        _ => Some(Level::Error),
+    }
+}
+
 /// What the table still leaves null, and why.
 ///
 /// Not a list of things forgotten — a list of things that cannot be written
@@ -51,7 +100,6 @@ use crate::osi::{WifiOsiFuncs, TIME_BLOCKING};
 pub const UNIMPLEMENTED: &[(&str, &str)] = &[
     ("_phy_* ", "PHY enable and init data (step 3.6); the calibration store itself is done, see crate::calibration"),
     ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
-    ("_log_write / _log_writev", "variadic C logging into api::log"),
     ("_event_post", "the esp_event loop, which FlintOS has no equivalent of"),
 ];
 
@@ -419,6 +467,22 @@ pub fn table() -> WifiOsiFuncs {
         t._nvs_erase_key = Some(crate::nvs::nvs_erase_key);
     }
 
+    // The field type is the header's, varargs and all. `esp_log_write` is
+    // declared without them so Rust can define it; a C function pointer has
+    // the same representation either way, and the windowed ABI lets a callee
+    // read fewer arguments than it was passed. The cast is the one place that
+    // concession is visible.
+    #[cfg(target_os = "none")]
+    {
+        t._log_write = Some(unsafe {
+            core::mem::transmute::<
+                unsafe extern "C" fn(u32, *const core::ffi::c_char, *const core::ffi::c_char),
+                unsafe extern "C" fn(u32, *const core::ffi::c_char, *const core::ffi::c_char, ...),
+            >(by_name::esp_log_write)
+        });
+        t._log_writev = Some(by_name::esp_log_writev);
+    }
+
     t._timer_setfn = Some(crate::ets_timer::timer_setfn);
     t._timer_arm = Some(crate::ets_timer::timer_arm);
     t._timer_arm_us = Some(crate::ets_timer::timer_arm_us);
@@ -589,6 +653,84 @@ mod by_name {
     blob_printf!(rtc_printf, "rtc");
     blob_printf!(net80211_printf, "net80211");
     blob_printf!(coexist_printf, "coex");
+
+    // ── esp_log_write ───────────────────────────────────────────────────────
+    //
+    // `_log_write` and `_log_writev` are the table's two entries into
+    // esp-idf's logging. Same wall as the `*_printf` hooks above -- the first
+    // is variadic and the second takes a `va_list` -- so both log the format
+    // string and drop the arguments, for the reasons stated there.
+    //
+    // What these add over the printf hooks is a **level**, which is worth
+    // honouring: the blob logs at verbose constantly and at error rarely, and
+    // sending all of it to `log_info!` would either drown the console or hide
+    // the one line that mattered.
+
+    /// The bounded read the logging paths share.
+    ///
+    /// # Safety
+    /// `s` must be nul-terminated within `MAX_LOG_STR`, or null.
+    unsafe fn c_str_bounded<'a>(s: *const c_char) -> Option<&'a str> {
+        /// A string with no terminator would otherwise walk memory until it
+        /// faulted, and a diagnostic path must not be able to make things
+        /// worse than whatever it is reporting.
+        const MAX_LOG_STR: usize = 256;
+        if s.is_null() {
+            return None;
+        }
+        let mut len = 0;
+        while len < MAX_LOG_STR && unsafe { *s.add(len) } != 0 {
+            len += 1;
+        }
+        let bytes = unsafe { core::slice::from_raw_parts(s as *const u8, len) };
+        core::str::from_utf8(bytes).ok()
+    }
+
+    /// The body both entries share.
+    fn write_log(level: u32, tag: *const c_char, fmt: *const c_char) {
+        let Some(level) = super::map_level(level) else {
+            return;
+        };
+        let tag = unsafe { c_str_bounded(tag) }.unwrap_or("blob");
+        let msg = unsafe { c_str_bounded(fmt) }.unwrap_or("<non-utf8 message>");
+        api::debug::log::__flint_log(level, format_args!("[{}] {}", tag, msg));
+    }
+
+    /// `_log_write(level, tag, format, ...)`.
+    ///
+    /// Declared without the varargs, which is what lets Rust define it at all.
+    /// The representation of a C function pointer does not depend on whether
+    /// the callee is variadic, and on the windowed ABI the caller passes
+    /// arguments in a2-a7 and on the stack and cleans up after itself -- so a
+    /// callee reading fewer than it was given is well defined. The table field
+    /// keeps the faithful variadic type and the assignment casts; see
+    /// `table()`.
+    ///
+    /// # Safety
+    /// `tag` and `format` must be nul-terminated or null. Called by the blob.
+    #[no_mangle]
+    pub unsafe extern "C" fn esp_log_write(level: u32, tag: *const c_char, fmt: *const c_char) {
+        write_log(level, tag, fmt);
+    }
+
+    /// `_log_writev(level, tag, format, va_list)`.
+    ///
+    /// Not variadic, so this one needs no cast -- but the `va_list` is still
+    /// undecodable without walking the format string, so the arguments are
+    /// dropped exactly as above.
+    ///
+    /// # Safety
+    /// `tag` and `format` must be nul-terminated or null; `args` is ignored.
+    /// Called by the blob.
+    #[no_mangle]
+    pub unsafe extern "C" fn esp_log_writev(
+        level: u32,
+        tag: *const c_char,
+        fmt: *const c_char,
+        _args: *mut c_void,
+    ) {
+        write_log(level, tag, fmt);
+    }
 
     // ── PHY critical section ────────────────────────────────────────────────
     //
@@ -1063,6 +1205,29 @@ mod tests {
         assert!(t._coex_init.is_none());
         assert_eq!(t._version, crate::osi::VERSION);
         assert_eq!(t._magic, crate::osi::MAGIC);
+    }
+
+    #[test]
+    fn the_log_levels_are_esp_idfs() {
+        use api::debug::log::Level;
+        // The blob passes these numbers, so they are values rather than an
+        // ordering. ESP_LOG_NONE is the one that must not produce a line.
+        assert!(map_level(0).is_none(), "ESP_LOG_NONE must not log");
+        assert_eq!(map_level(1), Some(Level::Error));
+        assert_eq!(map_level(2), Some(Level::Warn));
+        assert_eq!(map_level(3), Some(Level::Info));
+        assert_eq!(map_level(4), Some(Level::Debug));
+        assert_eq!(map_level(5), Some(Level::Trace));
+    }
+
+    #[test]
+    fn an_unknown_level_is_reported_rather_than_dropped() {
+        use api::debug::log::Level;
+        // A blob logging at a level this does not know is itself worth
+        // seeing; dropping it loses the message that would have explained
+        // something.
+        assert_eq!(map_level(99), Some(Level::Error));
+        assert_eq!(map_level(u32::MAX), Some(Level::Error));
     }
 
     #[test]
