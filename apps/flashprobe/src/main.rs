@@ -45,6 +45,20 @@ fn run() {
         api::log_error!("[probe] not populated: the ROM would build commands from this");
     }
 
+    // What the bootloader left SPI1 configured as. Every theory about where an
+    // extra clock comes from has been an inference from behaviour; this is the
+    // configuration itself.
+    for (name, off) in [
+        ("CTRL ", 0x08u32), ("CTRL1", 0x0c), ("CTRL2", 0x14), ("CLOCK", 0x18),
+        ("USER ", 0x1c), ("USER1", 0x20), ("USER2", 0x24), ("PIN  ", 0x34),
+    ] {
+        let v1 = unsafe { ((0x3FF4_2000u32 + off) as *const u32).read_volatile() };
+        // SPI0 is the cache's controller and demonstrably reads this chip
+        // correctly, so wherever the two differ is a candidate.
+        let v0 = unsafe { ((0x3FF4_3000u32 + off) as *const u32).read_volatile() };
+        api::log_info!("[probe] {} SPI1={:#010x} SPI0={:#010x}", name, v1, v0);
+    }
+
     // The struct is fine, so the ROM is not the problem. Try the real thing
     // from here, where the scheduler is running and a task has a stack.
     let outcome = round_trip();

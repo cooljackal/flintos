@@ -1,9 +1,46 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# SPI flash on ESP32 from bare-metal Rust — handover
+# SPI flash on ESP32 from bare-metal Rust — resolved
 
-An unsolved problem, written up for someone else to look at. Everything below
-was observed on hardware unless it says otherwise.
+**This is solved.** `apps/flashprobe` erases, programs and reads the `nvs`
+partition, and a value written one boot is read back the next. The rest of the
+document is kept as the record of how it was found, because most of it was
+wrong in instructive ways.
+
+Three faults, all in `drivers/physical/esp32/flash/src/spi1.rs`, each invisible
+until the one before it was fixed:
+
+1. **A read is a user transaction, not a native command.** esp-idf fires
+   `REG_WRITE(PERIPHS_SPI_FLASH_CMD, SPI_USR)`, never `SPI_FLASH_READ`. Driven
+   as a native command the read transfers nothing and the loop copies out
+   `W0..W15` — the data buffer, still holding the last program. So it returns
+   the bytes most recently written and looks like a working round trip.
+2. **`CMD_ANY` did not include `SPI_USR`**, so no user transaction was ever
+   waited for. The status read returned the scratch value written to `W0`
+   immediately before firing.
+3. **Every user transaction needs one dummy cycle.** Without it the controller
+   samples one clock early and the byte arrives as `0x80 | (real >> 1)`: a
+   status of `0x00` reads `0x80`, a `WEL` of `0x02` reads `0x81` — `WIP`
+   apparently set forever on an idle chip. Found by sweeping the count against
+   a status whose value was known.
+
+And the address convention differs between the two routes, which is why the
+first fault survived so long:
+
+```c
+erase:   WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, addr & 0xffffff);
+program: WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, (addr & 0xffffff) | (len << 24));
+read:    WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, temp_addr << 8);
+```
+
+The lesson that actually paid: every real step forward came from reading
+esp-idf's source, and every theory formed without it was wrong. Register
+headers describe bits; drivers describe order and convention.
+
+---
+
+Everything below was observed on hardware unless it says otherwise, and is
+retained as history.
 
 ## The goal
 
@@ -185,9 +222,9 @@ program: WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, (addr & 0xffffff) | (len << 24))
 read:    WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, temp_addr << 8);
 ```
 
-Shifting the read address to match has **not** fixed it — the symptom is
-unchanged — so the transfer is still not happening for some further reason.
-Erase and program are believed good; the read is the open item.
+Shifting the read address alone did not fix it. The transfer was not happening
+because the read was being driven as a native command at all; see the
+resolution at the top.
 
 ## What would most help
 
