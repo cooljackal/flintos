@@ -74,10 +74,22 @@ The blob allocates constantly. FlintOS currently has no allocator at all.
 
 | Step | Work | Done when |
 |---|---|---|
-| 1.1 | Reclaim heap memory **above** `0x3FFDC200` at runtime — not a new statically placed region | The heap is sized at boot from reclaimed RAM, and the static map below the bound is unchanged. |
-| 1.2 | Implement the allocator | Alloc/free under a host test suite, including fragmentation behaviour. |
-| 1.3 | Add the three flavours the blob wants: general, internal-only (DRAM, never PSRAM), DMA-capable | Each returns memory in the right region, proven by asserting the address range. |
-| 1.4 | Report exhaustion honestly | `get_free_heap_size` is accurate; an out-of-memory path is tested, not assumed. |
+| 1.1 | ✅ Reclaim heap memory **above** `0x3FFDC200` at runtime | Done. `kernel::heap::init` takes SRAM1 as two regions around the ROM's data, plus whatever SRAM2 the static map leaves. Proven on hardware, not assumed: the on-target suite writes patterns through the allocator and reads them back. |
+| 1.2 | ✅ Implement the allocator | Done. `lib/heap`, a free-list allocator with address-ordered coalescing. Fourteen host tests including a 2,000-operation churn that asserts every byte comes back. |
+| 1.3 | ✅ The flavours the blob wants | Done as **two**, not three — see below. `Caps::Internal` and `Caps::Dma`, each proven by asserting the returned address's region on the chip. |
+| 1.4 | ✅ Report exhaustion honestly | Done. `free_bytes` is the sum of the free blocks and `largest_free_block` is what a request can actually get; exhaustion returns null and is tested on host and target. |
+
+**Two flavours, not three.** The plan asked for general, internal-only and
+DMA-capable. Internal-only and general are the same thing until PSRAM exists,
+which is a non-goal, so a third that aliased the first would only invite a
+caller to pick the wrong one.
+
+**DMA cannot reach the big pool.** SRAM1 is the roomy region and the DMA
+engines cannot address it — a descriptor pointing there does not error, the
+transfer silently moves the wrong bytes. So `Caps::Dma` allocates from the
+SRAM2 tail instead, which is small (about 16 KiB). If the radio needs more
+DMA-capable memory than that, the static map has to give some back, and that
+is a real constraint to check early in phase 3 rather than discover in phase 5.
 
 **Note.** Static allocation is a real-time *feature* — no fragmentation, bounded
 latency. Confining the heap to the radio (ground rule 3) is what keeps that
