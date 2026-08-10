@@ -51,7 +51,6 @@ use crate::osi::{WifiOsiFuncs, TIME_BLOCKING};
 pub const UNIMPLEMENTED: &[(&str, &str)] = &[
     ("_phy_* ", "PHY enable and init data (step 3.6); the calibration store itself is done, see crate::calibration"),
     ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
-    ("_nvs_*", "maps onto kvstore, but the blob's key namespace needs deciding"),
     ("_log_write / _log_writev", "variadic C logging into api::log"),
     ("_event_post", "the esp_event loop, which FlintOS has no equivalent of"),
 ];
@@ -400,6 +399,25 @@ unsafe extern "C" fn osi_spin_lock_delete(handle: *mut c_void) {
 /// a diagnosable crash at a known address; a wrong function is not.
 pub fn table() -> WifiOsiFuncs {
     let mut t = WifiOsiFuncs::empty();
+
+    // The nvs family is target-only: it needs the flash region, which does
+    // not exist on a host. The table simply has fewer entries there, and the
+    // host build has no blob to hand it to.
+    #[cfg(target_os = "none")]
+    {
+        t._nvs_open = Some(crate::nvs::nvs_open);
+        t._nvs_close = Some(crate::nvs::nvs_close);
+        t._nvs_commit = Some(crate::nvs::nvs_commit);
+        t._nvs_set_i8 = Some(crate::nvs::nvs_set_i8);
+        t._nvs_get_i8 = Some(crate::nvs::nvs_get_i8);
+        t._nvs_set_u8 = Some(crate::nvs::nvs_set_u8);
+        t._nvs_get_u8 = Some(crate::nvs::nvs_get_u8);
+        t._nvs_set_u16 = Some(crate::nvs::nvs_set_u16);
+        t._nvs_get_u16 = Some(crate::nvs::nvs_get_u16);
+        t._nvs_set_blob = Some(crate::nvs::nvs_set_blob);
+        t._nvs_get_blob = Some(crate::nvs::nvs_get_blob);
+        t._nvs_erase_key = Some(crate::nvs::nvs_erase_key);
+    }
 
     t._timer_setfn = Some(crate::ets_timer::timer_setfn);
     t._timer_arm = Some(crate::ets_timer::timer_arm);
