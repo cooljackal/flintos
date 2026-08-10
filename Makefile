@@ -296,6 +296,12 @@ apps: ## List the applications in apps/
 	@echo "Debug:  debug-level-0 (silent) .. debug-level-3 (everything)"
 
 .PHONY: erase
+blobs: ## Fetch Espressif's radio blobs (Apache-2.0, ~4 MB, pinned to esp-idf v4.4)
+	@$(BASH) tools/fetch-blobs.sh
+
+blobs-check: ## Report whether the radio blobs have been fetched
+	@$(BASH) tools/fetch-blobs.sh --check
+
 erase: ## Erase the entire flash (recover from a bad/stuck prior image)
 	espflash erase-flash --chip $(ESPFLASH_CHIP)
 

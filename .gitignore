@@ -23,3 +23,9 @@ Thumbs.db
 # ESP32 / Embedded
 flasher.py
 esp-idf/
+
+# Espressif's radio blobs, fetched by `make blobs` rather than vendored.
+# Apache-2.0 binaries from Espressif's own repositories, pinned to the
+# revisions esp-idf references -- see doc/plan-radio.md for why these are
+# fetched rather than committed.
+.blobs/
