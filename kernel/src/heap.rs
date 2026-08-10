@@ -56,11 +56,17 @@ use heap::Heap;
 
 use crate::smp::Spinlock;
 
+// The five constants below are read by the target path and by the tests that
+// pin them. A host build takes a static buffer instead, so they are dead
+// there — kept rather than gated, because they are facts about the chip.
 /// End of SRAM2, where SRAM1 begins. Not a DMA boundary — see the module docs.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const SRAM2_END: u32 = 0x3FFE_0000;
 
 /// SRAM1, which the ROM uses during boot and FlintOS never places anything in.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const SRAM1_START: u32 = 0x3FFE_0000;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const SRAM1_END: u32 = 0x4000_0000;
 
 /// The ROM's own data, which stays reserved after boot.
@@ -78,7 +84,9 @@ const SRAM1_END: u32 = 0x4000_0000;
 /// this follows esp-idf, which is the narrower claim and the one whose
 /// boundaries are quoted above; if a ROM routine is ever seen scribbling past
 /// them, NuttX's `memory_layout.h` is the place to compare against.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const ROM_PRO_DATA: (u32, u32) = (0x3FFE_0000, 0x3FFE_0440);
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const ROM_APP_DATA: (u32, u32) = (0x3FFE_3F20, 0x3FFE_4350);
 
 /// What a caller needs from the memory, beyond its size.
@@ -112,6 +120,18 @@ pub unsafe fn init(free_from: u32) -> usize {
         return 0;
     }
 
+    // A host build has no SRAM1 to reclaim, and adding those addresses would
+    // hand out pointers into nothing. It gets a static buffer instead, so the
+    // dynamic-object tests exercise the real allocator rather than a stand-in.
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = free_from;
+        const TEST_HEAP: usize = 256 * 1024;
+        static mut BUF: [u8; TEST_HEAP] = [0; TEST_HEAP];
+        return POOL.with(|pool| unsafe { pool.add_region((&raw mut BUF) as *mut u8, TEST_HEAP) });
+    }
+
+    #[cfg(target_os = "none")]
     POOL.with(|pool| {
         let mut taken = 0;
 

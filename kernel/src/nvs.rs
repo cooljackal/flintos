@@ -37,6 +37,7 @@ pub const NVS_LEN: u32 = 0x6000;
 
 /// Largest single transfer either direction. One `kvstore` entry is at most
 /// 8 + 32 + 128 = 168 bytes; 256 leaves room without being generous.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const SCRATCH_WORDS: usize = 64;
 
 /// A [`FlashRegion`](esp32_flash::FlashRegion) that speaks [`Storage`].
