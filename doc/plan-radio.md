@@ -236,6 +236,65 @@ starts mesh.
 
 ---
 
+### Before 3.6: flash and the radio cannot currently coexist
+
+Researched against esp-idf and NuttX before starting 3.6, because 3.6's own
+acceptance criterion — *calibration data persists across a reboot* — means
+writing to flash while the radio is up, which is exactly the case below.
+
+**First, a correction.** An earlier note here said the danger was ISRs fetching
+from flash while the cache is off. That is not what happens: FlintOS's
+`with_cache_off` opens with `rsil 5`, masking every maskable interrupt, so
+nothing fetches anything. The real cost is **latency** — a flash operation
+blocks the tick and every driver interrupt for its whole duration, and a
+sector erase is tens of milliseconds. Wi-Fi will not survive that: missed
+beacons, and a link that drops under any write load.
+
+**Both reference implementations solve it the same way, and it is not "put
+everything in IRAM".** They mask *selectively*:
+
+```c
+void IRAM_ATTR esp_intr_noniram_disable(void)   // esp-idf, intr_alloc.c
+{
+    uint32_t non_iram_ints = non_iram_int_mask[cpu];
+    ...
+    interrupt_controller_hal_disable_interrupts(non_iram_ints);
+}
+```
+
+An interrupt declares itself IRAM-safe when it is allocated
+(`ESP_INTR_FLAG_IRAM`), and only the ones that did not are masked for a flash
+operation. The radio's handlers are IRAM-safe and keep running throughout.
+
+**NuttX does the same, and also parks the other core.** Its
+`esp32_spiflash_opstart` — the function this project's flash handover named as
+"the single most likely place the answer is", and never read — does, in order:
+
+1. raise the calling task to maximum priority;
+2. signal the other CPU through a semaphore and **wait** for it to confirm it
+   has parked;
+3. `sched_lock()`;
+4. `esp_intr_noniram_disable()`;
+5. disable the cache on **both** cores.
+
+FlintOS disables only core 0's cache and states the other core as a caller
+obligation in the driver's module docs. That obligation is fine today, when
+flash is written from a single-core bring-up app. It is not fine once the radio
+is running, because blob tasks are scheduled on either core.
+
+**So two kernel changes stand between here and a working 3.6**, and neither is
+radio code:
+
+- An IRAM-safe flag per interrupt, and masking only the others during a flash
+  operation, instead of `rsil 5`.
+- Cross-core coordination in the flash driver: park the other core and disable
+  both caches, rather than documenting it as somebody else's problem.
+
+Filed rather than folded into 3.6, because they belong to the kernel and the
+flash driver and would be wanted even without a radio.
+
+---
+
 ## Phase 4 — BLE
 
 | Step | Work | Done when |
