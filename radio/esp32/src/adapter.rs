@@ -49,7 +49,7 @@ use crate::osi::{WifiOsiFuncs, TIME_BLOCKING};
 /// yet or that need hardware to mean anything. Kept here so the gap is
 /// countable rather than discovered one crash at a time.
 pub const UNIMPLEMENTED: &[(&str, &str)] = &[
-    ("_set_intr / _clear_intr / _set_isr", "interrupt routing; needs the blob's ISRs in IRAM (step 3.5)"),
+    ("_set_intr / _clear_intr / _set_isr", "interrupt routing onto the ESP32 interrupt matrix; the IRAM placement it waited on is done"),
     ("_phy_* ", "PHY enable, init data and RF calibration (step 3.6)"),
     ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
     ("_nvs_*", "maps onto kvstore, but the blob's key namespace needs deciding"),
@@ -213,6 +213,8 @@ unsafe extern "C" fn osi_queue_send(handle: *mut c_void, item: *mut c_void, tick
 /// `hptw` is FreeRTOS's `pxHigherPriorityTaskWoken`: an out-parameter the
 /// handler checks on the way out to decide whether to yield. It is written
 /// through only when non-null, which the blob does rely on.
+#[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
+#[inline(never)]
 unsafe extern "C" fn osi_queue_send_from_isr(
     handle: *mut c_void,
     item: *mut c_void,
@@ -265,6 +267,8 @@ unsafe extern "C" fn osi_semphr_take(handle: *mut c_void, ticks: u32) -> i32 {
     pd(s.take(ms_from_ticks(ticks)))
 }
 
+#[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
+#[inline(never)]
 unsafe extern "C" fn osi_semphr_give(handle: *mut c_void) -> i32 {
     if handle.is_null() {
         return PD_FALSE;
@@ -368,10 +372,14 @@ unsafe extern "C" fn osi_task_ms_to_tick(ms: u32) -> i32 {
     ms as i32
 }
 
+#[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
+#[inline(never)]
 unsafe extern "C" fn osi_task_yield_from_isr() {
     dynobj::yield_from_isr();
 }
 
+#[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
+#[inline(never)]
 unsafe extern "C" fn osi_is_from_isr() -> bool {
     kernel::interrupt::in_interrupt()
 }
@@ -491,6 +499,8 @@ mod by_name {
     /// # Safety
     /// `reg` must be a DPORT register address.
     #[no_mangle]
+    #[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
+    #[inline(never)]
     pub unsafe extern "C" fn esp_dport_access_reg_read(reg: u32) -> u32 {
         unsafe { soc_esp32::dport::read(reg) }
     }
@@ -594,6 +604,8 @@ mod by_name {
     /// # Safety
     /// Must be matched by exactly one [`phy_exit_critical`] on the same core.
     #[no_mangle]
+    #[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
+    #[inline(never)]
     pub unsafe extern "C" fn phy_enter_critical() -> u32 {
         let core = kernel::smp::current_core().index();
         let saved = unsafe { kernel::arch::cs_enter() };
@@ -610,6 +622,8 @@ mod by_name {
     /// Must match a [`phy_enter_critical`] on this core. The argument is
     /// ignored, as it is in esp-idf.
     #[no_mangle]
+    #[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
+    #[inline(never)]
     pub unsafe extern "C" fn phy_exit_critical(_level: u32) {
         let core = kernel::smp::current_core().index();
         let depth = PHY_CS_DEPTH[core].load(core::sync::atomic::Ordering::Relaxed);
@@ -667,6 +681,49 @@ mod by_name {
         }
     }
 
+    /// `RTC_XTAL_FREQ_REG`, which is `RTC_CNTL_STORE4_REG` at offset `0xb0`.
+    ///
+    /// A retention register the bootloader writes, not a hardware one.
+    const RTC_XTAL_FREQ: u32 = soc_esp32::addr::RTC_CNTL_BASE + 0xB0;
+
+    /// The crystal frequency in MHz, as the bootloader recorded it.
+    ///
+    /// The encoding is not obvious and is not guessed. NuttX documents it:
+    ///
+    /// > Values of RTC_XTAL_FREQ_REG and RTC_APB_FREQ_REG are stored as two
+    /// > copies in lower and upper 16-bit halves.
+    ///
+    /// and esp-idf's `rtc_clk_xtal_freq_get` reads the same register at the
+    /// same offset, which two sources agreeing is what makes this safe to
+    /// write. The duplicate-halves trick is the validity check: a register
+    /// never written reads as something whose halves differ.
+    ///
+    /// **A wrong answer here mis-calibrates the radio**, and the symptom is
+    /// poor range rather than anything pointing at this function. So the
+    /// result is checked against the only two crystals the ESP32 supports, and
+    /// anything else is reported rather than passed on.
+    #[no_mangle]
+    pub unsafe extern "C" fn rtc_get_xtal() -> u32 {
+        let reg = unsafe { (RTC_XTAL_FREQ as *const u32).read_volatile() };
+        let lo = reg & 0xFFFF;
+        let hi = (reg >> 16) & 0xFFFF;
+        // esp-idf keeps a "ROM log disabled" flag in bit 16, i.e. bit 0 of the
+        // upper half, and compensates by setting bit 0 of the value too -- so
+        // the halves still match and the low bit may be set spuriously.
+        if lo != 0 && lo == hi {
+            let mhz = lo & !1;
+            if mhz == 40 || mhz == 26 {
+                return mhz;
+            }
+            api::log_error!("radio: RTC_XTAL_FREQ_REG says {} MHz, which is not a crystal the ESP32 has", mhz);
+        }
+        // esp-idf returns RTC_XTAL_FREQ_AUTO (0) here and lets the caller
+        // estimate. FlintOS has no estimator, and both supported modules --
+        // WROVER and PICO-D4 -- are 40 MHz, so that is the answer, loudly.
+        api::log_error!("radio: falling back to 40 MHz; a 26 MHz board needs this checked");
+        40
+    }
+
     // The five below are RTC clock and sleep entry points that esp-idf v4.4
     // defines *nowhere* -- not in its source, and not in any of its twelve
     // ROM linker scripts -- yet esp-idf links. They are referenced by members
@@ -705,7 +762,6 @@ mod by_name {
     }
 
     rtc_unimplemented!(
-        rtc_get_xtal,
         rtc_init_clk,
         rtc_dbias_cfg,
         rtc_slowck_cali,

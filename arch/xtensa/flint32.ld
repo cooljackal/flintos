@@ -133,6 +133,29 @@ SECTIONS
   {
     KEEP(*(.literal.startup .text.startup))
     *(.iram .iram.* .iram1 .iram1.*)
+
+    /* Espressif's radio blobs, whose interrupt paths must not live in flash.
+     *
+     * An ISR that fires while the instruction cache is disabled -- which it is
+     * for the whole of every flash erase and program -- fetches nothing and
+     * the core stops. The blobs mark those paths with their own section names
+     * rather than `.iram1`, and esp-idf routes them with a linker fragment;
+     * this is the same routing, spelled out.
+     *
+     * Section names confirmed against the archives with objdump rather than
+     * copied from the fragment: `.wifi0iram`, `.wifirxiram`, `.wifislpiram`,
+     * `.wifiorslpiram` and `.wifislprxiram` across libpp, libnet80211 and
+     * libcoexist, and `.phyiram` in libphy. They arrive suffixed (`.wifi0iram.7`)
+     * so the globs are deliberate.
+     *
+     * Costs nothing when the blobs are not linked, and 45.2 KiB when they are
+     * -- measured, against 127 KiB of iram_seg with under 1 KiB in use. */
+    *(.wifi0iram .wifi0iram.*)
+    *(.wifirxiram .wifirxiram.*)
+    *(.wifislpiram .wifislpiram.*)
+    *(.wifiorslpiram .wifiorslpiram.*)
+    *(.wifislprxiram .wifislprxiram.*)
+    *(.phyiram .phyiram.*)
   } > iram_seg
 
   /* ── Code (flash IROM, XIP) ────────────────────────────────────── */

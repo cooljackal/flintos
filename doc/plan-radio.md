@@ -191,7 +191,7 @@ it should wait for one.
 | 3.2 | Vendor or fetch the `.a` files; record the licence terms | A clean clone builds without a manual download step, or fails with a clear message saying why. |
 | 3.3 | ✅ Confirm the Xtensa ABI matches (windowed) and list what is unresolved | Done. ABI confirmed and all 57 symbols listed; see below. |
 | 3.4 | Fill in `wifi_osi_funcs_t` against the pinned IDF version | The struct's version and magic checks pass at runtime. |
-| 3.5 | Place blob ISR paths in IRAM | Nothing the radio calls from an interrupt lives in flash. |
+| 3.5 | ✅ Place blob ISR paths in IRAM | Done. The blobs' own `.wifi*iram` and `.phyiram` sections are routed by the linker script, and the adapter's ISR-reachable entry points carry `.iram1.radio`. 45.2 KiB measured, against 127 KiB. |
 | 3.6 | PHY enable/disable, PHY init data, RF calibration | Calibration data persists across a reboot via 0.3. |
 
 **Warning.** Step 3.4 is where a wrong IDF version shows up — as a magic-number
