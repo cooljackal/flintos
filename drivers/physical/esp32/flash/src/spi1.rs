@@ -23,7 +23,7 @@
 //! |---|---|---|
 //! | Read status register 1 | `0x05` | bit 0 is WIP, busy |
 //! | Write enable | `0x06` | must precede every program and erase |
-//! | Read data | `0x03` | single-line, 24-bit address, no dummy cycles |
+//! | Read data | `0x03` | single-line, 24-bit address, **one dummy cycle** |
 //! | Page program | `0x02` | 256 bytes max, must not cross a page |
 //! | Sector erase | `0x20` | 4 KiB |
 //!
@@ -31,33 +31,41 @@
 //! whether the chip is running in dual or quad mode, which is what makes this
 //! safe without knowing how the bootloader configured the flash.
 //!
-//! # Where this differs from NuttX, which is the one to copy
+//! # Two conventions, and reads use the other one
 //!
-//! NuttX's `arch/xtensa/src/esp32/esp32_spiflash.c` is the only comparable
-//! implementation that drives SPI1 itself — Zephyr and Arduino both hand off
-//! to esp-idf. Two differences, and this code boot-loops the board while
-//! NuttX does not:
+//! `SPI_CMD` has dedicated bits for flash operations, and asserting one runs
+//! the whole command — opcode, address, data. **Erase and program use those.**
+//! Reads and status reads do not: they are user-defined transactions fired
+//! with `SPI_USR`, exactly as esp-idf does it —
+//! `REG_WRITE(PERIPHS_SPI_FLASH_CMD, SPI_USR)`, never `SPI_FLASH_READ`.
 //!
-//! **1. It keeps the controller's read mode; this one destroys it.**
-//! `esp32_set_read_opt` reads `SPI_CTRL`, works out which mode the cache is
-//! using — QIO, DIO, dual, quad, plain — and issues the *matching* opcode with
-//! that mode's address length and dummy cycles: `0xEB` for QIO, `0xBB` for
-//! DIO, `0x6B`, `0x3B`, and so on. This module clears the mode bits and uses
-//! plain `0x03` instead, on the theory that a single-line opcode always works.
-//! It may, but the clearing does not survive: `SPI_CTRL` is restored, and the
-//! cache still comes back unable to fetch.
+//! The two conventions disagree about the address register, which is the
+//! single most expensive fact in this file:
 //!
-//! **2. It configures the transaction shape once, not per call.**
-//! `esp32_readonce` writes only `MISO_DLEN`, `ADDR`, `RD_STATUS` and then
-//! fires `SPI_CMD`. `SPI_USER`, `USER1` and `USER2` were set up earlier and
-//! are left alone. This module rewrites all three on every transaction,
-//! including the status reads, so the registers the cache depends on are
-//! churned far more often — and `SPI_RD_STATUS` is never cleared at all.
+//! | | user transaction (`SPI_USR`) | native command |
+//! |---|---|---|
+//! | opcode | built in `USER2` | the controller has it |
+//! | address | `SPI_ADDR = addr << 8` | `SPI_ADDR = addr`, unshifted |
+//! | length | `MISO_DLEN` | top byte of `SPI_ADDR`, program only |
+//! | `usr_addr_bitlen` | required, 23 | must be left alone |
 //!
-//! It also waits differently: `while (SPI_CMD != 0)`, the whole register,
-//! rather than testing the `USR` bit.
+//! Driving a read as a native command transfers **nothing**, and the loop that
+//! follows then copies out `W0..W15` — the data buffer, still holding the last
+//! program's bytes. So a read returns what was most recently written and looks
+//! like a working round trip. That is what "reads work" meant for a week.
 //!
-//! Following NuttX rather than inventing this is the way forward.
+//! # The dummy cycle
+//!
+//! Every user transaction on this part needs one dummy cycle between the
+//! opcode and the data. Without it the controller samples one clock early: the
+//! byte arrives as `0x80 | (real >> 1)`, so a status of `0x00` reads as `0x80`
+//! and a `WEL` of `0x02` reads as `0x81` — `WIP` apparently set, forever, on a
+//! chip that is idle. Data reads shift identically: `c3 a5 07 05` comes back
+//! as `e1 d2 83 82`.
+//!
+//! The ROM carries the same quantity as `g_rom_spiflash_dummy_len_plus`, and
+//! esp-idf's `read_status` switches to a user command when it is non-zero.
+//! That branch existing is the clue; see [`EXTRA_DUMMY`].
 //!
 //! # Every function here is in IRAM, and that is not optional
 //!
@@ -133,19 +141,10 @@ const SPI_ST_MASK: u32 = 0x7;
 /// }
 /// ```
 ///
-/// Two conventions therefore exist for driving SPI1, and mixing them is what
-/// wedged the controller:
-///
-/// | | user-defined (`SPI_USR`) | native flash command |
-/// |---|---|---|
-/// | opcode | you build it in `USER2` | the controller has it |
-/// | address | `SPI_ADDR = addr << 8` | `SPI_ADDR = addr`, **unshifted** |
-/// | length | `MISO_DLEN`/`MOSI_DLEN` | top byte of `SPI_ADDR` for program |
-/// | phases | `USER`/`USER1` | not yours |
-///
-/// Previous attempts used the user-defined route with a shifted address, and
-/// attempt B then borrowed the cache's register setup — which describes the
-/// *other* convention. Hence a controller SPI0 could not use afterwards.
+/// Erase, program, write-enable and write-disable are driven this way. Reads
+/// and status reads are not — see the module docs for why, and note that
+/// `CMD_FLASH_READ` and `CMD_FLASH_RDSR` are kept only so [`CMD_ANY`] can
+/// recognise a transaction the bootloader left running.
 const CMD_FLASH_READ: u32 = 1 << 31;
 const CMD_FLASH_WREN: u32 = 1 << 30;
 const CMD_FLASH_RDSR: u32 = 1 << 27;
@@ -161,20 +160,15 @@ const CMD_ANY: u32 = CMD_FLASH_READ
     | CMD_FLASH_PP
     | CMD_FLASH_SE
     | CMD_FLASH_WRDI
-    | CMD_FLASH_WRSR;
+    | CMD_FLASH_WRSR
+    // `SPI_USR` too, or a user-defined transaction is never waited for at all
+    // and the data buffer is read while the transfer is still in flight.
+    // esp-idf polls the whole register: `while (REG_READ(CMD) != 0);`.
+    | CMD_USR;
 
 /// `SPI_WRSR_2B`, `SPI_CTRL` bit 22: a status write sends two bytes.
 const CTRL_WRSR_2B: u32 = 1 << 22;
 
-/// `SPI_CTRL`'s fast-read mode bits: `FREAD_QIO` 24, `FREAD_DIO` 23,
-/// `FREAD_QUAD` 20, `FREAD_DUAL` 14, `FASTRD_MODE` 13.
-///
-/// The bootloader leaves these describing however it configured the chip, and
-/// a native flash command inherits them the same way it inherits the dummy
-/// count. A status read issued while the controller believes it is in QIO does
-/// not return status — it returns whatever four idle lines look like, offset by
-/// the dummy cycles that mode implies.
-const CTRL_FREAD_MASK: u32 = (1 << 24) | (1 << 23) | (1 << 20) | (1 << 14) | (1 << 13);
 
 /// Status register 1: `SRP0` at bit 7, block-protect at [6:2]. Together these
 /// are what refuses an erase.
@@ -192,10 +186,6 @@ const STATUS2_QE: u32 = 1 << 9;
 /// Status register 1, bit 0: a program or erase is in progress.
 const STATUS_WIP: u32 = 1 << 0;
 
-/// The chip's status mask, which `apps/flashprobe` reads off the board as
-/// 0xFFFF. esp-idf masks every status read with it rather than assuming one
-/// byte.
-const STATUS_MASK: u32 = 0xFFFF;
 
 /// Bound on a command's completion. A transaction is microseconds.
 const XFER_SPINS: u32 = 200_000;
@@ -225,10 +215,9 @@ const USR_ADDR: u32 = 1 << 30;
 const USR_DUMMY: u32 = 1 << 29;
 /// `SPI_USR_DUMMY_CYCLELEN` [7:0] in `USER1`.
 const DUMMY_CYCLELEN_MASK: u32 = 0xFF;
-/// `SPI_USR_COMMAND` bit 31, `SPI_USR_MISO` bit 28, `SPI_USR_MOSI` bit 27.
+/// `SPI_USR_COMMAND` bit 31, `SPI_USR_MISO` bit 28.
 const USR_COMMAND: u32 = 1 << 31;
 const USR_MISO: u32 = 1 << 28;
-const USR_MOSI: u32 = 1 << 27;
 /// `SPI_USR` bit 18 in `SPI_CMD` — fire a user-defined transaction.
 const CMD_USR: u32 = 1 << 18;
 /// `SPI_USR_COMMAND_BITLEN` sits at [31:28] of `USER2` and holds n−1, so an
@@ -236,6 +225,18 @@ const CMD_USR: u32 = 1 << 18;
 const COMMAND_BITLEN_8: u32 = 7 << 28;
 /// SPI-NOR `RDSR`, as an opcode rather than a controller command bit.
 const OPCODE_RDSR: u32 = 0x05;
+/// Dummy cycles between a user command's opcode and its data phase.
+///
+/// The ROM carries the same quantity as `g_rom_spiflash_dummy_len_plus`, and
+/// esp-idf's `read_status` branches on it -- which is the clue that it is not
+/// always zero. Swept on hardware; see the sweep in `unlock`'s trace.
+const EXTRA_DUMMY: u32 = 1;
+/// SPI-NOR "continuous read mode reset". See [`exit_continuous_read`].
+const OPCODE_MODE_RESET: u32 = 0xFF;
+/// SPI-NOR single-line `READ`. Also an opcode and not a command bit: esp-idf
+/// reads with `REG_WRITE(PERIPHS_SPI_FLASH_CMD, SPI_USR)`, never with
+/// `SPI_FLASH_READ`.
+const OPCODE_READ: u32 = 0x03;
 
 /// Page size. A program may not cross one — the chip wraps to the start of the
 /// page rather than continuing, silently corrupting both ends.
@@ -246,6 +247,7 @@ struct Saved {
     ctrl: u32,
     user: u32,
     user1: u32,
+    user2: u32,
     addr: u32,
     miso_dlen: u32,
     mosi_dlen: u32,
@@ -286,6 +288,9 @@ unsafe fn save() -> Saved {
         ctrl: rd(CTRL),
         user: rd(USER),
         user1: rd(USER1),
+        // The read now rewrites this to hold an opcode, and the cache has its
+        // own idea of what belongs here.
+        user2: rd(USER2),
         addr: rd(ADDR),
         miso_dlen: rd(MISO_DLEN),
         mosi_dlen: rd(MOSI_DLEN),
@@ -298,6 +303,7 @@ unsafe fn restore(s: &Saved) {
     wr(CTRL, s.ctrl);
     wr(USER, s.user);
     wr(USER1, s.user1);
+    wr(USER2, s.user2);
     wr(ADDR, s.addr);
     wr(MISO_DLEN, s.miso_dlen);
     wr(MOSI_DLEN, s.mosi_dlen);
@@ -438,35 +444,38 @@ unsafe fn set_addr_bitlen_24() {
     // freshly-flashed board -- so a native flash command takes its address
     // length from the command, not from this field, and only the user-defined
     // transactions esp-idf also issues need it. Left at zero it is ignored.
-    let mut u1 = rd(USER1) & !(0x3F << ADDR_BITLEN_SHIFT);
-    // And zero the dummy cycles. Inheriting the cache's is one extra clock,
-    // and one extra clock shifts every bit read: a status of 0x02 comes back
-    // as 0x01, and data of 0xAA comes back as 0x55. Erased flash is all ones
-    // and therefore immune, which is why reads looked correct right up until
-    // something real had been written.
-    u1 &= !DUMMY_CYCLELEN_MASK;
-    wr(USER1, u1);
-    wr(USER, (rd(USER) | USR_ADDR) & !USR_DUMMY);
-    single_line();
-}
-
-/// Drop the controller back to one data line for a native command.
-///
-/// `save`/`restore` put `SPI_CTRL` back, so the cache gets its mode returned
-/// intact.
-#[inline(never)]
-#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
-unsafe fn single_line() {
-    wr(CTRL, rd(CTRL) & !CTRL_FREAD_MASK);
-}
-
-/// The same, for a command with no address phase.
-#[inline(never)]
-#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
-unsafe fn clear_dummy_no_addr() {
+    // `USER` and `CTRL` back to zero, which is all a native command needs:
+    // it supplies its own command, address and data phases, and takes the
+    // address from `SPI_ADDR`. esp-idf's `spi_flash_ll_erase_sector` likewise
+    // does `dev->ctrl.val = 0` and nothing else before firing `flash_se`.
+    reset_user_ctrl();
     wr(USER1, rd(USER1) & !DUMMY_CYCLELEN_MASK);
-    wr(USER, rd(USER) & !(USR_DUMMY | USR_ADDR));
-    single_line();
+}
+
+/// Zero `SPI_USER` and `SPI_CTRL` before building a transaction.
+///
+/// ```c
+/// static inline void spi_flash_ll_reset(spi_dev_t *dev)
+/// {
+///     dev->user.val = 0;
+///     dev->ctrl.val = 0;
+/// }
+/// ```
+///
+/// esp-idf never inherits these. This driver did, and masking off the bits it
+/// had thought of left the ones it had not: `SPI_DOUTDIN`, the `HIGHPART`
+/// selectors, the clock edge. Any of those shifts where the received byte
+/// lands, and a status read that is off by one bit reports `WEL` where `WIP`
+/// is looked for -- so a chip that has just been told to write looks
+/// permanently busy.
+///
+/// `save`/`restore` put both registers back, so the cache gets its
+/// configuration returned intact.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+unsafe fn reset_user_ctrl() {
+    wr(USER, 0);
+    wr(CTRL, 0);
 }
 
 /// Run one native flash command.
@@ -502,6 +511,41 @@ unsafe fn status() -> Result<u32, FlashError> {
     status_user_cmd()
 }
 
+/// Take the chip out of continuous read mode.
+///
+/// Read off the running board, SPI0 — the cache's controller, which does work
+/// — is configured as:
+///
+/// ```text
+/// USER2 = 0x700000bb   command 0xBB, dual I/O fast read
+/// USER1 = 0x6c000002   address phase 28 bits, 3 dummy cycles
+/// ```
+///
+/// Twenty-eight bits of address is 24 of address and **4 of mode**. With the
+/// mode nibble at 0xA the chip stops expecting a command byte at all and
+/// treats the first bits of every transaction as an address. Which is what has
+/// been happening to this driver's commands: they were not being refused, they
+/// were being read as addresses. It explains a status register that reports
+/// nonsense, an erase that reports success without erasing, and a read that
+/// transfers nothing.
+///
+/// `0xFF` is the documented escape and is a no-op if the chip was never in the
+/// mode, so it is safe to issue unconditionally.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+unsafe fn exit_continuous_read() -> Result<(), FlashError> {
+    wait_spi_fsm_idle()?;
+    wait_cmd()?;
+    reset_user_ctrl();
+    // Command only: no address, no dummy, no data either way.
+    wr(USER, USR_COMMAND);
+    wr(USER1, rd(USER1) & !DUMMY_CYCLELEN_MASK);
+    wr(USER2, COMMAND_BITLEN_8 | OPCODE_MODE_RESET);
+    let _ = rd(USER);
+    wr(CMD, CMD_USR);
+    wait_cmd()
+}
+
 /// Status register 1 the other way: opcode `0x05` as a user transaction.
 ///
 /// esp-idf keeps both and picks between them:
@@ -522,6 +566,7 @@ unsafe fn status() -> Result<u32, FlashError> {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn status_user_cmd() -> Result<u32, FlashError> {
+    let dummy = EXTRA_DUMMY;
     wait_spi_fsm_idle()?;
     wait_cmd()?;
     // A user transaction rewrites the phase configuration, and the cache reads
@@ -529,11 +574,14 @@ unsafe fn status_user_cmd() -> Result<u32, FlashError> {
     let (user, user1, user2, miso, ctrl) =
         (rd(USER), rd(USER1), rd(USER2), rd(MISO_DLEN), rd(CTRL));
 
-    wr(USER, (user & !(USR_ADDR | USR_DUMMY | USR_MOSI)) | USR_COMMAND | USR_MISO);
-    wr(USER1, user1 & !DUMMY_CYCLELEN_MASK);
-    // One line here too. Inheriting QIO reports 0xc0 for a status of 0x00 --
-    // the whole byte arrives shifted, which is what made this look like SRP0.
-    single_line();
+    // From zero, not from whatever the cache left. An opcode out and a byte
+    // back: no address, no dummy, nothing outbound.
+    reset_user_ctrl();
+    wr(USER, USR_COMMAND | USR_MISO | if dummy > 0 { USR_DUMMY } else { 0 });
+    wr(
+        USER1,
+        (user1 & !DUMMY_CYCLELEN_MASK) | dummy.saturating_sub(1),
+    );
     wr(USER2, COMMAND_BITLEN_8 | OPCODE_RDSR);
     // Length fields hold n−1: one byte in, eight bits.
     wr(MISO_DLEN, 7);
@@ -619,11 +667,6 @@ unsafe fn unlock() -> Result<(), FlashError> {
     // known: WREN has just run, so WEL is set and SR1 must be 0x02. Whichever
     // of these does not say 0x02 is the one that has been lying all along.
     // Bit 31 marks the slot as written; user read in [23:16], native in [15:0].
-    {
-        let native = status().unwrap_or(0xEE);
-        let user = status_user_cmd().unwrap_or(0xEE);
-        STATUS_TRACE[3].store(0x8000_0000 | ((user & 0xFF) << 16) | (native & 0xFFFF), Ordering::Relaxed);
-    }
     // After the last status read, because a status read clears this register.
     wr(RD_STATUS, STATUS2_QE);
     command(CMD_FLASH_WRSR)?;
@@ -651,13 +694,33 @@ pub unsafe fn read(addr: u32, dest: &mut [u32]) -> Result<(), FlashError> {
     snapshot();
     let saved = save();
     let r = (|| {
+        exit_continuous_read()?;
         wait_ready()?;
-        // Explicit, not inherited. A read after a program was returning 0x55
-        // for every byte -- the program leaves the address phase and dummy
-        // configuration changed, and a read that borrows whatever is there
-        // samples at the wrong alignment.
-        set_addr_bitlen_24();
-        wr(USER, rd(USER) & !USR_DUMMY);
+        // A read is a user-defined transaction. Not `SPI_FLASH_READ` -- that
+        // command bit exists and does nothing useful here, and driving it was
+        // why reads transferred no bytes at all. esp-idf:
+        //
+        // ```c
+        // REG_WRITE(SPI_MISO_DLEN_REG(1), ((len << 3) - 1) << SPI_USR_MISO_DBITLEN_S);
+        // WRITE_PERI_REG(PERIPHS_SPI_FLASH_ADDR, temp_addr << 8);
+        // REG_WRITE(PERIPHS_SPI_FLASH_CMD, SPI_USR);
+        // while (REG_READ(PERIPHS_SPI_FLASH_CMD) != 0);
+        // ```
+        //
+        // Which is also where `usr_addr_bitlen` belongs. Setting it for the
+        // native erase and program hung the chip; a user transaction builds
+        // its own address phase and cannot work without it.
+        reset_user_ctrl();
+        let mut u1 = rd(USER1) & !(0x3F << ADDR_BITLEN_SHIFT) & !DUMMY_CYCLELEN_MASK;
+        u1 |= (ADDR_BITS - 1) << ADDR_BITLEN_SHIFT;
+        // The same one cycle the status read needs. Without it the whole data
+        // stream arrives shifted right a bit: `c3 a5 07 05` reads back as
+        // `e1 d2 83 82`.
+        u1 |= EXTRA_DUMMY - 1;
+        wr(USER1, u1);
+        wr(USER2, COMMAND_BITLEN_8 | OPCODE_READ);
+        // Command, address, one dummy cycle, data in; nothing outbound.
+        wr(USER, USR_COMMAND | USR_ADDR | USR_MISO | USR_DUMMY);
         let mut done = 0usize;
         while done < dest.len() {
             let n = (dest.len() - done).min(16);
@@ -677,7 +740,7 @@ pub unsafe fn read(addr: u32, dest: &mut [u32]) -> Result<(), FlashError> {
             // it looks like a working round trip and is not one.
             wr(ADDR, ((addr + done as u32 * 4) & ADDRESS_MASK_24BIT) << 8);
             wr(MISO_DLEN, (n as u32 * 4) * 8 - 1);
-            command(CMD_FLASH_READ)?;
+            command(CMD_USR)?;
             for i in 0..n {
                 dest[done + i] = rd(W0 + (i as u32 * 4));
             }
@@ -698,6 +761,7 @@ pub unsafe fn read(addr: u32, dest: &mut [u32]) -> Result<(), FlashError> {
 pub unsafe fn write(addr: u32, src: &[u32]) -> Result<(), FlashError> {
     let saved = save();
     let r = (|| {
+        exit_continuous_read()?;
         unlock()?;
         let mut done = 0usize;
         while done < src.len() {
@@ -836,10 +900,61 @@ mod tests {
             CMD_FLASH_SE,
             CMD_FLASH_WRDI,
             CMD_FLASH_WRSR,
+            // Reads and status reads are user transactions, so this one is
+            // waited for more often than any of the native commands. Leaving
+            // it out meant the data buffer was read while the transfer was
+            // still in flight, which returned the byte written to `W0` just
+            // before firing -- a status read that reported back its own
+            // scratch value and looked plausible doing it.
+            CMD_USR,
         ] {
             assert_ne!(CMD_ANY & b, 0);
         }
-        assert_eq!(CMD_ANY.count_ones(), 7);
+        assert_eq!(CMD_ANY.count_ones(), 8);
+    }
+
+    #[test]
+    fn a_user_transaction_carries_one_dummy_cycle() {
+        // Measured by sweeping the count on hardware against a status whose
+        // value was known: straight after WREN it must read 0x02. Zero cycles
+        // gives 0x81, one gives 0x02.
+        //
+        // Everything downstream of getting this wrong looks like a different
+        // bug -- a chip that is permanently busy, an erase that times out, a
+        // read that returns plausible-but-shifted bytes -- so if this constant
+        // is ever changed, change it against hardware and not against a guess.
+        assert_eq!(EXTRA_DUMMY, 1);
+        // `SPI_USR_DUMMY_CYCLELEN` holds n-1, so one cycle is a zero here, and
+        // the enable bit in `USER` is what actually turns the phase on.
+        assert_eq!(EXTRA_DUMMY - 1, 0);
+        assert_ne!(USR_DUMMY, 0);
+    }
+
+    #[test]
+    fn the_two_conventions_disagree_about_the_address() {
+        // A read is a user transaction and shifts; an erase is a native
+        // command and does not. Getting this backwards is silent: the read
+        // transfers nothing and returns the data buffer's previous contents,
+        // which are the bytes most recently written.
+        let addr = 0x9000u32;
+        assert_eq!((addr & ADDRESS_MASK_24BIT) << 8, 0x0090_0000);
+        assert_eq!(addr & ADDRESS_MASK_24BIT, 0x0000_9000);
+        // A program puts its length in the top byte, so its address must stay
+        // in the low 24 bits or the two collide.
+        let with_len = (addr & ADDRESS_MASK_24BIT) | (64u32 << 24);
+        assert_eq!(with_len >> 24, 64);
+        assert_eq!(with_len & ADDRESS_MASK_24BIT, addr);
+    }
+
+    #[test]
+    fn the_user_opcodes_are_the_single_line_ones() {
+        // Single-line regardless of the mode the bootloader left the chip in,
+        // which is what makes them safe without knowing that mode.
+        assert_eq!(OPCODE_READ, 0x03);
+        assert_eq!(OPCODE_RDSR, 0x05);
+        assert_eq!(OPCODE_MODE_RESET, 0xFF);
+        // Eight-bit opcodes, and the field holds n-1.
+        assert_eq!(COMMAND_BITLEN_8 >> 28, 7);
     }
 
     #[test]
