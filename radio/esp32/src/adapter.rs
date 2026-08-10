@@ -50,7 +50,7 @@ use crate::osi::{WifiOsiFuncs, TIME_BLOCKING};
 /// countable rather than discovered one crash at a time.
 pub const UNIMPLEMENTED: &[(&str, &str)] = &[
     ("_set_intr / _clear_intr / _set_isr", "interrupt routing onto the ESP32 interrupt matrix; the IRAM placement it waited on is done"),
-    ("_phy_* ", "PHY enable, init data and RF calibration (step 3.6)"),
+    ("_phy_* ", "PHY enable and init data (step 3.6); the calibration store itself is done, see crate::calibration"),
     ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
     ("_nvs_*", "maps onto kvstore, but the blob's key namespace needs deciding"),
     ("_timer_*", "esp_timer equivalents; TIMG exists, the shim does not"),
@@ -693,22 +693,43 @@ mod by_name {
         soc_esp32::rtc::XTAL_40_MHZ
     }
 
-    // The five below are RTC clock and sleep entry points that esp-idf v4.4
-    // defines *nowhere* -- not in its source, and not in any of its twelve
-    // ROM linker scripts -- yet esp-idf links. They are referenced by members
-    // of librtc.a that its build never pulls in, because a linker only takes
-    // the archive members it needs.
+    // ── RTC clock and sleep entry points ────────────────────────────────
     //
-    // So these most likely never link either, and defining them costs nothing
-    // if so. If one ever does get pulled in, a panic naming it is far better
-    // than a plausible zero: `rtc_get_xtal` returning the wrong crystal
-    // frequency would mis-calibrate the radio, and the symptom would be poor
-    // range rather than anything pointing here.
+    // Five symbols `librtc.a` imports and defines nowhere. This block used to
+    // claim they "most likely never link", on the reasoning that a linker
+    // only takes the archive members it needs. Half of that is wrong, and it
+    // was checked rather than reasoned about this time -- `nm` over the
+    // extracted members says:
     //
-    // `rtc_get_xtal` in particular is deliberately not guessed. esp-idf reads
-    // it from a retention register, and which of the STORE registers holds it
-    // is something this has not confirmed from the source. Guessing a register
-    // address is what cost several sessions on the flash driver.
+    //   member       imports                                    reachable?
+    //   ----------   ----------------------------------------   ----------
+    //   rtc.o        rtc_init_clk, rtc_slp_prep                 YES
+    //   pm.o         rtc_slp_prep, rtc_slowck_cali,             no
+    //                rtc_sleep_set_wakeup_time
+    //   rtc_cntl.o   rtc_dbias_cfg                              no
+    //
+    // "Reachable" means another archive member asks for something that member
+    // defines, so the linker has to take it. `rtc.o` is pulled in for
+    // `rtc_pads_funie`, `rtc_pads_muxsel`, `rtc_pads_pd`, `rtc_pads_pu`,
+    // `rtc_pads_slpie` and `rtc_pads_slpoe` -- six symbols other blobs
+    // reference. Nothing references anything `pm.o` or `rtc_cntl.o` defines.
+    //
+    // **So `rtc_init_clk` and `rtc_slp_prep` genuinely link**, and these are
+    // the definitions that satisfy them. The other three are kept because the
+    // reachability above is a property of one pinned revision, not a promise.
+    //
+    // Linking is not calling. `rtc.o` is taken for its pad helpers; the sleep
+    // and clock-init paths inside it belong to functions FlintOS never calls,
+    // because FlintOS never enters RTC sleep and never reprograms the clock
+    // tree -- it measures what the bootloader left instead (see
+    // `kernel::boot`). A panic here therefore means something started down a
+    // sleep or clock path that this OS does not implement, which is worth
+    // stopping for rather than returning a plausible zero to. `rtc_get_xtal`
+    // is the cautionary case: a wrong crystal mis-calibrates the radio and
+    // presents as poor range, nothing pointing at the function that guessed.
+    //
+    // Implementing them for real means the RTC clock tree and sleep
+    // sequencing, which is its own piece of work and has no caller yet.
 
     macro_rules! rtc_unimplemented {
         ($($name:ident),* $(,)?) => {
@@ -716,14 +737,16 @@ mod by_name {
                 /// Not implemented; see the note above. Part of step 3.6.
                 ///
                 /// # Safety
-                /// Expected never to be linked, let alone called.
+                /// Two of these do link, and none is expected to be called.
                 #[no_mangle]
                 pub unsafe extern "C" fn $name() -> ! {
                     panic!(concat!(
                         "radio: ", stringify!($name), " was called. It is an RTC ",
-                        "clock/sleep entry point that esp-idf does not define ",
-                        "either, so this build did not expect the archive member ",
-                        "referencing it to be linked. See doc/plan-radio.md 3.6."
+                        "clock or sleep entry point that librtc.a imports and ",
+                        "defines nowhere, and that FlintOS does not implement: ",
+                        "this OS never enters RTC sleep and never reprograms the ",
+                        "clock tree. Reaching it means a blob started down a path ",
+                        "that needs both. See doc/plan-radio.md 3.6."
                     ))
                 }
             )*

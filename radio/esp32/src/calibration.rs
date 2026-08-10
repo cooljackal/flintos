@@ -59,18 +59,35 @@ use kvstore::{Error as KvError, Store, Storage, MAX_VALUE_LEN};
 /// this module stores separately are ours, and exist so a mismatch can be
 /// found without reading 1904 bytes back first.
 ///
-/// # Unverified against the pinned header
+/// Verified against `esp-idf` tag **v4.4**, the revision `tools/fetch-blobs.sh`
+/// pins the archives to — `components/esp_phy/include/esp_phy_init.h`, read
+/// rather than remembered. 4 + 6 + 1894 = 1904.
 ///
-/// **Transcribed, not checked.** Nothing in the fetched archives states this
-/// size — `register_chipv7_phy` takes a pointer and the length is not in the
-/// symbol table — so it has to come from `esp_phy_init.h`, and it is written
-/// here from the struct above rather than read out of the pinned v4.4 tree.
-///
-/// Confirm it before 3.6 runs on hardware. Getting it wrong is silent in the
-/// direction that matters: too small and the PHY writes past the end of the
-/// buffer a caller sized from this constant. Everything in this module works
-/// on whatever the number is, so correcting it costs one line and one test.
+/// Worth having checked: nothing in the fetched archives states this size.
+/// `register_chipv7_phy` takes a pointer and the length is not in the symbol
+/// table, so a wrong value here would be silent in the direction that matters
+/// — too small, and the PHY writes past the end of a buffer sized from it.
+/// If the pinned IDF revision ever moves, this is one of the constants to
+/// re-read rather than assume.
 pub const CAL_DATA_LEN: usize = 1904;
+
+/// `esp_phy_calibration_mode_t`, from the same header.
+///
+/// What the caller asks `register_chipv7_phy` to do. `Full` is what a
+/// rejected or missing stored calibration means; `Partial` is the normal path
+/// once one has been loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CalibrationMode {
+    Partial = 0x0000_0000,
+    None = 0x0000_0001,
+    Full = 0x0000_0002,
+}
+
+/// `sizeof(esp_phy_init_data_t)` — `uint8_t params[128]`, same header, same
+/// tag. Recorded here because it is the other half of 3.6 and it is a
+/// pleasing accident that it fits one `kvstore` record exactly.
+pub const PHY_INIT_DATA_LEN: usize = 128;
 
 /// Bytes per stored chunk. The largest value `kvstore` takes.
 pub const CHUNK_LEN: usize = MAX_VALUE_LEN;
@@ -92,6 +109,7 @@ const KEY_CHUNK_PREFIX: &[u8] = b"phy.";
 // time, so changing `CAL_DATA_LEN` -- which is expected, see its docs -- fails
 // the build rather than a test somebody might not run.
 const _: () = assert!(CHUNK_LEN <= MAX_VALUE_LEN, "a chunk must fit one record");
+const _: () = assert!(PHY_INIT_DATA_LEN <= MAX_VALUE_LEN, "PHY init data fits one record");
 const _: () = assert!(CHUNKS * CHUNK_LEN >= CAL_DATA_LEN, "the chunks must cover the blob");
 const _: () = assert!(
     (CHUNKS - 1) * CHUNK_LEN < CAL_DATA_LEN,
@@ -541,10 +559,15 @@ mod tests {
 
     #[test]
     fn every_key_fits_and_the_blob_is_the_size_idf_says() {
-        // The size itself is transcribed rather than derived -- see the
-        // constant's docs. The relationships around it are checked at compile
-        // time below, so this only has to pin the number.
+        // Read out of esp-idf v4.4's esp_phy_init.h, the revision the blobs
+        // are pinned to: version[4] + mac[6] + opaque[1894].
+        assert_eq!(CAL_DATA_LEN, 4 + 6 + 1894);
         assert_eq!(CAL_DATA_LEN, 1904, "sizeof(esp_phy_calibration_data_t)");
+        assert_eq!(PHY_INIT_DATA_LEN, 128, "sizeof(esp_phy_init_data_t)");
+        // The enum values are the ABI, not an ordering we chose.
+        assert_eq!(CalibrationMode::Partial as u32, 0);
+        assert_eq!(CalibrationMode::None as u32, 1);
+        assert_eq!(CalibrationMode::Full as u32, 2);
         for key in [KEY_VERSION, KEY_MAC, KEY_SUM] {
             assert!(!key.is_empty() && key.len() <= kvstore::MAX_KEY_LEN);
         }
