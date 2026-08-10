@@ -25,6 +25,11 @@ use map::DramMap;
 /// Relative path of the linker script from the workspace root.
 const LD_SCRIPT: &str = "arch/xtensa/flint32.ld";
 
+/// The ROM address table the linker script includes. Named here so a change to
+/// it rebuilds, which it would not otherwise -- the generated script is what
+/// cargo watches, and this is pulled in by the linker rather than by us.
+const ROM_SCRIPT: &str = "esp32.rom.ld";
+
 /// Markers around the `MEMORY` entries this crate rewrites.
 const MAP_BEGIN: &str = "/* @FLINT-DRAM-MAP-BEGIN */";
 const MAP_END: &str = "/* @FLINT-DRAM-MAP-END */";
@@ -86,6 +91,13 @@ pub fn link() {
         let _ = std::fs::write(&findable, &resolved);
     }
 
+    // The generated script lives in OUT_DIR, so its `INCLUDE esp32.rom.ld`
+    // cannot resolve relative to the source tree. Adding the script's own
+    // directory to the search path is what makes the include findable.
+    if let Some(dir) = script.parent() {
+        println!("cargo:rustc-link-arg=-L{}", dir.display());
+        println!("cargo:rerun-if-changed={}", dir.join(ROM_SCRIPT).display());
+    }
     println!("cargo:rustc-link-arg=-T{}", out.display());
     println!("cargo:rerun-if-changed={}", script.display());
 }

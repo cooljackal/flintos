@@ -30,6 +30,7 @@ Sets and subprocesses have none of those failure modes.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,11 @@ BLOBS = ROOT / ".blobs" / "esp32"
 # overstate the work considerably -- libmesh alone drags in a great deal a
 # station build never touches.
 LINKED = ["core", "net80211", "pp", "coexist", "phy", "rtc", "wapi"]
+
+# The chip's ROM table, which the linker script includes. Every entry is a
+# PROVIDE, so these resolve at link time without anyone writing them -- and
+# counting them as outstanding work would overstate what is left.
+ROM_SCRIPT = ROOT / "arch" / "xtensa" / "esp32.rom.ld"
 
 # Grouped, because 60 names in one list says nothing about where the work is.
 # The prefixes are Espressif's own naming, so the groups line up with the
@@ -60,6 +66,14 @@ GROUPS = [
         "strcpy", "strlen", "strncmp", "strncpy", "strnlen", "strcmp",
     }),
 ]
+
+
+def rom_symbols() -> set[str]:
+    """Symbols the vendored ROM address table provides."""
+    if not ROM_SCRIPT.is_file():
+        return set()
+    text = ROM_SCRIPT.read_text(encoding="utf-8", errors="replace")
+    return set(re.findall(r"PROVIDE\s*\(\s*([A-Za-z_]\w*)\s*=", text))
 
 
 def find_nm() -> str:
@@ -142,11 +156,17 @@ def main() -> int:
 
     unresolved = needed - provided
 
+    from_rom = unresolved & rom_symbols()
+    unresolved -= from_rom
+
     if elf:
         ours = symbols(nm, Path(elf), defined=True)
         unresolved -= ours
 
     print(f"Symbols the linked blobs need and no blob defines: {len(unresolved)}")
+    if from_rom:
+        print(f"({len(from_rom)} more resolve from the ROM table: "
+              f"{', '.join(sorted(from_rom))})")
     if elf:
         print(f"(after subtracting what {elf} already defines)")
     print()

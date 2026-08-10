@@ -15,6 +15,14 @@
 
 ENTRY(_start)
 
+/* The chip's ROM routines, by address. Every entry is a PROVIDE, so this can
+ * only fill in symbols nothing else defines -- it cannot displace anything
+ * here. Espressif's radio blobs call four of them; see esp32.rom.ld.
+ *
+ * Found via a -L search path that `build::link()` adds, because the script
+ * being read is the generated copy in OUT_DIR rather than this file. */
+INCLUDE esp32.rom.ld
+
 /* Force the ESP-IDF app descriptor into the image past --gc-sections. */
 EXTERN(esp_app_desc)
 
