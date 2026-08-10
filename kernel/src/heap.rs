@@ -202,17 +202,12 @@ pub unsafe fn free(ptr: *mut u8, caps: Caps) {
 /// Whether an address is one a DMA engine can reach.
 ///
 /// Delegates to the SoC crate, so there is one definition of the window rather
-/// than a copy here that can drift away from it.
+/// than a copy here that can drift away from it. This used to say exactly that
+/// while the host arm of a `cfg` held a second copy of the range -- the drift
+/// the comment warned about, already present. `soc-esp32` is an unconditional
+/// dependency now, so both builds ask the same function.
 pub fn is_dma_capable(ptr: *const u8) -> bool {
-    #[cfg(target_os = "none")]
-    {
-        soc_esp32::dma::reachable(ptr as u32)
-    }
-    #[cfg(not(target_os = "none"))]
-    {
-        let a = ptr as usize as u64;
-        (0x3FFA_E000..0x4000_0000).contains(&a)
-    }
+    soc_esp32::dma::reachable(ptr as u32)
 }
 
 /// Free bytes in the pool.

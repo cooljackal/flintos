@@ -116,11 +116,6 @@ pub unsafe fn read_ps() -> u32 {
     val
 }
 
-/// Write PS.
-pub unsafe fn write_ps(val: u32) {
-    core::arch::asm!("wsr.ps {0}", "rsync", in(reg) val);
-}
-
 /// Read VECBASE (base address of the exception vector table). Used only for
 /// bring-up diagnostics: it should equal `_vector_table_start` once
 /// `startup.S` has run, proving the vector table was actually installed
@@ -274,15 +269,15 @@ pub unsafe fn set_intlevel_0() -> u32 {
 }
 
 /// Set interrupt level to 15 (disable all maskable interrupts), returning prev PS.
+///
+/// The returned PS has no restorer here on purpose. Its one caller is the
+/// panic path, which never comes back, and the two functions that used to sit
+/// beside this one -- `write_ps` and `restore_ps`, identical bodies 166 lines
+/// apart -- had no callers at all. Code that needs to restore PS should use
+/// [`crate::critical_section`], which pairs the two by construction.
 #[inline]
 pub unsafe fn set_intlevel_15() -> u32 {
     let prev: u32;
     core::arch::asm!("rsil {0}, 15", out(reg) prev);
     prev
-}
-
-/// Restore a previously-saved PS interrupt level.
-#[inline]
-pub unsafe fn restore_ps(prev: u32) {
-    core::arch::asm!("wsr.ps {0}", "rsync", in(reg) prev);
 }

@@ -215,9 +215,11 @@ mod tests {
 
     #[test]
     fn only_a_core_that_schedules_can_be_pinned_to() {
-        // Core 0 always runs the scheduler. Core 1 starts and runs code but
-        // has no tick or trap handler yet, so a task pinned there would look
-        // spawned and never run.
+        // A core is pinnable once it schedules. Core 0 always does; core 1
+        // does after `boot::join_scheduler` installs its vector table, idle
+        // task and tick. Pinning to a core that never schedules would produce
+        // a task that looks spawned and never runs, which is what
+        // `SCHEDULING_CORES` exists to refuse.
         assert!(is_pinnable(0));
         assert!(!is_pinnable(hal::smp::MAX_CORES as u8), "past the end");
         assert_eq!(is_pinnable(1), SCHEDULING_CORES > 1);

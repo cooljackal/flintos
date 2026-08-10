@@ -168,7 +168,10 @@ FlintOS is a small preemptive RTOS built around three ideas:
   tasks share one address space with no MPU enforcement. Tasks are cooperatively
   trusted. If you need hardware isolation between untrusted components, FlintOS
   is the wrong tool and may always be.
-- **Not multicore.** The ESP32's second core is currently unused.
+- **Not asymmetric multicore.** Both of the ESP32's cores run the one
+  scheduler out of the one ready queue, and `task::spawn_on` pins a task to a
+  core. What you don't get is a separate OS image per core, or any affinity
+  guarantee beyond that pin.
 - **Not 64-bit, and not going to be.** FlintOS targets 32-bit parts. The
   assumption runs deeper than a few type aliases: the trap frame is a
   `#[repr(C)]` of `u32`s that `vectors.S` indexes by fixed byte offsets, the

@@ -29,10 +29,13 @@
 //! # Status
 //!
 //! The table is generated and the object-model entries are implemented. The
-//! blobs themselves are **not vendored yet** — that is step 3.2, and it is a
-//! licensing decision rather than a technical one. Nothing here links against
-//! them, so this crate builds and tests on its own; what it cannot yet do is
-//! prove the table is right, because only the blob can tell us that.
+//! blobs are **fetched, not vendored** — `make blobs` pulls them at pinned
+//! revisions with checksums, and `build.rs` links whatever is in
+//! `.blobs/esp32`, or tells you to run `make blobs` if it is empty. Without
+//! that step this crate still builds and tests on its own.
+//!
+//! What it cannot do yet is prove the table is right; only the blob can say
+//! that, and it says it by running. That is step 3.6.
 //!
 //! [`adapter::UNIMPLEMENTED`] lists what is still null and why.
 

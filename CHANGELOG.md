@@ -311,9 +311,9 @@ A kernel that provides a different one refuses to build and points here.
   other core as well as this core's interrupts, and the scheduler lives behind
   one. There is no longer any way to reach the scheduler without the lock — the
   `unsafe global()` escape hatch is gone rather than documented.
-- **The APP CPU can be started** (`soc_esp32::appcpu`, `arch_xtensa::appcpu`).
-  The kernel is still single-core, and the started core must not touch it —
-  see the module docs for exactly what that rules out.
+- **The APP CPU can be started** (`soc_esp32::appcpu`, `arch_xtensa::appcpu`),
+  and stalled again — which is what lets a flash write disable both caches
+  without stopping the other core mid-instruction.
 - **`esp32-ledc`**: PWM output. Eight high-speed channels over four timers,
   with the frequency/resolution arithmetic as pure functions that refuse an
   impossible combination rather than clamping it.

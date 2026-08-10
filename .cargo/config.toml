@@ -1,9 +1,14 @@
 # FlintOS — Cargo build configuration.
 #
 # Board selection is a Cargo feature on kernel, not a setting here:
-#   (default)                                          ESP32-WROVER
-#   --no-default-features --features board-m5-atom     M5Stack Atom (PICO-D4)
-#   --no-default-features --features board-esp32-devkitc  DevKitC / WROOM-32
+#   (default)                                               ESP32-WROVER
+#   --no-default-features --features board-esp32-devkitc    DevKitC / WROOM-32
+#   --no-default-features --features board-m5-atom-lite     M5Stack Atom Lite
+#   --no-default-features --features board-m5-atom-matrix   M5Stack Atom Matrix
+#
+# `board-m5-atom` is not one of them: the Lite and the Matrix put different
+# hardware on the same pin, so it was split and the old name now fails the
+# build with a message naming both.
 #
 # All classic-ESP32 boards share the same image format and flashing flags --
 # see the Makefile flash targets for the full explicit espflash options.

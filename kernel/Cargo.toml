@@ -43,6 +43,14 @@ esp32-uart = { path = "../drivers/physical/esp32/uart" }
 esp32-wdt = { path = "../drivers/physical/esp32/wdt" }
 esp32-rng = { path = "../drivers/physical/esp32/rng" }
 
+# Unconditional, unlike the rest of the chip crates. `soc-esp32` builds on a
+# host -- its own tests run there -- and `heap::is_dma_capable` needs it on
+# both. Scoped to the target it could not be called from the host build, so
+# `heap` carried a hand-written copy of the DMA window under a comment claiming
+# there was only one definition. There are cheaper ways to be wrong than
+# maintaining two copies of an address range in two crates.
+soc-esp32 = { path = "../soc/esp32" }
+
 # Xtensa support is target-only, and that is what lets this crate be built —
 # and therefore tested — on a host at all.
 #
@@ -54,10 +62,6 @@ esp32-rng = { path = "../drivers/physical/esp32/rng" }
 # stand-ins in `arch::host` take its place.
 [target.'cfg(target_os = "none")'.dependencies]
 arch-xtensa = { path = "../arch/xtensa" }
-# Same scoping, different reason: `soc-esp32` builds fine on a host (its own
-# tests run there), but the kernel only reaches it from `watchdog`, which writes
-# real registers and so is target-only too.
-soc-esp32 = { path = "../soc/esp32" }
 # Target-only: it calls ROM routines at fixed addresses and runs with the
 # instruction cache off, neither of which means anything on a host.
 esp32-flash = { path = "../drivers/physical/esp32/flash" }
@@ -74,8 +78,8 @@ esp32-adc = { path = "../drivers/physical/esp32/adc" }
 # build:
 #
 #   cargo build -p kernel   # default: board-esp32-wrover
-#   cargo build -p kernel --no-default-features --features board-m5-atom
 #   cargo build -p kernel --no-default-features --features board-esp32-devkitc
+#   cargo build -p kernel --no-default-features --features board-m5-atom-lite
 default = ["board-esp32-wrover"]
 board-esp32-wrover = ["board/board-esp32-wrover"]
 board-esp32-devkitc = ["board/board-esp32-devkitc"]

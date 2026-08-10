@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Prints what the ROM believes about the flash, and nothing else.
+//! Exercises the flash driver end to end, on both cores, from a real task.
 //!
 //! The self-test harness runs in boot context before the scheduler, and three
-//! sessions of flash debugging there have produced one confusing result after
+//! sessions of flash debugging there produced one confusing result after
 //! another — most recently a board that died partway through printing a string
-//! literal, before reading anything at all.
+//! literal, before reading anything at all. So the flash work happens here
+//! instead, from an ordinary task in an ordinary app.
 //!
-//! So this is the same read from an ordinary task in an ordinary app. If it
-//! works here, the harness was the problem and the flash driver may be fine.
-//! If it dies here too, the fault is in the read itself and everything built
-//! on top of it has been chasing a symptom.
+//! What it does now: prints the ROM's chip description and a SPI1/SPI0
+//! register comparison, then erases, programs and reads back the `nvs`
+//! partition through `kvstore`, and reports `PASS` or `FAIL`.
 //!
-//! Deliberately does not touch flash. No cache changes, no ROM calls — just
-//! six words of DRAM that the bootloader is supposed to have filled in.
+//! It also **starts the APP CPU and joins it to the scheduler** before doing
+//! any of that, and fails the run if core 1 stopped counting across the flash
+//! writes. That is the only coverage `with_cache_off`'s cross-core half has:
+//! with core 1 parked at reset — which is every other app — the stall path is
+//! never taken, and both ways of getting it wrong (never stalling, never
+//! releasing) leave a board that otherwise looks healthy.
 
 #![no_std]
 #![no_main]
@@ -95,6 +99,12 @@ fn run() {
         for i in 0..4 {
             let v = esp32_flash::STATUS_TRACE[i].load(Ordering::Relaxed);
             api::log_info!("[probe] status[{}] = {:#05x}", i, v);
+        }
+        // The two failures inside the cache-off window that cannot print for
+        // themselves. 0 means neither happened.
+        let cache = esp32_flash::LAST_CACHE_STATE.load(Ordering::Relaxed);
+        if cache != 0 {
+            api::log_error!("[probe] cache-off window failed: {:#010x}", cache);
         }
     }
     match outcome {

@@ -310,13 +310,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn dimming_scales_and_clamps() {
-        assert_eq!(Rgb::new(100, 200, 50).dim(50), Rgb::new(50, 100, 25));
-        assert_eq!(Rgb::RED.dim(0), Rgb::OFF);
-        // Over 100% must not brighten past full scale or wrap.
-        assert_eq!(Rgb::new(200, 0, 0).dim(200), Rgb::new(200, 0, 0));
-    }
+    // `dimming_scales_and_clamps` used to sit here too, byte-identical to the
+    // one in `led-strip` down to the comment. `Rgb::dim` is defined there and
+    // only re-exported here, so this copy tested that crate's code through an
+    // import -- two tests to fail for one cause, and one of them in the wrong
+    // place to fix it.
 
     /// Records every emitted frame, so the strip's behaviour is observable
     /// without a peripheral.

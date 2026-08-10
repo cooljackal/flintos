@@ -1,10 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Raw SPI flash access, via the ROM's own driver.
+//! Raw SPI flash access, driving SPI1 directly.
 //!
 //! This is what `lib/kvstore` needs underneath it, and it is the one
 //! peripheral on this chip you cannot drive casually: **the code is executing
 //! out of the thing being written.**
+//!
+//! # Not through the ROM
+//!
+//! The obvious route is the ROM's own flash driver, and it is a dead end.
+//! Espressif's linker script comments out `esp_rom_spiflash_wait_idle` and
+//! `esp_rom_spiflash_unlock` with the note "always using patched versions of
+//! these functions" -- `unlock`'s address is not even recorded, written
+//! `0x400?????` -- and `spi_flash/esp32/spi_flash_rom_patch.c` exists to
+//! replace them. `esp_rom_spiflash_read` waits for the chip to go idle before
+//! returning, so a broken `wait_idle` is a read that never returns, which is
+//! exactly what this driver did for a week. Zephyr's `flash_esp32.c` and
+//! Arduino both reach flash through esp-idf's `esp_flash` layer rather than
+//! calling the ROM, for the same reason: there is no supported way to call it
+//! directly.
+//!
+//! So [`spi1`] sends the commands itself. See its module docs for the part
+//! that is genuinely surprising -- this chip needs two different transaction
+//! conventions, and using the wrong one for a read is silent rather than
+//! loud.
 //!
 //! # Why every one of these functions is in IRAM
 //!
@@ -12,8 +31,10 @@
 //! taking the SPI1 controller away from the cache, so for the duration of the
 //! operation a cache miss has nowhere to go and the CPU stops — permanently,
 //! with no fault. Everything on the path therefore has to already be in RAM
-//! before the cache goes away: this crate's functions, anything they call, and
-//! the ROM routines (which live in ROM, so they are fine).
+//! before the cache goes away: this crate's functions and anything they call,
+//! constant data included — an array literal lives in `.rodata`, which is
+//! flash, and reading it here is fatal in exactly the way calling into flash
+//! is, while looking nothing like a call.
 //!
 //! Hence `.iram1.flash` on every one of them — **and `#[inline(never)]`
 //! beside it.** A `link_section` says where a function body goes; it says
@@ -25,88 +46,29 @@
 //! # The other core
 //!
 //! It is executing from flash too, and disabling the cache stops it just as
-//! dead. **This now stalls it** for the duration, and disables its cache as
-//! well — a running APP CPU is detected and put back exactly as it was found.
+//! dead. This stalls it for the duration and disables its cache as well: a
+//! running APP CPU is detected, stalled, and put back exactly as it was
+//! found. Order matters in both directions — stalled before its cache goes,
+//! released after its cache is back.
 //!
 //! The stall is a hardware one, which esp-idf deliberately avoids while its
 //! scheduler is running: stalling a core that holds a spinlock deadlocks
 //! whoever wants it next, so esp-idf uses a task handshake and NuttX does the
-//! same in `esp32_spiflash_opstart`. FlintOS can stall precisely because the
-//! APP CPU may not call into `kernel` at all — it holds no kernel lock. Lift
-//! that restriction (#19) and this has to become a handshake.
+//! same in `esp32_spiflash_opstart`.
 //!
-//! Stalling it properly belongs with whoever adds the first caller that needs
-//! both, and wants `RTC_CNTL`'s stall rather than a reset.
+//! **What makes it safe here is a property of this path, not of that core.**
+//! The obvious justification — that the APP CPU never calls into `kernel` —
+//! is false: `kernel::boot::join_scheduler` makes it a full peer, and
+//! `apps/smp` and `apps/flashprobe` both call it, so core 1 runs kernel tasks
+//! and takes the scheduler spinlock. What holds is narrower: **nothing
+//! between the stall and the release acquires a lock**, so core 1 can be
+//! stalled holding one and no one on this side will ask for it.
 //!
-//! # ROM entry points
-//!
-//! Addresses from esp-idf `esp_rom/esp32/ld/esp32.rom.spiflash.ld` and
-//! `esp32.rom.ld`. Hardcoded, matching how `soc_esp32::appcpu` reaches
-//! `Cache_Flush`; this tree has no ROM linker script.
-//!
-//! | Routine | Address |
-//! |---|---|
-//! | `esp_rom_spiflash_erase_sector` | `0x4006_2CCC` |
-//! | `esp_rom_spiflash_write` | `0x4006_2D50` |
-//! | `esp_rom_spiflash_read` | `0x4006_2ED8` |
-//!
-//! # Why this does not work, and what would
-//!
-//! **The ROM's flash driver is not usable as-is.** Espressif's own linker
-//! script says so, in a comment around two of the entry points:
-//!
-//! ```text
-//! /* always using patched versions of these functions
-//! PROVIDE ( esp_rom_spiflash_wait_idle = 0x400622c0 );
-//! PROVIDE ( esp_rom_spiflash_unlock = 0x400????? );
-//! */
-//! ```
-//!
-//! Both are commented out, and `unlock`'s address is not even recorded —
-//! `0x400?????`. `spi_flash/esp32/spi_flash_rom_patch.c` exists to replace
-//! them. `esp_rom_spiflash_read` waits for the chip to go idle before it
-//! returns, and a `wait_idle` that never completes is a read that never
-//! returns, which is precisely the observed behaviour.
-//!
-//! That also explains why Zephyr's `flash_esp32.c` and Arduino both reach
-//! flash through esp-idf's `esp_flash` layer rather than calling the ROM:
-//! there is no supported way to call it directly.
-//!
-//! So the way forward is to stop using `ROM_READ`/`ROM_WRITE`/
-//! `ROM_ERASE_SECTOR` and drive SPI1 here — send the read, page-program and
-//! sector-erase commands, and poll the status register for the busy bit. That
-//! is what the patched versions do, in about 150 lines, and it removes the
-//! dependency on ROM behaviour nobody guarantees.
-//!
-//! # Ruled out, so nobody repeats it
-//!
-//! - **The cache.** Skipping the disable/restore entirely and calling the ROM
-//!   read with the cache running hangs identically.
-//! - **IRAM placement.** Verified against the ELF built with the self-test
-//!   feature: every `with_cache_off` instantiation is in IRAM.
-//! - **The chip description.** `apps/flashprobe` prints it off a running
-//!   board: device `0x00C84016`, 4 MB, 64 KiB blocks, 4 KiB sectors, 256-byte
-//!   pages. The ROM knows exactly what it is talking to.
-//!
-//! # What is still wrong
-//!
-//! `esp_rom_spiflash_read` does not return. Not a cache problem — the call
-//! hangs with the cache left entirely alone, which was checked directly and
-//! rules out the whole disable/restore path below. The cache sequence here is
-//! still the one esp-idf uses and is worth keeping; it is simply not the bug.
-//!
-//! The remaining assumption, and now the prime suspect, is the line under
-//! this one: that the bootloader's chip configuration survives into our image.
-//! `g_rom_spiflash_chip` at `0x3FFAE270` holds the page, sector and block
-//! sizes and the read command the ROM routine uses, and a routine polling for
-//! a status that never comes is exactly what a wrong command looks like.
-//! Zephyr and Arduino both avoid the question by going through esp-idf's
-//! `esp_flash` layer, which initialises its own chip description rather than
-//! inheriting one.
-//!
-//! The chip's parameters are assumed to have been configured by the
-//! second-stage bootloader, so there is no `attach` or `config_param` call
-//! here. That assumption is the next thing to test.
+//! That is fragile, and deliberately written down as such. Add a lock
+//! acquisition anywhere inside [`with_cache_off`] — a bus handle, a log line
+//! — and this deadlocks. When that day comes, the shape to copy is NuttX's
+//! `esp32_spiflash_opstart`: park the other core with a semaphore it enters
+//! voluntarily, then disable both caches.
 
 #![no_std]
 // Same reason as `soc-esp32`: Xtensa inline asm is unstable, and this crate
@@ -117,7 +79,7 @@
 use core::sync::atomic::Ordering;
 
 // The SPI-NOR commands, because the ROM's driver cannot be called. See the
-// module docs there.
+// module docs above.
 #[path = "spi1.rs"]
 mod spi1;
 
@@ -136,7 +98,7 @@ pub enum FlashError {
     /// The cache never reported itself idle, so it was left alone rather than
     /// disabled underneath the code that is running.
     CacheBusy,
-    /// Address or length not a multiple of 4. The ROM routines take word
+    /// Address or length not a multiple of 4. The SPI1 driver takes word
     /// pointers; a byte-aligned call reads or writes the wrong place rather
     /// than refusing.
     Misaligned,
@@ -182,13 +144,13 @@ const PRO_CACHE_STATE_IDLE: u32 = 1;
 /// generous enough to absorb a burst and still fail rather than hang.
 const CACHE_IDLE_SPINS: u32 = 100_000;
 
-/// Diagnostic only.
-const SKIP_CACHE: bool = false;
-
-
-/// The last state seen when the wait timed out, with bit 31 set to mark it
-/// written. Diagnostic: the whole question is what value this field actually
-/// takes on this part, and it cannot be printed from inside the window.
+/// Why a cache-off window last failed, or 0 if none has.
+///
+/// Nothing inside the window can print: the cache is off or about to be, and
+/// the log path is in flash. So the two failures that are otherwise invisible
+/// leave a value here for a caller to read afterwards -- `0x8000_0000 | state`
+/// when the idle wait timed out, `0xDEAD_0001` when the chip never reported
+/// ready. `apps/flashprobe` prints it.
 pub static LAST_CACHE_STATE: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 
@@ -360,11 +322,6 @@ impl FlashRegion {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(), FlashError> {
-    // Bisecting: run the transaction with the cache left alone, to split
-    // "the cache dance is wrong" from "the transaction is wrong".
-    if SKIP_CACHE {
-        return f();
-    }
     // Briefly, to make the INTENABLE read-modify-write atomic against an
     // interrupt arriving between the read and the write.
     #[cfg(target_arch = "xtensa")]
@@ -584,7 +541,7 @@ mod tests {
 
     #[test]
     fn misalignment_is_refused_rather_than_rounded() {
-        // The ROM routines take word pointers. A byte-aligned call does not
+        // The SPI1 driver takes word pointers. A byte-aligned call does not
         // fail -- it reads or writes somewhere else.
         let r = region();
         for off in [1u32, 2, 3] {

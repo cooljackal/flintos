@@ -292,10 +292,14 @@ apps: ## List the applications in apps/
 		printf "  %-12s %s\n" "$$name" "$$desc"; \
 	done
 	@echo ""
-	@echo "Boards: board-esp32-wrover (default), board-esp32-devkitc, board-m5-atom-lite, board-m5-atom-matrix"
+	@echo "Boards: $(BOARDS)   (first is the default)"
 	@echo "Debug:  debug-level-0 (silent) .. debug-level-3 (everything)"
 
-.PHONY: erase
+# Interpolated rather than spelled out, because the hand-kept copy that used to
+# be here is exactly the list `test-boards` walks: a board in one and not the
+# other is a board whose manifest invariants never run.
+
+.PHONY: blobs blob-symbols blobs-check erase
 blobs: ## Fetch Espressif's radio blobs (Apache-2.0, ~4 MB, pinned to esp-idf v4.4)
 	@$(BASH) tools/fetch-blobs.sh
 
@@ -319,10 +323,30 @@ monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
 check: ## Check every host-compatible crate
 	cargo check $(HOST_SELECT) --target $(HOST_TARGET)
 
+# Applications that refuse to build for the default board, and the board each
+# one wants. `blink`, `imu` and `pwm` need hardware only the Atoms declare, and
+# they say so with a `compile_error!` naming the board -- which is good
+# behaviour that made this target permanently red, because a plain `--workspace`
+# builds every app against the default WROVER. It had been failing for exactly
+# that reason, which is the trouble with a check nobody can ever see pass.
+#
+# So: everything else against the default, then each of these against the board
+# it asks for. Coverage goes up, not down -- before this they were excluded from
+# the Xtensa check by failing it.
+BOARD_SPECIFIC_APPS := blink imu pwm
+ATOM_BOARD          := board-m5-atom-matrix
+
 .PHONY: check-all
 check-all: ## Full check including arch (requires Xtensa toolchain)
 	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
-		--workspace --exclude build --exclude size
+		--workspace --exclude build --exclude size \
+		$(addprefix --exclude ,$(BOARD_SPECIFIC_APPS))
+	@for a in $(BOARD_SPECIFIC_APPS); do \
+		echo "== $$a ($(ATOM_BOARD))"; \
+		$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
+			-p $$a --no-default-features \
+			--features "$(ATOM_BOARD),debug-level-1" || exit 1; \
+	done
 
 .PHONY: check-layers
 check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)

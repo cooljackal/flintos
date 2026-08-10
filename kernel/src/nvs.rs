@@ -11,7 +11,7 @@
 //!
 //! # Alignment
 //!
-//! The ROM flash routines take word pointers and word counts. `kvstore` reads
+//! The SPI1 driver takes word-aligned addresses and word counts. `kvstore` reads
 //! at whatever offset an entry happens to start at, for whatever length a key
 //! or a value happens to be. [`FlashStorage`] is where those two facts are
 //! reconciled: reads are widened to the enclosing words and the result sliced
@@ -73,7 +73,7 @@ impl Storage for FlashStorage {
         if buf.is_empty() {
             return Ok(());
         }
-        // Widen to whole words: the ROM routine cannot start mid-word, and a
+        // Widen to whole words: the SPI1 driver cannot start mid-word, and a
         // read that silently rounded the offset down would return the right
         // number of bytes from the wrong place.
         let start = offset & !3;
@@ -107,7 +107,7 @@ impl Storage for FlashStorage {
             return Err(KvError::Io);
         }
         // Through a word-aligned buffer: `data` is a byte slice and may not be
-        // aligned, and the ROM routine takes a `*const u32`.
+        // aligned, and the SPI1 driver takes a `*const u32`.
         let mut scratch = [0u32; SCRATCH_WORDS];
         unsafe {
             core::ptr::copy_nonoverlapping(

@@ -14,10 +14,16 @@ extern "C" {
 
 /// The APP CPU's stack.
 ///
-/// 4 KiB, and it is all that core gets: it runs no tasks and takes no traps,
-/// so nothing else consumes it. 16-byte aligned because the Xtensa ABI
-/// requires it of any stack pointer, and a misaligned one faults on the first
-/// windowed call rather than at the misalignment.
+/// 4 KiB, and it is all that core gets. That budget was set when this core
+/// only ran a bare `main`; it no longer does. `kernel::boot::join_scheduler`
+/// makes it a full peer — it takes traps and ticks, and its idle task is
+/// pinned so that idle runs on *this* array. So the 4 KiB has to cover the
+/// deepest call chain plus a trap frame plus the kernel's trap handler on
+/// top, exactly as `apps/README.md` says of any task stack.
+///
+/// 16-byte aligned because the Xtensa ABI requires it of any stack pointer,
+/// and a misaligned one faults on the first windowed call rather than at the
+/// misalignment.
 #[repr(C, align(16))]
 struct Stack([u8; 4096]);
 
@@ -39,8 +45,10 @@ static APPCPU_MAIN: AtomicU32 = AtomicU32::new(0);
 /// Call before `soc_esp32::appcpu::start`.
 ///
 /// # Safety
-/// `main` must never return, and must not touch the kernel — see
-/// `soc_esp32::appcpu::start` for what that rules out.
+/// `main` must never return. It *may* call `kernel::boot::join_scheduler`,
+/// which is how this core becomes a scheduling peer; until it does, the core
+/// has no vector table, so a fault there is unreportable rather than
+/// diagnosable — see `soc_esp32::appcpu::start`.
 ///
 /// **`main` must be in IRAM**, as must everything it calls. The APP CPU starts
 /// with no instruction cache, so anything mapped from flash faults on the

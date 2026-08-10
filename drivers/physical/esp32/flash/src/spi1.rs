@@ -317,9 +317,11 @@ unsafe fn restore(s: &Saved) {
     let _ = rd(USER);
 }
 
-/// Snapshots of SPI1 taken at the top of the first two reads, so a read that
-/// works and a read that returns 0x55 can be compared. Diagnostic; printing
-/// cannot happen inside the cache-off window.
+/// Snapshots of SPI1 taken at the top of the first two reads, so two reads of
+/// different addresses can be compared register by register. That comparison
+/// is what proved reads were returning the stale W0..W15 buffer rather than
+/// anything from the chip. Diagnostic; printing cannot happen inside the
+/// cache-off window.
 pub static REG_SNAPSHOT: [core::sync::atomic::AtomicU32; 16] =
     [const { core::sync::atomic::AtomicU32::new(0) }; 16];
 static SNAP_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
@@ -350,8 +352,17 @@ unsafe fn snapshot() {
 /// Status register readings taken through one page program, so the step that
 /// changes the chip's state can be identified rather than guessed at.
 ///
-/// Slots: 0 before WREN, 1 after WREN, 2 after the program command, 3 once the
-/// chip reports ready. Bit 7 set (`SRP0`) is what we are hunting.
+/// **Two writers, and they do not agree.** [`trace`] fills all four slots for
+/// the first program: 0 before WREN, 1 after WREN, 2 after the program
+/// command, 3 once the chip reports ready, each `| 0x100` to mark it written.
+/// [`unlock`] runs earlier and uses slot 0 as a progress counter
+/// (`0x1000..=0x1006`) with its own readings in slots 1 and 2. Whichever ran
+/// last is what `apps/flashprobe` prints, so read a `0x1nnn` in slot 0 as
+/// unlock progress and anything else as a status byte.
+///
+/// This is bring-up scaffolding, kept because the unlock path is the one that
+/// can brick a board, and deliberately not tidied into something prettier
+/// than it is.
 pub static STATUS_TRACE: [core::sync::atomic::AtomicU32; 4] =
     [const { core::sync::atomic::AtomicU32::new(0) }; 4];
 static TRACED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
@@ -425,25 +436,24 @@ unsafe fn wait_cmd() -> Result<(), FlashError> {
     Ok(())
 }
 
-/// Force a 24-bit address phase.
+/// Clear the transaction registers before a native command.
 ///
-/// **Erase and program need this and reads do not**, which is why reads worked
-/// while everything else corrupted the chip. esp-idf calls
-/// `spi_flash_ll_set_addr_bitlen(dev, 24)` before every erase and program:
+/// Erase and program need this; the user-defined transactions build `USER` and
+/// `USER1` themselves. Left alone, these inherit whatever the cache is using:
+/// if the cache runs QIO its address phase is 32 bits — 24 of address and 8 of
+/// mode — so an erase issued under that configuration lands on the wrong
+/// sector, erasing part of the application image. That failure survived a
+/// reset, which is what made it the loud one.
 ///
-/// ```c
-/// dev->user1.usr_addr_bitlen = (bitlen - 1);
-/// dev->user.usr_addr = bitlen ? 1 : 0;
-/// ```
-///
-/// Left alone, these inherit whatever the cache is using. If the cache runs
-/// QIO its address phase is 32 bits — 24 of address and 8 of mode — so an
-/// erase issued under that configuration lands on the wrong sector. Which
-/// erases part of the application image, and is why that failure survived a
-/// reset while the read failure did not.
+/// This was called `set_addr_bitlen_24`, after esp-idf's
+/// `spi_flash_ll_set_addr_bitlen(dev, 24)`, and the name outlived the body —
+/// it sets no address length, and the comment inside says why. The old doc
+/// also claimed reads worked while erase and program corrupted the chip.
+/// Reads never worked; see this module's header. They returned the stale W0..
+/// W15 buffer, which is what a working round trip looks like from the outside.
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
-unsafe fn set_addr_bitlen_24() {
+unsafe fn reset_for_native_command() {
     // Cleared, deliberately not set to 23. esp-idf's `erase_sector` does
     // `REG_SET_FIELD(USRREG1, SPI_USR_ADDR_BITLEN, 23)`, but writing 23 here
     // hangs the very next read on this part, twice in a row, on a
@@ -565,10 +575,10 @@ unsafe fn exit_continuous_read() -> Result<(), FlashError> {
 /// ```
 ///
 /// So the native command is not unconditionally correct — when the chip is
-/// running with extra dummy cycles, esp-idf refuses to use it. This driver has
-/// only ever used the native one. Reading both and comparing is the cheapest
-/// way to find out whether that choice matters here, and it is a measurement
-/// rather than an argument.
+/// running with extra dummy cycles, esp-idf refuses to use it. This part does
+/// run with one, so this is the path taken: `status` is this function and
+/// nothing else, and the native `RDSR` survives only as a legal opcode in
+/// `CMD_ANY`. The comparison that settled it is recorded above.
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 unsafe fn status_user_cmd() -> Result<u32, FlashError> {
@@ -669,11 +679,10 @@ unsafe fn unlock() -> Result<(), FlashError> {
     wr(CTRL, rd(CTRL) | CTRL_WRSR_2B);
     command(CMD_FLASH_WREN)?;
     STATUS_TRACE[0].store(0x1003, Ordering::Relaxed);
-    // Both readings of the same register, at the one moment their contents are
-    // known: WREN has just run, so WEL is set and SR1 must be 0x02. Whichever
-    // of these does not say 0x02 is the one that has been lying all along.
-    // Bit 31 marks the slot as written; user read in [23:16], native in [15:0].
-    // After the last status read, because a status read clears this register.
+    // The value `WRSR` is about to write, not a diagnostic slot: block-protect
+    // and SRP0 cleared, and QE *kept* in status register 2. Dropping QE leaves
+    // a board that boots in QIO mode unable to boot at all, so this write is
+    // load-bearing even though nothing here reads it back.
     wr(RD_STATUS, STATUS2_QE);
     command(CMD_FLASH_WRSR)?;
     STATUS_TRACE[0].store(0x1004, Ordering::Relaxed);
@@ -776,7 +785,7 @@ pub unsafe fn write(addr: u32, src: &[u32]) -> Result<(), FlashError> {
             let n = (src.len() - done).min(16).min(to_page_end as usize);
             wait_ready()?;
             command(CMD_FLASH_WREN)?;
-            set_addr_bitlen_24();
+            reset_for_native_command();
             // No dummy phase on a program. See USR_DUMMY.
             wr(USER, rd(USER) & !USR_DUMMY);
             // Address first, then the data, in esp-idf's order:
@@ -820,7 +829,7 @@ pub unsafe fn erase_sector(addr: u32) -> Result<(), FlashError> {
         trace(0, first);
         command(CMD_FLASH_WREN)?;
         trace(1, first);
-        set_addr_bitlen_24();
+        reset_for_native_command();
         // esp-idf clears CTRL entirely before a sector erase.
         wr(CTRL, 0);
         wr(ADDR, (addr & !(4096 - 1)) & ADDRESS_MASK_24BIT);
