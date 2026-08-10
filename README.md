@@ -24,8 +24,8 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` → `make fl
 ## Status
 
 **Pre-alpha. Do not put this in a product.** FlintOS boots, schedules and
-preempts on real silicon — verified on an ESP32-PICO — but it is young, most
-drivers are thin, and the API will change.
+preempts on real silicon — verified on an ESP32-WROOM and an ESP32-PICO — but
+it is young, most drivers are thin, and the API will change.
 
 Read the columns as "does this work on that instruction set". Only Xtensa has a
 port today, so the ARM32 column is an honest row of blanks rather than a
@@ -125,8 +125,9 @@ own — see [Architecture](https://github.com/cooljackal/flintos/wiki/Architectu
 
 | | |
 |---|---|
-| Host unit tests | ✅ 423 passing, kernel included |
-| On-target self-tests | ✅ 17 passing on an ESP32-PICO — `make test-target` |
+| Host unit tests | ✅ 552 passing, kernel included |
+| On-target self-tests | ✅ 30 passing, 1 skipped on an ESP32-WROOM — `make test-target` |
+| Xtensa-only code and non-default features | ✅ `make check-features` |
 | Layer boundary and package naming | ✅ enforced in CI |
 | Image size reporting | ✅ `make size` |
 | ABI versioning and upgrade path | ✅ `make upgrade` |
@@ -140,8 +141,10 @@ checked and found sound, is in
 [`doc/review-findings.md`](doc/review-findings.md). Nothing is hidden: where a
 driver is a stub or a value is an assumption, it says so.
 
-**What we want from you right now:** flash it to a board that isn't an
-ESP32-PICO and tell us what happens. A garbled serial dump is a useful result.
+**What we want from you right now:** flash it to a board we have not held —
+a WROVER, or anything not in the table below — and tell us what happens. A
+garbled serial dump is a useful result. Bringing up the WROOM-32 found two
+real bugs in a day, both of which had passed every host test.
 
 ---
 
@@ -486,20 +489,42 @@ fn bump() {
 
 ## Supported hardware
 
-| Board | SoC | Support | What runs | Pinout |
+| Board | SoC | Support | Verified | Pinout |
 |---|---|---|---|---|
-| M5Stack Atom Matrix | ESP32-PICO-D4 | 🟢 full | Scheduler, LED panel, IMU over I²C, both watchdogs | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
+| ESP32-DevKitC / WROOM-32 | ESP32 | 🟢 full | Self-test suite, flash round trip, both cores | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-DevKitC) |
+| M5Stack Atom Matrix | ESP32-PICO-D4 | 🟢 full | Scheduler, LED panel, IMU over I²C, both watchdogs, ADC | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
 | M5Stack Atom Lite | ESP32-PICO-D4 | 🟢 full | Same, one LED instead of a panel | [wiki](https://github.com/cooljackal/flintos/wiki/Board-M5Stack-Atom) |
 | ESP32-WROVER | ESP32 | 🟡 partial | Manifest written, never flashed | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-WROVER) |
-| ESP32-DevKitC / WROOM-32 | ESP32 | 🟡 partial | Same manifest as the WROVER, never flashed | [wiki](https://github.com/cooljackal/flintos/wiki/Board-ESP32-DevKitC) |
+| ESP32-S2 / S3, C3 | ESP32 (LX7 / RISC-V) | 🔴 none | Single-core, different peripheral map; `arch-xtensa` is LX6-only | — |
 | STM32F3 / F4 | ARM32 | 🔴 none | Needs an `arch-cortex-m`, and an arch-selection axis that does not exist yet | — |
 
-🟢 runs on this board and has been checked · 🟡 should work, nobody has flashed
-it · 🔴 not supported
+🟢 runs on this board and has been checked on real silicon · 🟡 should work,
+nobody has flashed it · 🔴 not supported
 
-The two 🟡 rows are the honest ones: their manifests are written and their
-tests pass, but no one has held the board. **That is the contribution we want
-most** — flash it and tell us what happened.
+### What "verified" means on the DevKitC / WROOM-32
+
+The reference board for on-target work, checked on an ESP32 rev v3.0 module
+(4 MB flash, dual core, Wi-Fi and BT):
+
+| Check | Result |
+|---|---|
+| `make test-target` | 30 pass, 0 fail, 1 skip |
+| `make flash APP=flashprobe` | erase, program and read back the `nvs` partition, with core 1 running throughout |
+| `make flash APP=smp` | both cores scheduling, pinned and floating tasks, no lost DPORT writes |
+| `make flash APP=demo` | three tasks at three priorities, stable |
+
+The skip is `adc1_follows_the_pin_it_is_pointed_at`. It needs a pin the board
+holds hard high, which a bare DevKitC has not got — GPIO34-39 are input-only
+with no internal pull. The Atoms declare their button, so it runs there.
+Jumper GPIO39 to 3V3 and set `ADC_EXTERNAL_HIGH_GPIO` in the manifest to run
+it here. A test that cannot run says so rather than passing or failing.
+
+**Note the default board is the WROVER**, which is the one nobody has flashed.
+Pass `BOARD=board-esp32-devkitc` for the verified path.
+
+**The 🟡 row is the honest one:** the manifest is written and its tests pass,
+but no one has held the board. **That is the contribution we want most** —
+flash it and tell us what happened.
 
 Adding a board is one manifest plus feature registration in a few places — see
 [Adding a Board](https://github.com/cooljackal/flintos/wiki/Adding-a-Board).

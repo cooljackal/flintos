@@ -44,9 +44,13 @@ Pin tables and register maps, so you don't have to go looking.
 |---|---|
 | [Xtensa LX6](Arch-Xtensa-LX6) | The CPU: windows, traps, tick |
 | [ESP32](SoC-ESP32) | The chip: every pin, every peripheral |
-| [ESP32-WROVER](Board-ESP32-WROVER) | Board pinout |
-| [ESP32-DevKitC](Board-ESP32-DevKitC) | Board pinout |
-| [M5Stack Atom](Board-M5Stack-Atom) | Board pinout |
+| [ESP32-DevKitC / WROOM-32](Board-ESP32-DevKitC) | Board pinout — 🟢 the verified board |
+| [M5Stack Atom](Board-M5Stack-Atom) | Board pinout — 🟢 verified |
+| [ESP32-WROVER](Board-ESP32-WROVER) | Board pinout — 🟡 the default, never flashed |
+
+🟢 checked on real silicon · 🟡 manifest written, nobody has flashed it.
+`make flash` with no `BOARD=` builds for the WROVER; the tested path is
+`BOARD=board-esp32-devkitc`.
 
 ## Elsewhere
 

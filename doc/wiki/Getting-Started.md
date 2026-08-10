@@ -32,6 +32,11 @@ make flash APP=demo BOARD=board-m5-atom-lite   # different board
 
 Defaults: `APP=demo`, `BOARD=board-esp32-wrover`, `DEBUG=debug-level-1`.
 
+> The default board, the WROVER, is the one nobody has flashed. If you have a
+> plain ESP32 devboard, use `BOARD=board-esp32-devkitc` — same silicon, and
+> it is the board the on-target suite is verified against. See
+> [ESP32-DevKitC](Board-ESP32-DevKitC).
+
 Enabling two boards is a compile error, not a warning — a wrong pin map looks
 like broken hardware.
 

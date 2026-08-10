@@ -21,6 +21,24 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Added
 
+- **The ESP32-DevKitC / WROOM-32 is verified hardware**, and is now the
+  reference board for on-target work: 30 on-target tests pass (1 skipped),
+  `flashprobe` completes a flash round trip with the second core running, and
+  `smp` schedules on both. The default board is still the WROVER, which
+  nobody has flashed — pass `BOARD=board-esp32-devkitc` for the tested path.
+
+- **`make check-features`** — clippy for Xtensa across the feature
+  combinations that gate real code. `make lint` runs on the host, so
+  everything behind `target_os = "none"` was invisible to it: all of
+  `arch-xtensa`, the trap handler, the self-test suite. Its first run found
+  21 pre-existing errors in code no linter had ever read.
+
+- **A third self-test outcome, `SKIP`.** A test that needs hardware this
+  board has not got is neither a pass nor a failure, and dropping it silently
+  shrinks the total with nothing saying why. The first user is the ADC test,
+  which needs a pin the board holds high — `ADC_EXTERNAL_HIGH_GPIO` in the
+  manifest, `Some(39)` on the Atoms and `None` elsewhere.
+
 - **Persistent configuration in flash.** `kvstore` over the `nvs` partition:
   a value written one boot is read back the next. `kernel::nvs::FlashStorage`
   is the joint; the driver underneath drives SPI1 directly, because the ROM's

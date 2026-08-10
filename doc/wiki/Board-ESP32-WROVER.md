@@ -9,6 +9,16 @@ Feature: `board-esp32-wrover`. Manifest: `board/src/esp32_wrover.rs`.
 SoC: ESP32 — see [ESP32](SoC-ESP32) for the full pin table and peripheral map.
 Tick: 1 ms.
 
+> **Never flashed.** This is the default board and the *least* tested one —
+> the manifest is written and its invariant tests pass, but nobody has held
+> the hardware. The verified board is the
+> [DevKitC / WROOM-32](Board-ESP32-DevKitC); pass
+> `BOARD=board-esp32-devkitc` for the path that has been run.
+>
+> Same silicon and same image format, so this should work. If you have one,
+> please report either way — bringing up the WROOM-32 found two real bugs in
+> a day, both of which had passed every host test.
+
 ## The WROVER difference
 
 **GPIO16 and GPIO17 are PSRAM.** The module carries 4–8 MB of external PSRAM
