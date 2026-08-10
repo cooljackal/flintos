@@ -109,6 +109,45 @@ pub fn sys_spawn_with_affinity(
     stack_size: usize,
     affinity: scheduler::Affinity,
 ) -> Option<TaskId> {
+    spawn_inner(name, entry, priority, stack_size, affinity, StackSource::Pool)
+}
+
+/// Where a new task's stack comes from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StackSource {
+    /// The linker's `task_stacks` region, bump-allocated and never reclaimed.
+    /// What every statically created task uses.
+    Pool,
+    /// The radio heap, returned when the task is deleted. For runtime-created
+    /// tasks only — see `kernel::dynobj`.
+    Heap,
+}
+
+/// Spawn with an explicit stack source.
+///
+/// # Safety of the `Heap` variant
+/// The caller must delete the task through `dynobj::delete_task`, which is
+/// what returns the stack. Letting a heap-backed task simply run off the end
+/// of its entry point leaks the stack exactly as the pool would.
+pub fn sys_spawn_from(
+    name: &'static str,
+    entry: fn(),
+    priority: Priority,
+    stack_size: usize,
+    affinity: scheduler::Affinity,
+    stack: StackSource,
+) -> Option<TaskId> {
+    spawn_inner(name, entry, priority, stack_size, affinity, stack)
+}
+
+fn spawn_inner(
+    name: &'static str,
+    entry: fn(),
+    priority: Priority,
+    stack_size: usize,
+    affinity: scheduler::Affinity,
+    stack: StackSource,
+) -> Option<TaskId> {
     // Validate before taking a TCB slot, so a rejected request leaves no trace.
     //
     // These used to be silently clamped with `.min(MAX_STACK_SIZE)`. With no
@@ -126,7 +165,29 @@ pub fn sys_spawn_with_affinity(
             tcb.affinity = affinity;
         }
 
-        let stack_base = match allocate_stack(stack_size) {
+        let stack_base = match stack {
+            StackSource::Pool => allocate_stack(stack_size),
+            // Sixteen-byte aligned: the windowed ABI spills in sixteen-byte
+            // units and `init_context` puts the initial frame at the top.
+            StackSource::Heap => {
+                let p = unsafe { crate::heap::alloc(stack_size as usize, 16) };
+                // `stack_base` is a `u32` because the target's address space
+                // is. Truncating a wider pointer would paint the guard, and
+                // then run the task, at an address that is not the stack --
+                // which is a segfault on a 64-bit host and silent corruption
+                // anywhere. Refuse instead, and hand the memory straight back.
+                let addr = p as usize;
+                if p.is_null() {
+                    None
+                } else if addr > u32::MAX as usize {
+                    unsafe { crate::heap::free(p, crate::heap::Caps::Internal) };
+                    None
+                } else {
+                    Some(addr as u32)
+                }
+            }
+        };
+        let stack_base = match stack_base {
             Some(b) => b,
             None => {
                 // Roll back the TCB slot we just took.
@@ -143,6 +204,7 @@ pub fn sys_spawn_with_affinity(
             tcb.priority = priority.numeric();
             tcb.stack_base = stack_base;
             tcb.stack_size = stack_size;
+            tcb.heap_stack = stack == StackSource::Heap;
             tcb.stack_hwm = 0;
             tcb.state = TaskState::Ready;
             tcb.quantum = scheduler::DEFAULT_QUANTUM_MS;

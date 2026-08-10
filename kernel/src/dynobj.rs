@@ -781,3 +781,207 @@ mod lifecycle_tests {
         assert_eq!(lock.with(|| 42), 42);
     }
 }
+
+// ── Runtime-created tasks ───────────────────────────────────────────────────
+
+/// Create a task whose stack is returned when it is deleted.
+///
+/// The static [`crate::spawn::sys_spawn`] bump-allocates from the linker's
+/// `task_stacks` region and never reclaims it — correct for a static RTOS,
+/// which creates its tasks once. The blobs create and delete tasks throughout
+/// a session, so these take heap stacks instead and the pool is left alone.
+///
+/// Returns the task id, or `None` if there is no TCB slot or no heap.
+pub fn spawn_task(
+    name: &'static str,
+    entry: fn(),
+    priority: hal::types::Priority,
+    stack_size: usize,
+) -> Option<u32> {
+    crate::spawn::sys_spawn_from(
+        name,
+        entry,
+        priority,
+        stack_size,
+        crate::scheduler::Affinity::Any,
+        crate::spawn::StackSource::Heap,
+    )
+    .map(|t| t.0)
+}
+
+/// Why a delete was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteError {
+    /// No task with that id.
+    NoSuchTask,
+    /// The task is running right now, on this core or the other one. Freeing
+    /// the stack it is executing on would corrupt it mid-instruction.
+    StillRunning,
+    /// The task's stack came from the linker pool, which is a bump allocator
+    /// with nothing to give back to.
+    NotDeletable,
+}
+
+/// Delete a task and return its stack to the heap.
+///
+/// # What this deliberately refuses
+///
+/// **Self-delete.** A task cannot delete itself here: it is executing on the
+/// stack that would be freed, and the next interrupt would write into memory
+/// the heap had already handed to someone else. FreeRTOS handles this with a
+/// reaper that runs in the idle task, and that is the right shape for it — but
+/// it is a scheduler change with its own failure modes and belongs in its own
+/// piece of work. Until then this returns [`DeleteError::StillRunning`], which
+/// is a refusal the caller can see rather than corruption it cannot.
+///
+/// **Pool-backed tasks.** Nothing to reclaim; see [`DeleteError::NotDeletable`].
+///
+/// # What it does handle
+///
+/// Removing the task from every queue waiter list. A deleted task left listed
+/// gets unblocked by a later `wake_one_*`, by which point the slot may belong
+/// to a different task — which then returns from a wait it never entered, far
+/// from the delete that caused it.
+pub fn delete_task(id: u32) -> Result<(), DeleteError> {
+    // Take the stack details and clear the slot under one lock, so nothing can
+    // schedule the task between deciding it is idle and removing it.
+    let stack = crate::scheduler::with(|sched| {
+        let tcb = match sched.tasks.get(id as usize).and_then(|t| t.as_ref()) {
+            Some(t) => t,
+            None => return Err(DeleteError::NoSuchTask),
+        };
+        if tcb.state == crate::scheduler::TaskState::Running {
+            return Err(DeleteError::StillRunning);
+        }
+        // Also refuse if it is any core's current task, which `Running` should
+        // already imply but is worth checking separately: the two are set at
+        // slightly different moments during a switch.
+        if sched.is_current_anywhere(id) {
+            return Err(DeleteError::StillRunning);
+        }
+        if !tcb.heap_stack {
+            return Err(DeleteError::NotDeletable);
+        }
+        let stack = (tcb.stack_base, tcb.priority);
+        sched.tasks[id as usize] = None;
+        // The task may have been the only Ready one at its priority.
+        sched.recompute_ready_bit(stack.1);
+        Ok(stack.0)
+    })?;
+
+    // Outside the scheduler lock: `forget_task` takes its own critical
+    // section, and taking the scheduler's twice is the reentrancy that
+    // panics.
+    crate::queue::forget_task(id);
+    unsafe { heap::free(stack as *mut u8, Caps::Internal) };
+    Ok(())
+}
+
+#[cfg(test)]
+mod task_tests {
+    use super::*;
+    use hal::types::Priority;
+
+    fn heap_ready() {
+        unsafe { heap::init(0) };
+    }
+
+    fn noop() {}
+
+    /// On a 64-bit host the heap sits above 4 GiB, and `stack_base` is a `u32`
+    /// because the target's address space is. The spawn path refuses rather
+    /// than truncating.
+    ///
+    /// This is not a test-only concern dressed up as one: truncating would
+    /// paint the stack guard, and then run the task, at an address that is not
+    /// the stack. On the host that is an immediate segfault — which is how it
+    /// was found — and on any 32-bit target where the heap somehow sat high it
+    /// would be silent corruption.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn a_heap_stack_that_cannot_fit_a_u32_is_refused_not_truncated() {
+        heap_ready();
+        let before = heap::free_bytes(Caps::Internal);
+        assert!(
+            spawn_task("too high", noop, Priority::Normal(2), 4096).is_none(),
+            "a stack above 4 GiB must be refused"
+        );
+        assert_eq!(
+            heap::free_bytes(Caps::Internal),
+            before,
+            "the refused allocation must be handed back, not leaked"
+        );
+    }
+
+    /// The real create/delete cycle needs 32-bit addresses, so it runs on the
+    /// target — see `selftest_dynobj.rs`, which asserts the no-leak property
+    /// the issue actually asks for.
+    #[test]
+    #[cfg(target_pointer_width = "32")]
+    fn a_dynamic_task_takes_its_stack_from_the_heap_and_gives_it_back() {
+        heap_ready();
+        let before = heap::free_bytes(Caps::Internal);
+        let id = spawn_task("dyn", noop, Priority::Normal(2), 4096).expect("spawn");
+        assert!(heap::free_bytes(Caps::Internal) < before);
+        delete_task(id).expect("delete");
+        assert_eq!(heap::free_bytes(Caps::Internal), before);
+    }
+
+    #[test]
+    fn deleting_something_that_was_never_a_task_is_refused() {
+        assert_eq!(delete_task(crate::scheduler::MAX_TASKS as u32 + 1), Err(DeleteError::NoSuchTask));
+    }
+
+    #[test]
+    fn a_pool_backed_task_cannot_be_deleted() {
+        // The static tasks. Their stacks come from a bump allocator with
+        // nothing to return them to, so refusing is the honest answer —
+        // freeing would hand the heap a pointer it never owned.
+        //
+        // The TCB is set up directly rather than through `sys_spawn`, because
+        // the linker's stack region is empty in a host build and the pool path
+        // cannot allocate there at all.
+        let id = crate::scheduler::with(|sched| {
+            let id = sched.alloc_id().expect("a free TCB slot");
+            if let Some(tcb) = &mut sched.tasks[id as usize] {
+                tcb.state = crate::scheduler::TaskState::Ready;
+                tcb.heap_stack = false;
+                tcb.stack_base = 0x1000;
+                tcb.stack_size = 4096;
+            }
+            id
+        });
+        assert_eq!(delete_task(id), Err(DeleteError::NotDeletable));
+        // Clean up, or the slot leaks into every later test in this process.
+        crate::scheduler::with(|sched| sched.tasks[id as usize] = None);
+    }
+
+    #[test]
+    fn a_running_task_cannot_be_deleted() {
+        // Freeing the stack a task is executing on corrupts it mid-instruction,
+        // and the next interrupt writes into memory the heap has already given
+        // to someone else. Self-delete lands here too, deliberately — see the
+        // note on `delete_task`.
+        let id = crate::scheduler::with(|sched| {
+            let id = sched.alloc_id().expect("a free TCB slot");
+            if let Some(tcb) = &mut sched.tasks[id as usize] {
+                tcb.state = crate::scheduler::TaskState::Running;
+                tcb.heap_stack = true;
+                tcb.stack_base = 0x1000;
+            }
+            id
+        });
+        assert_eq!(delete_task(id), Err(DeleteError::StillRunning));
+        crate::scheduler::with(|sched| sched.tasks[id as usize] = None);
+    }
+
+    #[test]
+    fn forgetting_a_task_clears_it_from_every_waiter_list() {
+        // The hazard `delete_task` guards: a deleted id left listed is woken
+        // later, after its slot has been reused by an unrelated task.
+        let id = 7;
+        assert!(!crate::queue::is_waiting_anywhere(id));
+        crate::queue::forget_task(id);
+        assert!(!crate::queue::is_waiting_anywhere(id), "purging must be idempotent");
+    }
+}

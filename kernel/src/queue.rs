@@ -286,3 +286,34 @@ pub fn wake_one_sender(q_addr: usize) {
         }
     });
 }
+
+/// Remove a task from every waiter list it appears in.
+///
+/// Called when a task is deleted. Without this, a deleted task's id stays
+/// listed and a later `wake_one_*` unblocks it — by which time the slot may
+/// belong to a *different* task, which is then woken from a wait it never
+/// entered. The bug that produces is a task returning from `recv` with nothing
+/// received, arbitrarily far from the delete that caused it.
+pub fn forget_task(id: u32) {
+    cs_with(|| {
+        let table = waiters();
+        for i in 0..table.count as usize {
+            let (_, list) = &mut table.entries[i];
+            remove(&mut list.send_waiters, &mut list.send_count, id);
+            remove(&mut list.recv_waiters, &mut list.recv_count, id);
+        }
+    });
+}
+
+/// Whether a task is listed as waiting anywhere. Test support for
+/// [`forget_task`].
+pub fn is_waiting_anywhere(id: u32) -> bool {
+    cs_with(|| {
+        let table = waiters();
+        (0..table.count as usize).any(|i| {
+            let (_, list) = &table.entries[i];
+            contains(&list.send_waiters, list.send_count, id)
+                || contains(&list.recv_waiters, list.recv_count, id)
+        })
+    })
+}

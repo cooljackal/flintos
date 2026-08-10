@@ -97,6 +97,15 @@ pub struct TaskControlBlock {
     pub boosted_from: Option<u8>,
     /// Which mutex this task is blocked on (address), if any.
     pub blocked_on_mutex: Option<usize>,
+    /// Whether `stack_base` came from the radio heap rather than the linker's
+    /// bump-allocated pool.
+    ///
+    /// The static pool is never reclaimed — it is a bump allocator, by design,
+    /// because a static RTOS creates its tasks once. The radio blobs create
+    /// and delete tasks throughout a session, so theirs come from the heap and
+    /// this says which kind to give back. Getting it wrong either leaks a
+    /// stack or frees a pointer the heap never owned.
+    pub heap_stack: bool,
 }
 
 impl TaskControlBlock {
@@ -117,6 +126,7 @@ impl TaskControlBlock {
             sleep_until: 0,
             boosted_from: None,
             blocked_on_mutex: None,
+            heap_stack: false,
         }
     }
 }
@@ -243,6 +253,16 @@ impl Scheduler {
             // re-borrow all of `self`).
             self.ready_mask |= 1u64 << prio;
         }
+    }
+
+    /// Whether `id` is the current task on any core.
+    ///
+    /// `TaskState::Running` should already imply this, but the two are set at
+    /// slightly different moments during a switch, and a delete that raced
+    /// that window would free a stack still being executed on. Checking both
+    /// costs one comparison per core.
+    pub fn is_current_anywhere(&self, id: u32) -> bool {
+        self.current_per_core.iter().any(|&c| c == id)
     }
 
     /// The task the *calling* core is running.
