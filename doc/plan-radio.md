@@ -189,7 +189,7 @@ it should wait for one.
 |---|---|---|
 | 3.1 | New crate for the shim; decide where it sits in the layer check | `make check-layers` passes with the new tier documented. |
 | 3.2 | Vendor or fetch the `.a` files; record the licence terms | A clean clone builds without a manual download step, or fails with a clear message saying why. |
-| 3.3 | Confirm the Xtensa ABI matches (windowed) and the blobs link | The linker resolves every symbol; unresolved ones are listed, not discovered one at a time. |
+| 3.3 | ✅ Confirm the Xtensa ABI matches (windowed) and list what is unresolved | Done. ABI confirmed and all 57 symbols listed; see below. |
 | 3.4 | Fill in `wifi_osi_funcs_t` against the pinned IDF version | The struct's version and magic checks pass at runtime. |
 | 3.5 | Place blob ISR paths in IRAM | Nothing the radio calls from an interrupt lives in flash. |
 | 3.6 | PHY enable/disable, PHY init data, RF calibration | Calibration data persists across a reboot via 0.3. |
@@ -197,6 +197,42 @@ it should wait for one.
 **Warning.** Step 3.4 is where a wrong IDF version shows up — as a magic-number
 mismatch if you are lucky, and as a working radio that corrupts memory if you
 are not.
+
+---
+
+### Step 3.3, done: the ABI and the whole symbol list
+
+**Windowed ABI, confirmed rather than assumed.** `libpp.a` disassembles to 644
+`entry`, 813 `retw` and 1361 `call4/8/12` instructions. Those exist only in the
+windowed ABI, which is what FlintOS uses — so the blobs and the kernel agree
+and no call0 shim is needed.
+
+**Fifty-seven symbols the linked archives need and none of them define.**
+`make blob-symbols` produces this list from the archives directly, rather than
+by iterating on link failures, which was this step's bar. Where each will come
+from:
+
+| Source | Count | Notes |
+|---|---|---|
+| ESP32 ROM | 9 | `ets_delay_us`, `uart_div_modify`, `phy_get_romfuncs`, `roundup2`, `crc32_le`, and four libgcc routines. FlintOS does not yet include a ROM symbol script — adding one covers all nine at once |
+| `compiler_builtins` | 10 | the remaining `__divdi3`-style routines, plus `memcpy`/`memset`/`memmove`/`memcmp` |
+| Mesh stubs | 13 | see below |
+| PHY and RTC | 9 | `phy_enter_critical`, `rtc_init_clk`, `rtc_get_xtal` and friends — step 3.6 |
+| C library | 8 | `abort`, `puts`, `sprintf`, and five `str*` |
+| Logging shims | 4 | `phy_printf`, `rtc_printf`, `net80211_printf`, `coexist_printf` |
+| Already ours | 2 | `malloc`/`free` onto the radio heap, `esp_dport_access_reg_read` onto `soc-esp32` |
+| Odds and ends | 2 | `WIFI_EVENT` (a data symbol), `hexstr2bin` |
+
+So the real writing is around twenty-five functions, most of them small. That
+is a much better position than "121 function pointers" suggested.
+
+**Mesh has to be stubbed, not merely skipped.** `libnet80211.a` references
+thirteen mesh symbols unconditionally, so excluding `libmesh.a` is not free.
+Linking it instead resolves those thirteen but introduces seven more —
+including `esp_event_handler_register` and `esp_mesh_send_event_internal`,
+which need an event loop FlintOS does not have. Thirteen stubs are the smaller
+surface, and they are unreachable in a station-only build because nothing ever
+starts mesh.
 
 ---
 

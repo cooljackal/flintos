@@ -299,6 +299,9 @@ apps: ## List the applications in apps/
 blobs: ## Fetch Espressif's radio blobs (Apache-2.0, ~4 MB, pinned to esp-idf v4.4)
 	@$(BASH) tools/fetch-blobs.sh
 
+blob-symbols: ## List what the radio blobs need and no blob provides (step 3.3)
+	@ESP_GCC_DIR="$(ESP_GCC_DIR)" $(PY) tools/blob-symbols.py $(if $(ELF),$(ELF),)
+
 blobs-check: ## Report whether the radio blobs have been fetched
 	@$(BASH) tools/fetch-blobs.sh --check
 

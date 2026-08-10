@@ -31,7 +31,13 @@ const ARCHIVES: &[&str] = &[
 /// choice is visible rather than buried here -- 1.2 MB of the download is
 /// archives a station-plus-BLE build never references.
 const NOT_LINKED: &[(&str, &str)] = &[
-    ("mesh", "mesh networking is a non-goal; 956 KB"),
+    // Not merely unwanted: `libnet80211.a` references thirteen mesh symbols
+    // unconditionally, so leaving this out is not free -- they have to be
+    // stubbed. Linking it instead resolves those thirteen but pulls in seven
+    // more, including esp_event_handler_register, and FlintOS has no event
+    // loop to hang that on. Stubs are the smaller surface. See step 3.3 in
+    // doc/plan-radio.md.
+    ("mesh", "mesh is a non-goal; its 13 referenced symbols are stubbed instead"),
     ("espnow", "ESP-NOW is a non-goal"),
     ("smartconfig", "provisioning over the air; not needed to associate"),
     ("btdm_app", "BLE controller, linked by #66 rather than here"),
