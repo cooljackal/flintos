@@ -553,6 +553,166 @@ mod by_name {
     blob_printf!(net80211_printf, "net80211");
     blob_printf!(coexist_printf, "coex");
 
+    // ── C library ───────────────────────────────────────────────────────────
+    //
+    // Only what `compiler_builtins` does not already provide. It supplies
+    // `memcpy`, `memset`, `memmove`, `memcmp` and `strlen`, and defining those
+    // again here would be a duplicate symbol at the final link rather than a
+    // helpful redundancy. Checked against the built rlib rather than assumed;
+    // the list below is the difference.
+
+    /// # Safety
+    /// `dst` must have room for `src` including its terminator.
+    #[no_mangle]
+    pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+        let mut i = 0;
+        loop {
+            let c = unsafe { *src.add(i) };
+            unsafe { *dst.add(i) = c };
+            if c == 0 {
+                return dst;
+            }
+            i += 1;
+        }
+    }
+
+    /// # Safety
+    /// Both must be readable for `n` bytes or until a terminator.
+    #[no_mangle]
+    pub unsafe extern "C" fn strncmp(a: *const c_char, b: *const c_char, n: usize) -> c_int {
+        for i in 0..n {
+            let (x, y) = unsafe { (*a.add(i) as u8, *b.add(i) as u8) };
+            if x != y {
+                return x as c_int - y as c_int;
+            }
+            if x == 0 {
+                break;
+            }
+        }
+        0
+    }
+
+    /// C's `strncpy`, terminator quirk included.
+    ///
+    /// If `src` is shorter than `n` the remainder of `dst` is zero-filled, and
+    /// if it is longer the result is **not** terminated. Both are surprising
+    /// and both are what the standard says; a caller written against C expects
+    /// exactly this, so the quirk is reproduced rather than improved on.
+    ///
+    /// # Safety
+    /// `dst` must have room for `n` bytes.
+    #[no_mangle]
+    pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+        let mut i = 0;
+        while i < n {
+            let c = unsafe { *src.add(i) };
+            unsafe { *dst.add(i) = c };
+            i += 1;
+            if c == 0 {
+                break;
+            }
+        }
+        while i < n {
+            unsafe { *dst.add(i) = 0 };
+            i += 1;
+        }
+        dst
+    }
+
+    /// # Safety
+    /// `s` must be readable for up to `maxlen` bytes.
+    #[no_mangle]
+    pub unsafe extern "C" fn strnlen(s: *const c_char, maxlen: usize) -> usize {
+        let mut n = 0;
+        while n < maxlen && unsafe { *s.add(n) } != 0 {
+            n += 1;
+        }
+        n
+    }
+
+    /// # Safety
+    /// Never returns.
+    #[no_mangle]
+    pub unsafe extern "C" fn abort() -> ! {
+        panic!("radio: a blob called abort()")
+    }
+
+    /// # Safety
+    /// `s` must be nul-terminated.
+    #[no_mangle]
+    pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
+        unsafe { log_c_str("blob", s) }
+    }
+
+    /// `sprintf`, which cannot do what its name says.
+    ///
+    /// Variadic, so Rust cannot define it — the same wall as the `*_printf`
+    /// hooks above. Unlike those, this one writes into a caller's buffer whose
+    /// size it is never told, so the tempting fallback of copying the format
+    /// string in is a buffer overflow waiting for a format string longer than
+    /// the buffer someone sized for the *formatted* result.
+    ///
+    /// So it writes an empty string and reports zero. That is wrong but
+    /// bounded, and bounded is the property worth keeping when the alternative
+    /// is corrupting the caller's stack. If a blob path ever turns out to
+    /// depend on the contents, the fix is a small C shim calling the real
+    /// `vsnprintf` — not a cleverer guess here.
+    ///
+    /// # Safety
+    /// `buf` must be writable for at least one byte.
+    #[no_mangle]
+    pub unsafe extern "C" fn sprintf(buf: *mut c_char, _fmt: *const c_char) -> c_int {
+        if !buf.is_null() {
+            unsafe { *buf = 0 };
+        }
+        0
+    }
+
+    /// Population count. `compiler_builtins` has the other nine libgcc
+    /// routines the blobs want but not this one.
+    #[no_mangle]
+    pub extern "C" fn __popcountsi2(a: i32) -> i32 {
+        (a as u32).count_ones() as i32
+    }
+
+    // ── Odds and ends ───────────────────────────────────────────────────────
+
+    /// esp-idf's event base for Wi-Fi, which is a `const char *` compared by
+    /// pointer rather than by value. What it points at does not matter; that
+    /// every reference sees the *same* address does.
+    #[no_mangle]
+    pub static WIFI_EVENT: &[u8; 11] = b"WIFI_EVENT\0";
+
+    /// Espressif's hex-string decoder: `hex` into `buf`, `len` bytes.
+    ///
+    /// Returns 0 on success and -1 on a non-hex digit, which is the contract
+    /// its callers check. Implemented rather than stubbed because it is six
+    /// lines and a stub returning success would hand the radio a buffer of
+    /// zeroes where it expected a key.
+    ///
+    /// # Safety
+    /// `hex` must be readable for `2 * len` bytes; `buf` writable for `len`.
+    #[no_mangle]
+    pub unsafe extern "C" fn hexstr2bin(hex: *const c_char, buf: *mut u8, len: usize) -> c_int {
+        fn nibble(c: u8) -> Option<u8> {
+            match c {
+                b'0'..=b'9' => Some(c - b'0'),
+                b'a'..=b'f' => Some(c - b'a' + 10),
+                b'A'..=b'F' => Some(c - b'A' + 10),
+                _ => None,
+            }
+        }
+        for i in 0..len {
+            let hi = unsafe { *hex.add(i * 2) } as u8;
+            let lo = unsafe { *hex.add(i * 2 + 1) } as u8;
+            match (nibble(hi), nibble(lo)) {
+                (Some(h), Some(l)) => unsafe { *buf.add(i) = (h << 4) | l },
+                _ => return -1,
+            }
+        }
+        0
+    }
+
     // ── Mesh, stubbed ───────────────────────────────────────────────────────
     //
     // `libnet80211.a` references these thirteen unconditionally, so leaving

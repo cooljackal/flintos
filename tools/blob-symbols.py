@@ -49,6 +49,12 @@ LINKED = ["core", "net80211", "pp", "coexist", "phy", "rtc", "wapi"]
 # counting them as outstanding work would overstate what is left.
 ROM_SCRIPT = ROOT / "arch" / "xtensa" / "esp32.rom.ld"
 
+# Rust ships `compiler_builtins` with every no_std target, and it supplies the
+# libgcc routines plus memcpy/memset/memmove/memcmp/strlen. Those resolve at
+# the final link without anyone writing them, so counting them as outstanding
+# overstates the work -- it was reporting 23 when the real figure was 9.
+BUILTINS_GLOB = "target/xtensa-esp32-none-elf/*/deps/libcompiler_builtins-*.rlib"
+
 # Grouped, because 60 names in one list says nothing about where the work is.
 # The prefixes are Espressif's own naming, so the groups line up with the
 # subsystems in doc/plan-radio.md.
@@ -74,6 +80,15 @@ def rom_symbols() -> set[str]:
         return set()
     text = ROM_SCRIPT.read_text(encoding="utf-8", errors="replace")
     return set(re.findall(r"PROVIDE\s*\(\s*([A-Za-z_]\w*)\s*=", text))
+
+
+def builtin_symbols(nm: str) -> set[str]:
+    """Symbols compiler_builtins already provides, if it has been built."""
+    matches = sorted(ROOT.glob(BUILTINS_GLOB))
+    if not matches:
+        return set()
+    # Newest, in case both debug and release are present.
+    return symbols(nm, max(matches, key=lambda p: p.stat().st_mtime), defined=True)
 
 
 def find_nm() -> str:
@@ -159,6 +174,9 @@ def main() -> int:
     from_rom = unresolved & rom_symbols()
     unresolved -= from_rom
 
+    from_builtins = unresolved & builtin_symbols(nm)
+    unresolved -= from_builtins
+
     if elf:
         ours = symbols(nm, Path(elf), defined=True)
         unresolved -= ours
@@ -167,6 +185,8 @@ def main() -> int:
     if from_rom:
         print(f"({len(from_rom)} more resolve from the ROM table: "
               f"{', '.join(sorted(from_rom))})")
+    if from_builtins:
+        print(f"({len(from_builtins)} more come from compiler_builtins)")
     if elf:
         print(f"(after subtracting what {elf} already defines)")
     print()
