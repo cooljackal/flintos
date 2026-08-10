@@ -4,13 +4,26 @@
 //!
 //! # Macros
 //!
-//! | Macro           | Level   | Gate           |
-//! |-----------------|---------|----------------|
-//! | `log_error!`    | Error   | Always         |
-//! | `log_warn!`     | Warn    | Always         |
-//! | `log_info!`     | Info    | Always         |
-//! | `log_debug!`    | Debug   | `flint-log`    |
-//! | `log_trace!`    | Trace   | `flint-trace`  |
+//! | Macro           | Level   | Gate                      |
+//! |-----------------|---------|---------------------------|
+//! | `log_error!`    | Error   | `flint-log`               |
+//! | `log_warn!`     | Warn    | `flint-log`               |
+//! | `log_info!`     | Info    | `flint-log`               |
+//! | `log_debug!`    | Debug   | `flint-log`               |
+//! | `log_trace!`    | Trace   | `flint-log`               |
+//!
+//! Every level is gated on `flint-log`, which `debug-level-1` and above turn
+//! on. At `debug-level-0` there is no logging at all, errors included. The
+//! table used to say the first three were "Always"; they never were, and a
+//! user turning logging down for size was losing the error path without being
+//! told.
+//!
+//! The gate lives in one place, [`__flint_log`]. It must not be written into
+//! the macro bodies: a `cfg` inside `macro_rules!` is resolved against the
+//! crate *expanding* the macro, not this one, and no application declares a
+//! `flint-log` feature. `log_debug!` and `log_trace!` carried exactly that
+//! `cfg` and so expanded to nothing in every application, whatever `DEBUG=`
+//! was set to.
 //!
 //! # Example
 //!
@@ -46,16 +59,14 @@ macro_rules! log_info {
 #[macro_export]
 macro_rules! log_debug {
     ($($arg:tt)*) => {
-        #[cfg(feature = "flint-log")]
         $crate::debug::log::__flint_log(api::debug::log::Level::Debug, format_args!($($arg)*))
     };
 }
 
-/// Log a trace message (requires feature `flint-trace`).
+/// Log a trace message (requires feature `flint-log`).
 #[macro_export]
 macro_rules! log_trace {
     ($($arg:tt)*) => {
-        #[cfg(feature = "flint-trace")]
         $crate::debug::log::__flint_log(api::debug::log::Level::Trace, format_args!($($arg)*))
     };
 }

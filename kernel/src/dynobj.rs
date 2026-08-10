@@ -38,7 +38,9 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::heap::{self, Caps};
-use crate::queue::{block_recv, block_send, wake_one_receiver, wake_one_sender};
+use crate::queue::{
+    block_recv, block_send, retry_deadline, retry_remaining, wake_one_receiver, wake_one_sender,
+};
 
 /// Wait forever. Matches the convention the static queues already use.
 pub const FOREVER: u32 = u32::MAX;
@@ -140,15 +142,25 @@ impl DynQueue {
     /// # Safety
     /// As [`DynQueue::try_send`].
     pub unsafe fn send(&mut self, item: *const u8, timeout_ms: u32) -> bool {
+        if unsafe { self.try_send(item) } {
+            wake_one_receiver(self.key());
+            return true;
+        }
+        // The deadline is computed once and the *remaining* time passed each
+        // time round. Re-passing `timeout_ms` would re-arm the full wait on
+        // every retry, so a caller asking for 10 ms could wait indefinitely
+        // under contention -- see `queue::retry_deadline`.
+        let deadline = retry_deadline(timeout_ms);
         loop {
+            // `block_send` refuses in interrupt context and on timeout, which
+            // is what stops this looping forever.
+            match retry_remaining(deadline) {
+                Some(left) if block_send(self.key(), left) => {}
+                _ => return false,
+            }
             if unsafe { self.try_send(item) } {
                 wake_one_receiver(self.key());
                 return true;
-            }
-            // `block_send` refuses in interrupt context and on timeout, which
-            // is what stops this looping forever.
-            if !block_send(self.key(), timeout_ms) {
-                return false;
             }
         }
     }
@@ -158,13 +170,20 @@ impl DynQueue {
     /// # Safety
     /// As [`DynQueue::try_recv`].
     pub unsafe fn recv(&mut self, out: *mut u8, timeout_ms: u32) -> bool {
+        if unsafe { self.try_recv(out) } {
+            wake_one_sender(self.key());
+            return true;
+        }
+        // Remaining time, not the original timeout. As `DynQueue::send`.
+        let deadline = retry_deadline(timeout_ms);
         loop {
+            match retry_remaining(deadline) {
+                Some(left) if block_recv(self.key(), left) => {}
+                _ => return false,
+            }
             if unsafe { self.try_recv(out) } {
                 wake_one_sender(self.key());
                 return true;
-            }
-            if !block_recv(self.key(), timeout_ms) {
-                return false;
             }
         }
     }
@@ -238,12 +257,18 @@ impl Semaphore {
 
     /// Take a permit, blocking up to `timeout_ms`.
     pub fn take(&mut self, timeout_ms: u32) -> bool {
+        if self.try_take() {
+            return true;
+        }
+        // Remaining time, not the original timeout. As `DynQueue::send`.
+        let deadline = retry_deadline(timeout_ms);
         loop {
+            match retry_remaining(deadline) {
+                Some(left) if block_recv(self.key(), left) => {}
+                _ => return false,
+            }
             if self.try_take() {
                 return true;
-            }
-            if !block_recv(self.key(), timeout_ms) {
-                return false;
             }
         }
     }
@@ -322,12 +347,18 @@ impl RecursiveMutex {
 
     /// Lock, blocking up to `timeout_ms`.
     pub fn lock(&mut self, me: u32, timeout_ms: u32) -> bool {
+        if self.try_lock(me) {
+            return true;
+        }
+        // Remaining time, not the original timeout. As `DynQueue::send`.
+        let deadline = retry_deadline(timeout_ms);
         loop {
+            match retry_remaining(deadline) {
+                Some(left) if block_recv(self.key(), left) => {}
+                _ => return false,
+            }
             if self.try_lock(me) {
                 return true;
-            }
-            if !block_recv(self.key(), timeout_ms) {
-                return false;
             }
         }
     }
@@ -424,8 +455,8 @@ impl EventGroup {
         if bits == 0 {
             return None;
         }
-        loop {
-            let taken = crate::arch::cs_with(|| {
+        let take = || {
+            crate::arch::cs_with(|| {
                 let current = self.bits.load(Ordering::Acquire);
                 if Self::satisfied(current, bits, wait_for_all) {
                     if clear_on_exit {
@@ -435,12 +466,20 @@ impl EventGroup {
                 } else {
                     None
                 }
-            });
-            if let Some(v) = taken {
-                return Some(v);
+            })
+        };
+        if let Some(v) = take() {
+            return Some(v);
+        }
+        // Remaining time, not the original timeout. As `DynQueue::send`.
+        let deadline = retry_deadline(timeout_ms);
+        loop {
+            match retry_remaining(deadline) {
+                Some(left) if block_recv(self.key(), left) => {}
+                _ => return None,
             }
-            if !block_recv(self.key(), timeout_ms) {
-                return None;
+            if let Some(v) = take() {
+                return Some(v);
             }
         }
     }

@@ -395,6 +395,13 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     }
     if spins >= CACHE_IDLE_SPINS {
         LAST_CACHE_STATE.store(last_state | 0x8000_0000, Ordering::Relaxed);
+        // Every exit from here on owes an `INTENABLE` restore. This one is the
+        // easiest to forget, because it is the path that does no work: leaving
+        // without it strands the mask at the IRAM-safe set -- today the empty
+        // set -- so the tick never fires again and the board goes quiet with
+        // nothing pointing back here. Any new early return needs this too.
+        #[cfg(target_os = "none")]
+        kernel_interrupt_restore(saved_intenable);
         #[cfg(target_arch = "xtensa")]
         core::arch::asm!("wsr.ps {0}", "rsync", in(reg) saved);
         return Err(FlashError::CacheBusy);

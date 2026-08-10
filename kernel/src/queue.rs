@@ -164,6 +164,38 @@ fn deadline_for(timeout_ms: u32, now: u64) -> u64 {
     }
 }
 
+/// Absolute deadline for a retry loop, on the same clock `block_send` and
+/// `block_recv` arm their timeouts against. `0` means "forever".
+///
+/// A retry loop must not pass its original `timeout_ms` to `block_*` each time
+/// round: `deadline_for` computes a fresh `now + timeout_ms` on every call, so
+/// re-passing it re-arms the full wait, and under repeated spurious wakeups the
+/// *total* wait is unbounded even though the caller asked for a bounded one.
+/// `api::queue` learned this first (item 9); the pair lives here so that the
+/// next caller inherits the fix rather than the bug.
+pub fn retry_deadline(timeout_ms: u32) -> u64 {
+    deadline_for(timeout_ms, scheduler::with(|s| s.ticks()))
+}
+
+/// Time left before `deadline`, to pass to the next `block_*` call.
+/// `None` means it has passed and the caller should report a timeout.
+pub fn retry_remaining(deadline: u64) -> Option<u32> {
+    remaining_for(deadline, scheduler::with(|s| s.ticks()))
+}
+
+/// The arithmetic half of [`retry_remaining`], split out so it is testable
+/// without a scheduler. `0` is the "forever" sentinel [`deadline_for`] returns.
+fn remaining_for(deadline: u64, now: u64) -> Option<u32> {
+    if deadline == 0 {
+        return Some(u32::MAX);
+    }
+    if now >= deadline {
+        None
+    } else {
+        Some((deadline - now).min(u32::MAX as u64) as u32)
+    }
+}
+
 /// Block the caller waiting to send on a full queue.
 /// Returns true if woken by an opening slot (caller should retry), false on
 /// timeout, if the waiter table is full, or (item 11) if called from
@@ -316,4 +348,49 @@ pub fn is_waiting_anywhere(id: u32) -> bool {
                 || contains(&list.recv_waiters, list.recv_count, id)
         })
     })
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_retry_loop_does_not_re_arm_the_full_timeout() {
+        // The bug this pair exists to prevent: a caller asks for 10 ms, is
+        // woken spuriously at 4 ms and again at 7 ms, and each retry must ask
+        // for what is *left* rather than for another 10 ms.
+        let deadline = deadline_for(10, 100);
+        assert_eq!(remaining_for(deadline, 104), Some(6));
+        assert_eq!(remaining_for(deadline, 107), Some(3));
+        assert_eq!(remaining_for(deadline, 110), None, "expired, so no further block");
+        assert_eq!(remaining_for(deadline, 999), None, "and it stays expired");
+    }
+
+    #[test]
+    fn forever_stays_forever_across_retries() {
+        // `deadline_for` maps u32::MAX to the 0 sentinel; a retry loop must
+        // keep asking for u32::MAX rather than reading 0 as "already expired".
+        let deadline = deadline_for(u32::MAX, 100);
+        assert_eq!(deadline, 0);
+        assert_eq!(remaining_for(deadline, 100), Some(u32::MAX));
+        assert_eq!(remaining_for(deadline, u64::MAX), Some(u32::MAX));
+    }
+
+    #[test]
+    fn a_zero_timeout_never_blocks() {
+        // `deadline_for(0, now)` is `now` (or 1), so the first `remaining_for`
+        // already reports expiry and the caller returns without blocking.
+        let deadline = deadline_for(0, 100);
+        assert_eq!(remaining_for(deadline, 100), None);
+    }
+
+    #[test]
+    fn a_deadline_beyond_u32_is_clamped_not_truncated() {
+        // The tick is u64 and the kernel call takes u32. Clamping keeps a long
+        // wait long; truncating would silently turn it into a short one.
+        let deadline = deadline_for(u32::MAX - 1, 0);
+        assert_eq!(remaining_for(deadline, 0), Some(u32::MAX - 1));
+    }
 }

@@ -534,14 +534,21 @@ impl PhysicalBus for Esp32I2c {
         }
     }
 
-    fn set_enabled(&mut self, enabled: bool) {
-        let ctr = self.reg(I2C_CTR);
-        unsafe {
-            let mut val = ctr.read_volatile();
-            if enabled { val |= 1; } else { val &= !1; }
-            ctr.write_volatile(val);
-        }
-    }
+    /// Nothing, deliberately, as on every other bus in this tree.
+    ///
+    /// This used to set and clear bit 0 of `I2C_CTR_REG`, which it took for an
+    /// enable bit. There isn't one. Bit 0 is `I2C_SDA_FORCE_OUT` -- named
+    /// twenty lines up, in the same file, as one of the two bits *required*
+    /// for master mode -- so `set_enabled(false)` stopped the controller
+    /// driving SDA while leaving SCL driven and `MS_MODE` set, and
+    /// `set_enabled(true)` restored one of the three bits `init` writes. The
+    /// register comment at `I2C_MS_MODE` records the same mistake being made
+    /// once before with `1 << 1`.
+    ///
+    /// The ESP32 has no per-controller enable in `I2C_CTR`; the real one is
+    /// the DPORT clock gate, which this driver does not own. Doing nothing is
+    /// honest, and matches SPI, UART and GPIO.
+    fn set_enabled(&mut self, _enabled: bool) {}
 }
 
 #[cfg(test)]

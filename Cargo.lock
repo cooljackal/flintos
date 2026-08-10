@@ -154,6 +154,7 @@ name = "flashprobe"
 version = "0.1.0"
 dependencies = [
  "api",
+ "arch-xtensa",
  "build",
  "esp32-flash",
  "hal",
