@@ -348,6 +348,42 @@ check-all: ## Full check including arch (requires Xtensa toolchain)
 			--features "$(ATOM_BOARD),debug-level-1" || exit 1; \
 	done
 
+# Feature combinations that gate real code, and which nothing else builds.
+#
+# `check-all` builds the workspace with *default* features, and `lint` runs on
+# the host — so anything behind a non-default feature, or behind
+# `target_os = "none"`, is checked by neither. `kernel::selftest` is both:
+# `pub mod selftest` is gated on `all(feature = "self-test", target_os =
+# "none")`, so no host clippy can ever see it however the features are set.
+#
+# That was not theoretical. A `spin_ticks` helper went in with the module path
+# written as `super::selftest::spin_ticks` instead of `super::spin_ticks`, and
+# `make test-host`, `make lint` and `make check-all` were all green. It was
+# found by flashing a board, which is an expensive compiler.
+#
+# One entry per combination that turns code on, not a powerset. `debug-level-0`
+# earns its place by turning things *off*: it is where an unused import or a
+# variable only read by a log line becomes an error.
+FEATURE_CHECKS := \
+	self-test \
+	debug-level-0 \
+	debug-level-3 \
+	radio-bt \
+	radio-ble \
+	radio-wifi \
+	watchdog-test-kernel \
+	watchdog-test-idle
+
+.PHONY: check-features
+check-features: ## Clippy every non-default feature combination (Xtensa)
+	@for f in $(FEATURE_CHECKS); do \
+		echo "== demo --features $$f"; \
+		$(CARGO) clippy --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
+			-p demo --no-default-features \
+			--features "$(BOARD),debug-level-1,$$f" \
+			-- -D warnings || exit 1; \
+	done
+
 .PHONY: check-layers
 check-layers: ## Enforce the three-layer dependency boundary (plan W7.1)
 	$(BASH) tools/check-layers.sh

@@ -214,6 +214,18 @@ jobs:
           . "$HOME/export-esp.sh"
           make check-all
 
+      # Clippy for Xtensa, across the feature combinations that gate real code.
+      # `make lint` runs on the host, and anything behind `target_os = "none"`
+      # -- the whole of arch-xtensa, the trap handler, the self-test suite --
+      # is invisible to it however the features are set. This is the only job
+      # that lints that code. When it was first run it found twenty missing
+      # safety docs and a trap handler taking a raw pointer without being
+      # `unsafe`, none of which any other check could see.
+      - name: Lint Xtensa-only code and non-default features
+        run: |
+          . "$HOME/export-esp.sh"
+          make check-features
+
       # Build every application, not just one. An app carries its own
       # build.rs and feature pass-through, so a broken one is invisible to a
       # build of any other.

@@ -92,6 +92,9 @@ pub mod rtc_cntl {
     ///
     /// Returns `None` if `TIME_VALID` has not set after `max_polls` reads of
     /// `TIME_UPDATE_REG`, so a missing/stuck RTC block can't hang boot.
+    ///
+    /// # Safety
+    /// Reads RTC_CNTL registers. No side effects beyond the update-request bit it sets and waits on.
     pub unsafe fn read_counter(max_polls: u32) -> Option<u64> {
         core::ptr::write_volatile(TIME_UPDATE_REG, TIME_UPDATE);
         let mut polls = 0u32;
@@ -110,16 +113,15 @@ pub mod rtc_cntl {
 // ── PS access ────────────────────────────────────────────────────────────────
 
 /// Read PS.
+///
+/// # Safety
+/// Reads `PS`. No side effects.
 pub unsafe fn read_ps() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.ps {0}", out(reg) val);
     val
 }
 
-/// Read VECBASE (base address of the exception vector table). Used only for
-/// bring-up diagnostics: it should equal `_vector_table_start` once
-/// `startup.S` has run, proving the vector table was actually installed
-/// rather than left at the ROM's own vectors.
 /// Point this core at a vector table.
 ///
 /// Per-core: each core has its own `VECBASE`, and a core that never sets one
@@ -134,6 +136,14 @@ pub unsafe fn set_vecbase(base: u32) {
     core::arch::asm!("wsr.vecbase {0}", "rsync", in(reg) base, options(nostack));
 }
 
+/// Read VECBASE, the base of this core's exception vector table.
+///
+/// Bring-up diagnostics only: it should equal `_vector_table_start` once
+/// `startup.S` has run, which proves the table was installed rather than left
+/// at the ROM's own vectors.
+///
+/// # Safety
+/// Reads `VECBASE`. No side effects.
 pub unsafe fn read_vecbase() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.vecbase {0}", out(reg) val);
@@ -144,6 +154,9 @@ pub unsafe fn read_vecbase() -> u32 {
 /// Rust code can call this the window has already rotated at least once, so
 /// this reads whatever `a1` denotes in the *caller's* live window, which is
 /// exactly the stack pointer bring-up diagnostics want to report.
+///
+/// # Safety
+/// Reads `a1`. No side effects.
 pub unsafe fn read_sp() -> u32 {
     let val: u32;
     core::arch::asm!("mov {0}, a1", out(reg) val);
@@ -153,6 +166,9 @@ pub unsafe fn read_sp() -> u32 {
 // ── Cycle counter / tick timer ───────────────────────────────────────────────
 
 /// Read the CCOUNT special register (free-running cycle counter).
+///
+/// # Safety
+/// Reads the cycle counter. No side effects.
 pub unsafe fn read_ccount() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.ccount {0}", out(reg) val);
@@ -160,6 +176,9 @@ pub unsafe fn read_ccount() -> u32 {
 }
 
 /// Read CCOMPARE0.
+///
+/// # Safety
+/// Reads `CCOMPARE0`. No side effects.
 pub unsafe fn read_ccompare0() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.ccompare0 {0}", out(reg) val);
@@ -168,6 +187,9 @@ pub unsafe fn read_ccompare0() -> u32 {
 
 /// Write CCOMPARE0. Writing CCOMPARE0 also clears a pending Timer0 (CCOMPARE0)
 /// interrupt — this is how the tick is acknowledged and re-armed.
+///
+/// # Safety
+/// Arms the core timer. A value already behind `CCOUNT` does not fire for a full wrap.
 pub unsafe fn set_ccompare0(val: u32) {
     core::arch::asm!("wsr.ccompare0 {0}", "rsync", in(reg) val);
 }
@@ -176,6 +198,9 @@ pub unsafe fn set_ccompare0(val: u32) {
 
 /// Read EXCCAUSE (cause of the current exception). For a level-1 interrupt the
 /// cause is `EXCCAUSE_LEVEL1_INTERRUPT` (4); genuine exceptions use other codes.
+///
+/// # Safety
+/// Reads `EXCCAUSE`. Meaningful only inside a trap handler.
 pub unsafe fn read_exccause() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.exccause {0}", out(reg) val);
@@ -186,6 +211,9 @@ pub unsafe fn read_exccause() -> u32 {
 pub const EXCCAUSE_LEVEL1_INTERRUPT: u32 = 4;
 
 /// Read EXCVADDR (faulting data address for load/store errors).
+///
+/// # Safety
+/// Reads `EXCVADDR`. Meaningful only inside a trap handler.
 pub unsafe fn read_excvaddr() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.excvaddr {0}", out(reg) val);
@@ -193,6 +221,9 @@ pub unsafe fn read_excvaddr() -> u32 {
 }
 
 /// Read INTERRUPT (pending interrupts, special register).
+///
+/// # Safety
+/// Reads `INTERRUPT`. No side effects.
 pub unsafe fn read_interrupt() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.interrupt {0}", out(reg) val);
@@ -210,6 +241,9 @@ pub unsafe fn read_interrupt() -> u32 {
 /// for the tens of milliseconds a sector erase takes. esp-idf
 /// (`esp_intr_noniram_disable`) and NuttX (`esp32_spiflash_opstart`) both work
 /// this way; see `kernel::interrupt::mask_non_iram_safe`.
+///
+/// # Safety
+/// Reads `INTENABLE`. No side effects.
 pub unsafe fn read_intenable() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.intenable {0}", out(reg) val);
@@ -217,11 +251,17 @@ pub unsafe fn read_intenable() -> u32 {
 }
 
 /// Write INTENABLE.
+///
+/// # Safety
+/// Replaces the whole interrupt mask for this core. Masking a handler the kernel depends on is silent -- the peripheral simply stops being serviced.
 pub unsafe fn write_intenable(val: u32) {
     core::arch::asm!("wsr.intenable {0}", "rsync", in(reg) val);
 }
 
 /// Enable a CPU interrupt by number (set its bit in INTENABLE).
+///
+/// # Safety
+/// Read-modify-write of `INTENABLE`, so it must not race another writer on this core; the caller holds a critical section.
 pub unsafe fn enable_interrupt(num: u32) {
     let cur = read_intenable();
     write_intenable(cur | (1 << num));
@@ -230,28 +270,41 @@ pub unsafe fn enable_interrupt(num: u32) {
 /// Clear an edge/software interrupt via INTCLEAR (special register, write-only).
 /// NOTE: the Timer0 (CCOMPARE0) interrupt is *not* cleared here — it is cleared
 /// by re-writing CCOMPARE0 (see [`set_ccompare0`]).
+///
+/// # Safety
+/// Clears pending interrupt bits. Clearing one that has not been handled loses it.
 pub unsafe fn intclear(mask: u32) {
     core::arch::asm!("wsr.intclear {0}", "rsync", in(reg) mask);
 }
 
 /// Raise a software interrupt via INTSET (special register, write-only).
+///
+/// # Safety
+/// Raises interrupts in software. The corresponding handler must be installed.
 pub unsafe fn intset(mask: u32) {
     core::arch::asm!("wsr.intset {0}", "rsync", in(reg) mask);
 }
 
 /// Request a context switch by raising the software interrupt.
+///
+/// # Safety
+/// Raises the software interrupt the scheduler switches on. Safe to call from any context; the switch happens on the way out of the handler.
 pub unsafe fn request_switch() {
     intset(INT_SOFTWARE_MASK);
 }
 
 // ── Window state ─────────────────────────────────────────────────────────────
 
+/// # Safety
+/// Reads `WINDOWBASE`. No side effects.
 pub unsafe fn read_windowbase() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.windowbase {0}", out(reg) val);
     val
 }
 
+/// # Safety
+/// Reads `WINDOWSTART`. No side effects.
 pub unsafe fn read_windowstart() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.windowstart {0}", out(reg) val);
@@ -261,6 +314,9 @@ pub unsafe fn read_windowstart() -> u32 {
 // ── Interrupt level (PS.INTLEVEL) helpers ────────────────────────────────────
 
 /// Set interrupt level to 0 (enable all interrupts), returning previous PS.
+///
+/// # Safety
+/// Unmasks every level. Only correct where the caller knows interrupts should be on, such as the end of boot.
 #[inline]
 pub unsafe fn set_intlevel_0() -> u32 {
     let prev: u32;
@@ -275,6 +331,10 @@ pub unsafe fn set_intlevel_0() -> u32 {
 /// beside this one -- `write_ps` and `restore_ps`, identical bodies 166 lines
 /// apart -- had no callers at all. Code that needs to restore PS should use
 /// [`crate::critical_section`], which pairs the two by construction.
+///
+/// # Safety
+/// Masks every maskable interrupt on this core, and nothing here puts them
+/// back. Only correct on a path that does not return.
 #[inline]
 pub unsafe fn set_intlevel_15() -> u32 {
     let prev: u32;

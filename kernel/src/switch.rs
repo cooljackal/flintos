@@ -53,9 +53,11 @@ fn announce_once(flag: &AtomicBool, msg: &str) {
 ///
 /// # Safety
 /// `frame` must point to a valid `TaskContext`-layout frame built by the trap
-/// entry stub.
+/// entry stub. Marked `unsafe` to match that contract rather than only
+/// describing it: the only caller is `vectors.S`, so nothing in Rust has to
+/// change, and the symbol `#[no_mangle]` emits is unaffected.
 #[no_mangle]
-pub extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
+pub unsafe extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
     let cause = unsafe { registers::read_exccause() };
     announce_once(&FIRST_TRAP, "[FLINT] first trap serviced\r\n");
 
