@@ -348,6 +348,38 @@ pub unsafe fn radio_clock_disable(mask: u32) {
     unsafe { modify(WIFI_CLK_EN, mask, 0) }
 }
 
+/// `DPORT_CORE_RST_EN_REG`. The radio blocks' resets, separate from
+/// [`PERIP_RST_EN`] — the Wi-Fi and BT MACs are not on the peripheral bus.
+const CORE_RST_EN: u32 = DPORT_BASE + 0x0D0;
+
+/// `DPORT_MAC_RST`, bit 2 of [`CORE_RST_EN`]. Spelled `DPORT_WIFIMAC_RST` in
+/// the same header, at the same bit — two names for one thing, and esp-idf
+/// uses the first here.
+const WIFI_MAC_RST: u32 = 1 << 2;
+
+/// Pulse the Wi-Fi MAC's reset.
+///
+/// esp-idf's `wifi_reset_mac_wrapper`, which is a set followed immediately by
+/// a clear — the reset is edge-driven and leaving the bit asserted would hold
+/// the MAC down rather than restart it.
+///
+/// Deliberately *not* `periph_module_reset(PERIPH_WIFI_MODULE)`, which is what
+/// NuttX calls: on the ESP32 that lands in `periph_ll_get_rst_en_mask`'s
+/// `default` arm and returns a mask of zero, so it sets and clears nothing.
+/// The two references disagree, and this follows esp-idf, whose version is the
+/// one the blob was built and tested against.
+///
+/// # Safety
+/// Writes DPORT and resets a peripheral. The Wi-Fi MAC must not be mid-frame,
+/// which is the caller's business — the blob calls this while its own driver
+/// is stopped.
+pub unsafe fn wifi_mac_reset() {
+    unsafe {
+        modify(CORE_RST_EN, 0, WIFI_MAC_RST);
+        modify(CORE_RST_EN, WIFI_MAC_RST, 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -378,6 +410,22 @@ mod tests {
         // Writing the radio masks into PERIP_CLK_EN would gate six unrelated
         // peripherals instead.
         assert_ne!(WIFI_CLK_EN, PERIP_CLK_EN);
+    }
+
+    #[test]
+    fn the_mac_reset_is_its_own_register_and_bit() {
+        // From dport_reg.h at v4.4:
+        //
+        //     #define DPORT_CORE_RST_EN_REG   (DR_REG_DPORT_BASE + 0x0D0)
+        //     #define DPORT_MAC_RST           (BIT(2))
+        //
+        // Bit 2 of PERIP_RST_EN is UART0. Landing this pulse in the wrong
+        // register would reset the console mid-log, which is a symptom that
+        // points nowhere near the radio.
+        assert_eq!(CORE_RST_EN, 0x3FF0_00D0);
+        assert_eq!(WIFI_MAC_RST, 0x0000_0004);
+        assert_ne!(CORE_RST_EN, PERIP_RST_EN);
+        assert_ne!(CORE_RST_EN, WIFI_CLK_EN);
     }
     use super::*;
 

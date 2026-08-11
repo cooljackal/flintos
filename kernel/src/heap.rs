@@ -204,6 +204,19 @@ pub unsafe fn alloc_caps(size: usize, align: usize, caps: Caps) -> *mut u8 {
     }
 }
 
+/// Grow or shrink an allocation, preserving its contents.
+///
+/// The radio blobs' `_realloc_internal` and `_wifi_realloc`. See
+/// [`heap::Heap::realloc`] for the two C edges it honours — a failed call
+/// leaves the original valid, and a size of zero frees.
+///
+/// # Safety
+/// `ptr` is null or from this module and not yet freed. `align` must be a
+/// power of two.
+pub unsafe fn realloc(ptr: *mut u8, size: usize, align: usize) -> *mut u8 {
+    POOL.with(|h| unsafe { h.realloc(ptr, size, align) })
+}
+
 /// Return an allocation to the pool.
 ///
 /// # Safety

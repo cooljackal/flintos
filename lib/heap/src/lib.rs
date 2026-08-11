@@ -187,6 +187,72 @@ impl Heap {
         self.insert_free(start, total);
     }
 
+    /// Bytes usable from a pointer this heap returned.
+    ///
+    /// **Not the size that was asked for.** `alloc` rounds up to [`ALIGN`],
+    /// absorbs a front gap too small to track, and absorbs a tail smaller than
+    /// [`MIN_BLOCK`], so the usable span is at least the request and often
+    /// more. That is the number [`Heap::realloc`] needs: it is how much of the
+    /// old block is safe to copy out.
+    ///
+    /// # Safety
+    /// `ptr` must have come from [`Heap::alloc`] on this heap and not have
+    /// been freed. Null returns zero rather than reading a header at `-8`.
+    pub unsafe fn usable_size(&self, ptr: *const u8) -> usize {
+        if ptr.is_null() {
+            return 0;
+        }
+        let header = (ptr as usize - HEADER) as *const Header;
+        (*header).total as usize - (*header).back as usize - HEADER
+    }
+
+    /// Grow or shrink an allocation, preserving its contents.
+    ///
+    /// There is no in-place growth: this allocator has no way to ask whether
+    /// the block after `ptr` is free without walking the whole list, and the
+    /// caller is a radio blob that reallocs rarely. What it does do is return
+    /// `ptr` unchanged when the block is already big enough, which is the case
+    /// that actually shows up — a blob growing a buffer by a few bytes inside
+    /// the slack `alloc` already gave it.
+    ///
+    /// # The two edges, both of which are C's and neither of which is obvious
+    ///
+    /// **A failed realloc leaves the original valid.** Freeing it here and
+    /// returning null would lose the caller's data while telling it nothing
+    /// went wrong beyond the allocation, and every C caller written against
+    /// `realloc` assumes otherwise.
+    ///
+    /// **`size == 0` frees and returns null**, which is what glibc,
+    /// `heap_caps_realloc` and NuttX's `kmm_realloc` all do. C99 leaves it
+    /// implementation-defined; the callers here are built against those.
+    ///
+    /// # Safety
+    /// `ptr` is null or from [`Heap::alloc`] on this heap. `align` must be a
+    /// power of two.
+    pub unsafe fn realloc(&mut self, ptr: *mut u8, size: usize, align: usize) -> *mut u8 {
+        if ptr.is_null() {
+            return self.alloc(size, align);
+        }
+        if size == 0 {
+            self.free(ptr);
+            return ptr::null_mut();
+        }
+        let old = self.usable_size(ptr);
+        // Alignment is checked as well as size: a caller asking for stricter
+        // alignment than the block happens to have needs a move even when it
+        // fits, and "it fits" is the easy half to notice.
+        if size <= old && (ptr as usize) % align == 0 {
+            return ptr;
+        }
+        let new = self.alloc(size, align);
+        if new.is_null() {
+            return ptr::null_mut();
+        }
+        ptr::copy_nonoverlapping(ptr, new, old.min(size));
+        self.free(ptr);
+        new
+    }
+
     /// Bytes the heap manages in total, across every region.
     pub fn total_bytes(&self) -> usize {
         self.total
@@ -289,6 +355,84 @@ mod tests {
         let mut h = Heap::new();
         let taken = unsafe { h.add_region(start, bytes) };
         (h, start, taken)
+    }
+
+    #[test]
+    fn a_usable_size_covers_at_least_what_was_asked_for() {
+        let (mut h, _, _) = heap_of(4096);
+        for want in [1usize, 7, 8, 9, 100, 333] {
+            let p = unsafe { h.alloc(want, 8) };
+            assert!(!p.is_null());
+            let got = unsafe { h.usable_size(p) };
+            assert!(got >= want, "usable {got} < requested {want}");
+            // Writing every byte it claims must not corrupt the heap: this is
+            // the assertion that an over-reported size would break, and an
+            // over-report is what would make `realloc` copy past the block.
+            unsafe { ptr::write_bytes(p, 0xAB, got) };
+        }
+        assert!(unsafe { h.alloc(64, 8) }.is_null() || h.free_bytes() > 0);
+        assert_eq!(unsafe { h.usable_size(ptr::null()) }, 0);
+    }
+
+    #[test]
+    fn a_realloc_that_fits_keeps_the_pointer() {
+        let (mut h, _, _) = heap_of(4096);
+        let p = unsafe { h.alloc(64, 8) };
+        let room = unsafe { h.usable_size(p) };
+        let same = unsafe { h.realloc(p, room, 8) };
+        assert_eq!(same, p, "a request inside the block should not move it");
+        // One byte past it must move, or the copy below is reading past the
+        // end of what was allocated.
+        let bigger = unsafe { h.realloc(p, room + 1, 8) };
+        assert_ne!(bigger, p);
+        assert!(!bigger.is_null());
+        unsafe { h.free(bigger) };
+    }
+
+    #[test]
+    fn a_realloc_carries_the_contents_across() {
+        let (mut h, _, _) = heap_of(8192);
+        let p = unsafe { h.alloc(32, 8) };
+        for i in 0..32 {
+            unsafe { p.add(i).write(i as u8) };
+        }
+        let grown = unsafe { h.realloc(p, 2048, 8) };
+        assert!(!grown.is_null());
+        for i in 0..32 {
+            assert_eq!(unsafe { grown.add(i).read() }, i as u8, "byte {i} was lost");
+        }
+        // And shrinking keeps the prefix rather than the tail.
+        let shrunk = unsafe { h.realloc(grown, 8, 8) };
+        for i in 0..8 {
+            assert_eq!(unsafe { shrunk.add(i).read() }, i as u8);
+        }
+        unsafe { h.free(shrunk) };
+    }
+
+    #[test]
+    fn a_failed_realloc_leaves_the_original_alone() {
+        // C's contract, and the one that costs data when it is got wrong: a
+        // caller that loses its block *and* is told the allocation failed has
+        // no way back.
+        let (mut h, _, taken) = heap_of(1024);
+        let p = unsafe { h.alloc(64, 8) };
+        unsafe { p.write(0x5A) };
+        let failed = unsafe { h.realloc(p, taken * 4, 8) };
+        assert!(failed.is_null(), "that request cannot fit");
+        assert_eq!(unsafe { p.read() }, 0x5A, "the original was freed or moved");
+        // Still a live allocation: freeing it must be the first free.
+        unsafe { h.free(p) };
+        assert_eq!(h.free_bytes(), h.total_bytes());
+    }
+
+    #[test]
+    fn a_realloc_of_null_allocates_and_of_zero_frees() {
+        let (mut h, _, _) = heap_of(1024);
+        let fresh = unsafe { h.realloc(ptr::null_mut(), 32, 8) };
+        assert!(!fresh.is_null());
+        let gone = unsafe { h.realloc(fresh, 0, 8) };
+        assert!(gone.is_null());
+        assert_eq!(h.free_bytes(), h.total_bytes(), "the block was not returned");
     }
 
     #[test]

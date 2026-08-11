@@ -142,7 +142,54 @@ impl DynQueue {
     /// # Safety
     /// As [`DynQueue::try_send`].
     pub unsafe fn send(&mut self, item: *const u8, timeout_ms: u32) -> bool {
-        if unsafe { self.try_send(item) } {
+        unsafe { self.send_blocking(item, timeout_ms, false) }
+    }
+
+    /// Copy one item in at the **head**, without blocking. `false` if full.
+    ///
+    /// FreeRTOS's `xQueueSendToFront`, which the blob uses to put a frame back
+    /// where it will be taken next rather than behind everything already
+    /// waiting. The ring runs head-forward, so this steps head *backwards* —
+    /// which is the whole implementation, and also the whole risk: writing at
+    /// `head` without moving it first would overwrite the item about to be
+    /// received.
+    ///
+    /// # Safety
+    /// `item` must point to at least [`DynQueue::item_size`] readable bytes.
+    pub unsafe fn try_send_to_front(&mut self, item: *const u8) -> bool {
+        if self.is_full() {
+            return false;
+        }
+        self.head = if self.head == 0 { self.capacity - 1 } else { self.head - 1 };
+        let slot = unsafe { self.buf.add(self.head * self.item_size) };
+        unsafe { core::ptr::copy_nonoverlapping(item, slot, self.item_size) };
+        self.len += 1;
+        true
+    }
+
+    /// Send to the head, blocking up to `timeout_ms` for a slot.
+    ///
+    /// # Safety
+    /// As [`DynQueue::try_send_to_front`].
+    pub unsafe fn send_to_front(&mut self, item: *const u8, timeout_ms: u32) -> bool {
+        unsafe { self.send_blocking(item, timeout_ms, true) }
+    }
+
+    /// The blocking half of both sends, which differ only in where the item
+    /// lands. Written once so the deadline handling below cannot be right in
+    /// one of them and wrong in the other.
+    ///
+    /// # Safety
+    /// As [`DynQueue::try_send`].
+    unsafe fn send_blocking(&mut self, item: *const u8, timeout_ms: u32, front: bool) -> bool {
+        let put = |q: &mut Self| unsafe {
+            if front {
+                q.try_send_to_front(item)
+            } else {
+                q.try_send(item)
+            }
+        };
+        if put(self) {
             wake_one_receiver(self.key());
             return true;
         }
@@ -158,7 +205,7 @@ impl DynQueue {
                 Some(left) if block_send(self.key(), left) => {}
                 _ => return false,
             }
-            if unsafe { self.try_send(item) } {
+            if put(self) {
                 wake_one_receiver(self.key());
                 return true;
             }
@@ -528,6 +575,46 @@ mod tests {
     }
 
     #[test]
+    fn a_send_to_front_jumps_the_queue_and_wraps_backwards() {
+        heap_ready();
+        let mut q = DynQueue::create(3, 1).expect("create");
+        // Two waiting, then one pushed in front: it must come out first and
+        // the other two must keep their order behind it.
+        for v in [1u8, 2] {
+            assert!(unsafe { q.try_send(&v) });
+        }
+        assert!(unsafe { q.try_send_to_front(&9u8) });
+        assert_eq!(q.len(), 3);
+        let mut got = [0u8; 3];
+        for g in got.iter_mut() {
+            assert!(unsafe { q.try_recv(g) });
+        }
+        assert_eq!(got, [9, 1, 2]);
+
+        // From empty, head is 0 and stepping back must land on the last slot
+        // rather than underflow. This is the case that panics in debug and
+        // silently indexes off the end in release.
+        assert!(q.is_empty());
+        assert!(unsafe { q.try_send_to_front(&7u8) });
+        let mut one = 0u8;
+        assert!(unsafe { q.try_recv(&mut one) });
+        assert_eq!(one, 7);
+
+        // And a full queue refuses, rather than moving head over a live item.
+        for v in [1u8, 2, 3] {
+            assert!(unsafe { q.try_send(&v) });
+        }
+        assert!(!unsafe { q.try_send_to_front(&0u8) });
+        assert_eq!(q.len(), 3);
+        for expect in [1u8, 2, 3] {
+            let mut g = 0u8;
+            assert!(unsafe { q.try_recv(&mut g) });
+            assert_eq!(g, expect, "a refused front-send corrupted the ring");
+        }
+        q.delete();
+    }
+
+    #[test]
     fn a_queue_is_first_in_first_out_and_wraps() {
         heap_ready();
         let mut q = DynQueue::create(3, 1).expect("create");
@@ -839,12 +926,31 @@ pub fn spawn_task(
     priority: hal::types::Priority,
     stack_size: usize,
 ) -> Option<u32> {
+    spawn_task_on(name, entry, priority, stack_size, crate::scheduler::Affinity::Any)
+}
+
+/// Create a heap-stacked task pinned to a core.
+///
+/// [`spawn_task`] with the affinity spelled out. It exists because the blobs
+/// ask for it: `_task_create_pinned_to_core` is a separate entry from
+/// `_task_create` precisely because the radio's own task must run on the core
+/// whose interrupt matrix its handlers were routed through, and answering that
+/// request with `Affinity::Any` would be a wrong answer rather than a missing
+/// one — the task would work, until the tick migrated it and its interrupts
+/// stopped arriving.
+pub fn spawn_task_on(
+    name: &'static str,
+    entry: fn(),
+    priority: hal::types::Priority,
+    stack_size: usize,
+    affinity: crate::scheduler::Affinity,
+) -> Option<u32> {
     crate::spawn::sys_spawn_from(
         name,
         entry,
         priority,
         stack_size,
-        crate::scheduler::Affinity::Any,
+        affinity,
         crate::spawn::StackSource::Heap,
     )
     .map(|t| t.0)
