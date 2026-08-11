@@ -67,6 +67,7 @@ pub fn run() {
 
     check("timer_preserves_windowed_context", timer_preserves_windowed_context(), &mut pass, &mut fail);
     check("deep_window_recursion_returns_intact", deep_window_recursion_returns_intact(), &mut pass, &mut fail);
+    check("call8_windows_survive_preemption", call8_windows_survive_preemption(), &mut pass, &mut fail);
     check("tick_advances", tick_advances(), &mut pass, &mut fail);
     check("tick_never_goes_backwards", tick_never_goes_backwards(), &mut pass, &mut fail);
     check("critical_section_masks_the_tick", critical_section_masks_the_tick(), &mut pass, &mut fail);
@@ -238,6 +239,98 @@ fn descend(n: u32) -> u32 {
     } else {
         n + descend(n - 1)
     }
+}
+
+/// The same idea, but through **eight-register windows**, which is what the
+/// two tests above never reach.
+///
+/// They both recurse directly, and LLVM compiles a direct self-call into a
+/// `call4`. Only `WindowOverflow4` and `WindowUnderflow4` are ever exercised —
+/// and those two were the only ones this kernel had right. The call8 and call12
+/// handlers were wrong from the day the file was written and passed every test
+/// here for a year, until a GCC-built radio blob, which uses call8 throughout,
+/// double-faulted on every preemption.
+///
+/// So: recurse through a `fn` pointer, which LLVM has to emit as `callx8`, and
+/// keep eight values live across the call so all of a4-a7 are in play. Deeper
+/// than the 64-register file, so windows genuinely spill; long enough to be
+/// preempted, so the trap frame lands in the middle of it — which is the exact
+/// interaction the broken handler could not survive, because it spilled a4-a7
+/// below the live stack pointer and the trap frame was written on top.
+///
+/// Checked by value, not by not-crashing. A misplaced spill returns wrong
+/// arithmetic just as readily as it faults.
+///
+/// Confirmed to catch it, by putting the old `_WindowOverflow8` back and
+/// running this suite: the board boot-loops and `make test-target` reports
+/// that it never reached the self-tests. Loud rather than precise, which is
+/// the right way round — but worth knowing that the failure arrives as a dead
+/// board and not as this line printing FAIL.
+fn call8_windows_survive_preemption() -> Check {
+    // Kept out of line and behind a pointer so the compiler cannot turn the
+    // recursion into a loop or a direct call.
+    static DESCEND8: fn(u32, u32, u32, u32, u32, u32) -> u32 = descend8;
+
+    fn descend8(n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> u32 {
+        if n == 0 {
+            return 0;
+        }
+        // Every argument is used *after* the recursive call, so each one has to
+        // survive a spill and a restore rather than being dead across it.
+        let deeper = core::hint::black_box(DESCEND8)(n - 1, a, b, c, d, e);
+        deeper
+            .wrapping_add(n)
+            .wrapping_add(a ^ n)
+            .wrapping_add(b.rotate_left(n % 32))
+            .wrapping_add(c.wrapping_mul(n))
+            .wrapping_add(d.wrapping_sub(n))
+            .wrapping_add(e)
+    }
+
+    // Computed the same way, iteratively, so the expected value is not this
+    // function's own output written down.
+    fn expected(depth: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> u32 {
+        let mut acc = 0u32;
+        let mut n = 1;
+        while n <= depth {
+            acc = acc
+                .wrapping_add(n)
+                .wrapping_add(a ^ n)
+                .wrapping_add(b.rotate_left(n % 32))
+                .wrapping_add(c.wrapping_mul(n))
+                .wrapping_add(d.wrapping_sub(n))
+                .wrapping_add(e);
+            n += 1;
+        }
+        acc
+    }
+
+    const DEPTH: u32 = 96;
+    const A: u32 = 0x1234_5678;
+    const B: u32 = 0x9ABC_DEF0;
+    const C: u32 = 0x0F0F_0F0F;
+    const D: u32 = 0xDEAD_BEEF;
+    const E: u32 = 0xFEED_FACE;
+
+    let want = expected(DEPTH, A, B, C, D, E);
+
+    // Several passes, so the tick lands at a different depth each time. One
+    // pass can get lucky about where the interrupt falls.
+    let start = Tick::now();
+    let mut rounds = 0u32;
+    while Tick::now().saturating_sub(start) < 3 {
+        if core::hint::black_box(DESCEND8)(DEPTH, A, B, C, D, E) != want {
+            return Err("a call8 window came back corrupted");
+        }
+        rounds += 1;
+        if rounds > 100_000 {
+            break; // the tick is not running; tick_advances will say so
+        }
+    }
+    if rounds == 0 {
+        return Err("the recursion never ran");
+    }
+    Ok(())
 }
 
 /// The tick must actually advance. Nothing on a host can fail this test,

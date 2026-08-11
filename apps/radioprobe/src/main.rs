@@ -239,17 +239,14 @@ fn probe() -> Result<(), &'static str> {
     // The expensive one. Everything #65 built is on the other side of this
     // call, and until now none of it has run.
     //
-    // **`cs_with` is a workaround, not a design.** Called as an ordinary
-    // preemptible task this double-faults part-way through the calibration --
-    // see the module docs. Masking for the duration makes it deterministic, at
-    // the cost of ~190 ms with the tick stopped, which is unacceptable in
-    // anything but a probe. #66/#67 cannot ship this: the Wi-Fi driver calls
-    // `esp_phy_enable` from a task and expects to be preempted.
-    //
-    // It is here rather than inside `phy::enable` deliberately. Putting it
-    // there would make the bug invisible and permanent.
+    // **Preemptible, and that is the test.** This ran inside `cs_with` for as
+    // long as it took to find out why it double-faulted otherwise, and the
+    // answer was the call8/call12 window vectors rather than anything about
+    // the blob. With those fixed, the tick lands inside `register_chipv7_phy`
+    // some hundreds of times across ~190 ms and the calibration survives it.
+    // Masking again would hide the only regression test that exists for it.
     let t0 = kernel::clock::now_us();
-    let first = kernel::arch::cs_with(|| unsafe { phy::enable(RADIO_CLK_WIFI) });
+    let first = unsafe { phy::enable(RADIO_CLK_WIFI) };
     let t1 = kernel::clock::now_us();
     match first {
         Ok(()) => {
