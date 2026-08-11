@@ -128,11 +128,33 @@ fn scan_task() {
     }
 }
 
-/// Start the timer service. Call once, before the blob is initialised.
+/// Whether [`start`] has already spawned the service task.
+static STARTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Start the timer service. Idempotent.
 ///
 /// Nothing arms a timer until the blob does, so this is cheap until then: a
 /// task that wakes once a tick and walks 16 slots.
+///
+/// # Nothing called this, and the radio could not scan
+///
+/// The five timer entries went into the OSI table, the blob armed timers
+/// through them, `collect_due` was written and host-tested — and no task ever
+/// ran it, because `start` had no caller anywhere in the tree. A scan hops
+/// thirteen channels on a software timer, so it advanced only when the driver
+/// gave up on each channel: **8.7 seconds to time out, then a `SCAN_DONE` with
+/// zero results.**
+///
+/// It is called from [`crate::wifi::init`] now, which is the only place that
+/// can guarantee "before the blob is initialised", rather than being left to
+/// each application to remember. That is the fix for the class as well as the
+/// instance: a service the adapter depends on should not be an application's
+/// responsibility to start.
 pub fn start() {
+    use core::sync::atomic::Ordering;
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     api::task::spawn(
         "radio-timer",
         scan_task,

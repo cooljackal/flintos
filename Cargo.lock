@@ -334,6 +334,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wifiscan"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "hal",
+ "kernel",
+ "radio-esp32",
+ "soc-esp32",
+]
+
+[[package]]
 name = "ws2812"
 version = "0.1.0"
 dependencies = [

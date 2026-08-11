@@ -133,8 +133,8 @@ impl WpaCryptoFuncs {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct WifiInitConfig {
-    /// `system_event_handler_t`. esp-idf passes `esp_event_send_internal`.
-    pub event_handler: Option<extern "C" fn(*mut c_void) -> i32>,
+    /// esp-idf passes `esp_event_send_internal`. See [`SystemEventHandler`].
+    pub event_handler: Option<SystemEventHandler>,
     pub osi_funcs: *const WifiOsiFuncs,
     pub wpa_crypto_funcs: WpaCryptoFuncs,
     pub static_rx_buf_num: i32,
@@ -217,7 +217,12 @@ impl WifiInitConfig {
     /// null.
     pub const fn defaults(osi_funcs: *const WifiOsiFuncs) -> Self {
         Self {
-            event_handler: Some(event_post),
+            // The same dispatcher `_event_post` is bound to, which is what
+            // esp-idf does once its two layers are unwound:
+            // `esp_event_send_internal` calls `esp_event_post` — the OSI
+            // entry — and then forwards to the legacy loop, which FlintOS has
+            // no equivalent of and nothing here needs.
+            event_handler: Some(crate::adapter::event_post),
             osi_funcs,
             wpa_crypto_funcs: WpaCryptoFuncs::empty(),
             static_rx_buf_num: 10,
@@ -243,26 +248,32 @@ impl WifiInitConfig {
     }
 }
 
-/// `wifi_init_config_t::event_handler` — **the path the driver's events
-/// actually take, and still a stub.**
+/// `system_event_handler_t`, v4.4's, which is **not** what the name suggests.
 ///
-/// There are two event routes out of the blob and it is easy to wire the wrong
-/// one, which is what happened here. `_event_post` in the OSI table is
-/// `esp_event_post`, the modern loop, and it is implemented
-/// ([`crate::adapter::set_event_handler`]). *This* field is
-/// `esp_event_send_internal`, the older `system_event_t` path — and on a v4.4
-/// station bring-up it is the one that carries `WIFI_EVENT_STA_START` and
-/// `WIFI_EVENT_SCAN_DONE`.
+/// The obvious reading of "`system_event_handler_t`" is a handler taking a
+/// `system_event_t *` — the legacy tagged union — and that reading was written
+/// into this file and was wrong. The header settles it:
 ///
-/// Measured, not assumed: with `_event_post` wired and this left as a stub,
-/// `wifiscan` starts the station, routes the MAC interrupt and reaches the
-/// scan — and observes **zero** events.
+/// ```c
+/// typedef esp_err_t (*system_event_handler_t)(esp_event_base_t event_base,
+///                                             int32_t event_id,
+///                                             void* event_data,
+///                                             size_t event_data_size,
+///                                             TickType_t ticks_to_wait);
+/// ```
 ///
-/// Implementing it needs `system_event_t`'s layout, which is a tagged union of
-/// every event payload the driver has. That is step 5.2's remaining work.
-extern "C" fn event_post(_event: *mut c_void) -> i32 {
-    0
-}
+/// The same five arguments as `_event_post`. A one-argument stub sat here and
+/// linked, ran, and returned `ESP_OK` for every event the driver raised —
+/// because on the windowed ABI a callee may read fewer arguments than it was
+/// passed, so the wrong signature is invisible until you ask what happened to
+/// the events.
+pub type SystemEventHandler = unsafe extern "C" fn(
+    base: *const core::ffi::c_char,
+    id: i32,
+    data: *mut c_void,
+    data_size: usize,
+    ticks: u32,
+) -> i32;
 
 /// The bytes behind [`WIFI_EVENT`].
 static WIFI_EVENT_NAME: [u8; 11] = *b"WIFI_EVENT\0";
@@ -410,6 +421,12 @@ static OSI_TABLE: OsiTable = OsiTable(core::cell::UnsafeCell::new(WifiOsiFuncs::
 /// same thread. **Call once**, and not from two cores: it writes [`OSI_TABLE`],
 /// whose soundness rests on there being exactly one writer before any reader.
 pub unsafe fn init() -> i32 {
+    // Before the table is handed over, because the blob arms a timer during
+    // `esp_wifi_start` and a timer nothing services is a driver that never
+    // advances. See `crate::ets_timer::start` — this call is the whole reason
+    // a scan used to time out.
+    crate::ets_timer::start();
+
     let table = OSI_TABLE.0.get();
     unsafe { table.write(crate::adapter::table()) };
     // The config itself may be a local: the blob copies the scalar fields and

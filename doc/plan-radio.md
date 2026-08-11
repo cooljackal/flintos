@@ -337,7 +337,7 @@ during 3.6 rather than after it.
 | Step | Work | Done when |
 |---|---|---|
 | 5.1 | Bring up the Wi-Fi blobs | **Done.** `esp_wifi_init_internal` returns `ESP_OK` in 179 ms on an ESP32-DevKitC, with all 115 OSI entries filled. |
-| 5.2 | Station mode: scan | **In progress.** `esp_wifi_set_mode`, `esp_wifi_start` and `esp_wifi_scan_start` all run; the scan times out with no results. See below. |
+| 5.2 | Station mode: scan | **Scanning works** — 2.1 s for all 13 channels, `SCAN_DONE` delivered. Blocked on one bug: a populated `nvs` partition hangs `esp_wifi_init_internal`. See below. |
 | 5.3 | Station mode: associate | The device joins a WPA2 network and holds the association. |
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
 | 5.5 | On-target self-test | Scan and associate run in `make test-target`, skipped cleanly when no AP is configured. |
@@ -381,49 +381,75 @@ Two things are known to be needed beyond the struct:
   scan needs either, the queue is what replaces it.
 ### Where 5.2 actually is, measured
 
-`apps/wifiscan` gets the driver all the way to a scan and the scan fails.
-Everything up to that point works on an ESP32-DevKitC:
+**The scan works.** On an ESP32-DevKitC, from an erased flash:
 
 ```text
 [wifi] driver up
-radio: no stored RF calibration; calibrating in full      <- on wifiT, not ours
-radio: RF calibration stored
-[wifi] station started
+radio: RF calibration stored                              <- on wifiT, not ours
+[wifi] event WIFI_EVENT id=2 (sta-start) 0 bytes
 [wifi] irq: source 0 -> cpu-int 0 on core 0 (connected)
-[wifi] intenable=0x000000c1
-[wifi] scan 1 failed: 0x300c after 8702011 us             <- ESP_ERR_WIFI_TIMEOUT
-[wifi] scan 2 done in 2 ms ... 0 networks, 0 events
+[wifi] event WIFI_EVENT id=1 (scan-done) 8 bytes
+[wifi] scan 1 done in 2102 ms (scan-done event: yes)
 ```
 
-So: the Wi-Fi task runs, the driver drives the PHY through `_phy_enable` and
-calibrates on its own thread, and `_set_intr` routes the MAC interrupt (source
-0) to a level-1 CPU input with the mask set. What does not happen is any
-event, and any result.
+2.1 seconds for thirteen channels is the right number. Two bugs stood between
+that and the previous state, and both were the same kind: **code that existed,
+was documented, was host-tested, and had never been executed.**
 
-**Two known causes, both concrete.**
+**1. `wifi_init_config_t::event_handler` had the wrong signature.** The obvious
+reading of `system_event_handler_t` is a handler taking a `system_event_t *`,
+and that reading was written into `wifi.rs`. The v4.4 header says otherwise:
 
-1. **`wifi_init_config_t::event_handler` is still a stub.** There are two
-   event routes out of the blob. `_event_post` in the OSI table is
-   `esp_event_post`, and it is implemented. This field is
-   `esp_event_send_internal`, the older `system_event_t` path — and on v4.4 it
-   is the one that carries `WIFI_EVENT_STA_START` and `WIFI_EVENT_SCAN_DONE`.
-   Wiring the wrong one of the two is easy and was done here. Implementing it
-   needs `system_event_t`'s layout, a tagged union over every event payload.
-2. **The scan itself times out**, which the event path does not explain — a
-   blocking scan waits on the driver's own event group, not on the
-   application. The next measurement is whether the MAC interrupt fires at
-   all. `radio_esp32::interrupts::for_each_route` reports the routing;
-   counting *deliveries* needs somewhere safe to count from, and an atomic
-   increment inside the trampoline hangs the board before the driver finishes
-   starting — unexplained, and worth understanding before it is worked around.
+```c
+typedef esp_err_t (*system_event_handler_t)(esp_event_base_t event_base,
+                                            int32_t event_id, void* event_data,
+                                            size_t event_data_size,
+                                            TickType_t ticks_to_wait);
+```
 
-Two smaller things the run surfaced, both filed here rather than fixed:
+The same five arguments as `_event_post`, and esp-idf binds it to
+`esp_event_send_internal`, which is a two-line function that calls
+`esp_event_post` — the OSI entry — and then forwards to the legacy loop.
+So both routes converge, and both now reach `adapter::event_post`.
 
-- **A stored RF calibration wedges the next boot.** With `nvs` non-empty,
-  `esp_wifi_init_internal` never returns; with `make erase` first it takes
-  14 ms. `radioprobe` reads the same store without trouble, so the difference
-  is the driver reading it from `wifiT` rather than from an application task.
+A one-argument stub sat in the field and linked, ran, and returned `ESP_OK`
+for every event: on the windowed ABI a callee may read fewer arguments than it
+was passed, so a wrong signature is invisible until you ask where the events
+went.
+
+**2. Nothing started the software-timer service.** `ets_timer::start` spawns
+the task that fires what the blob arms, and it had **no caller anywhere in the
+tree**. The five timer entries were in the OSI table, `collect_due` was
+written and host-tested, and no task ever ran it. A scan hops channels on a
+software timer, so it advanced only when the driver gave up on each channel:
+8.7 s to `ESP_ERR_WIFI_TIMEOUT`, then a late `SCAN_DONE` with zero results.
+`wifi::init` calls it now — a service the adapter depends on should not be
+each application's job to remember.
+
+### The one bug left in 5.2
+
+**A populated `nvs` partition hangs `esp_wifi_init_internal`.** After
+`make erase` the sequence above runs every time; on the next boot, with the RF
+calibration stored, init never returns — 90 s and no progress, no fault.
+
+Localised, not yet explained. With `nvs_enable = 0` in the init config it goes
+away entirely and the scan runs, so it is our `_nvs_*` path. Raw-UART markers
+put it inside `nvs_open`, between entry and the result of
+`c_str(name, MAX_NAME_LEN)` — a loop bounded at sixteen iterations, which
+cannot spin. A bounded read loop that never finishes means **the read itself
+stalls**, and on this chip that has one known cause: reading memory-mapped
+flash with the cache off, which stops the core dead with no exception. What is
+not yet explained is why the cache would be off there, or why it depends on
+the store having content.
+
+Two smaller things the run surfaced, both filed rather than fixed:
+
 - **~184 bytes leak per scan**, steadily, across rounds.
+- **An atomic `fetch_add` inside the interrupt trampoline hangs the board**
+  before the driver finishes starting. Reproducible, unexplained, and worth
+  understanding rather than working around — that trampoline is load-bearing
+  for every interrupt in the system. It is why there is no delivery counter to
+  go with `interrupts::for_each_route`.
 
 - **`wpa_crypto_funcs`.** In esp-idf this is filled from
   `libwpa_supplicant`, which is C source and not one of the blobs, so WPA2

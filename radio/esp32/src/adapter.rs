@@ -857,7 +857,7 @@ pub fn set_event_handler(f: Option<EventHandler>) -> Option<EventHandler> {
 /// failure here as a fatal error during init, and "nobody is listening" is not
 /// one. The timeout is ignored because the dispatch cannot block — see
 /// [`set_event_handler`].
-unsafe extern "C" fn event_post(
+pub(crate) unsafe extern "C" fn event_post(
     base: *const core::ffi::c_char,
     id: i32,
     data: *mut c_void,
