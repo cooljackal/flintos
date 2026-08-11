@@ -500,10 +500,98 @@ unsafe extern "C" fn osi_spin_lock_delete(handle: *mut c_void) {
     let _ = unsafe { unbox::<dynobj::SpinlockHandle>(handle) };
 }
 
-// ── The table ───────────────────────────────────────────────────────────────
+// ── Odds and ends with bodies already in the tree ───────────────────────────
 
-/// Build the table the blob is given.
+/// `_env_is_chip`. True on silicon, false on Espressif's FPGA prototypes.
 ///
+/// NuttX's `wifi_env_is_chip` returns the same constant. The blob uses it to
+/// skip timing workarounds that only apply to the FPGA, so answering "chip"
+/// on a chip is not a stub.
+unsafe extern "C" fn env_is_chip() -> bool {
+    true
+}
+
+/// `_task_delay`, in ticks -- which are milliseconds here; see
+/// [`ms_from_ticks`].
+unsafe extern "C" fn task_delay(ticks: u32) {
+    api::task::sleep_ms(ticks);
+}
+
+/// `_log_timestamp`. Milliseconds since boot, which is what the tick counts.
+unsafe extern "C" fn log_timestamp() -> u32 {
+    use hal::tick::TickSource;
+    kernel::arch::Tick::now() as u32
+}
+
+/// Several entries whose correct implementation on this chip, in this
+/// configuration, is to do nothing. **Each for its own reason**, and none of
+/// them because it was too hard:
+///
+/// - `_wifi_rtc_enable_iso` / `_wifi_rtc_disable_iso` isolate the RTC power
+///   domain's pads across a sleep. NuttX's pair are empty function bodies.
+/// - `_wifi_apb80m_request` / `_wifi_apb80m_release` hold the APB at 80 MHz
+///   against dynamic frequency scaling. FlintOS has no DFS (#38), so the APB
+///   is already fixed at 80 MHz and there is nothing to hold.
+/// - `_dport_access_stall_other_cpu_start_wrap` / `..._end_wrap` serialise
+///   DPORT reads against the other core for the ESP32's DPORT/APB erratum.
+///   `soc_esp32::dport::read` already implements the workaround on every
+///   read, so the bracketing is redundant here rather than absent.
+///
+/// They share one body because they share one answer, and a separate empty
+/// function per entry would suggest five different decisions.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn nothing_to_do() {}
+
+/// `_ints_on` / `_ints_off`. A **mask**, not an index.
+///
+/// esp-idf binds these to `xt_ints_on`/`xt_ints_off`, which set and clear bits
+/// in `INTENABLE` wholesale. `registers::enable_interrupt` takes an interrupt
+/// *number*, so passing the mask through would enable one interrupt chosen by
+/// how many bits happened to be set.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn ints_on(mask: u32) {
+    let cur = unsafe { kernel::arch::registers::read_intenable() };
+    unsafe { kernel::arch::registers::write_intenable(cur | mask) };
+}
+
+#[cfg(target_os = "none")]
+unsafe extern "C" fn ints_off(mask: u32) {
+    let cur = unsafe { kernel::arch::registers::read_intenable() };
+    unsafe { kernel::arch::registers::write_intenable(cur & !mask) };
+}
+
+/// `_wifi_int_disable` / `_wifi_int_restore`. A critical section, in and out.
+///
+/// The `void*` is a spinlock handle from `_spin_lock_create`, and the return
+/// value is the saved interrupt state the restore is handed back. FlintOS's
+/// `cs_enter` returns exactly that, so the handle is unused: a critical
+/// section here masks the calling core, which is the whole of what the blob
+/// is asking for on a path it has already serialised.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn wifi_int_disable(_lock: *mut c_void) -> u32 {
+    unsafe { kernel::arch::cs_enter() }
+}
+
+#[cfg(target_os = "none")]
+unsafe extern "C" fn wifi_int_restore(_lock: *mut c_void, saved: u32) {
+    unsafe { kernel::arch::cs_exit(saved) };
+}
+
+/// `_wifi_clock_enable` / `_wifi_clock_disable`. Wi-Fi's own clock bits.
+///
+/// Distinct from `_phy_common_clock_*`, which is the group both radios share.
+/// NuttX's `wifi_clock_enable` sets `DPORT_WIFI_CLK_WIFI_EN_M` and nothing
+/// else, which is `RADIO_CLK_WIFI` here.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn wifi_clock_enable() {
+    unsafe { soc_esp32::dport::radio_clock_enable(soc_esp32::dport::RADIO_CLK_WIFI) };
+}
+
+#[cfg(target_os = "none")]
+unsafe extern "C" fn wifi_clock_disable() {
+    unsafe { soc_esp32::dport::radio_clock_disable(soc_esp32::dport::RADIO_CLK_WIFI) };
+}
+
 // ── The PHY ─────────────────────────────────────────────────────────────────
 //
 // esp-idf binds these five to `esp_phy_enable`, `esp_phy_disable`,
@@ -572,6 +660,10 @@ unsafe extern "C" fn phy_update_country_info(_country: *const core::ffi::c_char)
     0
 }
 
+// ── The table ───────────────────────────────────────────────────────────────
+
+/// Build the table the blob is given.
+///
 /// Everything not set here is null, and [`UNIMPLEMENTED`] says why. A null is
 /// a diagnosable crash at a known address; a wrong function is not.
 pub fn table() -> WifiOsiFuncs {
@@ -622,6 +714,28 @@ pub fn table() -> WifiOsiFuncs {
     t._set_intr = Some(crate::interrupts::set_intr);
     t._clear_intr = Some(crate::interrupts::clear_intr);
     t._set_isr = Some(crate::interrupts::set_isr);
+
+    // The entries whose bodies are one line of something this tree already
+    // has. Grouped rather than scattered so the remaining gap stays countable.
+    t._env_is_chip = Some(env_is_chip);
+    t._task_delay = Some(task_delay);
+    t._log_timestamp = Some(log_timestamp);
+    t._wifi_delete_queue = Some(osi_queue_delete);
+    #[cfg(target_os = "none")]
+    {
+        t._ints_on = Some(ints_on);
+        t._ints_off = Some(ints_off);
+        t._wifi_int_disable = Some(wifi_int_disable);
+        t._wifi_int_restore = Some(wifi_int_restore);
+        t._wifi_clock_enable = Some(wifi_clock_enable);
+        t._wifi_clock_disable = Some(wifi_clock_disable);
+        t._wifi_rtc_enable_iso = Some(nothing_to_do);
+        t._wifi_rtc_disable_iso = Some(nothing_to_do);
+        t._wifi_apb80m_request = Some(nothing_to_do);
+        t._wifi_apb80m_release = Some(nothing_to_do);
+        t._dport_access_stall_other_cpu_start_wrap = Some(nothing_to_do);
+        t._dport_access_stall_other_cpu_end_wrap = Some(nothing_to_do);
+    }
 
     // The PHY. Step 3.6 implemented all of this and never connected it, so
     // the first real call into the driver died on a null here.
