@@ -201,6 +201,33 @@ pub unsafe fn is_stalled() -> bool {
     c0 != 0 || c1 != 0
 }
 
+/// Whether the APP CPU is actually executing instructions.
+///
+/// **Not the complement of [`is_stalled`].** A core that has never been
+/// started is held in reset with its clock gated, and the stall bits are clear
+/// — so `!is_stalled()` calls it running and every caller that acts on that
+/// pays for stalling a core that is not there.
+///
+/// That cost was real and large. `esp32-flash`'s cache-off window used
+/// `!is_stalled()`, so on any single-core application every flash read stalled
+/// and released a core at reset, and `stall`/`unstall` each wait 32768 cycles
+/// for the RTC's slow-clock domain to catch up. 819 µs of settling per read,
+/// on a read that takes microseconds. It showed up as `kvstore` taking 1.36 s
+/// to load 1904 bytes.
+///
+/// # Safety
+/// Reads DPORT and RTC. No side effects.
+pub unsafe fn is_running() -> bool {
+    let clocked = unsafe { crate::dport::read(APPCPU_CTRL_B) } & APPCPU_CLKGATE_EN != 0;
+    if !clocked {
+        return false;
+    }
+    if unsafe { crate::dport::read(APPCPU_CTRL_A) } & APPCPU_RESETTING != 0 {
+        return false;
+    }
+    !unsafe { is_stalled() }
+}
+
 /// Start the APP CPU at `entry`.
 ///
 /// # What the started core may touch

@@ -113,6 +113,17 @@ fn crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
+/// The most an entry can occupy, header included. One read's worth.
+const MAX_ENTRY: usize = HEADER_LEN + MAX_KEY_LEN + MAX_VALUE_LEN;
+
+/// What a single read of an entry established about it.
+struct Entry {
+    /// Bytes to advance to reach the next entry.
+    total: u32,
+    key_len: usize,
+    val_len: usize,
+}
+
 /// The log, over some [`Storage`].
 pub struct Store<S: Storage> {
     storage: S,
@@ -151,29 +162,48 @@ impl<S: Storage> Store<S> {
     /// append-only log nothing valid can follow something torn, because the
     /// torn thing is what was being written when the power went.
     fn scan_tail(&self) -> Result<u32, Error> {
+        let mut buf = [0u8; MAX_ENTRY];
         let mut at = 0;
         loop {
-            match self.entry_at(at)? {
-                Some(len) => at += len,
+            match self.entry_into(at, &mut buf)? {
+                Some(e) => at += e.total,
                 None => return Ok(at),
             }
         }
     }
 
-    /// Length of the valid entry at `at`, or `None` if there is not one.
-    fn entry_at(&self, at: u32) -> Result<Option<u32>, Error> {
-        if at + HEADER_LEN as u32 > self.storage.capacity() {
+    /// Read the whole entry at `at` into `buf`, in **one** `Storage::read`.
+    ///
+    /// This exists because the obvious decomposition — read the header, then
+    /// read the body, then let the caller read the key, then read the value —
+    /// costs four reads per entry, and on this hardware a read is not a cheap
+    /// thing to do four times. Every one goes through a window with the
+    /// instruction cache switched off, so the fixed cost per call dwarfs the
+    /// bytes moved: reading 168 bytes once beats reading 8 bytes four times by
+    /// most of a factor of four.
+    ///
+    /// It reads a fixed [`MAX_ENTRY`] rather than the entry's own length,
+    /// because the length is in the header and the header is what is being
+    /// read. Overshooting into the next entry, or into erased flash, costs
+    /// nothing; it is clamped to the region so it cannot overshoot into
+    /// somebody else's partition.
+    ///
+    /// `buf` is the caller's so this can be reused across a whole scan without
+    /// putting 168 bytes on the stack per entry.
+    fn entry_into(&self, at: u32, buf: &mut [u8; MAX_ENTRY]) -> Result<Option<Entry>, Error> {
+        let cap = self.storage.capacity();
+        if at + HEADER_LEN as u32 > cap {
             return Ok(None);
         }
-        let mut header = [0u8; HEADER_LEN];
-        self.storage.read(at, &mut header)?;
+        let want = MAX_ENTRY.min((cap - at) as usize);
+        self.storage.read(at, &mut buf[..want])?;
 
-        let magic = u16::from_le_bytes([header[0], header[1]]);
+        let magic = u16::from_le_bytes([buf[0], buf[1]]);
         if magic != MAGIC {
             return Ok(None);
         }
-        let key_len = header[2] as usize;
-        let val_len = header[3] as usize;
+        let key_len = buf[2] as usize;
+        let val_len = buf[3] as usize;
         if key_len == 0 || key_len > MAX_KEY_LEN || val_len > MAX_VALUE_LEN {
             // A corrupt header with a believable magic. Treat it as the end
             // rather than trusting the lengths and walking off into whatever
@@ -181,18 +211,22 @@ impl<S: Storage> Store<S> {
             return Ok(None);
         }
         let total = entry_len(key_len, val_len);
-        if at + total > self.storage.capacity() {
+        if at + total > cap {
+            return Ok(None);
+        }
+        // The lengths passed their bounds check, so the body is inside
+        // MAX_ENTRY; it can still fall outside what the clamp above allowed us
+        // to read, at the very end of the region.
+        let n = key_len + val_len;
+        if HEADER_LEN + n > want {
             return Ok(None);
         }
 
-        let stored_crc = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-        let mut body = [0u8; MAX_KEY_LEN + MAX_VALUE_LEN];
-        let n = key_len + val_len;
-        self.storage.read(at + HEADER_LEN as u32, &mut body[..n])?;
-        if crc_of(key_len, val_len, &body[..n]) != stored_crc {
+        let stored_crc = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        if crc_of(key_len, val_len, &buf[HEADER_LEN..HEADER_LEN + n]) != stored_crc {
             return Ok(None);
         }
-        Ok(Some(total))
+        Ok(Some(Entry { total, key_len, val_len }))
     }
 
     /// Store `value` under `key`, superseding any earlier value.
@@ -228,30 +262,38 @@ impl<S: Storage> Store<S> {
 
     /// Read the newest value for `key` into `out`, returning its length.
     pub fn get(&self, key: &[u8], out: &mut [u8]) -> Result<usize, Error> {
-        let mut found: Option<(u32, usize, usize)> = None;
+        // One read per entry, and the value carried out of the same read that
+        // matched the key. The previous version read the header inside
+        // `entry_at`, read it again here, read the key a third time and the
+        // value a fourth — four flash operations per entry, each paying for
+        // its own cache-off window, for a scan that visits every entry in the
+        // log. Loading a 1904-byte blob out of fifteen chunked records took
+        // 1.36 s on an ESP32, against the 183 ms of radio calibration the
+        // record existed to avoid.
+        let mut buf = [0u8; MAX_ENTRY];
+        let mut found: Option<usize> = None;
+        let mut value = [0u8; MAX_VALUE_LEN];
         let mut at = 0;
+
         // Forward, keeping the last match: newer entries are later, and the
         // log has no back-pointers to walk the other way.
-        while let Some(len) = self.entry_at(at)? {
-            let mut header = [0u8; HEADER_LEN];
-            self.storage.read(at, &mut header)?;
-            let key_len = header[2] as usize;
-            let val_len = header[3] as usize;
-            if key_len == key.len() {
-                let mut k = [0u8; MAX_KEY_LEN];
-                self.storage.read(at + HEADER_LEN as u32, &mut k[..key_len])?;
-                if &k[..key_len] == key {
-                    found = Some((at, key_len, val_len));
-                }
+        while let Some(e) = self.entry_into(at, &mut buf)? {
+            if e.key_len == key.len() && &buf[HEADER_LEN..HEADER_LEN + e.key_len] == key {
+                let from = HEADER_LEN + e.key_len;
+                value[..e.val_len].copy_from_slice(&buf[from..from + e.val_len]);
+                found = Some(e.val_len);
             }
-            at += len;
+            at += e.total;
         }
-        let (at, key_len, val_len) = found.ok_or(Error::NotFound)?;
+
+        let val_len = found.ok_or(Error::NotFound)?;
+        // Checked after the scan, exactly as before: it is the *last* entry
+        // for the key that decides, and an earlier one being too big for
+        // `out` says nothing about the one that counts.
         if out.len() < val_len {
             return Err(Error::BufferTooSmall);
         }
-        self.storage
-            .read(at + HEADER_LEN as u32 + key_len as u32, &mut out[..val_len])?;
+        out[..val_len].copy_from_slice(&value[..val_len]);
         Ok(val_len)
     }
 
@@ -554,5 +596,98 @@ mod tests {
         // checksum covers them. Same bytes, different framing.
         let body = [1u8, 2, 3, 4];
         assert_ne!(crc_of(1, 3, &body), crc_of(3, 1, &body));
+    }
+
+    /// Flash that counts how many times it is asked to read.
+    ///
+    /// The bytes moved are not what a `get` costs on this hardware — the *call*
+    /// is, because each one runs with the instruction cache off and the other
+    /// core parked. So the number worth asserting is the call count.
+    struct Counting {
+        inner: Fake,
+        reads: core::cell::Cell<u32>,
+    }
+
+    impl Storage for Counting {
+        const SECTOR_SIZE: u32 = 4096;
+        fn capacity(&self) -> u32 {
+            self.inner.capacity()
+        }
+        fn read(&self, offset: u32, buf: &mut [u8]) -> Result<(), Error> {
+            self.reads.set(self.reads.get() + 1);
+            self.inner.read(offset, buf)
+        }
+        fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Error> {
+            self.inner.write(offset, data)
+        }
+        fn erase_all(&mut self) -> Result<(), Error> {
+            self.inner.erase_all()
+        }
+    }
+
+    #[test]
+    fn a_lookup_reads_each_entry_once() {
+        // The fix this test exists for: `get` used to read the header inside
+        // `entry_at`, read it again itself, read the key a third time and the
+        // value a fourth. Four reads per entry, every entry, every lookup.
+        //
+        // One read per entry is the floor for a log with no index — you cannot
+        // skip an entry without knowing its length, and its length is in it.
+        let mut store = Store::open(Counting {
+            inner: Fake::new(),
+            reads: core::cell::Cell::new(0),
+        })
+        .expect("opens");
+
+        const N: usize = 20;
+        for i in 0..N {
+            let key = [b'k', b'0' + (i / 10) as u8, b'0' + (i % 10) as u8];
+            store.set(&key, b"value").expect("set");
+        }
+
+        // The last key, so the scan runs the full length of the log.
+        let mut out = [0u8; 16];
+        store.storage.reads.set(0);
+        let n = store.get(b"k19", &mut out).expect("get");
+        assert_eq!(&out[..n], b"value");
+
+        let reads = store.storage.reads.get();
+        // N entries plus the one that finds the end of the log.
+        assert_eq!(reads, (N + 1) as u32, "expected one read per entry");
+    }
+
+    #[test]
+    fn a_miss_costs_no_more_than_a_hit() {
+        // A `NotFound` still has to walk the whole log — there is nowhere else
+        // the entry could be — but it must not walk it twice.
+        let mut store = Store::open(Counting {
+            inner: Fake::new(),
+            reads: core::cell::Cell::new(0),
+        })
+        .expect("opens");
+        for i in 0..8u8 {
+            store.set(&[b'k', b'0' + i], b"v").expect("set");
+        }
+        let mut out = [0u8; 8];
+        store.storage.reads.set(0);
+        assert_eq!(store.get(b"nope", &mut out), Err(Error::NotFound));
+        assert_eq!(store.storage.reads.get(), 9);
+    }
+
+    #[test]
+    fn a_value_too_big_for_the_caller_is_still_refused() {
+        // `get` now carries the value out of the scan rather than re-reading
+        // it at the end, so the size check moved. It must still fire, and it
+        // must still be the *last* entry for the key that decides.
+        let mut store = Store::open(Fake::new()).expect("opens");
+        store.set(b"k", &[7u8; 64]).expect("set");
+        let mut small = [0u8; 8];
+        assert_eq!(store.get(b"k", &mut small), Err(Error::BufferTooSmall));
+
+        // Superseded by something that does fit: the short one wins, because
+        // it is the newer.
+        store.set(b"k", b"ok").expect("set");
+        let n = store.get(b"k", &mut small).expect("get");
+        assert_eq!(&small[..n], b"ok");
     }
 }

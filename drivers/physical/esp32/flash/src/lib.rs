@@ -377,8 +377,14 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     // Stall the second core before its cache goes away. Order matters: a core
     // still fetching when the cache dies stops mid-instruction, and nothing
     // reports it.
+    // `is_running`, not `!is_stalled`. A core that was never started is held
+    // in reset with its clock gated and its stall bits clear, so the negation
+    // called it running -- and every flash read on a single-core application
+    // then paid `stall` and `unstall`, which each wait 32768 cycles for the
+    // RTC's slow-clock domain. 819 µs of settling around a read that takes
+    // microseconds, on every read.
     #[cfg(target_os = "none")]
-    let app_was_running = !soc_esp32::appcpu::is_stalled();
+    let app_was_running = soc_esp32::appcpu::is_running();
     #[cfg(target_os = "none")]
     let app_saved_mask = if app_was_running {
         soc_esp32::appcpu::stall();
