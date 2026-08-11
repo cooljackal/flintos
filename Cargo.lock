@@ -266,6 +266,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "radioprobe"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "hal",
+ "kernel",
+ "radio-esp32",
+ "soc-esp32",
+]
+
+[[package]]
 name = "size"
 version = "0.1.0"
 

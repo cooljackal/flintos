@@ -135,7 +135,7 @@ LD_SCRIPT       = $(if $(wildcard $(LD_GENERATED)),$(LD_GENERATED),$(LD_TEMPLATE
 #
 # This replaces a hand-kept list of fifteen names, which lived here and in three
 # more copies in ci.yml. Those copies had already drifted once.
-HOST_EXCLUDE   := arch-xtensa hello demo blink imu pwm smp spidma flashprobe
+HOST_EXCLUDE   := arch-xtensa hello demo blink imu pwm smp spidma flashprobe radioprobe
 HOST_SELECT    := --workspace $(addprefix --exclude ,$(HOST_EXCLUDE))
 
 # The host suite still has to compile `board` and `kernel`, and both need a
@@ -395,7 +395,7 @@ check: ## Check every host-compatible crate
 # separately. The board-specific apps below override it with the one they
 # require.
 XTENSA_BOARD   ?= board-esp32-devkitc
-XTENSA_BOARD_FEATURES = --features board/$(XTENSA_BOARD),kernel/$(XTENSA_BOARD),demo/$(XTENSA_BOARD),hello/$(XTENSA_BOARD),smp/$(XTENSA_BOARD),spidma/$(XTENSA_BOARD),flashprobe/$(XTENSA_BOARD)
+XTENSA_BOARD_FEATURES = --features board/$(XTENSA_BOARD),kernel/$(XTENSA_BOARD),demo/$(XTENSA_BOARD),hello/$(XTENSA_BOARD),smp/$(XTENSA_BOARD),spidma/$(XTENSA_BOARD),flashprobe/$(XTENSA_BOARD),radioprobe/$(XTENSA_BOARD)
 
 BOARD_SPECIFIC_APPS := blink imu pwm
 ATOM_BOARD          := board-m5-atom-matrix

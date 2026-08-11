@@ -29,12 +29,25 @@
 //! that the calibration in RAM is still good. FlintOS has no deep sleep, so
 //! that case cannot arise here and is not implemented rather than guessed at.
 //!
-//! # What this does not do yet
+//! # What the hardware said
 //!
-//! Nothing calls it. Wiring it into a `radio::start()` belongs with #66 or
-//! #67, which is also where the first `register_chipv7_phy` on real silicon
-//! happens -- and where a wrong init-data table or a wrong MAC stops being a
-//! test failure and starts being a radio that transmits badly.
+//! `apps/radioprobe` runs this on a board. On an ESP32-WROOM:
+//! `register_chipv7_phy` returns 0 with our init data and our eFuse MAC, a
+//! full calibration takes ~183 ms, and a re-enable takes ~250 µs.
+//!
+//! Two things it also found, neither of which is fixed here:
+//!
+//! - **This cannot be called from a preemptible task.** A tick landing inside
+//!   the blob breaks the register-window chain and the next `retw` double
+//!   faults. `radioprobe` masks interrupts around the call to get a result at
+//!   all. That workaround is deliberately *not* in this function: hiding it
+//!   here would make the bug permanent, and #66/#67 need `esp_phy_enable` to
+//!   be preemptible.
+//! - **The stored calibration currently costs more than it saves.** Reading it
+//!   back is ~1.36 s, against the ~183 ms of calibration it avoids, because
+//!   `kvstore::get` scans the whole log per key and [`crate::calibration`]
+//!   needs eighteen of them. [`CalibrationMode::Partial`] is the right
+//!   decision and the store is the right idea; the log is the wrong shape.
 
 use crate::calibration::{CalibrationMode, CAL_DATA_LEN};
 // `calibration::load`/`save_or_reset` and `Invalid` are named only by the
@@ -60,6 +73,13 @@ extern "C" {
 
     /// `void phy_close_rf(void)` — the counterpart to a successful enable.
     fn phy_close_rf();
+
+    /// `char* get_phy_version_str(void)` — the blob's own version string,
+    /// which esp-idf logs at every boot.
+    ///
+    /// Needs no clocks and touches no register, which makes it the cheapest
+    /// question that can only be answered by the blob actually running.
+    fn get_phy_version_str() -> *const core::ffi::c_char;
 }
 
 /// How many times [`enable`] has been called without a matching [`disable`],
@@ -91,6 +111,28 @@ pub enum PhyError {
 /// Calls into the blob. Cheap and side-effect-free, but it is still the blob.
 pub unsafe fn rf_cal_version() -> u32 {
     unsafe { phy_get_rf_cal_version() }
+}
+
+/// The PHY blob's version string, as it reports itself.
+///
+/// Which archive is linked is otherwise invisible: `make blobs` fetches a
+/// pinned revision, and nothing downstream would notice if it fetched a
+/// different one.
+///
+/// # Safety
+/// Calls into the blob, which returns a pointer to its own static storage.
+pub unsafe fn version_str() -> &'static str {
+    let p = unsafe { get_phy_version_str() };
+    if p.is_null() {
+        return "(null)";
+    }
+    // The blob's string outlives everything; `'static` is not a widening.
+    match unsafe { core::ffi::CStr::from_ptr(p) }.to_str() {
+        Ok(s) => s,
+        // Not a panic: this is diagnostics, and a version string that came
+        // back as something other than text is itself the finding.
+        Err(_) => "(not utf-8)",
+    }
 }
 
 /// Bring the PHY up, or take another reference to an already-running one.
