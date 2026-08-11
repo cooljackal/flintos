@@ -41,6 +41,20 @@ use soc_esp32::addr;
 /// GPIO39 is ADC1 channel 3.
 pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = Some(39);
 
+
+/// Maximum radio transmit power, in dBm.
+///
+/// A regulatory and thermal choice, not a chip fact, which is why it is a
+/// board manifest entry rather than a constant in the radio crate. It feeds
+/// the six transmit-power entries of the PHY's initialisation table
+/// (`radio_esp32::phy_init`), clamped per modulation exactly as esp-idf's
+/// `LIMIT` macro does.
+///
+/// 20 dBm is esp-idf's own default, and saturates every band. Lower it for a
+/// board that runs hot, has a poor antenna, or ships somewhere with a tighter
+/// limit than the part can reach.
+pub const PHY_MAX_TX_POWER_DBM: i32 = 20;
+
 pub const TICK_PERIOD_US: u32 = 1000;
 pub const DMA_POOL_BYTES: usize = 8192;
 
