@@ -106,6 +106,17 @@ fn run() {
         Err(e) => api::log_error!("[probe] could not read the JEDEC id: {:?}", e),
     }
 
+    // The factory MAC, read straight out of eFuse. Printed so it can be
+    // compared against `espflash board-info`, which is the only way to check
+    // the bit order without trusting a reading of the eFuse table.
+    {
+        let m = unsafe { soc_esp32::efuse::base_mac() };
+        api::log_info!(
+            "[probe] efuse MAC = {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            m[0], m[1], m[2], m[3], m[4], m[5]
+        );
+    }
+
     // What the bootloader left SPI1 configured as. Every theory about where an
     // extra clock comes from has been an inference from behaviour; this is the
     // configuration itself.

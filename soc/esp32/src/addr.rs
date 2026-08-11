@@ -34,6 +34,9 @@ pub const GPIO_BASE: u32 = 0x3FF4_4000;
 pub const IO_MUX_BASE: u32 = 0x3FF4_9000;
 pub const DPORT_BASE: u32 = 0x3FF0_0000;
 pub const RTC_CNTL_BASE: u32 = 0x3FF4_8000;
+
+/// eFuse controller. Block 0 holds the factory MAC address, among much else.
+pub const EFUSE_BASE: u32 = 0x3FF5_A000;
 pub const TIMG0_BASE: u32 = 0x3FF5_F000;
 pub const TIMG1_BASE: u32 = 0x3FF6_0000;
 
