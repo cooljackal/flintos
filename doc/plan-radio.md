@@ -342,6 +342,40 @@ during 3.6 rather than after it.
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
 | 5.5 | On-target self-test | Scan and associate run in `make test-target`, skipped cleanly when no AP is configured. |
 
+### What 5.1 actually needs, measured
+
+The archive-wide symbol report (`make blob-symbols`) says 39 symbols are
+missing. That number badly over-counts, because it is computed over whole
+archives rather than over the members a station build pulls in. The useful
+measurement is a link:
+
+> Referencing `esp_wifi_init_internal` from an application and building it
+> **links with zero undefined references**, pulling in 211 `ieee80211`/`pp`/
+> `wDev_` symbols.
+
+So the OSI table and the adapter already satisfy the Wi-Fi init path at link
+time, and 5.1 is not a symbol-hunting exercise. What is left is calling it:
+
+`wifi_init_config_t` (from `esp_wifi.h` at v4.4) is `event_handler`,
+`osi_funcs`, an inline `wpa_crypto_funcs_t`, eighteen `int` buffer-sizing
+fields, a `uint64_t feature_caps`, a `bool sta_disconnected_pm`, and
+`magic = 0x1F2F3F4F` last. Getting the layout wrong is the failure step 3.4
+warns about — a magic mismatch if you are lucky, a working radio corrupting
+memory if you are not — so the struct wants a layout assertion against the
+header, the way `calibration::CAL_DATA_LEN` has one.
+
+Two things are known to be needed beyond the struct:
+
+- **`_event_post`.** The driver reports scan completion and association
+  through it, so 5.2 cannot observe its own result without it. It is the last
+  null in [`adapter::UNIMPLEMENTED`] and needs an event loop, which FlintOS
+  has no equivalent of — a design decision rather than a shim.
+- **`wpa_crypto_funcs`.** In esp-idf this is filled from
+  `libwpa_supplicant`, which is C source and not one of the blobs, so WPA2
+  (5.3) means providing AES, SHA, HMAC and PBKDF2 ourselves. An **open** scan
+  (5.2) should not need it, which is the reason to do 5.2 before 5.3 rather
+  than in issue order.
+
 ---
 
 ## Phase 6 — Network stack
