@@ -48,6 +48,7 @@ pub mod interrupts;
 pub mod nvs;
 pub mod phy;
 pub mod phy_init;
+pub mod wifi;
 pub mod osi;
 
 pub use osi::{WifiOsiFuncs, IDF_VERSION, MAGIC, VERSION};

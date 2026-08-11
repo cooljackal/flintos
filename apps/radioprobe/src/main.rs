@@ -169,6 +169,33 @@ fn run() {
         Err(e) => api::log_error!("[radio] FAIL: {}", e),
     }
 
+    // Step 5.1, and the first time the OSI table is exercised for real.
+    //
+    // Everything up to here calls *into* the blob and hands it data. This is
+    // the first call that makes it call back out: `esp_wifi_init_internal`
+    // allocates its control structures and buffers, and does it through the
+    // table -- malloc, task create, mutex create, queue create. A wrong entry
+    // there has been unfalsifiable since #65 started.
+    //
+    // Kept after the PHY probe rather than before it, because the PHY is the
+    // thing that already works: if this wedges the board, everything above it
+    // has already been printed.
+    api::log_info!("[radio] calling esp_wifi_init_internal");
+    let t0 = kernel::clock::now_us();
+    let rc = unsafe { radio_esp32::wifi::init() };
+    let t1 = kernel::clock::now_us();
+    if rc == 0 {
+        api::log_info!("[radio] wifi init OK in {} us", t1 - t0);
+        api::log_info!(
+            "[radio] heap after wifi init: {} bytes free",
+            kernel::heap::free_bytes(kernel::heap::Caps::Internal)
+        );
+    } else {
+        // Espressif's, not translated: `esp_err_t` values are documented and a
+        // guess at what one means is worse than the number.
+        api::log_error!("[radio] wifi init returned {:#x} after {} us", rc, t1 - t0);
+    }
+
     loop {
         task::sleep_ms(1000);
     }
