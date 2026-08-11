@@ -143,6 +143,20 @@ pub const UNIMPLEMENTED: &[(&str, &str)] = &[
     ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
 ];
 
+// **There is no useful minimum subset**, and the references settle it.
+//
+// The tempting approach is to fill entries until the crashes stop, treating
+// the null as a search. NuttX's `esp32_wifi_adapter.c` binds **120 entries**,
+// 22 of them coexistence, and leaves nothing null. esp-idf's
+// `esp_wifi/esp32/esp_adapter.c` does the same. Zephyr does not have a table
+// of its own -- it reaches the blobs through esp-idf's layer, so it inherits
+// esp-idf's.
+//
+// Two independent non-FreeRTOS-and-FreeRTOS implementations both filling the
+// whole thing is the answer: the driver calls what it calls, and finding out
+// which by faulting is a slower way of arriving at "all of them". The
+// remaining work is the list above, not a bisection.
+//
 // A count belongs here, pinned by a test, so the list cannot drift again
 // without something failing. It is not written yet because counting 115
 // `Option` fields needs a macro over the struct definition, and a
