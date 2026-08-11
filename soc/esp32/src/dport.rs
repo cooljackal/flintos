@@ -292,8 +292,93 @@ pub unsafe fn disable(bit: ClockBit) {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+// ── The radio's clock gate ──────────────────────────────────────────────────
+//
+// The Wi-Fi and Bluetooth blocks are not gated by `DPORT_PERIP_CLK_EN` like
+// every other peripheral. They have their own register, their own bit
+// assignment, and a *shared* group of bits that both radios need -- which is
+// why this is a separate pair of functions rather than more `ClockBit`
+// variants. A refcount over one bitmask would get the sharing wrong.
+//
+// Values from esp-idf `components/soc/esp32/include/soc/dport_reg.h` at tag
+// v4.4, read rather than recalled:
+//
+//     DPORT_WIFI_CLK_EN_REG            DPORT + 0x0CC
+//     DPORT_WIFI_CLK_WIFI_BT_COMMON_M  0x000003c9   bits 0, 3, 6, 7, 8, 9
+//     DPORT_WIFI_CLK_WIFI_EN           0x00000406   bits 1, 2, 10
+//     DPORT_WIFI_CLK_BT_EN             0x61 << 11   bits 11, 16, 17
+
+/// `DPORT_WIFI_CLK_EN_REG`.
+const WIFI_CLK_EN: u32 = DPORT_BASE + 0x0CC;
+
+/// Clocks both radios need. Enabling either radio needs these on, and only
+/// the last one out may turn them off -- which is the caller's business,
+/// since this crate has no idea who else is using the radio.
+pub const RADIO_CLK_COMMON: u32 = 0x0000_03C9;
+
+/// Clocks only Wi-Fi needs. Bits 1, 2 and 10.
+pub const RADIO_CLK_WIFI: u32 = 0x0000_0406;
+
+/// Clocks only Bluetooth needs. Bits 11, 16 and 17.
+pub const RADIO_CLK_BT: u32 = 0x61 << 11;
+
+/// Turn on the radio clocks in `mask`.
+///
+/// Read-modify-write through [`read`]/[`write`], so it inherits the DPORT
+/// erratum workaround and the lock: the PHY is brought up from a task while
+/// the other core may be doing anything at all, and a lost bit here is a
+/// radio block that never gets a clock.
+///
+/// # Safety
+/// Writes DPORT. `mask` must be a combination of the `RADIO_CLK_*` constants.
+pub unsafe fn radio_clock_enable(mask: u32) {
+    unsafe { modify(WIFI_CLK_EN, 0, mask) }
+}
+
+/// Turn off the radio clocks in `mask`.
+///
+/// **Not the inverse of [`radio_clock_enable`] in practice.** The common bits
+/// are shared, so clearing them while the other radio is up stops it dead.
+/// Nothing here tracks that; the caller owns the decision, and today the only
+/// caller refcounts it.
+///
+/// # Safety
+/// Writes DPORT. `mask` must be a combination of the `RADIO_CLK_*` constants.
+pub unsafe fn radio_clock_disable(mask: u32) {
+    unsafe { modify(WIFI_CLK_EN, mask, 0) }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_radio_clock_masks_are_esp_idfs() {
+        // From dport_reg.h at v4.4. A wrong bit here is a radio block with no
+        // clock, which presents as the PHY failing to initialise rather than
+        // as anything pointing at a clock gate.
+        assert_eq!(WIFI_CLK_EN, 0x3FF0_00CC);
+        assert_eq!(RADIO_CLK_COMMON, 0x0000_03C9);
+        assert_eq!(RADIO_CLK_WIFI, 0x0000_0406);
+        assert_eq!(RADIO_CLK_BT, 0x0003_0800);
+    }
+
+    #[test]
+    fn wifi_and_bt_own_no_bits_in_common() {
+        // The shared bits are `RADIO_CLK_COMMON` and nothing else. If the
+        // per-radio masks overlapped, disabling one would silently take a
+        // clock away from the other.
+        assert_eq!(RADIO_CLK_WIFI & RADIO_CLK_BT, 0);
+        assert_eq!(RADIO_CLK_WIFI & RADIO_CLK_COMMON, 0);
+        assert_eq!(RADIO_CLK_BT & RADIO_CLK_COMMON, 0);
+    }
+
+    #[test]
+    fn the_radio_clock_register_is_not_the_peripheral_one() {
+        // Wi-Fi and BT are gated separately from every other peripheral.
+        // Writing the radio masks into PERIP_CLK_EN would gate six unrelated
+        // peripherals instead.
+        assert_ne!(WIFI_CLK_EN, PERIP_CLK_EN);
+    }
     use super::*;
 
     #[test]

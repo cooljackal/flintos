@@ -46,6 +46,7 @@ pub mod calibration;
 pub mod ets_timer;
 pub mod interrupts;
 pub mod nvs;
+pub mod phy;
 pub mod phy_init;
 pub mod osi;
 
