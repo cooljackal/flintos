@@ -46,29 +46,23 @@
 //! # The other core
 //!
 //! It is executing from flash too, and disabling the cache stops it just as
-//! dead. This stalls it for the duration and disables its cache as well: a
-//! running APP CPU is detected, stalled, and put back exactly as it was
-//! found. Order matters in both directions — stalled before its cache goes,
-//! released after its cache is back.
+//! dead. So it has to be got out of the way, and **it is asked rather than
+//! frozen** — see the note above [`park_this_core`]. Core 0 raises
+//! `FROM_CPU_2`, core 1's handler turns off its own cache, says it is parked
+//! and spins until released.
 //!
-//! The stall is a hardware one, which esp-idf deliberately avoids while its
-//! scheduler is running: stalling a core that holds a spinlock deadlocks
-//! whoever wants it next, so esp-idf uses a task handshake and NuttX does the
-//! same in `esp32_spiflash_opstart`.
+//! This used to be a hardware stall, and the argument for that being safe was
+//! that nothing ran between the stall and the release, so core 1 could be
+//! frozen holding a lock and nobody on this side would ask for it. #69 made
+//! IRAM-safe interrupts run in exactly that window, which retired the
+//! argument. esp-idf
+//! (`spi_flash_disable_interrupts_caches_and_other_cpu`) and NuttX
+//! (`esp32_spiflash_opstart`) both ask, and neither stalls.
 //!
-//! **What makes it safe here is a property of this path, not of that core.**
-//! The obvious justification — that the APP CPU never calls into `kernel` —
-//! is false: `kernel::boot::join_scheduler` makes it a full peer, and
-//! `apps/smp` and `apps/flashprobe` both call it, so core 1 runs kernel tasks
-//! and takes the scheduler spinlock. What holds is narrower: **nothing
-//! between the stall and the release acquires a lock**, so core 1 can be
-//! stalled holding one and no one on this side will ask for it.
-//!
-//! That is fragile, and deliberately written down as such. Add a lock
-//! acquisition anywhere inside [`with_cache_off`] — a bus handle, a log line
-//! — and this deadlocks. When that day comes, the shape to copy is NuttX's
-//! `esp32_spiflash_opstart`: park the other core with a semaphore it enters
-//! voluntarily, then disable both caches.
+//! The stall survives as a **bounded fallback**: if core 1 does not answer
+//! within `PARK_SPINS`, the old path runs and [`PARK_FELL_BACK`] records it.
+//! A board whose park signal was never routed then still writes flash, badly
+//! rather than not at all.
 
 #![no_std]
 // Same reason as `soc-esp32`: Xtensa inline asm is unstable, and this crate
@@ -385,8 +379,20 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     // microseconds, on every read.
     #[cfg(target_os = "none")]
     let app_was_running = soc_esp32::appcpu::is_running();
+
+    // Ask first, stall only if asking fails. See the long note above
+    // `park_this_core`: a parked core provably holds no lock, a stalled one
+    // may hold any of them, and IRAM-safe interrupts now run in this window.
     #[cfg(target_os = "none")]
-    let app_saved_mask = if app_was_running {
+    let app_parked = app_was_running && park_other_core();
+
+    #[cfg(target_os = "none")]
+    let app_stalled = app_was_running && !app_parked;
+
+    // The fallback path, unchanged from when it was the only path: freeze the
+    // core and reach across to its cache registers.
+    #[cfg(target_os = "none")]
+    let app_saved_mask = if app_stalled {
         soc_esp32::appcpu::stall();
         let c1 = APP_CACHE_CTRL1 as *mut u32;
         let saved = c1.read_volatile() & PRO_CACHE_MASK;
@@ -419,12 +425,19 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     // run. Released before its cache is restored, it would fetch through a
     // disabled one.
     #[cfg(target_os = "none")]
-    if app_was_running {
+    if app_stalled {
         let c = APP_CACHE_CTRL as *mut u32;
         c.write_volatile(c.read_volatile() | PRO_CACHE_ENABLE);
         let c1 = APP_CACHE_CTRL1 as *mut u32;
         c1.write_volatile((c1.read_volatile() & !PRO_CACHE_MASK) | app_saved_mask);
         soc_esp32::appcpu::unstall_now();
+    }
+
+    // A parked core restores its own cache, so there is nothing to reach
+    // across for -- only the release, and the wait for it to be out.
+    #[cfg(target_os = "none")]
+    if app_parked {
+        release_other_core();
     }
 
     #[cfg(target_os = "none")]
@@ -476,6 +489,162 @@ pub unsafe fn jedec_id() -> Result<u32, FlashError> {
     let mut out = 0u32;
     unsafe { with_cache_off(|| spi1::jedec_id().map(|v| out = v)) }?;
     Ok(out)
+}
+
+// ── Parking the other core ──────────────────────────────────────────────────
+//
+// The hardware stall this replaces was safe by an argument that stopped being
+// true. `appcpu::stall()` freezes core 1 wherever it happens to be, and a
+// frozen core does not release what it holds -- so if it were stalled holding
+// a `Spinlock`, anything on core 0 that wanted that lock would wait forever.
+// What made it safe was that *nothing ran* between the stall and the release.
+// Then #69 made IRAM-safe interrupts run there, and the argument went with it.
+//
+// esp-idf and NuttX both solve it the same way, and neither stalls:
+//
+//     esp-idf   spi_flash_disable_interrupts_caches_and_other_cpu, cache_utils.c
+//               -> esp_ipc_call(other_cpu, spi_flash_op_block_func)
+//     NuttX     esp32_spiflash_opstart, esp32_spiflash.c
+//               -> nxsem_post(&g_disable_non_iram_isr_on_core[other_cpu])
+//
+// In both, the other core is *asked*: it runs code of its own, disables its
+// own cache, says it is ready, and spins until released. It is never frozen
+// mid-instruction.
+//
+// **Why that is enough, in FlintOS's terms.** `Spinlock::with` takes the lock
+// inside `arch::cs_with`, so a lock is only ever held with interrupts masked
+// on the holding core. An interrupt therefore cannot land on core 1 while
+// core 1 holds a lock -- so a core parked *by an interrupt* provably holds
+// none. That is the same invariant esp-idf relies on, arrived at from the same
+// direction, and it is what makes the handshake correct rather than merely
+// more polite than a stall.
+//
+// The signal is `FROM_CPU_2`, routed only in the APP crossbar table, which is
+// esp-idf's choice of channel for exactly this job.
+
+/// Set by core 1 once it has parked: its cache is off and it is spinning.
+#[cfg(target_os = "none")]
+static PARKED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Set by core 0 to ask core 1 to park, cleared to release it.
+#[cfg(target_os = "none")]
+static PARK_REQUESTED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// How long core 0 waits for core 1 to park before giving up on the handshake.
+///
+/// Bounded, and the fallback is the old hardware stall. Core 1 answers within
+/// an interrupt latency when it is healthy; if it does not, something is wrong
+/// with the routing or the handler, and hanging here would be a board that
+/// goes silent on its first flash write with nothing pointing at the cause.
+/// Stalling instead is worse but recoverable, and it says so in the log.
+#[cfg(target_os = "none")]
+const PARK_SPINS: u32 = 2_000_000;
+
+/// True if the last flash operation had to fall back to stalling core 1.
+///
+/// Diagnostics, and the only way the fallback is visible: it cannot log from
+/// where it happens.
+pub static PARK_FELL_BACK: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// How many times core 1 has been parked by handshake rather than stalled.
+///
+/// Exists so the handshake can be shown to have *run*. Without it a silent
+/// fallback and a working handshake look identical from outside, and code that
+/// is never executed is the failure mode this project keeps rediscovering.
+pub static PARKS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// The handler core 1 runs when core 0 asks it to park. **IRAM throughout.**
+///
+/// Register it on the second core with `interrupt::connect_iram_safe` against
+/// `crosscore::Signal::FromCpu2`, routed in the APP table. The kernel does
+/// that in `join_scheduler`; this crate cannot, being Layer 1.
+///
+/// Acknowledging comes first and matters: the from-CPU signal is
+/// level-triggered, so a handler that spins without clearing it re-enters the
+/// moment it returns.
+///
+/// # Safety
+/// Trap context on the APP CPU only. Disables that core's cache, so everything
+/// from here until it is restored must be in IRAM — which is why this does so
+/// little.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+pub unsafe fn park_this_core() {
+    #[cfg(target_os = "none")]
+    {
+        use core::sync::atomic::Ordering;
+
+        soc_esp32::crosscore::clear(soc_esp32::crosscore::Signal::FromCpu2);
+
+        // This core's own cache, saved and switched off by this core. Core 0
+        // used to reach across and do it; doing it here is what lets core 1
+        // choose the moment.
+        let c1 = APP_CACHE_CTRL1 as *mut u32;
+        let saved_mask = c1.read_volatile() & PRO_CACHE_MASK;
+        let c = APP_CACHE_CTRL as *mut u32;
+        c.write_volatile(c.read_volatile() & !PRO_CACHE_ENABLE);
+
+        PARKED.store(true, Ordering::SeqCst);
+        while PARK_REQUESTED.load(Ordering::SeqCst) {
+            core::hint::spin_loop();
+        }
+
+        c.write_volatile(c.read_volatile() | PRO_CACHE_ENABLE);
+        c1.write_volatile((c1.read_volatile() & !PRO_CACHE_MASK) | saved_mask);
+        PARKED.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Ask core 1 to park. `true` if it did; `false` if the caller must stall it.
+///
+/// # Safety
+/// Raises a DPORT signal. Must be followed by [`release_other_core`].
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+#[cfg(target_os = "none")]
+unsafe fn park_other_core() -> bool {
+    use core::sync::atomic::Ordering;
+
+    PARKED.store(false, Ordering::SeqCst);
+    PARK_REQUESTED.store(true, Ordering::SeqCst);
+    soc_esp32::crosscore::raise(soc_esp32::crosscore::Signal::FromCpu2);
+
+    let mut spins = 0u32;
+    while !PARKED.load(Ordering::SeqCst) {
+        if spins >= PARK_SPINS {
+            // Give up cleanly: withdraw the request so a late handler does not
+            // park against a release that has already happened.
+            PARK_REQUESTED.store(false, Ordering::SeqCst);
+            soc_esp32::crosscore::clear(soc_esp32::crosscore::Signal::FromCpu2);
+            PARK_FELL_BACK.store(true, Ordering::Relaxed);
+            return false;
+        }
+        spins += 1;
+        core::hint::spin_loop();
+    }
+    PARKS.fetch_add(1, Ordering::Relaxed);
+    true
+}
+
+/// Let core 1 go, and wait for it to have its cache back.
+///
+/// The wait is not optional. Returning while core 1 is still spinning with its
+/// cache off leaves it fetching nothing the moment it resumes, and the failure
+/// appears on the *other* core.
+///
+/// # Safety
+/// Must match a [`park_other_core`] that returned `true`.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+#[cfg(target_os = "none")]
+unsafe fn release_other_core() {
+    use core::sync::atomic::Ordering;
+    PARK_REQUESTED.store(false, Ordering::SeqCst);
+    while PARKED.load(Ordering::SeqCst) {
+        core::hint::spin_loop();
+    }
 }
 
 /// Tell the driver how to mask interrupts that cannot survive the cache going

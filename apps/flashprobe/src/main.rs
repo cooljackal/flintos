@@ -148,6 +148,24 @@ fn run() {
         }
     }
 
+    // Was core 1 asked to get out of the way, or frozen?
+    //
+    // The two look identical from outside — flash works either way and core 1
+    // survives either way — so without this the handshake could be dead code
+    // and nothing would say so. It is the only app that starts the second
+    // core, so it is the only place the question can be asked at all.
+    {
+        use core::sync::atomic::Ordering;
+        let parks = esp32_flash::PARKS.load(Ordering::Relaxed);
+        let fell_back = esp32_flash::PARK_FELL_BACK.load(Ordering::Relaxed);
+        api::log_info!("[probe] core 1 parked by handshake {} times", parks);
+        if fell_back {
+            api::log_error!("[probe] and at least once it had to fall back to stalling");
+        } else if parks == 0 {
+            api::log_error!("[probe] never parked: the handshake did not run");
+        }
+    }
+
     match outcome {
         Ok(()) => api::log_info!("[probe] PASS"),
         Err(e) => api::log_error!("[probe] FAIL: {}", e),

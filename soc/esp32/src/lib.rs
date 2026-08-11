@@ -49,6 +49,7 @@
 pub mod app_desc;
 pub mod addr;
 pub mod appcpu;
+pub mod crosscore;
 pub mod dma;
 pub mod efuse;
 pub mod dport;

@@ -59,9 +59,17 @@ use crate::addr::DPORT_BASE;
 
 /// The PRO CPU's crossbar table. Source 0 lives here.
 ///
-/// There is a matching APP CPU table further along; nothing routes to the
-/// second core until it is brought up, so it has no constant yet.
+/// `DPORT_PRO_MAC_INTR_MAP_REG`, read from `dport_reg.h` at v4.4.
 const PRO_MAP_BASE: u32 = DPORT_BASE + 0x104;
+
+/// The APP CPU's crossbar table. `DPORT_APP_MAC_INTR_MAP_REG`, same header.
+///
+/// **The two tables are independent, and that is the point.** A source routed
+/// in one and parked in the other fires on exactly one core, which is how a
+/// cross-core signal is aimed: `esp32-flash` routes `FROM_CPU_2` here and
+/// leaves it parked in the PRO table, so raising it interrupts core 1 and
+/// nothing else.
+const APP_MAP_BASE: u32 = DPORT_BASE + 0x218;
 
 /// `ETS_MAX_INTR_SOURCE`. Valid sources are `0..SOURCE_COUNT`.
 pub const SOURCE_COUNT: u8 = 69;
@@ -137,7 +145,39 @@ pub enum RouteError {
 /// — the handler then has to work out which fired — but routing a source that
 /// another driver owns will steal its interrupts.
 pub unsafe fn route(source: u8, cpu_int: u8) -> Result<(), RouteError> {
-    let reg = map_reg(source).ok_or(RouteError::NoSuchSource)?;
+    unsafe { route_on(Core::Pro, source, cpu_int) }
+}
+
+/// Which core's crossbar table a route goes in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Core {
+    Pro,
+    App,
+}
+
+/// The crossbar register for a source in one core's table.
+pub const fn map_reg_on(core: Core, source: u8) -> Option<u32> {
+    if source >= SOURCE_COUNT {
+        return None;
+    }
+    let base = match core {
+        Core::Pro => PRO_MAP_BASE,
+        Core::App => APP_MAP_BASE,
+    };
+    Some(base + 4 * source as u32)
+}
+
+/// [`route`], naming which core the source should land on.
+///
+/// The two tables are independent: routing in one leaves the other parked, so
+/// this is how an interrupt is aimed at a particular core rather than merely
+/// enabled.
+///
+/// # Safety
+/// As [`route`], and additionally: routing into the APP table before the APP
+/// CPU is running arms an interrupt nothing will service.
+pub unsafe fn route_on(core: Core, source: u8, cpu_int: u8) -> Result<(), RouteError> {
+    let reg = map_reg_on(core, source).ok_or(RouteError::NoSuchSource)?;
     if !can_serve_peripheral(cpu_int) {
         return Err(RouteError::Unusable);
     }

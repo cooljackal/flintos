@@ -417,6 +417,19 @@ fn idle_loop_entry() {
 
 // ── Secondary core ──────────────────────────────────────────────────────────
 
+/// The registered form of `esp32_flash::park_this_core`.
+///
+/// A top-half is a safe `fn()`, and the driver's entry point is `unsafe`
+/// because of where it may be called from. In IRAM for the obvious reason: it
+/// is the first thing on the path that runs with the cache off, and a shim in
+/// flash would defeat the function it is shimming.
+#[cfg(target_os = "none")]
+#[inline(never)]
+#[link_section = ".iram1.flash"]
+fn park_isr() {
+    unsafe { esp32_flash::park_this_core() };
+}
+
 /// Bring a secondary core into the scheduler.
 ///
 /// Called *on that core*, by the trampoline, once it has a stack. When this
@@ -473,6 +486,44 @@ pub unsafe fn join_scheduler() -> ! {
     // task sleeping 7 ms iterated ten thousand times a second. `INTENABLE` is
     // per-core, so core 0 enabling it says nothing about core 1.
     registers::enable_interrupt(registers::INT_SOFTWARE);
+
+    // How core 0 asks this core to get out of the way for a flash operation.
+    //
+    // Before this, it did not ask: `esp32-flash` stalled the APP CPU in
+    // hardware, freezing it wherever it happened to be — including, in
+    // principle, holding a `Spinlock` that core 0 was about to want. Now core 1
+    // parks itself from an interrupt, and because `Spinlock::with` takes its
+    // lock inside `arch::cs_with`, an interrupt cannot land here while a lock
+    // is held. A core parked this way provably holds nothing.
+    //
+    // Routed in the **APP** crossbar table only, so raising `FROM_CPU_2`
+    // interrupts this core and no other. Registered as IRAM-safe because that
+    // is exactly what it is: the handler's whole job is to run with the cache
+    // off. Failure is reported and not fatal — the flash driver falls back to
+    // the stall it used to do, which is worse but works.
+    #[cfg(target_os = "none")]
+    unsafe {
+        use soc_esp32::crosscore::Signal;
+        use soc_esp32::intr_map::{self, Core};
+
+        const PARK_CPU_INT: u8 = 5;
+        match intr_map::route_on(Core::App, Signal::FromCpu2.source(), PARK_CPU_INT) {
+            Ok(()) => {
+                if crate::interrupt::register_iram_safe(PARK_CPU_INT, park_isr) {
+                    registers::enable_interrupt(PARK_CPU_INT as u32);
+                } else {
+                    debug::fault::raw_print(
+                        "[FLINT] WARNING: no slot for the flash park handler; \
+                         flash will stall core 1\r\n",
+                    );
+                }
+            }
+            Err(_) => debug::fault::raw_print(
+                "[FLINT] WARNING: could not route the flash park signal; \
+                 flash will stall core 1\r\n",
+            ),
+        }
+    }
 
     let _prev = registers::set_intlevel_0();
 
