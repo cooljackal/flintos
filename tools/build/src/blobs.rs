@@ -2,10 +2,30 @@
 
 //! Point the linker at Espressif's radio archives.
 //!
-//! Only under the `blobs` feature, and only for the Xtensa target. Without it
-//! this crate builds and tests as ordinary Rust — which is what lets the OSI
-//! table and its conversions be developed and tested with no binaries present
-//! at all.
+//! # Why this lives in the application's build script
+//!
+//! It used to live in `radio/esp32/build.rs`, next to the crate that declares
+//! the `extern "C"` functions, which is where it reads as belonging. It does
+//! not work there, for the reason this crate's own module docs already state:
+//!
+//! > Cargo does not propagate `rustc-link-arg` from a dependency's build
+//! > script to the binary that depends on it.
+//!
+//! `cargo:rustc-link-search` *does* propagate, so the failure was not obvious
+//! — the linker was given the directory and none of the `-l` flags, and
+//! reported five undefined PHY symbols as though the archives were missing.
+//!
+//! `cargo:rustc-link-lib` would propagate, but cannot express the one thing
+//! these archives need: `--start-group`. So the flags are emitted here, from
+//! the build script of the binary being linked, which is the only place they
+//! reach the link at all.
+//!
+//! # When it runs
+//!
+//! Only when the application enables its own `blobs` feature, and only for the
+//! Xtensa target. `CARGO_FEATURE_BLOBS` in *this* build script is the
+//! application's feature, exactly as `CARGO_FEATURE_RADIO_BT` is for the
+//! memory map.
 //!
 //! The archives are not in the repository. `make blobs` fetches them into
 //! `.blobs/`, pinned to the revisions esp-idf references; see
@@ -23,9 +43,7 @@ const BLOB_DIR: &str = ".blobs/esp32";
 /// needs it. `pp` and `net80211` reference each other, which no ordering can
 /// satisfy on a single pass — `--start-group` is what handles that, and it is
 /// why these are emitted as a group rather than as plain `-l` flags.
-const ARCHIVES: &[&str] = &[
-    "core", "net80211", "pp", "coexist", "phy", "rtc", "wapi",
-];
+const ARCHIVES: &[&str] = &["core", "net80211", "pp", "coexist", "phy", "rtc", "wapi"];
 
 /// Fetched but not linked, with the reason. Reported once at build time so the
 /// choice is visible rather than buried here -- 1.2 MB of the download is
@@ -43,38 +61,29 @@ const NOT_LINKED: &[(&str, &str)] = &[
     ("btdm_app", "BLE controller, linked by #66 rather than here"),
 ];
 
-fn main() {
-    println!("cargo:rerun-if-changed=build.rs");
+/// Emit the link flags for Espressif's archives, if this build wants them.
+///
+/// Called from [`crate::link`], after the target has been checked.
+pub(crate) fn link() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_BLOBS");
-
-    if std::env::var_os("CARGO_FEATURE_BLOBS").is_none() {
-        return;
-    }
-    if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("xtensa") {
-        // A host build with `blobs` on is a mistake rather than a
-        // configuration: the archives are Xtensa objects and the linker would
-        // reject every one. Say so instead of emitting flags that cannot work.
-        println!(
-            "cargo:warning=radio-esp32: the `blobs` feature does nothing off \
-             the Xtensa target; the archives are ESP32 objects."
-        );
-        return;
-    }
 
     // Track the directory itself, so removing the archives re-runs this and
     // produces the message below rather than a cached set of link flags
     // pointing at nothing -- which surfaces much later as `cannot find -lpp`
-    // and names neither the cause nor the fix. Emitted for the expected path
-    // whether or not it currently exists, so creating it also triggers a
-    // rebuild.
+    // and names neither the cause nor the fix. Emitted whether or not it
+    // currently exists, so creating it also triggers a rebuild.
     if let Some(root) = workspace_root() {
         println!("cargo:rerun-if-changed={}", root.join(BLOB_DIR).display());
+    }
+
+    if std::env::var_os("CARGO_FEATURE_BLOBS").is_none() {
+        return;
     }
 
     let dir = match find_blobs() {
         Some(d) => d,
         None => panic!(
-            "\n\nradio-esp32: the `blobs` feature is enabled but Espressif's \
+            "\n\nbuild: the `blobs` feature is enabled but Espressif's \
              archives are not present.\n\n    make blobs\n\nfetches them \
              (~4.3 MB, Apache-2.0, pinned to esp-idf v4.4) into {BLOB_DIR}. \
              They are deliberately not committed -- see doc/plan-radio.md for \
@@ -82,15 +91,14 @@ fn main() {
         ),
     };
 
-    let mut missing = Vec::new();
-    for name in ARCHIVES {
-        if !dir.join(format!("lib{name}.a")).is_file() {
-            missing.push(*name);
-        }
-    }
+    let missing: Vec<&str> = ARCHIVES
+        .iter()
+        .copied()
+        .filter(|name| !dir.join(format!("lib{name}.a")).is_file())
+        .collect();
     if !missing.is_empty() {
         panic!(
-            "\n\nradio-esp32: {} is present but incomplete -- missing: {}\n\n    \
+            "\n\nbuild: {} is present but incomplete -- missing: {}\n\n    \
              make blobs\n\nwill re-fetch. If it persists, the pinned revisions \
              in tools/fetch-blobs.sh may no longer carry these archives.\n",
             dir.display(),
@@ -98,7 +106,7 @@ fn main() {
         );
     }
 
-    println!("cargo:rustc-link-search=native={}", dir.display());
+    println!("cargo:rustc-link-arg=-L{}", dir.display());
 
     // A group, not a sequence: `libpp.a` and `libnet80211.a` reference each
     // other, so no single-pass ordering resolves both. Without this the link
@@ -112,14 +120,14 @@ fn main() {
     println!("cargo:rustc-link-arg=-Wl,--end-group");
 
     for (name, why) in NOT_LINKED {
-        println!("cargo:warning=radio-esp32: lib{name}.a fetched but not linked ({why})");
+        println!("cargo:warning=build: lib{name}.a fetched but not linked ({why})");
     }
 }
 
-/// Walk up from this crate looking for the workspace's blob directory.
+/// Walk up from the calling crate looking for the workspace's blob directory.
 ///
-/// Same approach as `build::link`'s search for the linker script: it means the
-/// crate does not have to know how deep it sits.
+/// Same approach as [`crate::link`]'s search for the linker script: it means
+/// an application does not have to know how deep it sits.
 fn find_blobs() -> Option<PathBuf> {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").ok()?);
     manifest
@@ -149,4 +157,40 @@ fn has_any_archive(dir: &Path) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_linked_archive_is_named_once() {
+        // A duplicate is not harmless inside a group: it is a second scan of
+        // the same members, and it hides an ordering mistake rather than
+        // fixing it.
+        for (i, a) in ARCHIVES.iter().enumerate() {
+            assert!(!ARCHIVES[i + 1..].contains(a), "{a} listed twice");
+        }
+    }
+
+    #[test]
+    fn nothing_is_both_linked_and_deliberately_skipped() {
+        // The two lists are the whole of what `make blobs` fetches, split by
+        // a decision. An archive in both would mean the recorded reason for
+        // skipping it is a lie.
+        for (name, _) in NOT_LINKED {
+            assert!(!ARCHIVES.contains(name), "{name} is linked and skipped");
+        }
+    }
+
+    #[test]
+    fn the_group_is_what_makes_the_pair_resolvable() {
+        // `pp` and `net80211` reference each other. If a refactor ever drops
+        // one of them from the group the link breaks in a way that reads as a
+        // missing library, so pin the fact that both are in the list.
+        assert!(ARCHIVES.contains(&"pp"));
+        assert!(ARCHIVES.contains(&"net80211"));
+    }
 }

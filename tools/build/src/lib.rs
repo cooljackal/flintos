@@ -16,6 +16,7 @@
 //! }
 //! ```
 
+mod blobs;
 pub mod map;
 
 use std::path::{Path, PathBuf};
@@ -100,6 +101,11 @@ pub fn link() {
     }
     println!("cargo:rustc-link-arg=-T{}", out.display());
     println!("cargo:rerun-if-changed={}", script.display());
+
+    // Espressif's archives, for an application that has asked for them. Same
+    // reason this function exists at all: the flags have to come from the
+    // build script of the binary being linked.
+    blobs::link();
 }
 
 /// Replace the marked `MEMORY` entries with the computed map.

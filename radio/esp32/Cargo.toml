@@ -32,11 +32,13 @@ soc-esp32 = { path = "../../soc/esp32" }
 kvstore = { path = "../../lib/kvstore" }
 
 [features]
-# Link Espressif's archives. Off by default so the crate builds and tests with
-# no binaries present -- `make blobs` fetches them. Turning this on is step 3.3
-# of doc/plan-radio.md, and the first thing it produces is the full list of
-# symbols the adapter has yet to provide.
-blobs = []
+# **No `blobs` feature, and no build script.** This crate declares the
+# `extern "C"` functions; the archives that define them are named by the
+# *application's* build script, because cargo does not propagate
+# `rustc-link-arg` from a dependency's build script to the binary that links
+# it -- see `tools/build/src/blobs.rs`. A feature here would have looked like
+# the switch and not been one: the search path propagated, every `-l` flag was
+# dropped, and the linker reported the PHY symbols as simply missing.
 
 board-esp32-wrover = ["kernel/board-esp32-wrover"]
 board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
