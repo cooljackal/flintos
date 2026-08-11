@@ -1644,12 +1644,12 @@ mod by_name {
     }
 
     // ── Odds and ends ───────────────────────────────────────────────────────
-
-    /// esp-idf's event base for Wi-Fi, which is a `const char *` compared by
-    /// pointer rather than by value. What it points at does not matter; that
-    /// every reference sees the *same* address does.
-    #[no_mangle]
-    pub static WIFI_EVENT: &[u8; 11] = b"WIFI_EVENT\0";
+    //
+    // `WIFI_EVENT` used to be defined here, as a `&[u8; 11]`. It has moved to
+    // `crate::wifi`, because a handler installed through `set_event_handler`
+    // has to compare the base it is given against it — and it could not, from
+    // a private module inside a `#[cfg(target_os = "none")]` block. Same
+    // symbol, same representation, somewhere it can be named.
 
     /// Espressif's hex-string decoder: `hex` into `buf`, `len` bytes.
     ///

@@ -70,7 +70,24 @@ pub fn raw_dec(v: u32) {
 
 /// Report a CPU exception over raw UART0 and halt. Called from the trap handler
 /// when a non-interrupt exception reaches it.
-pub fn raw_uart_fault(tag: &str, cause: u32, epc: u32, ps: u32, vaddr: u32) -> ! {
+///
+/// `a0` and `a1` are the faulting window's return address and stack pointer.
+/// They matter more than they look: `epc` alone is useless the moment the fault
+/// is a jump through a null or garbage pointer, because the address it names is
+/// not code and `addr2line` has nothing to say about it. `a0` is the call site,
+/// which is the question actually being asked — "who called this?".
+///
+/// This was added the first time `epc=0x00000036` appeared, which named an
+/// address in nobody's function and left a blob-sized haystack.
+pub fn raw_uart_fault(
+    tag: &str,
+    cause: u32,
+    epc: u32,
+    ps: u32,
+    vaddr: u32,
+    a0: u32,
+    a1: u32,
+) -> ! {
     unsafe {
         raw_puts("\r\n[FLINT FAULT] ");
         raw_puts(tag);
@@ -82,6 +99,16 @@ pub fn raw_uart_fault(tag: &str, cause: u32, epc: u32, ps: u32, vaddr: u32) -> !
         raw_hex(ps);
         raw_puts(" vaddr=");
         raw_hex(vaddr);
+        // `a0` carries the window increment in its top two bits on a windowed
+        // return; the address is the bottom 30, ORed with the caller's region.
+        // Printed raw rather than decoded, because decoding it needs the
+        // caller's PC, which is what we are trying to find.
+        raw_puts("\r\n[FLINT FAULT] a0=");
+        raw_hex(a0);
+        raw_puts(" sp=");
+        raw_hex(a1);
+        raw_puts(" task=");
+        raw_dec(crate::dynobj::current_task());
         raw_puts("\r\n");
     }
     loop {

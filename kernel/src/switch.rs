@@ -163,10 +163,16 @@ pub unsafe extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContex
         // A genuine exception (not an interrupt) reached the trap handler.
         // In a single protection domain this is a fatal fault — dump it over
         // raw UART0 (works even before our own UART init) and halt.
-        let (epc, ps, vaddr) = unsafe {
-            ((*frame).pc, (*frame).ps, registers::read_excvaddr())
+        let (epc, ps, vaddr, a0, a1) = unsafe {
+            (
+                (*frame).pc,
+                (*frame).ps,
+                registers::read_excvaddr(),
+                (*frame).a[0],
+                (*frame).a[1],
+            )
         };
-        debug::fault::raw_uart_fault("exc", cause, epc, ps, vaddr);
+        debug::fault::raw_uart_fault("exc", cause, epc, ps, vaddr, a0, a1);
     }
 
     // Decide whether to switch.

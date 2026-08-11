@@ -72,6 +72,45 @@ fn trampoline<const N: usize>() {
     }
 }
 
+/// A route the blob asked for, kept so it can be reported later.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Route {
+    /// The peripheral interrupt source. 0 is the Wi-Fi MAC.
+    pub source: u8,
+    /// The CPU interrupt input it was routed onto.
+    pub num: u8,
+    /// The core it was routed on.
+    pub core: u8,
+    /// Whether [`kernel::interrupt::connect`] accepted it.
+    pub connected: bool,
+}
+
+/// What the blob has routed so far.
+///
+/// **Recorded rather than logged**, and the distinction cost a debugging
+/// session: an `api::log_info!` inside [`set_intr`] hangs the board before the
+/// driver finishes starting. These run inside the blob's own critical sections,
+/// where the console path is not available. Writing four bytes under a lock the
+/// caller cannot already hold is affordable there; formatting and a UART write
+/// are not. Printing is the application's job, once it is back on its own
+/// stack.
+static ROUTES: kernel::smp::Spinlock<[Option<Route>; CPU_INTS]> =
+    kernel::smp::Spinlock::new([None; CPU_INTS]);
+
+/// Call `f` with every interrupt route the blob has asked for.
+///
+/// The answer to "did the radio's interrupt get connected, and to what?",
+/// which is otherwise invisible — a scan that times out looks identical
+/// whether the MAC interrupt is misrouted, refused, or never requested. On a
+/// v4.4 station bring-up the expected answer is exactly one route: source 0 to
+/// a level-1 CPU input on the core the Wi-Fi task is pinned to.
+pub fn for_each_route(mut f: impl FnMut(Route)) {
+    let snapshot = ROUTES.with(|r| *r);
+    for route in snapshot.into_iter().flatten() {
+        f(route);
+    }
+}
+
 /// One distinct `fn()` per CPU interrupt, which is the whole trick.
 static TRAMPOLINES: [fn(); CPU_INTS] = [
     trampoline::<0>, trampoline::<1>, trampoline::<2>, trampoline::<3>,
@@ -146,9 +185,16 @@ pub unsafe extern "C" fn set_intr(cpu: i32, source: u32, num: u32, _prio: i32) {
         );
         return;
     }
-    if let Err(e) = unsafe { interrupt::connect(source, num, TRAMPOLINES[num as usize]) } {
+    let result = unsafe { interrupt::connect(source, num, TRAMPOLINES[num as usize]) };
+    if let Err(e) = result {
         api::log_error!("radio: _set_intr could not route source {} to CPU interrupt {}: {:?}", source, num, e);
     }
+    let route = Route { source, num, core: me as u8, connected: result.is_ok() };
+    ROUTES.with(|r| {
+        // Keyed by CPU interrupt, so a re-route overwrites rather than
+        // accumulating -- the blob does call this twice for the same input.
+        r[num as usize] = Some(route);
+    });
 }
 
 /// `_clear_intr(source, num)`.

@@ -337,7 +337,7 @@ during 3.6 rather than after it.
 | Step | Work | Done when |
 |---|---|---|
 | 5.1 | Bring up the Wi-Fi blobs | **Done.** `esp_wifi_init_internal` returns `ESP_OK` in 179 ms on an ESP32-DevKitC, with all 115 OSI entries filled. |
-| 5.2 | Station mode: scan | A scan returns the APs actually in the room. |
+| 5.2 | Station mode: scan | **In progress.** `esp_wifi_set_mode`, `esp_wifi_start` and `esp_wifi_scan_start` all run; the scan times out with no results. See below. |
 | 5.3 | Station mode: associate | The device joins a WPA2 network and holds the association. |
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
 | 5.5 | On-target self-test | Scan and associate run in `make test-target`, skipped cleanly when no AP is configured. |
@@ -379,6 +379,52 @@ Two things are known to be needed beyond the struct:
   and an event task the way esp-idf does. That trade is the thing 5.2 tests:
   the handler must not block and must not re-enter `esp_wifi_*`, and if a real
   scan needs either, the queue is what replaces it.
+### Where 5.2 actually is, measured
+
+`apps/wifiscan` gets the driver all the way to a scan and the scan fails.
+Everything up to that point works on an ESP32-DevKitC:
+
+```text
+[wifi] driver up
+radio: no stored RF calibration; calibrating in full      <- on wifiT, not ours
+radio: RF calibration stored
+[wifi] station started
+[wifi] irq: source 0 -> cpu-int 0 on core 0 (connected)
+[wifi] intenable=0x000000c1
+[wifi] scan 1 failed: 0x300c after 8702011 us             <- ESP_ERR_WIFI_TIMEOUT
+[wifi] scan 2 done in 2 ms ... 0 networks, 0 events
+```
+
+So: the Wi-Fi task runs, the driver drives the PHY through `_phy_enable` and
+calibrates on its own thread, and `_set_intr` routes the MAC interrupt (source
+0) to a level-1 CPU input with the mask set. What does not happen is any
+event, and any result.
+
+**Two known causes, both concrete.**
+
+1. **`wifi_init_config_t::event_handler` is still a stub.** There are two
+   event routes out of the blob. `_event_post` in the OSI table is
+   `esp_event_post`, and it is implemented. This field is
+   `esp_event_send_internal`, the older `system_event_t` path — and on v4.4 it
+   is the one that carries `WIFI_EVENT_STA_START` and `WIFI_EVENT_SCAN_DONE`.
+   Wiring the wrong one of the two is easy and was done here. Implementing it
+   needs `system_event_t`'s layout, a tagged union over every event payload.
+2. **The scan itself times out**, which the event path does not explain — a
+   blocking scan waits on the driver's own event group, not on the
+   application. The next measurement is whether the MAC interrupt fires at
+   all. `radio_esp32::interrupts::for_each_route` reports the routing;
+   counting *deliveries* needs somewhere safe to count from, and an atomic
+   increment inside the trampoline hangs the board before the driver finishes
+   starting — unexplained, and worth understanding before it is worked around.
+
+Two smaller things the run surfaced, both filed here rather than fixed:
+
+- **A stored RF calibration wedges the next boot.** With `nvs` non-empty,
+  `esp_wifi_init_internal` never returns; with `make erase` first it takes
+  14 ms. `radioprobe` reads the same store without trouble, so the difference
+  is the driver reading it from `wifiT` rather than from an application task.
+- **~184 bytes leak per scan**, steadily, across rounds.
+
 - **`wpa_crypto_funcs`.** In esp-idf this is filled from
   `libwpa_supplicant`, which is C source and not one of the blobs, so WPA2
   (5.3) means providing AES, SHA, HMAC and PBKDF2 ourselves. An **open** scan

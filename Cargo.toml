@@ -59,6 +59,7 @@ members = [
     "apps/spidma",
     "apps/flashprobe",
     "apps/radioprobe",
+    "apps/wifiscan",
 
     "drivers/physical/esp32/uart",
     "drivers/physical/esp32/gpio",

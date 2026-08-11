@@ -56,6 +56,7 @@ pub mod interrupts;
 pub mod nvs;
 pub mod phy;
 pub mod phy_init;
+pub mod scan;
 pub mod tasks;
 pub mod wifi;
 pub mod osi;

@@ -243,27 +243,158 @@ impl WifiInitConfig {
     }
 }
 
-/// Where the driver reports what happened. **A stub, and step 5.2's problem.**
+/// `wifi_init_config_t::event_handler` — **the path the driver's events
+/// actually take, and still a stub.**
 ///
-/// esp-idf points this at `esp_event_send_internal`, which posts into
-/// `esp_event`'s loop; the driver announces `WIFI_EVENT_SCAN_DONE`,
-/// `WIFI_EVENT_STA_START`, `WIFI_EVENT_STA_CONNECTED` and the rest through it.
-/// FlintOS has no event loop, so this accepts and drops.
+/// There are two event routes out of the blob and it is easy to wire the wrong
+/// one, which is what happened here. `_event_post` in the OSI table is
+/// `esp_event_post`, the modern loop, and it is implemented
+/// ([`crate::adapter::set_event_handler`]). *This* field is
+/// `esp_event_send_internal`, the older `system_event_t` path — and on a v4.4
+/// station bring-up it is the one that carries `WIFI_EVENT_STA_START` and
+/// `WIFI_EVENT_SCAN_DONE`.
 ///
-/// That is enough for init, which is why 5.1 can be done without it, and not
-/// enough for a scan — a scan that completes and cannot say so is a scan you
-/// cannot read. Returning `ESP_OK` rather than an error is deliberate: the
-/// driver treats a failed post as a problem worth retrying, and there is
-/// nothing here to retry into.
+/// Measured, not assumed: with `_event_post` wired and this left as a stub,
+/// `wifiscan` starts the station, routes the MAC interrupt and reaches the
+/// scan — and observes **zero** events.
+///
+/// Implementing it needs `system_event_t`'s layout, which is a tagged union of
+/// every event payload the driver has. That is step 5.2's remaining work.
 extern "C" fn event_post(_event: *mut c_void) -> i32 {
     0
+}
+
+/// The bytes behind [`WIFI_EVENT`].
+static WIFI_EVENT_NAME: [u8; 11] = *b"WIFI_EVENT\0";
+
+/// An `esp_event_base_t`, which is a `const char *` and therefore not `Sync` on
+/// its own. It is written once, at link time, and never again.
+#[repr(transparent)]
+pub struct EventBase(pub *const core::ffi::c_char);
+
+// SAFETY: a pointer to a `static` in this crate's rodata. Immutable, and
+// outlives everything that can read it.
+unsafe impl Sync for EventBase {}
+
+/// `WIFI_EVENT` — the event base the driver tags its own events with.
+///
+/// **The blob imports this and nothing defines it**, which is a trap worth
+/// naming: `libnet80211.a` leaves `WIFI_EVENT` undefined, but only the members
+/// pulled in by `esp_wifi_start` reference it. So a build that only calls
+/// `esp_wifi_init_internal` links cleanly and the first `set_mode`/`start`
+/// fails at link time instead — a long way from the code that caused it.
+///
+/// In esp-idf it comes from `ESP_EVENT_DEFINE_BASE(WIFI_EVENT)` in
+/// `wifi_init.c`, which is C source rather than one of the archives, and
+/// expands to exactly this: a `const char *` holding the string `"WIFI_EVENT"`.
+///
+/// [`crate::adapter::EventHandler`] is handed this pointer, and comparing
+/// against `&WIFI_EVENT` is how a handler tells a Wi-Fi event from an IP one.
+#[no_mangle]
+pub static WIFI_EVENT: EventBase = EventBase(WIFI_EVENT_NAME.as_ptr().cast());
+
+/// `wifi_event_t`, from `esp_wifi_types.h` at v4.4. Only the ones a station
+/// build can see; the enum is contiguous from zero and these are its head.
+pub mod event {
+    /// The driver is up.
+    pub const WIFI_READY: i32 = 0;
+    /// A scan finished. The payload is `wifi_event_sta_scan_done_t`.
+    pub const SCAN_DONE: i32 = 1;
+    /// Station mode started — the point at which a scan may be requested.
+    pub const STA_START: i32 = 2;
+    pub const STA_STOP: i32 = 3;
+    pub const STA_CONNECTED: i32 = 4;
+    pub const STA_DISCONNECTED: i32 = 5;
+    pub const STA_AUTHMODE_CHANGE: i32 = 6;
+}
+
+/// `wifi_event_sta_scan_done_t`, the payload of [`event::SCAN_DONE`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ScanDone {
+    /// 0 on success, 1 on failure.
+    pub status: u32,
+    /// How many results are waiting. Also available from
+    /// [`crate::scan::ap_count`], which is what a handler that did not capture
+    /// this should use.
+    pub number: u8,
+    /// The scan's sequence number.
+    pub scan_id: u8,
+}
+
+/// `wifi_mode_t`. The driver refuses most calls until a mode is set.
+pub mod mode {
+    pub const NULL: u32 = 0;
+    pub const STA: u32 = 1;
+    pub const AP: u32 = 2;
+    pub const APSTA: u32 = 3;
 }
 
 extern "C" {
     /// `esp_err_t esp_wifi_init_internal(const wifi_init_config_t *config)`,
     /// from `esp_private/wifi.h` at v4.4. Defined in `libnet80211.a`.
     fn esp_wifi_init_internal(config: *const WifiInitConfig) -> i32;
+    fn esp_wifi_set_mode(mode: u32) -> i32;
+    fn esp_wifi_start() -> i32;
+    fn esp_wifi_stop() -> i32;
 }
+
+/// `esp_wifi_set_mode`. One of [`mode`].
+///
+/// # Safety
+/// Calls into the blob. [`init`] must have succeeded.
+pub unsafe fn set_mode(m: u32) -> i32 {
+    unsafe { esp_wifi_set_mode(m) }
+}
+
+/// `esp_wifi_start`. Starts the driver in whatever mode was set.
+///
+/// **Does not return with the radio ready.** The driver posts
+/// [`event::STA_START`] when station mode is actually up, and a scan requested
+/// before that returns `ESP_ERR_WIFI_NOT_STARTED`. In esp-idf the start is
+/// synchronous enough in practice that most examples ignore this; it is called
+/// out because the failure is intermittent and reads like a scan bug.
+///
+/// # Safety
+/// Calls into the blob. A mode must have been set.
+pub unsafe fn start() -> i32 {
+    unsafe { esp_wifi_start() }
+}
+
+/// `esp_wifi_stop`.
+///
+/// # Safety
+/// Calls into the blob.
+pub unsafe fn stop() -> i32 {
+    unsafe { esp_wifi_stop() }
+}
+
+/// The OSI table, in storage that outlives [`init`].
+///
+/// **This has to be `static`, and the reason is worth the paragraph.**
+/// `esp_wifi_init_internal` does not copy the table — it keeps the pointer, in
+/// a global the blob calls `g_osi_funcs_p`, and dereferences it for the rest of
+/// the session. The first version of `init` built the table as a local and
+/// passed `&table`, which worked perfectly: `esp_wifi_init_internal` returned
+/// `ESP_OK` and every entry it called during init was live.
+///
+/// The next call into the driver was `esp_wifi_set_mode`, which reaches
+/// `current_task_is_wifi_task`, which loads `g_osi_funcs_p->_task_get_current_task`
+/// — from a stack frame that had since been reused — and jumped to
+/// `0x00000036`.
+///
+/// A dangling pointer whose target is *still valid for the whole of the call
+/// that stores it* is the shape to watch for at any FFI boundary that keeps
+/// what it is given.
+struct OsiTable(core::cell::UnsafeCell<WifiOsiFuncs>);
+
+// SAFETY: written once by `init` before the driver exists to read it, and
+// read-only thereafter. The same argument `kernel::clock` makes about its
+// one-shot: a lock would be actively wrong, since the blob dereferences this
+// from trap context.
+unsafe impl Sync for OsiTable {}
+
+static OSI_TABLE: OsiTable = OsiTable(core::cell::UnsafeCell::new(WifiOsiFuncs::empty()));
 
 /// Bring the Wi-Fi driver up.
 ///
@@ -276,11 +407,29 @@ extern "C" {
 ///
 /// # Safety
 /// Calls into the blob, which will call back out through the OSI table on the
-/// same thread. Call once.
+/// same thread. **Call once**, and not from two cores: it writes [`OSI_TABLE`],
+/// whose soundness rests on there being exactly one writer before any reader.
 pub unsafe fn init() -> i32 {
-    let table = crate::adapter::table();
-    let config = WifiInitConfig::defaults(&table);
+    let table = OSI_TABLE.0.get();
+    unsafe { table.write(crate::adapter::table()) };
+    // The config itself may be a local: the blob copies the scalar fields and
+    // the inline `wpa_crypto_funcs` out of it during the call. `osi_funcs` is
+    // the one field it keeps, and that now points at a `static`.
+    let config = WifiInitConfig::defaults(unsafe { &*table });
     unsafe { esp_wifi_init_internal(&config) }
+}
+
+/// The table the driver was given, for a caller that wants to check it.
+///
+/// Returns `None` before [`init`] — an all-null table is not one the blob
+/// would survive, and saying so is better than handing it back.
+pub fn osi_table() -> Option<&'static WifiOsiFuncs> {
+    let t = unsafe { &*OSI_TABLE.0.get() };
+    if t.null_count() == crate::osi::FUNCTION_COUNT {
+        None
+    } else {
+        Some(t)
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
