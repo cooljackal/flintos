@@ -12,8 +12,13 @@ Three tasks running on an ESP32. No Kconfig, no CMake, no vendor SDK.
 
 ## Status
 
-Pre-alpha. Boots, schedules and preempts on real silicon (ESP32-PICO), on
-both cores. Young, most drivers thin, API will change. Don't ship it.
+Pre-alpha. Boots, schedules and preempts on real silicon (ESP32-PICO and
+WROOM-32), on both cores. Young, most drivers thin, API will change. Don't
+ship it.
+
+The radio is the current work. The PHY registers and calibrates on hardware
+and the calibration survives a reboot; **nothing has transmitted**. See
+[`doc/plan-radio.md`](https://github.com/cooljackal/flintos/blob/main/doc/plan-radio.md).
 
 32-bit only — see [Architecture](Architecture#word-size).
 

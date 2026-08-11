@@ -51,10 +51,11 @@ Standard USB serial via the onboard CP2102 or CH340. If it fails, see
 
 | Check | Result |
 |---|---|
-| `make test-target BOARD=board-esp32-devkitc` | 30 pass, 0 fail, 1 skip |
+| `make test-target BOARD=board-esp32-devkitc` | 32 pass, 0 fail, 1 skip |
 | `make flash APP=flashprobe BOARD=board-esp32-devkitc` | erase, program and read back the `nvs` partition, core 1 running throughout |
 | `make flash APP=smp BOARD=board-esp32-devkitc` | both cores scheduling, pinned and floating tasks, no lost DPORT writes |
 | `make flash APP=demo BOARD=board-esp32-devkitc` | three tasks at three priorities, stable |
+| `make flash APP=radioprobe BOARD=board-esp32-devkitc EXTRA_FEATURES=blobs` | PHY registers, full calibration ~183 ms, re-enable ~250 µs, calibration survives a reboot |
 
 ### The skipped test
 

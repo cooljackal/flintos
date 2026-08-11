@@ -15,6 +15,48 @@ where it died**.
 | `entering idle`, then silence | Died in its first interrupt — trap entry or `_flint_trap` |
 | `DBL <cause> <epc1> <depc> <vaddr>` | Double exception. Those four words locate it exactly |
 
+### Reading a `DBL` line
+
+`DBL <exccause> <epc1> <depc> <excvaddr>`, and the order matters: **`epc1` is
+where the *first* fault happened, `depc` where the second one did.**
+
+If `depc` lands between `VECBASE` and `VECBASE+0x180` you are in a window
+overflow or underflow handler, and `excvaddr` is the address it tried to spill
+to. A junk `excvaddr` — `0xffffffed`, `0x00000ca6` — means the frame chain is
+broken, not that the handler is at fault. Symbolise `epc1` against the ELF to
+find what was returning.
+
+## A flash write says it worked and the next boot cannot find it
+
+`kvstore` is an append-only log with no compaction, and it appends at the first
+offset that does not parse as a record. Anything else that has written to the
+same partition stops the scan there — an earlier `flashprobe` run leaves a raw
+pattern at offset `0x100` — and every later `set` then writes onto bytes that
+are **not erased**. NOR flash only clears bits, so those writes return `Ok` and
+land as garbage.
+
+```bash
+make erase
+```
+
+The tell is that a `set` followed immediately by a `get` in the *same* boot
+returns the old value, or nothing. If that happens, the store is poisoned, not
+the save.
+
+## A task with a big stack starves the board
+
+Fixed, and worth knowing the shape in case it comes back. The per-tick stack
+high-water scan used to cost a pass over the **untouched** part of a stack, so
+the better provisioned a task was the more the kernel paid to say so. At
+`MAX_STACK_SIZE` the scan no longer fitted inside a tick and the system made
+almost no forward progress — a task printing a few characters per half second,
+not a crash.
+
+It is not a cliff at any particular size, it is a slope: 4, 8 and 10 KiB were
+fine, 12 KiB crawled, 14 and 16 KiB produced nothing. If you ever see that
+shape again, look at what runs per tick and whether its cost scales with
+something a task chose.
+
 ## The board boots but prints nothing after that
 
 You built with `DEBUG=debug-level-0`, which compiles logging out. Tasks are

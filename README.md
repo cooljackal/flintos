@@ -47,9 +47,14 @@ out ADC2 channels invites a bug that appears the day someone turns on
 networking and not before.
 
 The radios are 🚧 rather than ⛔ because the groundwork is done and the
-radio itself is not: the heap, the runtime-created kernel objects and the
-adapter crate exist and are tested, the vendor blobs fetch and the ABI is
-confirmed, and no packet has been sent. See
+PHY comes up on real silicon, and no packet has been sent. Measured on a
+WROOM-32: the vendor archives link, `register_chipv7_phy` accepts FlintOS's
+init data and eFuse MAC, a full RF calibration takes ~183 ms, a re-enable
+~250 µs, and the calibration persists across a reboot through the flash
+key/value store. Referencing `esp_wifi_init_internal` links with zero
+undefined symbols, so the OSI table is complete enough to start — but nothing
+has called it yet, there is no event loop for the driver to report a scan
+through, and WPA2 needs a crypto table FlintOS has not got. See
 [doc/plan-radio.md](doc/plan-radio.md) for what is left.
 
 Per-peripheral detail — which registers, which pins, what is untested — lives
@@ -514,10 +519,11 @@ The reference board for on-target work, checked on an ESP32 rev v3.0 module
 
 | Check | Result |
 |---|---|
-| `make test-target` | 30 pass, 0 fail, 1 skip |
+| `make test-target` | 32 pass, 0 fail, 1 skip |
 | `make flash APP=flashprobe BOARD=board-esp32-devkitc` | erase, program and read back the `nvs` partition, with core 1 running throughout |
 | `make flash APP=smp BOARD=board-esp32-devkitc` | both cores scheduling, pinned and floating tasks, no lost DPORT writes |
 | `make flash APP=demo BOARD=board-esp32-devkitc` | three tasks at three priorities, stable |
+| `make flash APP=radioprobe BOARD=board-esp32-devkitc EXTRA_FEATURES=blobs` | the PHY registers, calibrates and persists; needs `make blobs` first |
 
 The skip is `adc1_follows_the_pin_it_is_pointed_at`. It needs a pin the board
 holds hard high, which a bare DevKitC has not got — GPIO34-39 are input-only

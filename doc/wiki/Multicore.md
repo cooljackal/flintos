@@ -180,6 +180,56 @@ stalling — diagnostics, mostly.
 
 ---
 
+## Getting the other core out of the way
+
+Writing flash means taking SPI1 away from the instruction cache, so for the
+duration of the operation **neither core can fetch from flash**. The second
+one has to be got out of the way, and *how* is the interesting part.
+
+The obvious way is `appcpu::stall()` — a hardware freeze. FlintOS used it, and
+it was safe by an argument about the *other* side: nothing ran between the
+stall and the release, so core 1 could be frozen holding a `Spinlock` and
+nobody would ask for it. Then IRAM-safe interrupts started running in that
+window and the argument was gone.
+
+esp-idf (`spi_flash_disable_interrupts_caches_and_other_cpu`) and NuttX
+(`esp32_spiflash_opstart`) both **ask** instead, and neither freezes:
+
+1. Signal the other core — esp-idf an IPC call, NuttX a semaphore, FlintOS the
+   `FROM_CPU_2` cross-core interrupt, routed in the APP crossbar table only so
+   it lands on core 1 and nowhere else.
+2. That core disables **its own** cache, says it is parked, and spins.
+3. The initiator waits for "parked", does the operation, then releases.
+
+**Why asking is enough**, in this kernel's terms: `Spinlock::with` takes the
+lock inside `arch::cs_with`, so a lock is only ever held with interrupts masked
+on the holding core. An interrupt therefore cannot land on core 1 while core 1
+holds a lock — so a core parked *by an interrupt* provably holds none. Same
+invariant esp-idf relies on, reached from FlintOS's own primitives.
+
+The stall survives as a bounded fallback, and `esp32_flash::PARK_FELL_BACK`
+records it if it ever fires. `esp32_flash::PARKS` counts the handshakes, so a
+dead handshake and a working one can be told apart — `apps/flashprobe` prints
+both, and is the only application that starts the second core.
+
+### Interrupts during a flash operation
+
+A sector erase is tens of milliseconds. Masking everything for that long is a
+real-time defect with or without a radio, so FlintOS masks *selectively*:
+handlers registered through `interrupt::register_iram_safe` stay enabled in
+`INTENABLE`, everything else is masked, and `_flint_trap` takes a separate
+IRAM-only path for the duration — no tick, no scheduler, no timers.
+
+Registering there is two promises, not one:
+
+- **IRAM**, for the handler and everything it calls. Check the built ELF, not
+  the attributes; `#[link_section]` says nothing about a copy the optimiser
+  inlined into a caller.
+- **No locks.** See above — this is the register for handlers that run while
+  the other core is parked.
+
+---
+
 ## Asymmetric cores
 
 Out of scope, on purpose.

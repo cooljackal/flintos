@@ -62,6 +62,60 @@ rotw 3          // ×4, then rotw 4 — 16 slots, a full trip
 register in an older live window, which raises the overflow that writes that
 window to memory. `rotw` steps around the ring. Nothing is destroyed.
 
+### The overflow handlers use two bases, not one
+
+The six window vectors are transcribed from the Xtensa ISA reference, and
+Zephyr's `window_vectors.S` and NuttX's `xtensa_window_vector.S` are identical
+to each other instruction for instruction. **Do not paraphrase them.** FlintOS
+had four of the six wrong for a year.
+
+A spilled window's registers go to *two different places*:
+
+| Registers | Where | Base |
+|---|---|---|
+| `a0`–`a3` | the callee's frame | the stack pointer the hardware hands over in `a5`/`a9`/`a13` |
+| `a4`–`a7` (and `a8`–`a11` for call12) | the top of the frame's **own** allocation | the **caller's** stack pointer, loaded from `[a1 - 12]` |
+
+The second base has to be *loaded*. Using `a1` directly puts every spill one
+frame too low — and it is self-consistent enough to survive casual use,
+because the matching underflow reads back from the same wrong place. It comes
+apart where the shift has nowhere to go: the innermost spilled frame writes
+*below* the live stack pointer, which is exactly where the trap entry puts its
+112-byte frame. The interrupt overwrites the spill it caused.
+
+### Why call4 hid it
+
+LLVM compiles a direct Rust call into a `call4`, and the two call4 handlers
+were correct. Nothing FlintOS compiles reaches the call8 or call12 handlers
+often enough to overflow — 64 physical registers hold a deeper chain than the
+kernel gets. `objdump` on the kernel rlib finds four `call4` and no `call8`.
+
+Espressif's radio blobs are GCC-built, nest deeply and are all `call8`, so
+they overflow constantly. `register_chipv7_phy` double-faulted on every
+preemption, and ran perfectly with interrupts masked — because masking removed
+the trap frame that was landing on the misplaced spill. The first fault was at
+a `retw` in some ROM leaf and the second inside `_WindowUnderflow8` loading
+from junk (`0xffffffed`, `0x00000ca6`).
+
+The regression test is `call8_windows_survive_preemption`: it recurses through
+a `fn` pointer, which LLVM must emit as `callx8`, keeps six arguments live
+across the call, and repeats across ticks so the trap frame lands at a
+different depth each time.
+
+### `_start` must enter Rust with `call4`
+
+Correcting the handlers exposed a second bug immediately, as a boot-time
+double exception with `EXCCAUSE=0x1D`.
+
+`call0` does not rotate the window, so a Rust function entered that way runs
+in `_start`'s window — and Rust emits `callx8` for nearly every call. That
+makes the bottom-most live window eight registers wide, and when the file
+wraps to it, `WindowOverflow8` dereferences `[a1 - 12]` for a caller `_start`
+does not have. Zephyr's `crt1.S` says it plainly: *"because all of its CALL
+instructions use a window size of 4, the stack frame for _start can be
+empty."* Four wide, and only `WindowOverflow4` — which needs no caller
+pointer — can ever spill it. The APP CPU's entry has the same requirement.
+
 **Preconditions: `PS.WOE=1`, `PS.EXCM=0`, and `a1` holding the task's real
 stack pointer.**
 
