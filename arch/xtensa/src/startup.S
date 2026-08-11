@@ -110,9 +110,32 @@ call_start_cpu0:
     .extern _kernel_stack_end
     movi a1, _kernel_stack_end
 
+    // A zero return address, so anything walking the frame chain -- a debugger,
+    // or the window spill -- knows this is the bottom.
+    movi a0, 0
+
     // ── Enter the Rust kernel (interrupts still masked; FlintMain unmasks).
+    //
+    // **`call4`, not `call0`, and the width is the whole point.**
+    //
+    // `call0` does not rotate the window, so FlintMain would execute in
+    // _start's window -- and Rust's Xtensa backend emits `callx8` for nearly
+    // every call it makes. That makes the bottom-most live window an
+    // eight-register one, and when the register file wraps around to it, the
+    // hardware raises WindowOverflow8. That handler reads `[a1 - 12]` for the
+    // caller's stack pointer, and _start has no caller: it reads whatever is
+    // in the top of the kernel stack and stores eight registers relative to
+    // it. Observed as a double exception during boot, `EXCCAUSE=0x1D`
+    // (StoreProhibited), the moment the window handlers were corrected to
+    // dereference that slot at all.
+    //
+    // With `call4` the bottom-most window is four registers wide, so only
+    // WindowOverflow4 can ever spill it -- and that handler needs no caller
+    // pointer. This is exactly Zephyr's arrangement, and its crt1.S says so:
+    // "because all of its CALL instructions use a window size of 4, the stack
+    // frame for _start can be empty."
     .extern FlintMain
-    call0 FlintMain
+    call4 FlintMain
 
 .L_halt:
     j .L_halt

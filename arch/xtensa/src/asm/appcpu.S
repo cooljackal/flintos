@@ -61,7 +61,15 @@ _flint_appcpu_entry:
     /* A zero return address: this function never returns. */
     movi    a0, 0
 
-    call0   flint_appcpu_main
+    /*
+     * `call4`, for the same reason `_start` uses it -- see the long note in
+     * startup.S. `call0` would leave `flint_appcpu_main` running in this
+     * window, and Rust emits `callx8`, which makes the bottom-most window
+     * eight registers wide; WindowOverflow8 then dereferences `[a1 - 12]` for
+     * a caller that does not exist. Four registers wide, and only
+     * WindowOverflow4 can ever spill it.
+     */
+    call4   flint_appcpu_main
 
     /*
      * `flint_appcpu_main` is `-> !` and must not return. If it does anyway,

@@ -3,10 +3,12 @@
 // Xtensa LX6 Relocatable Exception Vector Table (ESP32)
 //
 // ┌──────────────────────────────────────────────────────────────────────┐
-// │ HARDWARE-UNVERIFIED. Vector offsets follow the ESP32 relocatable       │
-// │ layout (VECBASE-relative). The window overflow/underflow handlers use  │
-// │ the canonical Xtensa spill/fill sequences. The level-1 trap entry and  │
-// │ its call into the Rust handler need on-target bring-up (gates G0/G1).  │
+// │ This banner used to claim the window handlers "use the canonical       │
+// │ Xtensa spill/fill sequences". Four of the six did not, and the claim   │
+// │ is exactly why nobody checked them for a year. They are now literal    │
+// │ transcriptions -- see the note above _WindowOverflow4 -- and the way   │
+// │ to verify that is to diff them against Zephyr and NuttX, not to read   │
+// │ a sentence in a comment.                                              │
 // └──────────────────────────────────────────────────────────────────────┘
 //
 // VECBASE is set to _vector_table_start in startup.S. Layout (offsets from
@@ -56,82 +58,140 @@
 .align 1024
 _vector_table_start:
 
+// ── Window overflow and underflow ─────────────────────────────────────────
+//
+// These six are transcribed from the Xtensa ISA reference, and are identical
+// instruction for instruction in Zephyr (arch/xtensa/core/window_vectors.S)
+// and NuttX (arch/xtensa/src/common/xtensa_window_vector.S). Both were read
+// rather than remembered. **Do not paraphrase them.**
+//
+// The two-base rule is the part that is easy to get wrong, and this file had
+// it wrong for call8 and call12 until the radio blob found it:
+//
+//   * a0-a3 of call[j] are saved in **call[j+1]'s** frame, addressed from the
+//     callee's stack pointer, which the hardware hands over in a5 / a9 / a13.
+//   * a4-a7 (and a8-a11 for call12) are saved at the top of **call[j]'s own**
+//     frame, which is addressed from **call[j-1]'s** stack pointer -- and that
+//     has to be *loaded* first, out of the save area at `[a1 - 12]`. It is not
+//     a1.
+//
+// Using a1 as the base for the second group is self-consistent enough to
+// survive casual use: every frame's spill lands one frame too low, and the
+// matching underflow reads back from the same wrong place. It comes apart in
+// two situations. The frame with no callee below it writes beneath the live
+// stack pointer, straight into where the next interrupt puts its trap frame;
+// and any point where the call widths change breaks the shift.
+//
+// Which is why nothing noticed for so long. FlintOS's own Rust code overflows
+// almost never -- 64 physical registers hold a call chain deeper than the
+// kernel ever gets. Espressif's blobs are GCC-compiled, nest deeply, and use
+// call8 and call12 throughout, so they overflow constantly. `register_chipv7_phy`
+// double-faulted at a `retw` every time it was preempted, and ran perfectly
+// with interrupts masked -- because masking removed the trap frame that was
+// landing on the misplaced spill.
+
 // ── 0x000  Window Overflow 4 ──────────────────────────────────────────────
+//
+// call[j] did a call4. a0-a3 are the registers to save; a5 is call[j+1]'s
+// stack pointer. There is no second group, which is why this one was right.
 .org 0x000
 _WindowOverflow4:
-    s32e    a0, a5, -16
+    s32e    a0, a5, -16             // save a0 to call[j+1]'s stack frame
     s32e    a1, a5, -12
     s32e    a2, a5, -8
     s32e    a3, a5, -4
-    rfwo
+    rfwo                            // rotates back to call[i] position
 
 // ── 0x040  Window Underflow 4 ─────────────────────────────────────────────
 .org 0x040
 _WindowUnderflow4:
-    l32e    a0, a5, -16
+    l32e    a0, a5, -16             // restore a0 from call[i+1]'s stack frame
     l32e    a1, a5, -12
     l32e    a2, a5, -8
     l32e    a3, a5, -4
     rfwu
 
 // ── 0x080  Window Overflow 8 ──────────────────────────────────────────────
+//
+// a0-a7 are the registers to save; a8-a15 must be preserved; a9 is call[j+1]'s
+// stack pointer.
 .org 0x080
 _WindowOverflow8:
-    s32e    a0, a9, -16
+    s32e    a0, a9, -16             // save a0 to call[j+1]'s stack frame
+    l32e    a0, a1, -12             // a0 <- call[j-1]'s sp; finds the end of
+                                    //       call[j]'s own frame
     s32e    a1, a9, -12
     s32e    a2, a9, -8
     s32e    a3, a9, -4
-    s32e    a4, a1, -32
-    s32e    a5, a1, -28
-    s32e    a6, a1, -24
-    s32e    a7, a1, -20
+    s32e    a4, a0, -32             // save a4 to call[j]'s stack frame
+    s32e    a5, a0, -28
+    s32e    a6, a0, -24
+    s32e    a7, a0, -20
     rfwo
 
 // ── 0x0C0  Window Underflow 8 ─────────────────────────────────────────────
+//
+// a0-a7 must be reloaded; a8-a15 are call[i+1]'s a0-a7 and must be preserved;
+// a9 is call[i+1]'s stack pointer.
+//
+// a1 is restored before it is used as the source for call[i-1]'s sp, and a7
+// serves as the scratch for that pointer before being loaded with its own
+// value last. The order is load-bearing; it is not an arbitrary listing.
 .org 0x0C0
 _WindowUnderflow8:
-    l32e    a0, a9, -16
+    l32e    a0, a9, -16             // restore a0 from call[i+1]'s stack frame
     l32e    a1, a9, -12
     l32e    a2, a9, -8
-    l32e    a7, a1, -20
+    l32e    a7, a1, -12             // a7 <- call[i-1]'s sp
     l32e    a3, a9, -4
-    l32e    a4, a1, -32
-    l32e    a5, a1, -28
-    l32e    a6, a1, -24
+    l32e    a4, a7, -32             // restore a4 from call[i]'s stack frame
+    l32e    a5, a7, -28
+    l32e    a6, a7, -24
+    l32e    a7, a7, -20             // a7 last: it is the base until now
     rfwu
 
 // ── 0x100  Window Overflow 12 ─────────────────────────────────────────────
+//
+// a0-a11 are the registers to save; a12-a15 must be preserved; a13 is
+// call[j+1]'s stack pointer. The second group is eight registers, so it
+// reaches to -48 rather than -32.
 .org 0x100
 _WindowOverflow12:
-    s32e    a0,  a13, -16
+    s32e    a0,  a13, -16           // save a0 to call[j+1]'s stack frame
+    l32e    a0,  a1,  -12           // a0 <- call[j-1]'s sp
     s32e    a1,  a13, -12
     s32e    a2,  a13, -8
     s32e    a3,  a13, -4
-    s32e    a4,  a1, -48
-    s32e    a5,  a1, -44
-    s32e    a6,  a1, -40
-    s32e    a7,  a1, -36
-    s32e    a8,  a9, -32
-    s32e    a9,  a9, -28
-    s32e    a10, a9, -24
-    s32e    a11, a9, -20
+    s32e    a4,  a0,  -48           // save a4 to the end of call[j]'s frame
+    s32e    a5,  a0,  -44
+    s32e    a6,  a0,  -40
+    s32e    a7,  a0,  -36
+    s32e    a8,  a0,  -32
+    s32e    a9,  a0,  -28
+    s32e    a10, a0,  -24
+    s32e    a11, a0,  -20
     rfwo
 
 // ── 0x140  Window Underflow 12 ────────────────────────────────────────────
+//
+// a0-a11 must be reloaded; a12-a15 are call[i+1]'s a0-a3; a13 is call[i+1]'s
+// stack pointer. a11 is the scratch for call[i-1]'s sp, and is loaded with its
+// own value last.
 .org 0x140
 _WindowUnderflow12:
-    l32e    a0,  a13, -16
+    l32e    a0,  a13, -16           // restore a0 from call[i+1]'s stack frame
     l32e    a1,  a13, -12
     l32e    a2,  a13, -8
-    l32e    a11, a13, -20
+    l32e    a11, a1,  -12           // a11 <- call[i-1]'s sp
     l32e    a3,  a13, -4
-    l32e    a4,  a1, -48
-    l32e    a5,  a1, -44
-    l32e    a6,  a1, -40
-    l32e    a7,  a1, -36
-    l32e    a8,  a9, -32
-    l32e    a9,  a9, -28
-    l32e    a10, a9, -24
+    l32e    a4,  a11, -48           // restore a4 from the end of call[i]'s frame
+    l32e    a5,  a11, -44
+    l32e    a6,  a11, -40
+    l32e    a7,  a11, -36
+    l32e    a8,  a11, -32
+    l32e    a9,  a11, -28
+    l32e    a10, a11, -24
+    l32e    a11, a11, -20           // a11 last: it is the base until now
     rfwu
 
 // ── 0x180  Level-2 Interrupt ──────────────────────────────────────────────
