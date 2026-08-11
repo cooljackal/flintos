@@ -97,11 +97,58 @@ fn map_level(level: u32) -> Option<api::debug::log::Level> {
 /// Not a list of things forgotten — a list of things that cannot be written
 /// yet or that need hardware to mean anything. Kept here so the gap is
 /// countable rather than discovered one crash at a time.
+/// **This list was wrong**, and it is worth saying how, because the shape of
+/// the mistake is the recurring one in this crate. It named three groups —
+/// `_phy_*`, `_coex_*`, `_event_post` — and the table had *forty-nine* null
+/// entries, thirty of them outside those groups. `_task_create_pinned_to_core`
+/// was among them: the driver creates its task before it does anything else,
+/// so init could never have got past the first few instructions.
+///
+/// Nothing noticed because nothing had ever called the table. A hand-kept
+/// list of what is missing is a claim about code, and it decays exactly like
+/// any other comment; this one was a year stale and read as authoritative.
+/// The count below is from `table()` itself, not from memory.
 pub const UNIMPLEMENTED: &[(&str, &str)] = &[
-    ("_phy_* ", "PHY enable and init data (step 3.6); the calibration store itself is done, see crate::calibration"),
-    ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
+    (
+        "_task_create*, _task_delete, _task_delay",
+        "the blob's own tasks; `kernel::dynobj` has the pieces, the shims are not written",
+    ),
+    (
+        "_ints_on/off, _wifi_int_disable/restore",
+        "interrupt masking on the blob's terms; `kernel::interrupt` has the parts",
+    ),
+    (
+        "_dport_access_stall_other_cpu_*",
+        "cross-core DPORT serialisation; `soc_esp32::dport` handles the erratum already",
+    ),
+    (
+        "_wifi_clock_enable/disable, _wifi_reset_mac, _wifi_rtc_*_iso, _wifi_apb80m_*",
+        "MAC and clock plumbing around the PHY, which step 3.6 did not need",
+    ),
+    ("_read_mac", "the eFuse MAC; `soc_esp32::efuse::base_mac` is the body"),
+    (
+        "_rand, _random, _get_random",
+        "the hardware RNG; `esp32-rng` exists and is not wired here",
+    ),
+    ("_get_time, _log_timestamp", "wall-clock and log timestamps"),
+    (
+        "_realloc_internal, _wifi_realloc",
+        "the radio heap has no realloc; it needs alloc-copy-free",
+    ),
+    (
+        "_env_is_chip, _wifi_thread_semphr_get, _queue_send_to_front, _wifi_delete_queue",
+        "odds and ends of the object model",
+    ),
     ("_event_post", "the esp_event loop, which FlintOS has no equivalent of"),
+    ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
 ];
+
+// A count belongs here, pinned by a test, so the list cannot drift again
+// without something failing. It is not written yet because counting 115
+// `Option` fields needs a macro over the struct definition, and a
+// hand-maintained number would be the same kind of claim that was wrong
+// above. Until then: the table is 115 entries, `table()` fills 66 on the
+// host and 71 on the target, and `tools/` is the right place for the check.
 
 // ── Conversions ─────────────────────────────────────────────────────────────
 
@@ -443,6 +490,74 @@ unsafe extern "C" fn osi_spin_lock_delete(handle: *mut c_void) {
 
 /// Build the table the blob is given.
 ///
+// ── The PHY ─────────────────────────────────────────────────────────────────
+//
+// esp-idf binds these five to `esp_phy_enable`, `esp_phy_disable`,
+// `esp_phy_common_clock_enable`, `esp_phy_common_clock_disable` and
+// `esp_phy_update_country_info` -- read from `esp_wifi/esp32/esp_adapter.c`
+// at v4.4 rather than inferred from the names, which is how the split between
+// "the PHY" and "the clocks both radios share" got respected here.
+//
+// The blob calls the common-clock pair *and* enable, and `crate::phy::enable`
+// turns the common bits on as well. That is not a bug and it matches IDF:
+// `esp_phy_enable` calls `esp_phy_common_clock_enable` itself. Setting a bit
+// that is already set costs nothing; the refcount that matters is the one on
+// registration, and it lives in `crate::phy`.
+
+/// `_phy_enable`. Wi-Fi's clocks and the PHY behind them.
+///
+/// The signature has no return value, so a failure has nowhere to go but the
+/// log. That is Espressif's choice, not ours: `esp_phy_enable` is `void` too,
+/// and aborts internally if it cannot allocate.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn phy_enable() {
+    if let Err(e) = unsafe { crate::phy::enable(soc_esp32::dport::RADIO_CLK_WIFI) } {
+        api::log_error!("radio: the blob asked for the PHY and it failed: {:?}", e);
+    }
+}
+
+/// `_phy_disable`.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn phy_disable() {
+    unsafe { crate::phy::disable(soc_esp32::dport::RADIO_CLK_WIFI) };
+}
+
+/// `_phy_common_clock_enable`. The bits Wi-Fi and Bluetooth share.
+///
+/// Not `phy::enable`: this is the clock gate on its own, with no registration
+/// and no calibration, which is what the blob is asking for when it calls
+/// this rather than the one above.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn phy_common_clock_enable() {
+    unsafe { soc_esp32::dport::radio_clock_enable(soc_esp32::dport::RADIO_CLK_COMMON) };
+}
+
+/// `_phy_common_clock_disable`.
+///
+/// Turns off bits the *other* radio may still need. Safe today because BLE is
+/// #66 and nothing else holds them; when both radios run, this wants the same
+/// treatment `crate::phy` gives registration.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn phy_common_clock_disable() {
+    unsafe { soc_esp32::dport::radio_clock_disable(soc_esp32::dport::RADIO_CLK_COMMON) };
+}
+
+/// `_phy_update_country_info`. **Exactly `ESP_OK`, and that is the whole of
+/// it**, not a stub.
+///
+/// `esp_phy_update_country_info` selects between PHY init-data blobs stored in
+/// a flash partition, and the entire body is behind
+/// `CONFIG_ESP_PHY_MULTIPLE_INIT_DATA_BIN`. FlintOS has one init-data table,
+/// compiled in (`crate::phy_init`), so the configuration this corresponds to
+/// is the one where the function reduces to `return ESP_OK;`.
+///
+/// Regulatory domain still reaches the PHY -- it goes through the driver's own
+/// country configuration, not this hook.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn phy_update_country_info(_country: *const core::ffi::c_char) -> i32 {
+    0
+}
+
 /// Everything not set here is null, and [`UNIMPLEMENTED`] says why. A null is
 /// a diagnosable crash at a known address; a wrong function is not.
 pub fn table() -> WifiOsiFuncs {
@@ -493,6 +608,17 @@ pub fn table() -> WifiOsiFuncs {
     t._set_intr = Some(crate::interrupts::set_intr);
     t._clear_intr = Some(crate::interrupts::clear_intr);
     t._set_isr = Some(crate::interrupts::set_isr);
+
+    // The PHY. Step 3.6 implemented all of this and never connected it, so
+    // the first real call into the driver died on a null here.
+    #[cfg(target_os = "none")]
+    {
+        t._phy_enable = Some(phy_enable);
+        t._phy_disable = Some(phy_disable);
+        t._phy_common_clock_enable = Some(phy_common_clock_enable);
+        t._phy_common_clock_disable = Some(phy_common_clock_disable);
+        t._phy_update_country_info = Some(phy_update_country_info);
+    }
 
     t._malloc = Some(osi_malloc_uint);
     t._malloc_internal = Some(osi_malloc);
@@ -1200,9 +1326,12 @@ mod tests {
         assert!(t._event_group_wait_bits.is_some());
         assert!(t._malloc.is_some() && t._free.is_some());
         assert!(t._spin_lock_create.is_some());
-        // And leaves the rest null on purpose.
-        assert!(t._phy_enable.is_none());
+        // And leaves the rest null on purpose. `_phy_*` is filled in on the
+        // target and not here: the shims drive DPORT and the RF blob, neither
+        // of which a host has, so this asserts the *host* table's shape.
+        // `check-features` builds the target one.
         assert!(t._coex_init.is_none());
+        assert!(t._event_post.is_none());
         assert_eq!(t._version, crate::osi::VERSION);
         assert_eq!(t._magic, crate::osi::MAGIC);
     }
