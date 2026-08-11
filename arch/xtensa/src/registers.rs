@@ -165,6 +165,10 @@ pub unsafe fn read_excvaddr() -> u32 {
 ///
 /// # Safety
 /// Reads `INTERRUPT`. No side effects.
+/// In IRAM: read by the trap handler's cache-off path, where a call into
+/// flash does not fault, it simply stops the core.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.regs")]
 pub unsafe fn read_interrupt() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.interrupt {0}", out(reg) val);
@@ -185,6 +189,10 @@ pub unsafe fn read_interrupt() -> u32 {
 ///
 /// # Safety
 /// Reads `INTENABLE`. No side effects.
+/// In IRAM: read by the trap handler's cache-off path, where a call into
+/// flash does not fault, it simply stops the core.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.regs")]
 pub unsafe fn read_intenable() -> u32 {
     let val: u32;
     core::arch::asm!("rsr.intenable {0}", out(reg) val);

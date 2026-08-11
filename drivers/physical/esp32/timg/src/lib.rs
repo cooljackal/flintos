@@ -293,8 +293,15 @@ impl Timg {
 /// handle. The registers are the state; nothing else is needed to clear one
 /// bit.
 ///
+/// In IRAM, because a top-half that registered as IRAM-safe has to be able to
+/// acknowledge its alarm during a flash operation. One register write, and
+/// leaving it in flash would make an otherwise-correct IRAM handler stop the
+/// core on its very first instruction that mattered.
+///
 /// # Safety
 /// Writes the group's interrupt-clear register.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.timg")]
 pub unsafe fn clear_interrupt(group: Group, timer: Timer) {
     let base = match group {
         Group::Timg0 => TIMG0_BASE,
@@ -313,8 +320,14 @@ pub unsafe fn clear_interrupt(group: Group, timer: Timer) {
 /// periodic alarm's handler has to put `ALARM_EN` back every time, and a
 /// top-half cannot reach a shared handle.
 ///
+/// In IRAM, and for the same reason as [`clear_interrupt`]: a periodic
+/// alarm whose handler runs during a flash operation has to put `ALARM_EN`
+/// back, and it cannot reach out to flash to do it.
+///
 /// # Safety
 /// Read-modify-writes the timer's config register.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.timg")]
 pub unsafe fn rearm(group: Group, timer: Timer) {
     let base = timer_base(group, timer);
     let r = (base + CONFIG) as *mut u32;

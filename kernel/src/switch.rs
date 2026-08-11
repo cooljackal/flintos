@@ -57,7 +57,29 @@ fn announce_once(flag: &AtomicBool, msg: &str) {
 /// describing it: the only caller is `vectors.S`, so nothing in Rust has to
 /// change, and the symbol `#[no_mangle]` emits is unaffected.
 #[no_mangle]
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.trap")]
 pub unsafe extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContext {
+    // **First, and before anything that might be in flash.**
+    //
+    // A flash erase or program runs with the instruction cache disabled, and
+    // for the duration only handlers that promised IRAM are left enabled --
+    // that is the whole point of `interrupt::mask_non_iram_safe`, and it buys
+    // nothing if the path those handlers arrive through is itself in flash.
+    // Everything below this branch is: the tick, the scheduler, the software
+    // timers, the diagnostics. Reaching any of it here would not fault, it
+    // would stop the core mid-instruction with nothing to show for it.
+    //
+    // So this function is in IRAM and the window takes a different path: the
+    // IRAM-safe handlers, and nothing else. No tick, therefore no preemption
+    // decision, therefore the frame goes back exactly as it arrived -- a
+    // context switch here would resume a task whose code cannot be fetched.
+    #[cfg(target_os = "none")]
+    if crate::interrupt::cache_is_off() {
+        unsafe { crate::interrupt::dispatch_while_cache_off() };
+        return frame;
+    }
+
     let cause = unsafe { registers::read_exccause() };
     announce_once(&FIRST_TRAP, "[FLINT] first trap serviced\r\n");
 

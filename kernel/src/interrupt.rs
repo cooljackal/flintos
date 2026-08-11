@@ -11,7 +11,7 @@
 //!
 //! Handler-table access is guarded by a critical section.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::arch::cs_with;
 use crate::arch::registers;
 
@@ -103,6 +103,15 @@ struct Handler {
 /// complete entry or an empty one.
 static mut HANDLERS: [Option<Handler>; MAX_HANDLERS] = [None; MAX_HANDLERS];
 
+/// In IRAM, because two of its callers run with the instruction cache off.
+///
+/// It is three instructions and the optimiser would usually fold it away, but
+/// "usually" is not a placement guarantee — `#[link_section]` says where a
+/// body goes and nothing about a copy inlined into a caller, and at
+/// `opt-level = 1` across a crate boundary the call is real. A flash-resident
+/// copy of even this much is a core that stops fetching.
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.intr")]
 fn handlers() -> &'static mut [Option<Handler>; MAX_HANDLERS] {
     unsafe { &mut *core::ptr::addr_of_mut!(HANDLERS) }
 }
@@ -139,6 +148,24 @@ pub fn register(irq: u8, isr: fn()) -> bool {
 /// Breaking it does not fault. The core simply stops fetching, which presents
 /// as a board that went silent during a flash write, nowhere near the handler
 /// that caused it.
+///
+/// # And it must not take a lock
+///
+/// A second promise, and a less obvious one. The other core is **stalled in
+/// hardware** for the duration of a flash operation — see `esp32-flash`'s
+/// module docs — and a stalled core does not release what it holds. A handler
+/// that waits on a `Spinlock` core 1 was stalled holding will wait for the
+/// rest of time.
+///
+/// That constraint used to be satisfied by accident, because nothing ran
+/// between the stall and the release. It is a real constraint now: this is the
+/// register for handlers that run in exactly that window. `Queue::send_isr`
+/// and the atomics are fine; anything that locks is not.
+///
+/// The way out, when a handler genuinely needs one, is NuttX's
+/// `esp32_spiflash_opstart`: park the other core with a handshake it enters
+/// voluntarily, at a point where it holds nothing, instead of stalling it
+/// wherever it happens to be.
 pub fn register_iram_safe(irq: u8, isr: fn()) -> bool {
     register_inner(irq, isr, true)
 }
@@ -238,8 +265,30 @@ pub enum ConnectError {
 /// trap context: it must be short, must not block, and must acknowledge its
 /// peripheral.
 pub unsafe fn connect(source: u8, cpu_int: u8, handler: fn()) -> Result<(), ConnectError> {
+    unsafe { connect_inner(source, cpu_int, handler, false) }
+}
+
+/// [`connect`], for a handler that has made the promises in
+/// [`register_iram_safe`] — IRAM, and no locks.
+///
+/// # Safety
+/// As [`connect`], plus both of those promises.
+pub unsafe fn connect_iram_safe(
+    source: u8,
+    cpu_int: u8,
+    handler: fn(),
+) -> Result<(), ConnectError> {
+    unsafe { connect_inner(source, cpu_int, handler, true) }
+}
+
+unsafe fn connect_inner(
+    source: u8,
+    cpu_int: u8,
+    handler: fn(),
+    iram_safe: bool,
+) -> Result<(), ConnectError> {
     route(source, cpu_int)?;
-    if !register(cpu_int, handler) {
+    if !register_inner(cpu_int, handler, iram_safe) {
         return Err(ConnectError::AlreadyRegistered);
     }
     unmask(cpu_int);
@@ -268,6 +317,65 @@ unsafe fn unmask(cpu_int: u8) {
 unsafe fn unmask(_cpu_int: u8) {}
 
 // ── Masking for flash operations ────────────────────────────────────────────
+
+/// Set for as long as the instruction cache is off for a flash operation.
+///
+/// The trap handler reads this **first**, before anything that might live in
+/// flash, and takes a different path when it is set. Nothing else can tell:
+/// a trap taken inside that window looks exactly like any other one, and the
+/// difference between the two paths is the difference between servicing an
+/// interrupt and stopping the core.
+///
+/// Owned by [`mask_non_iram_safe`]/[`restore_mask`] because those two are the
+/// window: the flash driver calls them as its first and last acts, so there is
+/// no way to open the window without setting this and no way to close it
+/// without clearing it. A separate hook would be a third thing to keep in step
+/// with the other two.
+static CACHE_OFF: AtomicBool = AtomicBool::new(false);
+
+/// Whether a flash operation currently has the instruction cache disabled.
+///
+/// `Relaxed` is right: the only writer is the core that is about to do the
+/// flash operation, and the only reader that matters is that same core's trap
+/// handler. The other core is stalled in hardware for the duration and cannot
+/// observe anything at all.
+#[inline(always)]
+pub fn cache_is_off() -> bool {
+    CACHE_OFF.load(Ordering::Relaxed)
+}
+
+/// Service the interrupts that may run while the cache is off, and only those.
+///
+/// Everything the ordinary trap path does — the tick, the scheduler, software
+/// timers, logging — lives in flash and would stop the core dead. So this does
+/// none of it. No tick means no preemption decision either, which is why the
+/// caller returns the frame it was given: a context switch inside this window
+/// would resume a task whose code cannot be fetched.
+///
+/// Takes no lock, deliberately. The other core is stalled in hardware, and if
+/// it were stalled holding a lock this wanted, the wait would never end.
+/// [`HANDLERS`] is readable without one; see the note on that static.
+///
+/// # Safety
+/// Runs in trap context with the instruction cache disabled. Every handler it
+/// calls must have promised IRAM via [`register_iram_safe`], and this function
+/// and everything it touches must be in IRAM too.
+/// Target-only: there is no cache to switch off on a host, and the stand-in
+/// `registers` has no `INTERRUPT` to read. Gating the function rather than
+/// inventing a stand-in keeps the host suite honest about what it covers --
+/// which for this path is nothing, and the on-target
+/// `an_erase_does_not_stop_an_iram_safe_interrupt` is why.
+#[cfg(target_os = "none")]
+#[inline(never)]
+#[link_section = ".iram1.intr"]
+pub unsafe fn dispatch_while_cache_off() {
+    let pending = unsafe { registers::read_interrupt() & registers::read_intenable() };
+    for handler in handlers().iter().flatten() {
+        if handler.iram_safe && handler.irq < 32 && pending & (1u32 << handler.irq) != 0 {
+            (handler.isr)();
+        }
+    }
+}
 
 /// Mask every interrupt that is *not* safe to run with the cache off.
 ///
@@ -299,6 +407,9 @@ pub unsafe fn mask_non_iram_safe() -> u32 {
         }
     }
     unsafe { registers::write_intenable(previous & keep) };
+    // Last, so the window opens only once the mask that makes it survivable
+    // is in place.
+    CACHE_OFF.store(true, Ordering::Relaxed);
     previous
 }
 
@@ -309,6 +420,9 @@ pub unsafe fn mask_non_iram_safe() -> u32 {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.intr")]
 pub unsafe fn restore_mask(previous: u32) {
+    // First, so the trap handler is back on its ordinary path before the
+    // interrupts that path serves are re-enabled.
+    CACHE_OFF.store(false, Ordering::Relaxed);
     unsafe { registers::write_intenable(previous) };
 }
 

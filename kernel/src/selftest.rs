@@ -50,6 +50,10 @@ mod heap;
 
 #[path = "selftest_dynobj.rs"]
 mod dynobj;
+
+#[path = "selftest_flash.rs"]
+mod flash;
+
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
 pub(crate) type Check = Result<(), &'static str>;
@@ -68,6 +72,7 @@ pub fn run() {
     check("timer_preserves_windowed_context", timer_preserves_windowed_context(), &mut pass, &mut fail);
     check("deep_window_recursion_returns_intact", deep_window_recursion_returns_intact(), &mut pass, &mut fail);
     check("call8_windows_survive_preemption", call8_windows_survive_preemption(), &mut pass, &mut fail);
+    check("an_erase_does_not_stop_an_iram_safe_interrupt", flash::an_erase_does_not_stop_an_iram_safe_interrupt(), &mut pass, &mut fail);
     check("tick_advances", tick_advances(), &mut pass, &mut fail);
     check("tick_never_goes_backwards", tick_never_goes_backwards(), &mut pass, &mut fail);
     check("critical_section_masks_the_tick", critical_section_masks_the_tick(), &mut pass, &mut fail);
