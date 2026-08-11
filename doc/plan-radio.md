@@ -337,7 +337,7 @@ during 3.6 rather than after it.
 | Step | Work | Done when |
 |---|---|---|
 | 5.1 | Bring up the Wi-Fi blobs | **Done.** `esp_wifi_init_internal` returns `ESP_OK` in 179 ms on an ESP32-DevKitC, with all 115 OSI entries filled. |
-| 5.2 | Station mode: scan | **Scanning works** — 2.1 s for all 13 channels, `SCAN_DONE` delivered. Blocked on one bug: a populated `nvs` partition hangs `esp_wifi_init_internal`. See below. |
+| 5.2 | Station mode: scan | **Scanning works** — 2.1 s for all 13 channels, `SCAN_DONE` delivered, repeatable after `make erase`. One timing-sensitive hang left on the stored-calibration path. See below. |
 | 5.3 | Station mode: associate | The device joins a WPA2 network and holds the association. |
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
 | 5.5 | On-target self-test | Scan and associate run in `make test-target`, skipped cleanly when no AP is configured. |
@@ -426,30 +426,50 @@ software timer, so it advanced only when the driver gave up on each channel:
 `wifi::init` calls it now — a service the adapter depends on should not be
 each application's job to remember.
 
-### The one bug left in 5.2
+### The bug left in 5.2, and what it is not
 
-**A populated `nvs` partition hangs `esp_wifi_init_internal`.** After
-`make erase` the sequence above runs every time; on the next boot, with the RF
-calibration stored, init never returns — 90 s and no progress, no fault.
+The first diagnosis of this was wrong, and the correction is the useful part.
 
-Localised, not yet explained. With `nvs_enable = 0` in the init config it goes
-away entirely and the scan runs, so it is our `_nvs_*` path. Raw-UART markers
-put it inside `nvs_open`, between entry and the result of
-`c_str(name, MAX_NAME_LEN)` — a loop bounded at sixteen iterations, which
-cannot spin. A bounded read loop that never finishes means **the read itself
-stalls**, and on this chip that has one known cause: reading memory-mapped
-flash with the cache off, which stops the core dead with no exception. What is
-not yet explained is why the cache would be off there, or why it depends on
-the store having content.
+It was written up as "a populated `nvs` partition hangs
+`esp_wifi_init_internal`", localised with raw-UART markers to inside
+`nvs_open`, and blamed on a read stalling with the cache off. **None of that
+survived the timer fix.** With `ets_timer::start` wired into `wifi::init`,
+init returns in 254 ms on every boot with the store populated, and `nvs_open`
+is called twice and returns both times. The init hang *was* the missing timer
+service, on a path only taken when the driver finds its NVS non-empty. The
+marker experiment had been run before that fix and never repeated after it.
 
-Two smaller things the run surfaced, both filed rather than fixed:
+What is actually left is a different, **timing-sensitive** hang, after init,
+on the stored-calibration path — `esp_wifi_set_mode` or `esp_wifi_start`
+never returns when the RF calibration is loaded from flash rather than
+computed. It disappears when *any* small amount of work is added nearby: two
+`raw_print` calls in the application are enough to make it run every time,
+scan included. That is a race, not a logic error, and the shape of it points
+at the cache-off window: the calibration load is the only flash read on that
+path, and `radio-timer` — a 1 ms task that did not exist before this session
+— is the only new thing that can be scheduled during it.
+
+Erasing the store avoids it (the calibration is recomputed, ~160 ms), so this
+does not block a demonstration; it blocks a second boot.
+
+**What the references say about `nvs_enable`.** Worth recording because it was
+checked while chasing the wrong bug: **NuttX implements every `_nvs_*` entry
+as `DEBUGPANIC(); return -1;`** — it asserts the driver never calls them,
+which holds only because it sets `nvs_enable = 0`. Zephyr keeps
+`WIFI_INIT_CONFIG_DEFAULT`'s `nvs_enable = WIFI_NVS_ENABLED`, gated on
+`CONFIG_ESP_WIFI_NVS_ENABLED`, and ships a real NVS port behind it. FlintOS
+keeps `nvs_enable = 1` and a working implementation, which is the stronger of
+the two positions — but if the driver's own NVS ever needs to be taken out of
+the picture, turning it off is a configuration both esp-idf and NuttX support
+rather than a workaround.
+
+Two smaller things, still open:
 
 - **~184 bytes leak per scan**, steadily, across rounds.
 - **An atomic `fetch_add` inside the interrupt trampoline hangs the board**
   before the driver finishes starting. Reproducible, unexplained, and worth
   understanding rather than working around — that trampoline is load-bearing
-  for every interrupt in the system. It is why there is no delivery counter to
-  go with `interrupts::for_each_route`.
+  for every interrupt in the system. It may well be the same race as above.
 
 - **`wpa_crypto_funcs`.** In esp-idf this is filled from
   `libwpa_supplicant`, which is C source and not one of the blobs, so WPA2
