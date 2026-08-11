@@ -180,6 +180,14 @@ fn run() {
     // Kept after the PHY probe rather than before it, because the PHY is the
     // thing that already works: if this wedges the board, everything above it
     // has already been printed.
+    // Read off the table, not off a comment. The first attempt at this call
+    // died at `epc=0x00000000` with no way to say which entry, and a list of
+    // what is still null — printed before the blob is handed the table — is
+    // the difference between a name and a bisection.
+    let table = radio_esp32::adapter::table();
+    let nulls = radio_esp32::adapter::report_unimplemented(&table);
+    api::log_info!("[radio] osi table: {} of 115 entries still null", nulls);
+
     api::log_info!("[radio] calling esp_wifi_init_internal");
     let t0 = kernel::clock::now_us();
     let rc = unsafe { radio_esp32::wifi::init() };

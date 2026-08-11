@@ -92,77 +92,28 @@ fn map_level(level: u32) -> Option<api::debug::log::Level> {
     }
 }
 
-/// What the table still leaves null, and why.
-///
-/// Not a list of things forgotten — a list of things that cannot be written
-/// yet or that need hardware to mean anything. Kept here so the gap is
-/// countable rather than discovered one crash at a time.
-/// **This list was wrong**, and it is worth saying how, because the shape of
-/// the mistake is the recurring one in this crate. It named three groups —
-/// `_phy_*`, `_coex_*`, `_event_post` — and the table had *forty-nine* null
-/// entries, thirty of them outside those groups. `_task_create_pinned_to_core`
-/// was among them: the driver creates its task before it does anything else,
-/// so init could never have got past the first few instructions.
-///
-/// Nothing noticed because nothing had ever called the table. A hand-kept
-/// list of what is missing is a claim about code, and it decays exactly like
-/// any other comment; this one was a year stale and read as authoritative.
-/// The count below is from `table()` itself, not from memory.
-pub const UNIMPLEMENTED: &[(&str, &str)] = &[
-    (
-        "_task_create*, _task_delete, _task_delay",
-        "the blob's own tasks; `kernel::dynobj` has the pieces, the shims are not written",
-    ),
-    (
-        "_ints_on/off, _wifi_int_disable/restore",
-        "interrupt masking on the blob's terms; `kernel::interrupt` has the parts",
-    ),
-    (
-        "_dport_access_stall_other_cpu_*",
-        "cross-core DPORT serialisation; `soc_esp32::dport` handles the erratum already",
-    ),
-    (
-        "_wifi_clock_enable/disable, _wifi_reset_mac, _wifi_rtc_*_iso, _wifi_apb80m_*",
-        "MAC and clock plumbing around the PHY, which step 3.6 did not need",
-    ),
-    ("_read_mac", "the eFuse MAC; `soc_esp32::efuse::base_mac` is the body"),
-    (
-        "_rand, _random, _get_random",
-        "the hardware RNG; `esp32-rng` exists and is not wired here",
-    ),
-    ("_get_time, _log_timestamp", "wall-clock and log timestamps"),
-    (
-        "_realloc_internal, _wifi_realloc",
-        "the radio heap has no realloc; it needs alloc-copy-free",
-    ),
-    (
-        "_env_is_chip, _wifi_thread_semphr_get, _queue_send_to_front, _wifi_delete_queue",
-        "odds and ends of the object model",
-    ),
-    ("_event_post", "the esp_event loop, which FlintOS has no equivalent of"),
-    ("_coex_*", "coexistence; only meaningful once both radios run (#66, #67)"),
-];
-
-// **There is no useful minimum subset**, and the references settle it.
+// **The table is complete on the target: 115 of 115.** There is no hand-kept
+// list here any more, and that is the point of this comment.
 //
+// There used to be one -- `UNIMPLEMENTED`, a `&[(&str, &str)]` of what was
+// still missing and why. It was wrong. It named three groups (`_phy_*`,
+// `_coex_*`, `_event_post`) while the table had *forty-nine* nulls, thirty of
+// them outside those groups, including `_task_create_pinned_to_core` -- the
+// first thing the Wi-Fi driver calls. Nothing noticed for a year because
+// nothing had ever called the table.
+//
+// A list of what is missing is a claim about code, and it decays like any
+// other comment. So the list is gone and the question is asked of the table
+// instead: `WifiOsiFuncs::for_each_null` walks it and reports by name, and
+// `the_only_gaps_left_are_the_ones_that_need_hardware` fails the build if a
+// new null appears or an entry that needs silicon is filled on the host.
+//
+// **There was never a useful minimum subset**, and the references settle it.
 // The tempting approach is to fill entries until the crashes stop, treating
-// the null as a search. NuttX's `esp32_wifi_adapter.c` binds **120 entries**,
-// 22 of them coexistence, and leaves nothing null. esp-idf's
-// `esp_wifi/esp32/esp_adapter.c` does the same. Zephyr does not have a table
-// of its own -- it reaches the blobs through esp-idf's layer, so it inherits
-// esp-idf's.
-//
-// Two independent non-FreeRTOS-and-FreeRTOS implementations both filling the
-// whole thing is the answer: the driver calls what it calls, and finding out
-// which by faulting is a slower way of arriving at "all of them". The
-// remaining work is the list above, not a bisection.
-//
-// A count belongs here, pinned by a test, so the list cannot drift again
-// without something failing. It is not written yet because counting 115
-// `Option` fields needs a macro over the struct definition, and a
-// hand-maintained number would be the same kind of claim that was wrong
-// above. Until then: the table is 115 entries, `table()` fills 66 on the
-// host and 71 on the target, and `tools/` is the right place for the check.
+// the nulls as a search. NuttX's `esp32_wifi_adapter.c` leaves nothing null;
+// esp-idf's `esp_wifi/esp32/esp_adapter.c` does the same; Zephyr has no table
+// of its own and inherits esp-idf's. Two independent implementations, one
+// FreeRTOS and one not, both filling the whole thing is the answer.
 
 // ── Conversions ─────────────────────────────────────────────────────────────
 
@@ -463,8 +414,15 @@ unsafe extern "C" fn osi_event_group_wait_bits(
 
 // ── Tasks ───────────────────────────────────────────────────────────────────
 
+/// `_task_get_current_task`.
+///
+/// The same encoding [`crate::tasks`] hands out, and it has to be: the blob
+/// stores what this returns and later passes it to `_task_delete` or compares
+/// it against a handle from `_task_create`. Two encodings would never match,
+/// and the symptom would be a task that cannot be deleted rather than anything
+/// that points here.
 unsafe extern "C" fn osi_task_get_current_task() -> *mut c_void {
-    dynobj::current_task() as usize as *mut c_void
+    crate::tasks::handle_from_id(dynobj::current_task())
 }
 
 unsafe extern "C" fn osi_task_get_max_priority() -> i32 {
@@ -592,6 +550,331 @@ unsafe extern "C" fn wifi_clock_disable() {
     unsafe { soc_esp32::dport::radio_clock_disable(soc_esp32::dport::RADIO_CLK_WIFI) };
 }
 
+// ── The rest of the object model ────────────────────────────────────────────
+
+/// `_queue_send_to_front`. FreeRTOS's `xQueueSendToFront`.
+///
+/// Not the same entry as `_queue_send_to_back`, which is `_queue_send` under
+/// another name. The blob uses this to put a frame where it will be taken
+/// *next* rather than behind everything already waiting, so binding it to the
+/// back-send would compile, run, and reorder frames under load.
+unsafe extern "C" fn osi_queue_send_to_front(
+    handle: *mut c_void,
+    item: *mut c_void,
+    ticks: u32,
+) -> i32 {
+    if handle.is_null() {
+        return PD_FALSE;
+    }
+    let q = unsafe { &mut *(handle as *mut DynQueue) };
+    pd(unsafe { q.send_to_front(item as *const u8, ms_from_ticks(ticks)) })
+}
+
+/// esp-idf's `wifi_static_queue_t`.
+///
+/// A queue handle and, on a build with PSRAM, the statically-placed storage
+/// behind it. FlintOS has no PSRAM path, so `storage` is always null — but the
+/// struct is still two words, because the blob reads `handle` out of the
+/// first one by offset.
+#[repr(C)]
+struct WifiStaticQueue {
+    handle: *mut c_void,
+    storage: *mut c_void,
+}
+
+/// `_wifi_create_queue(len, item_size)`.
+///
+/// **Not `_queue_create`.** It returns a pointer to the wrapper above rather
+/// than to the queue, and the blob dereferences the first word to get the
+/// handle it then passes to `_queue_send` and friends. Binding this to
+/// `_queue_create` would hand the blob a queue where it expects a pointer to
+/// one, and the first send would write through whatever the queue's first
+/// field happened to be.
+unsafe extern "C" fn wifi_create_queue(len: i32, item_size: i32) -> *mut c_void {
+    let (Ok(len), Ok(item_size)) = (u32::try_from(len), u32::try_from(item_size)) else {
+        api::log_error!("radio: _wifi_create_queue({}, {}) is not a queue", len, item_size);
+        return core::ptr::null_mut();
+    };
+    let handle = unsafe { osi_queue_create(len, item_size) };
+    if handle.is_null() {
+        return core::ptr::null_mut();
+    }
+    let wrapper = unsafe { box_up(WifiStaticQueue { handle, storage: core::ptr::null_mut() }) };
+    if wrapper.is_null() {
+        unsafe { osi_queue_delete(handle) };
+    }
+    wrapper
+}
+
+/// `_wifi_delete_queue`. The wrapper, then the queue inside it.
+///
+/// This entry was bound straight to `_queue_delete` when the table was first
+/// filled in, which was wrong in the way that is hardest to see: both take a
+/// `void*`, both compile, and the call would have freed the wrapper *as* a
+/// queue — reading a heap pointer out of `handle` and calling `free` on it.
+unsafe extern "C" fn wifi_delete_queue(wrapper: *mut c_void) {
+    if let Some(q) = unsafe { unbox::<WifiStaticQueue>(wrapper) } {
+        unsafe { osi_queue_delete(q.handle) };
+    }
+}
+
+/// How many tasks may hold a per-thread semaphore at once.
+///
+/// One per blob task, plus room for application tasks that call into
+/// `esp_wifi_*` directly and get one on the way through.
+const THREAD_SEMAPHORES: usize = 12;
+
+/// A task's scratch semaphore, and whose it is.
+#[derive(Clone, Copy)]
+struct ThreadSemaphore {
+    task: u32,
+    handle: usize,
+}
+
+/// The per-task semaphores handed out by [`wifi_thread_semphr_get`].
+static THREAD_SEMPHRS: kernel::smp::Spinlock<[Option<ThreadSemaphore>; THREAD_SEMAPHORES]> =
+    kernel::smp::Spinlock::new([None; THREAD_SEMAPHORES]);
+
+/// `_wifi_thread_semphr_get`. The calling task's own semaphore, created on
+/// first ask.
+///
+/// esp-idf keeps this in a `pthread_key_t` with a destructor; NuttX uses task
+/// local storage the same way. FlintOS has neither, so the association lives
+/// in a small table keyed by task id, and [`forget_thread_semaphore`] is the
+/// destructor — called when a blob task is deleted.
+///
+/// **The reason that matters**: task ids are recycled. Without the forget, a
+/// new task landing on a dead one's id would inherit its semaphore, count and
+/// all, and a wait that should block would return immediately.
+unsafe extern "C" fn wifi_thread_semphr_get() -> *mut c_void {
+    let me = dynobj::current_task();
+    let existing = THREAD_SEMPHRS.with(|t| {
+        t.iter()
+            .flatten()
+            .find(|s| s.task == me)
+            .map(|s| s.handle)
+    });
+    if let Some(handle) = existing {
+        return handle as *mut c_void;
+    }
+
+    // Counting, max 1, initially taken: `xSemaphoreCreateCounting(1, 0)`.
+    let handle = unsafe { osi_semphr_create(1, 0) };
+    if handle.is_null() {
+        api::log_error!("radio: no heap for task {}'s thread semaphore", me);
+        return core::ptr::null_mut();
+    }
+    let stored = THREAD_SEMPHRS.with(|t| {
+        match t.iter_mut().find(|s| s.is_none()) {
+            Some(slot) => {
+                *slot = Some(ThreadSemaphore { task: me, handle: handle as usize });
+                true
+            }
+            None => false,
+        }
+    });
+    if !stored {
+        // Hand it over anyway rather than fail the call: the blob gets a
+        // working semaphore, and what is lost is the caching, so the next ask
+        // creates another. Say so, because the leak is real.
+        api::log_error!(
+            "radio: no thread-semaphore slot for task {}; it will not be reused or freed",
+            me
+        );
+    }
+    handle
+}
+
+/// Release the per-task semaphore belonging to `task`, if it has one.
+///
+/// Called from [`crate::tasks`] when a blob task is deleted. A task FlintOS
+/// did not create for the blob never reaches here, which matches esp-idf: its
+/// destructor is a pthread key's, and only pthreads have one.
+pub fn forget_thread_semaphore(task: u32) {
+    let handle = THREAD_SEMPHRS.with(|t| {
+        let slot = t.iter_mut().find(|s| s.is_some_and(|s| s.task == task))?;
+        slot.take().map(|s| s.handle)
+    });
+    if let Some(handle) = handle {
+        unsafe { osi_semphr_delete(handle as *mut c_void) };
+    }
+}
+
+/// `_realloc_internal` and `_wifi_realloc`.
+///
+/// One body for both, as with the malloc family: everything the radio heap
+/// holds is internal, DMA-capable RAM, so there is nothing for the variants to
+/// distinguish. See `heap::Heap::realloc` for the two C edges — a failed call
+/// leaves the original valid, and a size of zero frees.
+unsafe extern "C" fn osi_realloc(p: *mut c_void, size: usize) -> *mut c_void {
+    unsafe { heap::realloc(p as *mut u8, size, 8) as *mut c_void }
+}
+
+/// `_rand` and `_random`. One 32-bit value from the hardware generator.
+///
+/// The two entries have identical signatures and esp-idf binds both to
+/// `esp_random`. Kept as one function for the same reason the malloc family
+/// is: two bodies would be two places to get the entropy question wrong.
+///
+/// **On entropy**: `esp32-rng`'s documentation is emphatic that the output is
+/// only cryptographically usable while the radio is running. That condition is
+/// met here by construction — the caller is the radio — which is the one place
+/// in this tree where it is.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn osi_rand() -> u32 {
+    unsafe { kernel::rng::read_u32() }
+}
+
+/// `_get_random(buf, len)`. esp-idf's `esp_fill_random`, which has no failure
+/// mode and so returns `ESP_OK` unconditionally.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn osi_get_random(buf: *mut u8, len: usize) -> i32 {
+    if buf.is_null() || len == 0 {
+        return 0;
+    }
+    let out = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+    unsafe { kernel::rng::fill(out) };
+    0
+}
+
+/// esp-idf's `struct os_time`, which `_get_time` fills in.
+///
+/// Two `long`s, and `long` is 32 bits on this target. Widening either to 64
+/// would shift `usec` out from under the blob's read of it, and the value it
+/// got would be the top half of `sec` — a number that looks like a plausible
+/// microsecond count.
+#[cfg(target_os = "none")]
+#[repr(C)]
+struct OsTime {
+    sec: i32,
+    usec: i32,
+}
+
+/// `_get_time`. Seconds and microseconds, from the monotonic clock.
+///
+/// esp-idf calls `gettimeofday`, which on a board that has never been given
+/// the time returns exactly this: the epoch plus however long it has been up.
+/// FlintOS has no wall clock at all (#39), so uptime is not an approximation
+/// of what the blob would otherwise see — it is the same number.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn osi_get_time(out: *mut c_void) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    let us = kernel::clock::now_us();
+    unsafe {
+        (out as *mut OsTime).write(OsTime {
+            sec: (us / 1_000_000) as i32,
+            usec: (us % 1_000_000) as i32,
+        })
+    };
+    0
+}
+
+/// `_read_mac(mac, type)`. esp-idf's `esp_read_mac`.
+///
+/// The ESP32 burns **one** MAC address into eFuse and derives the other three
+/// from it by adding to the last byte — station is the base, soft-AP is `+1`,
+/// Bluetooth `+2`, Ethernet `+3`. That is the `FOUR_UNIVERSAL_MAC_ADDRESSES`
+/// configuration, which is Espressif's default for this chip and the one every
+/// other ESP32 on the network is using.
+///
+/// **The addition wraps within the byte and does not carry.** A base address
+/// ending `...ff` gives a soft-AP address ending `...00`, with byte 4
+/// unchanged. That is what esp-idf does, and "fixing" it would put this board
+/// on an address no other implementation would derive.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn read_mac(mac: *mut u8, kind: u32) -> i32 {
+    /// `ESP_ERR_INVALID_ARG`.
+    const INVALID_ARG: i32 = 0x102;
+    if mac.is_null() {
+        return INVALID_ARG;
+    }
+    // `esp_mac_type_t`: STA, SOFTAP, BT, ETH.
+    let offset: u8 = match kind {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 => 3,
+        _ => {
+            api::log_error!("radio: _read_mac for unknown address type {}", kind);
+            return INVALID_ARG;
+        }
+    };
+    let mut base = unsafe { soc_esp32::efuse::base_mac() };
+    base[5] = base[5].wrapping_add(offset);
+    unsafe { core::ptr::copy_nonoverlapping(base.as_ptr(), mac, 6) };
+    0
+}
+
+/// `_wifi_reset_mac`. A pulse on the Wi-Fi MAC's reset line.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn wifi_reset_mac() {
+    unsafe { soc_esp32::dport::wifi_mac_reset() };
+}
+
+// ── Events ──────────────────────────────────────────────────────────────────
+
+/// What `_event_post` hands on: esp-idf's `esp_event_post` arguments, minus
+/// the timeout.
+///
+/// `base` is a C string the blob owns — `WIFI_EVENT` or `IP_EVENT` — and
+/// `data` points at `len` bytes that are **only valid for the duration of the
+/// call**. A handler that wants them later must copy them.
+pub type EventHandler = fn(base: *const core::ffi::c_char, id: i32, data: *mut c_void, len: usize);
+
+/// The registered handler, if any.
+static EVENT_HANDLER: kernel::smp::Spinlock<Option<EventHandler>> =
+    kernel::smp::Spinlock::new(None);
+
+/// Install the handler `_event_post` dispatches to. Returns the previous one.
+///
+/// # What this is not
+///
+/// esp-idf's `esp_event` is a task with a queue: `esp_event_post` copies the
+/// payload, puts it on the queue, and returns, and the handler runs later on
+/// the event task. **This dispatches synchronously, on the blob's own task,
+/// inside the blob's call stack.**
+///
+/// That is a real difference and it constrains the handler:
+///
+/// - It must not block. The Wi-Fi task is waiting on it, and the blob has
+///   timing requirements this is inside.
+/// - It must not call back into `esp_wifi_*`. The driver is part-way through
+///   an operation and its locks are held.
+/// - The payload does not outlive the call.
+///
+/// The alternative was a queue and a task, which is a copy, an allocation and
+/// a context switch per event, for a system that has one consumer. Step 5.2
+/// is where that trade gets tested against a real scan.
+pub fn set_event_handler(f: Option<EventHandler>) -> Option<EventHandler> {
+    EVENT_HANDLER.with(|h| core::mem::replace(h, f))
+}
+
+/// `_event_post(base, id, data, len, ticks)`.
+///
+/// Returns `ESP_OK` whether or not a handler is installed: the blob treats a
+/// failure here as a fatal error during init, and "nobody is listening" is not
+/// one. The timeout is ignored because the dispatch cannot block — see
+/// [`set_event_handler`].
+unsafe extern "C" fn event_post(
+    base: *const core::ffi::c_char,
+    id: i32,
+    data: *mut c_void,
+    len: usize,
+    _ticks: u32,
+) -> i32 {
+    // `try_with`, not `with`: a handler that posts an event would otherwise
+    // deadlock on the lock its own dispatch is holding, and a dropped event is
+    // the better failure.
+    let handler = EVENT_HANDLER.try_with(|h| *h).flatten();
+    match handler {
+        Some(f) => f(base, id, data, len),
+        None => api::log_trace!("radio: event {} with no handler installed", id),
+    }
+    0
+}
+
 // ── The PHY ─────────────────────────────────────────────────────────────────
 //
 // esp-idf binds these five to `esp_phy_enable`, `esp_phy_disable`,
@@ -664,8 +947,9 @@ unsafe extern "C" fn phy_update_country_info(_country: *const core::ffi::c_char)
 
 /// Build the table the blob is given.
 ///
-/// Everything not set here is null, and [`UNIMPLEMENTED`] says why. A null is
-/// a diagnosable crash at a known address; a wrong function is not.
+/// On the target this fills all 115. On a host it leaves the entries that
+/// need silicon null — see `NEEDS_HARDWARE` in the tests, which is the list
+/// that has to stay true.
 pub fn table() -> WifiOsiFuncs {
     let mut t = WifiOsiFuncs::empty();
 
@@ -720,9 +1004,21 @@ pub fn table() -> WifiOsiFuncs {
     t._env_is_chip = Some(env_is_chip);
     t._task_delay = Some(task_delay);
     t._log_timestamp = Some(log_timestamp);
-    t._wifi_delete_queue = Some(osi_queue_delete);
+    t._wifi_create_queue = Some(wifi_create_queue);
+    t._wifi_delete_queue = Some(wifi_delete_queue);
+    t._queue_send_to_front = Some(osi_queue_send_to_front);
+    t._wifi_thread_semphr_get = Some(wifi_thread_semphr_get);
+    t._realloc_internal = Some(osi_realloc);
+    t._wifi_realloc = Some(osi_realloc);
+    t._event_post = Some(event_post);
     #[cfg(target_os = "none")]
     {
+        t._rand = Some(osi_rand);
+        t._random = Some(osi_rand);
+        t._get_random = Some(osi_get_random);
+        t._get_time = Some(osi_get_time);
+        t._read_mac = Some(read_mac);
+        t._wifi_reset_mac = Some(wifi_reset_mac);
         t._ints_on = Some(ints_on);
         t._ints_off = Some(ints_off);
         t._wifi_int_disable = Some(wifi_int_disable);
@@ -759,7 +1055,6 @@ pub fn table() -> WifiOsiFuncs {
     t._get_free_heap_size = Some(osi_get_free_heap_size);
 
     t._queue_create = Some(osi_queue_create);
-    t._wifi_create_queue = None; // takes ints and wraps a queue; see below
     t._queue_delete = Some(osi_queue_delete);
     t._queue_send = Some(osi_queue_send);
     t._queue_send_to_back = Some(osi_queue_send);
@@ -784,6 +1079,9 @@ pub fn table() -> WifiOsiFuncs {
     t._event_group_clear_bits = Some(osi_event_group_clear_bits);
     t._event_group_wait_bits = Some(osi_event_group_wait_bits);
 
+    t._task_create = Some(crate::tasks::create_anywhere);
+    t._task_create_pinned_to_core = Some(crate::tasks::create);
+    t._task_delete = Some(crate::tasks::delete);
     t._task_get_current_task = Some(osi_task_get_current_task);
     t._task_get_max_priority = Some(osi_task_get_max_priority);
     t._task_ms_to_tick = Some(osi_task_ms_to_tick);
@@ -793,7 +1091,46 @@ pub fn table() -> WifiOsiFuncs {
     t._spin_lock_create = Some(osi_spin_lock_create);
     t._spin_lock_delete = Some(osi_spin_lock_delete);
 
+    // Coexistence. Nineteen entries with one answer between them; see
+    // `crate::coex` for why that answer is not a stub.
+    t._coex_init = Some(crate::coex::init);
+    t._coex_deinit = Some(crate::coex::deinit);
+    t._coex_enable = Some(crate::coex::enable);
+    t._coex_disable = Some(crate::coex::disable);
+    t._coex_status_get = Some(crate::coex::status_get);
+    t._coex_condition_set = Some(crate::coex::condition_set);
+    t._coex_wifi_request = Some(crate::coex::wifi_request);
+    t._coex_wifi_release = Some(crate::coex::wifi_release);
+    t._coex_wifi_channel_set = Some(crate::coex::wifi_channel_set);
+    t._coex_event_duration_get = Some(crate::coex::event_duration_get);
+    t._coex_pti_get = Some(crate::coex::pti_get);
+    t._coex_schm_status_bit_clear = Some(crate::coex::schm_status_bit_clear);
+    t._coex_schm_status_bit_set = Some(crate::coex::schm_status_bit_set);
+    t._coex_schm_interval_set = Some(crate::coex::schm_interval_set);
+    t._coex_schm_interval_get = Some(crate::coex::schm_interval_get);
+    t._coex_schm_curr_period_get = Some(crate::coex::schm_curr_period_get);
+    t._coex_schm_curr_phase_get = Some(crate::coex::schm_curr_phase_get);
+    t._coex_schm_curr_phase_idx_set = Some(crate::coex::schm_curr_phase_idx_set);
+    t._coex_schm_curr_phase_idx_get = Some(crate::coex::schm_curr_phase_idx_get);
+
     t
+}
+
+/// Log every entry the table still leaves null, by name.
+///
+/// The list this replaced was prose and went a year out of date. This is the
+/// same question asked of the table itself, and it is what turned the gap from
+/// something discovered one `epc=0x00000000` at a time into a list printed
+/// before the blob is ever handed the table.
+///
+/// Returns the count, so a caller can decide whether to go on.
+pub fn report_unimplemented(t: &WifiOsiFuncs) -> usize {
+    let mut n = 0;
+    t.for_each_null(|i, name| {
+        n += 1;
+        api::log_warn!("radio: osi entry {} ({}) is null", i, name);
+    });
+    n
 }
 
 // ── Symbols the blobs call by name ──────────────────────────────────────────
@@ -1454,14 +1791,62 @@ mod tests {
         assert!(t._event_group_wait_bits.is_some());
         assert!(t._malloc.is_some() && t._free.is_some());
         assert!(t._spin_lock_create.is_some());
-        // And leaves the rest null on purpose. `_phy_*` is filled in on the
-        // target and not here: the shims drive DPORT and the RF blob, neither
-        // of which a host has, so this asserts the *host* table's shape.
-        // `check-features` builds the target one.
-        assert!(t._coex_init.is_none());
-        assert!(t._event_post.is_none());
+        assert!(t._coex_init.is_some());
+        assert!(t._event_post.is_some());
+        assert!(t._task_create_pinned_to_core.is_some());
         assert_eq!(t._version, crate::osi::VERSION);
         assert_eq!(t._magic, crate::osi::MAGIC);
+    }
+
+    /// The entries a host build cannot fill, and why each one needs silicon.
+    ///
+    /// Every one of these drives a register, an eFuse or a flash region a host
+    /// does not have. Nothing is on this list because it was unfinished — that
+    /// is what [`the_only_gaps_left_are_the_ones_that_need_hardware`] is for.
+    const NEEDS_HARDWARE: &[&str] = &[
+        // The interrupt mask and the critical section: `INTENABLE` and `PS`.
+        "_ints_on", "_ints_off", "_wifi_int_disable", "_wifi_int_restore",
+        // DPORT: clock gates, the MAC reset, and the erratum bracket.
+        "_wifi_clock_enable", "_wifi_clock_disable", "_wifi_reset_mac",
+        "_dport_access_stall_other_cpu_start_wrap",
+        "_dport_access_stall_other_cpu_end_wrap",
+        // RTC and APB, which are the same story.
+        "_wifi_rtc_enable_iso", "_wifi_rtc_disable_iso",
+        "_wifi_apb80m_request", "_wifi_apb80m_release",
+        // The PHY, which is the RF blob itself.
+        "_phy_enable", "_phy_disable", "_phy_common_clock_enable",
+        "_phy_common_clock_disable", "_phy_update_country_info",
+        // The hardware RNG, the eFuse MAC and the microsecond timer.
+        "_rand", "_random", "_get_random", "_read_mac", "_get_time",
+        // Logging through the blob's own varargs entry points.
+        "_log_write", "_log_writev",
+        // NVS, which is a flash region.
+        "_nvs_open", "_nvs_close", "_nvs_commit", "_nvs_erase_key",
+        "_nvs_set_i8", "_nvs_get_i8", "_nvs_set_u8", "_nvs_get_u8",
+        "_nvs_set_u16", "_nvs_get_u16", "_nvs_set_blob", "_nvs_get_blob",
+    ];
+
+    #[test]
+    fn the_only_gaps_left_are_the_ones_that_need_hardware() {
+        // This is the test `UNIMPLEMENTED` should always have been. The old
+        // prose list named three groups while forty-nine entries were null,
+        // and nothing failed, because nothing was checking. Here a new null —
+        // or an entry quietly dropped from the table — fails the build.
+        let t = table();
+        let mut unexpected = 0;
+        t.for_each_null(|_, name| {
+            assert!(
+                NEEDS_HARDWARE.contains(&name),
+                "{name} is null and is not on the needs-hardware list"
+            );
+            unexpected += 1;
+        });
+        assert_eq!(
+            unexpected,
+            NEEDS_HARDWARE.len(),
+            "an entry on the needs-hardware list is filled in on the host; \
+             it belongs in the portable half of `table()`"
+        );
     }
 
     #[test]
@@ -1487,12 +1872,4 @@ mod tests {
         assert_eq!(map_level(u32::MAX), Some(Level::Error));
     }
 
-    #[test]
-    fn every_unimplemented_entry_carries_a_reason() {
-        assert!(!UNIMPLEMENTED.is_empty());
-        for (name, why) in UNIMPLEMENTED {
-            assert!(!name.is_empty());
-            assert!(why.len() > 10, "{name} needs a real reason, not a shrug");
-        }
-    }
 }

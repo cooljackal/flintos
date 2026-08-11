@@ -28,26 +28,35 @@
 //!
 //! # Status
 //!
-//! The table is generated and the object-model entries are implemented. The
-//! blobs are **fetched, not vendored** — `make blobs` pulls them at pinned
+//! **The table is complete: 115 of 115 on the target**, and
+//! `esp_wifi_init_internal` returns `ESP_OK` on an ESP32-DevKitC. That is the
+//! first thing that has ever proved an entry right — a table can only be
+//! checked by the blob calling it, and until #67 nothing had.
+//!
+//! What has *not* been proved is every entry: init exercises allocation, task
+//! creation, queues, semaphores, the PHY and the NVS family. Scan and
+//! associate (5.2, 5.3) are what reach the rest.
+//!
+//! [`WifiOsiFuncs::for_each_null`] reports whatever is still null, by name.
+//! There is deliberately no hand-written list of gaps — there was one, and it
+//! was a year out of date; see the note above `table()`.
+//!
+//! The blobs are **fetched, not vendored** — `make blobs` pulls them at pinned
 //! revisions with checksums, and `build.rs` links whatever is in
 //! `.blobs/esp32`, or tells you to run `make blobs` if it is empty. Without
 //! that step this crate still builds and tests on its own.
-//!
-//! What it cannot do yet is prove the table is right; only the blob can say
-//! that, and it says it by running. That is step 3.6.
-//!
-//! [`adapter::UNIMPLEMENTED`] lists what is still null and why.
 
 #![no_std]
 
 pub mod adapter;
 pub mod calibration;
+pub mod coex;
 pub mod ets_timer;
 pub mod interrupts;
 pub mod nvs;
 pub mod phy;
 pub mod phy_init;
+pub mod tasks;
 pub mod wifi;
 pub mod osi;
 

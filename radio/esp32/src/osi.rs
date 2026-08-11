@@ -187,7 +187,97 @@ impl WifiOsiFuncs {
         t._magic = MAGIC;
         t
     }
+
+    /// Call `f` with the index and name of every entry still null.
+    ///
+    /// The gap in this table used to be a hand-written list in
+    /// `adapter::UNIMPLEMENTED`, and it was wrong — it named three groups when
+    /// forty-nine entries were null. A list of what is missing is a claim
+    /// about code, and this is the same claim read off the code itself.
+    ///
+    /// Reads the table as the array of words it is. That is sound for the
+    /// reason [`FIELD_NAMES`] gives, and it is the only way to visit 115
+    /// differently-typed fields without writing 115 lines that can each be
+    /// wrong.
+    pub fn for_each_null(&self, mut f: impl FnMut(usize, &'static str)) {
+        // SAFETY: `#[repr(C)]`, and every field between the two `i32`s is a
+        // pointer-sized `Option<fn>` whose `None` is all zeroes. Reading them
+        // as `usize` reads a value that is always initialised.
+        let words = unsafe {
+            core::slice::from_raw_parts(
+                core::ptr::from_ref(self).cast::<usize>(),
+                core::mem::size_of::<Self>() / core::mem::size_of::<usize>(),
+            )
+        };
+        for (i, name) in FIELD_NAMES.iter().enumerate() {
+            if words[i + 1] == 0 {
+                f(i, name);
+            }
+        }
+    }
+
+    /// How many entries are still null.
+    pub fn null_count(&self) -> usize {
+        let mut n = 0;
+        self.for_each_null(|_, _| n += 1);
+        n
+    }
 }
+
+/// Every function field's name, in header order.
+///
+/// The struct is `#[repr(C)]` with `_version` first and `_magic` last, so
+/// function `n` lives at word `n + 1` — on a 64-bit host too, where the
+/// four bytes of padding after `_version` bring it to exactly one word.
+///
+/// Generated from the struct definition rather than retyped, for the reason
+/// the module docs give about the field list itself: a transposition here
+/// would name the wrong entry in a diagnostic, which is worse than no
+/// diagnostic. [`the_names_line_up_with_the_fields`] checks the ends and the
+/// count against the struct.
+///
+/// [`the_names_line_up_with_the_fields`]: tests::the_names_line_up_with_the_fields
+pub const FIELD_NAMES: [&str; FUNCTION_COUNT] = [
+    "_env_is_chip", "_set_intr", "_clear_intr",
+    "_set_isr", "_ints_on", "_ints_off",
+    "_is_from_isr", "_spin_lock_create", "_spin_lock_delete",
+    "_wifi_int_disable", "_wifi_int_restore", "_task_yield_from_isr",
+    "_semphr_create", "_semphr_delete", "_semphr_take",
+    "_semphr_give", "_wifi_thread_semphr_get", "_mutex_create",
+    "_recursive_mutex_create", "_mutex_delete", "_mutex_lock",
+    "_mutex_unlock", "_queue_create", "_queue_delete",
+    "_queue_send", "_queue_send_from_isr", "_queue_send_to_back",
+    "_queue_send_to_front", "_queue_recv", "_queue_msg_waiting",
+    "_event_group_create", "_event_group_delete", "_event_group_set_bits",
+    "_event_group_clear_bits", "_event_group_wait_bits", "_task_create_pinned_to_core",
+    "_task_create", "_task_delete", "_task_delay",
+    "_task_ms_to_tick", "_task_get_current_task", "_task_get_max_priority",
+    "_malloc", "_free", "_event_post",
+    "_get_free_heap_size", "_rand", "_dport_access_stall_other_cpu_start_wrap",
+    "_dport_access_stall_other_cpu_end_wrap", "_wifi_apb80m_request", "_wifi_apb80m_release",
+    "_phy_disable", "_phy_enable", "_phy_common_clock_enable",
+    "_phy_common_clock_disable", "_phy_update_country_info", "_read_mac",
+    "_timer_arm", "_timer_disarm", "_timer_done",
+    "_timer_setfn", "_timer_arm_us", "_wifi_reset_mac",
+    "_wifi_clock_enable", "_wifi_clock_disable", "_wifi_rtc_enable_iso",
+    "_wifi_rtc_disable_iso", "_esp_timer_get_time", "_nvs_set_i8",
+    "_nvs_get_i8", "_nvs_set_u8", "_nvs_get_u8",
+    "_nvs_set_u16", "_nvs_get_u16", "_nvs_open",
+    "_nvs_close", "_nvs_commit", "_nvs_set_blob",
+    "_nvs_get_blob", "_nvs_erase_key", "_get_random",
+    "_get_time", "_random", "_log_write",
+    "_log_writev", "_log_timestamp", "_malloc_internal",
+    "_realloc_internal", "_calloc_internal", "_zalloc_internal",
+    "_wifi_malloc", "_wifi_realloc", "_wifi_calloc",
+    "_wifi_zalloc", "_wifi_create_queue", "_wifi_delete_queue",
+    "_coex_init", "_coex_deinit", "_coex_enable",
+    "_coex_disable", "_coex_status_get", "_coex_condition_set",
+    "_coex_wifi_request", "_coex_wifi_release", "_coex_wifi_channel_set",
+    "_coex_event_duration_get", "_coex_pti_get", "_coex_schm_status_bit_clear",
+    "_coex_schm_status_bit_set", "_coex_schm_interval_set", "_coex_schm_interval_get",
+    "_coex_schm_curr_period_get", "_coex_schm_curr_phase_get", "_coex_schm_curr_phase_idx_set",
+    "_coex_schm_curr_phase_idx_get",
+];
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -249,5 +339,57 @@ mod tests {
             core::mem::size_of::<WifiOsiFuncs>(),
             (2 + FUNCTION_COUNT + 1) * 4
         );
+    }
+
+    #[test]
+    fn an_empty_table_reports_every_entry_as_null() {
+        let t = WifiOsiFuncs::empty();
+        assert_eq!(t.null_count(), FUNCTION_COUNT);
+    }
+
+    #[test]
+    fn the_names_line_up_with_the_fields() {
+        // The word walk and the name list are two independent descriptions of
+        // the same struct, and a diagnostic that names the wrong entry is
+        // worse than none. So this fills a field at each end and in the
+        // middle, and checks that *that* name is the one that stops being
+        // reported -- which no amount of counting would catch.
+        unsafe extern "C" fn nothing() {}
+        unsafe extern "C" fn a_timestamp() -> u32 {
+            0
+        }
+
+        let mut t = WifiOsiFuncs::empty();
+        t._task_yield_from_isr = Some(nothing);
+        t._log_timestamp = Some(a_timestamp);
+
+        assert_eq!(t.null_count(), FUNCTION_COUNT - 2);
+        let filled = ["_task_yield_from_isr", "_log_timestamp"];
+        // The neighbours of each: what a one-field shift in either direction
+        // would move into the gap.
+        let still_null = ["_wifi_int_restore", "_semphr_create", "_log_writev", "_malloc_internal"];
+        let mut seen_neighbours = 0;
+        t.for_each_null(|_, n| {
+            assert!(!filled.contains(&n), "{n} is implemented but reported null");
+            if still_null.contains(&n) {
+                seen_neighbours += 1;
+            }
+        });
+        assert_eq!(seen_neighbours, still_null.len());
+    }
+
+    #[test]
+    fn no_field_name_appears_twice() {
+        // A duplicate would mean a transposition: one entry named twice and
+        // another never, so a real gap would be reported under a name whose
+        // implementation is right there.
+        for (i, a) in FIELD_NAMES.iter().enumerate() {
+            for b in FIELD_NAMES.iter().skip(i + 1) {
+                assert_ne!(a, b, "duplicate field name {a}");
+            }
+        }
+        assert_eq!(FIELD_NAMES.len(), FUNCTION_COUNT);
+        assert_eq!(FIELD_NAMES[0], "_env_is_chip");
+        assert_eq!(FIELD_NAMES[FUNCTION_COUNT - 1], "_coex_schm_curr_phase_idx_get");
     }
 }

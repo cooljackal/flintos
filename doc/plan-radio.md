@@ -336,7 +336,7 @@ during 3.6 rather than after it.
 
 | Step | Work | Done when |
 |---|---|---|
-| 5.1 | Bring up the Wi-Fi blobs | `esp_wifi_init` equivalent succeeds. |
+| 5.1 | Bring up the Wi-Fi blobs | **Done.** `esp_wifi_init_internal` returns `ESP_OK` in 179 ms on an ESP32-DevKitC, with all 115 OSI entries filled. |
 | 5.2 | Station mode: scan | A scan returns the APs actually in the room. |
 | 5.3 | Station mode: associate | The device joins a WPA2 network and holds the association. |
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
@@ -354,7 +354,13 @@ measurement is a link:
 > `wDev_` symbols.
 
 So the OSI table and the adapter already satisfy the Wi-Fi init path at link
-time, and 5.1 is not a symbol-hunting exercise. What is left is calling it:
+time, and 5.1 was not a symbol-hunting exercise. What was left was calling it,
+and the answer at run time was different from the answer at link time: **the
+table had forty-nine null entries**, and the first call died at
+`epc=0x00000000` with nothing to say which. `WifiOsiFuncs::for_each_null`
+exists because of that — it names the gap before the blob finds it.
+
+The struct, for the record:
 
 `wifi_init_config_t` (from `esp_wifi.h` at v4.4) is `event_handler`,
 `osi_funcs`, an inline `wpa_crypto_funcs_t`, eighteen `int` buffer-sizing
@@ -367,9 +373,12 @@ header, the way `calibration::CAL_DATA_LEN` has one.
 Two things are known to be needed beyond the struct:
 
 - **`_event_post`.** The driver reports scan completion and association
-  through it, so 5.2 cannot observe its own result without it. It is the last
-  null in [`adapter::UNIMPLEMENTED`] and needs an event loop, which FlintOS
-  has no equivalent of — a design decision rather than a shim.
+  through it, so 5.2 cannot observe its own result without it. It is wired
+  now — `adapter::set_event_handler` installs a callback that `_event_post`
+  calls **synchronously, on the blob's own task**, rather than through a queue
+  and an event task the way esp-idf does. That trade is the thing 5.2 tests:
+  the handler must not block and must not re-enter `esp_wifi_*`, and if a real
+  scan needs either, the queue is what replaces it.
 - **`wpa_crypto_funcs`.** In esp-idf this is filled from
   `libwpa_supplicant`, which is C source and not one of the blobs, so WPA2
   (5.3) means providing AES, SHA, HMAC and PBKDF2 ourselves. An **open** scan
