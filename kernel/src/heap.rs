@@ -154,6 +154,23 @@ pub unsafe fn init(free_from: u32) -> usize {
     })
 }
 
+/// [`init`], with `free_from` taken from the linker script.
+///
+/// `_dma_pool_end` is the first address above the static map. Asking the
+/// linker rather than repeating a constant means the map can move — and it
+/// does, under `radio-bt` — without every caller going stale. Two callers
+/// already: the self-test suite and any application that brings the radio up.
+///
+/// # Safety
+/// As [`init`].
+#[cfg(target_os = "none")]
+pub unsafe fn init_from_map() -> usize {
+    unsafe extern "C" {
+        static _dma_pool_end: u8;
+    }
+    unsafe { init((&raw const _dma_pool_end) as u32) }
+}
+
 /// Allocate from the pool.
 ///
 /// # Safety

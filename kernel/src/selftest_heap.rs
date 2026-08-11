@@ -34,17 +34,10 @@ const PATTERN_LEN: usize = 1024 + 24;
 /// harmless — the second call returns zero — so the ordering of the suite does
 /// not have to be defended.
 pub(super) fn reclaimed_memory_is_available() -> Check {
-    // `_dma_pool_end` is the first address above the static map. Taking it from
-    // the linker rather than repeating a constant means the map can move --
-    // and it does, under `radio-bt` -- without this going stale.
-    unsafe extern "C" {
-        static _dma_pool_end: u8;
-    }
-    let free_from = (&raw const _dma_pool_end) as u32;
-    let total = unsafe { heap::init(free_from) };
+    let total = unsafe { heap::init_from_map() };
 
     // A second call must not hand the same memory out again.
-    if unsafe { heap::init(free_from) } != 0 {
+    if unsafe { heap::init_from_map() } != 0 {
         return Err("init handed out memory twice");
     }
 
