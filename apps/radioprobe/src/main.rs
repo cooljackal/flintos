@@ -91,18 +91,17 @@ use hal::types::Priority;
 kernel::flint_app!(main, abi = 1);
 
 fn main() {
-    // 8 KiB rather than the usual 4, because `register_chipv7_phy` is a blob
-    // of unknown frame depth. It is not what fixed the fault -- 4 KiB and
-    // 8 KiB fail the same way -- but it removes stack depth from the list of
-    // things the next person has to rule out.
+    // `MAX_STACK_SIZE`, because `register_chipv7_phy` is a blob of unknown
+    // frame depth and this application has exactly one task to spend the pool
+    // on. 4 KiB was in fact enough, but "enough" is not something that can be
+    // established about code nobody here can read.
     //
-    // **Not 16 KiB**, which is `MAX_STACK_SIZE` and ought to be legal: at that
-    // size this board stops dead part-way through a log line, before the radio
-    // is touched at all -- it dies in whatever it does next, which was the
-    // heap in one arrangement and the first flash read in another. Retested
-    // after the window vectors were fixed and it is unchanged, so it is a
-    // separate bug and still open.
-    task::spawn("radioprobe", run, Priority::Normal(2), 8192);
+    // This size used to be unusable. Asking for 16 KiB starved the board: the
+    // per-tick stack high-water scan cost a pass over the *untouched* part of
+    // the stack, so it grew with the request until it no longer fitted in a
+    // tick. Fixed in `kernel::debug::stack` — the scan is incremental now —
+    // and this line is one of the things that would notice if it regressed.
+    task::spawn("radioprobe", run, Priority::Normal(2), 16384);
 }
 
 /// The build that cannot do anything, and says so rather than looking idle.
