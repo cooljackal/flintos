@@ -28,20 +28,30 @@
 //! - **The calibration store is a net loss as built.** Reading 1904 bytes back
 //!   out of `kvstore` takes **~1.36 s** — seven and a half times the
 //!   calibration it exists to avoid. See below.
-//! - **The blob cannot survive preemption.** See below.
 //!
-//! # Two findings that are not this application's to fix
+//! # The kernel bug it found, since fixed
 //!
-//! **Preemption inside the blob corrupts the register windows.** Run the
-//! bring-up as an ordinary preemptible task and it dies part-way through the
-//! calibration, every time, with a double exception: the first fault is at a
-//! `retw` in some ROM leaf (`xthal_get_ccount`, `ets_delay_us` — it varies),
-//! and the second is inside our own `WindowUnderflow8` handler loading from a
-//! junk address (`0xffffffed`, `0x00000ca6`). That is a stack frame chain
-//! broken across a context switch, and it is not a stack overflow: 4 KiB and
-//! 8 KiB fail identically. Masking interrupts for the whole call makes it work
-//! every time, which is why [`probe`] does that — a workaround here, not a
-//! fix, and the fix belongs in the trap path.
+//! Run as an ordinary preemptible task, the bring-up died part-way through the
+//! calibration every time, with a double exception: the first fault at a
+//! `retw` in some ROM leaf (`xthal_get_ccount`, `ets_delay_us` — it varied),
+//! the second inside our own `WindowUnderflow8` loading from junk
+//! (`0xffffffed`, `0x00000ca6`). It ran perfectly with interrupts masked,
+//! which made it look like something about the blob.
+//!
+//! It was not. Four of the six window overflow/underflow vectors were wrong,
+//! and had been from the day they were written: they used `a1` as the base for
+//! the second register group instead of loading the caller's stack pointer
+//! from `[a1 - 12]`, so every spill landed one frame too low — and the
+//! innermost one landed below the live stack pointer, exactly where the trap
+//! entry puts its frame. Masking interrupts removed the trap frame, which is
+//! why masking "fixed" it.
+//!
+//! Nothing in FlintOS's own Rust ever reached those handlers: LLVM compiles a
+//! direct call into `call4`, and the two call4 handlers were right. A
+//! GCC-built blob is all call8 and call12. See `arch/xtensa/src/asm/vectors.S`
+//! and the `call8_windows_survive_preemption` self-test.
+//!
+//! # What is still not fixed
 //!
 //! **`kvstore::get` is a full forward scan**, CRC-ing every record. Loading a
 //! calibration is eighteen of them — version, MAC, checksum and fifteen chunks
@@ -88,8 +98,10 @@ fn main() {
     //
     // **Not 16 KiB**, which is `MAX_STACK_SIZE` and ought to be legal: at that
     // size this board stops dead part-way through a log line, before the radio
-    // is touched at all. Reproducible, and a third finding this application
-    // was not looking for.
+    // is touched at all -- it dies in whatever it does next, which was the
+    // heap in one arrangement and the first flash read in another. Retested
+    // after the window vectors were fixed and it is unchanged, so it is a
+    // separate bug and still open.
     task::spawn("radioprobe", run, Priority::Normal(2), 8192);
 }
 

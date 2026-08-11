@@ -35,14 +35,15 @@
 //! `register_chipv7_phy` returns 0 with our init data and our eFuse MAC, a
 //! full calibration takes ~183 ms, and a re-enable takes ~250 µs.
 //!
-//! Two things it also found, neither of which is fixed here:
+//! It also found a kernel bug, since fixed: this double-faulted on every
+//! preemption, and the cause was four wrong window overflow/underflow vectors
+//! rather than anything about the blob. Nothing in FlintOS's own Rust reaches
+//! the call8 and call12 handlers; a GCC-built blob reaches them constantly.
+//! `enable` is preemptible now, and there is no critical section anywhere on
+//! this path -- see `arch/xtensa/src/asm/vectors.S`.
 //!
-//! - **This cannot be called from a preemptible task.** A tick landing inside
-//!   the blob breaks the register-window chain and the next `retw` double
-//!   faults. `radioprobe` masks interrupts around the call to get a result at
-//!   all. That workaround is deliberately *not* in this function: hiding it
-//!   here would make the bug permanent, and #66/#67 need `esp_phy_enable` to
-//!   be preemptible.
+//! One thing it found that is **not** fixed:
+//!
 //! - **The stored calibration currently costs more than it saves.** Reading it
 //!   back is ~1.36 s, against the ~183 ms of calibration it avoids, because
 //!   `kvstore::get` scans the whole log per key and [`crate::calibration`]
