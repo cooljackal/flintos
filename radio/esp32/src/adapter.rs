@@ -847,9 +847,18 @@ static EVENT_HANDLER: kernel::smp::Spinlock<Option<EventHandler>> =
 ///   an operation and its locks are held.
 /// - The payload does not outlive the call.
 ///
-/// The alternative was a queue and a task, which is a copy, an allocation and
-/// a context switch per event, for a system that has one consumer. Step 5.2
-/// is where that trade gets tested against a real scan.
+/// **Both references disagree with this, and 5.2 is where that showed.**
+/// esp-idf posts to `esp_event`'s loop task; Zephyr posts to a `k_msgq` and
+/// drains it on a dedicated thread, with a comment saying why — a handler must
+/// run "on its own stack" and must not "stall or overrun the Wi-Fi library
+/// task". Zephyr then reads its scan results *inside that handler*, which is
+/// the part this shape cannot support: a handler that called back into
+/// `esp_wifi_*` here would re-enter the driver from its own task.
+///
+/// The trade was written up as one consumer against a copy, an allocation and
+/// a context switch per event. That undervalued what the queue buys. Replacing
+/// this with a small queue and a dispatch task is the next piece of 5.2; see
+/// the piece-by-piece comparison in `doc/plan-radio.md`.
 pub fn set_event_handler(f: Option<EventHandler>) -> Option<EventHandler> {
     EVENT_HANDLER.with(|h| core::mem::replace(h, f))
 }

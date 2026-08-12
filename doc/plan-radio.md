@@ -453,6 +453,69 @@ service task's priority against the application's — `radio-timer` sits at
 armed by the driver after a scan would starve the caller — but that is a
 guess, and it has not been measured.
 
+## Piece-by-piece against NuttX and Zephyr
+
+Written after a run of single-bug fixes, because chasing symptoms one at a
+time had stopped being the cheapest way to find things. Each row is what
+FlintOS does, what the two references do, and whether the difference is a
+decision or a defect. "Checked" means the reference source was read at the
+pinned revision; nothing here is from memory.
+
+### Where we match
+
+| Piece | Reference | FlintOS |
+|---|---|---|
+| OSI table | esp-idf and NuttX both fill every entry; neither leaves a null | 115/115 on target, `for_each_null` proves it |
+| Task priorities | Blob tasks 18–23 of 25, timer task at `ESP_TASK_PRIO_MAX - 3` | `priority_from_freertos` inverts into the Critical band; timer takes 22 from the same constant |
+| Stack depth | Bytes, not words (ESP-IDF port) | Bytes |
+| Task handles | `TaskHandle_t`, null means "self" | Id + 1, so task 0 is not null |
+| Timers | `esp_timer` on TG0 LAC, alarm + ISR + service task | `kernel::alarm` on TG0 LAC, same |
+| Mutexes | esp-idf takes **both** kinds with `xSemaphoreTakeRecursive` | One recursive type for both — at least as permissive |
+| Coexistence off | Both return 0 / NULL / nothing | Same, transcribed |
+| `_wifi_reset_mac` | esp-idf writes `DPORT_MAC_RST`; **NuttX's is a no-op** (mask resolves to 0) | Follows esp-idf |
+| Interrupts | `intr_matrix_set` + `xt_set_interrupt_handler`, MAC source 0 | Same, routed to a level-1 input |
+
+### Where we differ, and the three that are in one place
+
+**1. Event dispatch is synchronous.** Both references queue. Zephyr's comment
+on its event task says why, in as many words: *"Dispatch library-posted events
+on this dedicated task so a handler runs on its own stack and cannot stall or
+overrun the Wi-Fi library task."* esp-idf does the same through
+`esp_event`'s loop task. FlintOS calls the handler **inside the blob's call
+stack, on `wifiT`**.
+
+That was written up as a considered trade — one consumer, so a queue is a
+copy, an allocation and a context switch per event. The references disagree,
+and Zephyr disagrees for exactly the failure being seen.
+
+**2. The scan is blocking.** Zephyr calls `esp_wifi_scan_start(&cfg, false)`
+and waits for `WIFI_EVENT_SCAN_DONE`. FlintOS passes `block = true`, so the
+application task sits inside the driver for the whole 2.1 seconds.
+
+**3. Results are read on the wrong task.** Zephyr drains
+`esp_wifi_scan_get_ap_record` **from the event handler**, on its event task.
+FlintOS calls `esp_wifi_scan_get_ap_num` from the application task after the
+blocking scan returns — a third pattern neither reference uses, and the exact
+call that currently does not return.
+
+These are one divergence, not three: **the driver expects its results to be
+collected by whoever handles the event, on a task of its own.** Adopting the
+reference shape — a small event queue, a dispatch task, a non-blocking scan,
+results read in the handler — replaces all three and is the next thing to do,
+ahead of any further work on the symptom.
+
+### Smaller divergences, deliberate and recorded
+
+- **`nvs_enable = 1`.** NuttX sets 0 and panics if the driver ever calls
+  `_nvs_*`; Zephyr gates it on `CONFIG_ESP_WIFI_NVS_ENABLED`. Ours is on with
+  a working implementation, which is the stronger position and is now
+  exercised on every boot.
+- **No `esp_netif`, no `esp_event` loop.** Neither is needed to scan; both
+  arrive with #68.
+- **The event handler logs.** It runs on `wifiT`, which is precisely what
+  Zephyr's queue exists to avoid. Harmless while debugging, and it goes away
+  with the dispatch task.
+
 ### What the references do with the blob's timers, and what ours does
 
 Checked because the hang needs `radio-timer` to exist, and the answer is that
