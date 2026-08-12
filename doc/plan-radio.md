@@ -512,10 +512,6 @@ So the Wi-Fi MAC is not asserting its interrupt line, and the cause is
 upstream of the crossbar — the RF/PHY receive path, or the driver never
 putting the MAC into a receiving state. That is where 5.2 continues.
 
-Also open: **~1.9 KB of heap goes per scan** (121928 → 119904 → 118064 across
-three), steady enough to be one allocation that is never freed rather than
-fragmentation.
-
 ### What the references do with the blob's timers, and what ours does
 
 Checked because the hang needs `radio-timer` to exist, and the answer is that
