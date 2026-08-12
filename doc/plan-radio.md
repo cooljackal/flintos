@@ -522,7 +522,32 @@ establishes, and one it does not:
 The reads are the thing those two have in common: one `get` over a
 9988-byte log costs **14106 us**, against 3347 us at 2272 bytes, and every one
 of them runs with the instruction cache off (see "flash and the radio cannot
-currently coexist" above). Whether that is what stalls it is unmeasured.
+currently coexist" above).
+
+**The second core is not involved, measured.** The obvious suspect was the one
+place this tree diverges from both references: `esp32_flash` asks core 1 to
+park and falls back to a *hardware stall* if it does not answer, and neither
+reference has that fallback — NuttX's `esp32_spiflash_opstart` coordinates by
+semaphore in SMP (`esp32_spiflash.c:676-682`) and Zephyr's ESP32 flash driver
+requests remote-core work over IPM (`drivers/flash/flash_esp32.c:369-396`).
+A stalled core can be holding a lock; a parked one provably is not. But after
+400 writes, two compactions and a full-log read the counters say:
+
+```text
+[wifi] cache: 0 parks, fell_back=false, last_state=0x0
+```
+
+Zero. `appcpu::is_running()` is false in this application, so core 1 is never
+asked and never stalled. The park path is not the mechanism, and the whole
+second-core question is out of scope for N2.
+
+What that leaves is single-core: each window masks every non-IRAM interrupt
+(as both references do — `esp_intr_noniram_disable`, and NuttX's opstart at
+`esp32_spiflash.c:687-689`, which also takes `sched_lock`), and a 14 ms read
+is roughly seventy of those windows back to back. Where NuttX differs is size:
+it caps one window at **64 bytes** (`SPI_FLASH_READ_BUF_SIZE`,
+`esp32_spiflash.c:64`, loop at 2107-2125) against this tree's 256. Untested
+whether that matters.
 
 Reproducing it: set `NVS_FILL_PROBE` in `apps/wifiscan` to `true`, boot once to
 fill the partition, set it back, and reboot without erasing.

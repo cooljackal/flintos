@@ -296,6 +296,16 @@ fn run() {
     if NVS_FILL_PROBE {
         fill_probe();
     }
+    // Every one of those reads ran with the cache off and the second core out
+    // of the way. It is *asked* to park first; a fallback hardware stall is
+    // what neither esp-idf nor NuttX does, and a stalled core can be holding a
+    // lock. If the fallback ever runs, this says so before the hang would.
+    api::log_info!(
+        "[wifi] cache: {} parks, fell_back={}, last_state={:#x}",
+        esp32_flash::PARKS.load(core::sync::atomic::Ordering::Relaxed),
+        esp32_flash::PARK_FELL_BACK.load(core::sync::atomic::Ordering::Relaxed),
+        esp32_flash::LAST_CACHE_STATE.load(core::sync::atomic::Ordering::Relaxed)
+    );
 
     // Installed before init, not after. The driver posts `WIFI_READY` from
     // inside `esp_wifi_start`, and a handler registered afterwards would miss

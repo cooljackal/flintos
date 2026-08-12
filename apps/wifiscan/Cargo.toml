@@ -17,6 +17,10 @@ api = { path = "../../api" }
 hal = { path = "../../hal" }
 
 soc-esp32 = { path = "../../soc/esp32" }
+# For the cache-off counters: every `nvs` read parks the second core, and
+# whether it ever falls back to stalling it is the open question behind the
+# init hang. See doc/plan-radio.md, "N2".
+esp32-flash = { path = "../../drivers/physical/esp32/flash" }
 # The reason this application exists.
 radio-esp32 = { path = "../../radio/esp32" }
 
