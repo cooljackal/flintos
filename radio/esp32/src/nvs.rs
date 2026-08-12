@@ -207,16 +207,69 @@ fn put<S: Storage>(store: &mut Store<S>, ns: &[u8], key: &[u8], tag: u8, bytes: 
             // driver rewrites on every boot fills with superseded copies of a
             // handful of keys -- and `Full` reaching the driver as
             // `ESP_ERR_NVS_NOT_ENOUGH_SPACE` is what hung init.
+            PROBE.with(|p| p.set_full += 1);
             if !compact(store) {
                 return map_err(KvError::Full);
             }
             match store.set(k, &vbuf[..1 + bytes.len()]) {
-                Ok(()) => ESP_OK,
-                Err(e) => map_err(e),
+                Ok(()) => {
+                    PROBE.with(|p| p.retry_ok += 1);
+                    ESP_OK
+                }
+                Err(e) => {
+                    PROBE.with(|p| p.retry_err += 1);
+                    map_err(e)
+                }
             }
         }
         Err(e) => map_err(e),
     }
+}
+
+/// What the compaction path did, counted rather than logged.
+///
+/// The previous hardware run was read as "compaction ran and the retry
+/// failed" on the strength of a log line that was *missing*, which is not
+/// evidence of anything: a line can be lost to a level filter, to a serial
+/// drop, or to the reset that the run ended in. A counter the application
+/// reads back afterwards distinguishes the three ways the retry can fail --
+/// the arm never runs, the heap refuses, the store refuses -- and cannot go
+/// missing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Probe {
+    /// `set` returned `Full`, so the compact-and-retry arm was entered.
+    pub set_full: u32,
+    /// The heap would not give up [`COMPACT_SCRATCH`] bytes.
+    pub no_heap: u32,
+    /// `Store::compact` returned, and what it reclaimed in total.
+    pub compacted: u32,
+    pub reclaimed: u32,
+    /// `Store::compact` refused -- scratch too small, or a flash error.
+    pub compact_err: u32,
+    /// The `set` after a successful compaction.
+    pub retry_ok: u32,
+    pub retry_err: u32,
+}
+
+impl Probe {
+    const fn new() -> Self {
+        Self {
+            set_full: 0,
+            no_heap: 0,
+            compacted: 0,
+            reclaimed: 0,
+            compact_err: 0,
+            retry_ok: 0,
+            retry_err: 0,
+        }
+    }
+}
+
+static PROBE: kernel::smp::Spinlock<Probe> = kernel::smp::Spinlock::new(Probe::new());
+
+/// The compaction counters so far this boot.
+pub fn probe() -> Probe {
+    PROBE.with(|p| *p)
 }
 
 /// Bytes of scratch for a compaction.
@@ -240,6 +293,7 @@ const COMPACT_SCRATCH: usize = 4096;
 fn compact<S: Storage>(store: &mut Store<S>) -> bool {
     let scratch = unsafe { kernel::heap::alloc(COMPACT_SCRATCH, 4) };
     if scratch.is_null() {
+        PROBE.with(|p| p.no_heap += 1);
         api::log_error!("radio: nvs is full and there is no heap to compact with");
         return false;
     }
@@ -248,10 +302,15 @@ fn compact<S: Storage>(store: &mut Store<S>) -> bool {
     unsafe { kernel::heap::free(scratch, kernel::heap::Caps::Internal) };
     match result {
         Ok(freed) => {
+            PROBE.with(|p| {
+                p.compacted += 1;
+                p.reclaimed += freed;
+            });
             api::log_info!("radio: nvs compacted, {} bytes reclaimed", freed);
             true
         }
         Err(e) => {
+            PROBE.with(|p| p.compact_err += 1);
             api::log_error!("radio: nvs compaction failed: {:?}", e);
             false
         }

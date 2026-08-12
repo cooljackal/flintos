@@ -465,6 +465,40 @@ So the working theory is **`kvstore` log growth**, not the Wi-Fi driver, and
 This outranks the missing MAC interrupt. Every measurement behind B1 was taken
 on a board that boots reliably only some of the time.
 
+#### Compaction, and the write that was too wide
+
+`kvstore` now compacts, and the path from `nvs_set_blob` down to the retry is
+proven on hardware — 400 writes of one key through the C entry points, two
+compactions, `retry_ok=2`, `retry_err=0`, 44196 bytes reclaimed:
+
+```text
+[wifi] probe: 400 writes, last rc=0x0, used 9952
+[wifi] probe: set_full=2 no_heap=0 compact_err=0
+[wifi] probe: compacted=2 reclaimed=44196 retry_ok=2 retry_err=0
+```
+
+The first attempt failed, and the reason is worth keeping. `compact` wrote the
+whole live set back in **one** `Storage::write`. The ESP32's implementation
+copies through a 64-word scratch array and refuses anything longer
+(`kernel/src/nvs.rs`, `SCRATCH_WORDS`), so any live set past 256 bytes came
+back `Io` — *after* the erase, which is the one window where a failure costs
+the store. The write-back now goes one entry at a time, which is what both
+references do: esp-idf's `Page::copyItems` calls `writeEntry` per entry
+(`nvs_page.cpp:535`), and Zephyr's `nvs_gc` pairs one `nvs_flash_block_move`
+with one `nvs_flash_ate_wrt` per entry (`subsys/fs/nvs/nvs.c`, ~line 510) and
+chunks even within an entry.
+
+Five host tests passed over this bug because the test `Fake` had no write-size
+limit — it modelled flash's *bit* behaviour and not its *transfer* behaviour.
+It has the cap now, and the test that fails without the fix is
+`a_live_set_wider_than_one_write_still_goes_back`.
+
+The counters behind those log lines live in `radio_esp32::nvs::probe()`, and
+the fill loop is `NVS_FILL_PROBE` in `apps/wifiscan`, off by default because it
+writes junk that only `make erase` clears. They exist because the run before
+them was read as "compaction ran and the retry failed" on the strength of a
+log line that was *missing*, which turned out to say nothing at all.
+
 ### Where 5.2 stands
 
 **The whole scan cycle runs, repeatably.** Three boots, three scans each, no

@@ -382,9 +382,24 @@ impl<S: Storage> Store<S> {
         // Past this point the store is gone until the write-back finishes.
         self.storage.erase_all()?;
         self.tail = 0;
-        if live > 0 {
-            self.storage.write(0, &scratch[..live])?;
-            self.tail = live as u32;
+        // One entry per `write`, not one write for the whole live set. A
+        // `Storage` is allowed to cap how much it takes at once -- the ESP32's
+        // does, at 256 bytes, because it copies through a word-aligned scratch
+        // array (`kernel::nvs`, `SCRATCH_WORDS`) -- and `set` never writes more
+        // than a single entry, so that is the size the implementations are
+        // built for. Both references copy per entry for the same reason:
+        // esp-idf's `Page::copyItems` calls `writeEntry` once per entry
+        // (`nvs_page.cpp:535`), and Zephyr's `nvs_gc` pairs one
+        // `nvs_flash_block_move` with one `nvs_flash_ate_wrt` per entry
+        // (`subsys/fs/nvs/nvs.c`, ~line 510), chunking even within an entry.
+        let mut at = 0;
+        while at < live {
+            let n = encoded_len(&scratch[at..]);
+            self.storage.write(at as u32, &scratch[at..at + n])?;
+            at += n;
+            // Advanced per entry so a failure part-way leaves the cursor on
+            // what actually reached the flash rather than on the whole set.
+            self.tail = at as u32;
         }
         Ok(before.saturating_sub(self.tail))
     }
@@ -422,8 +437,18 @@ mod tests {
 
     const CAP: usize = 4096;
 
-    /// Flash that behaves like flash: erased is 0xFF, and a write can only
-    /// clear bits.
+    /// The most one `write` may carry.
+    ///
+    /// The ESP32's `Storage` copies through a 64-word scratch array and
+    /// refuses anything longer (`kernel/src/nvs.rs`, `SCRATCH_WORDS`). The
+    /// fake did not model that, so `compact` writing the whole live set in one
+    /// call passed every host test and returned `Io` on the board the first
+    /// time two keys were live. A cap here is what makes that a test failure
+    /// instead of a hardware one.
+    const MAX_WRITE: usize = 256;
+
+    /// Flash that behaves like flash: erased is 0xFF, a write can only clear
+    /// bits, and no single write may exceed [`MAX_WRITE`].
     pub(crate) struct Fake {
         bytes: [u8; CAP],
         /// Stop writing after this many bytes, to model losing power.
@@ -451,7 +476,7 @@ mod tests {
         }
         fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Error> {
             let o = offset as usize;
-            if o + data.len() > CAP {
+            if o + data.len() > CAP || data.len() > MAX_WRITE {
                 return Err(Error::Io);
             }
             let limit = self.stop_after.unwrap_or(data.len()).min(data.len());
@@ -868,6 +893,32 @@ mod compaction_tests {
         assert_eq!(s.used(), before, "the store must be untouched");
         let mut out = [0u8; MAX_VALUE_LEN];
         assert_eq!(s.get(b"a", &mut out).unwrap(), MAX_VALUE_LEN);
+    }
+
+    #[test]
+    fn a_live_set_wider_than_one_write_still_goes_back() {
+        // The one that was missing. Five full-length values are ~700 bytes
+        // live, well past what a single `Storage::write` may carry, so a
+        // write-back that hands over the whole set at once fails with `Io`
+        // *after* the erase -- which is exactly what the board did.
+        let mut s = store();
+        let keys: [&[u8]; 5] = [b"k0", b"k1", b"k2", b"k3", b"k4"];
+        for (i, k) in keys.iter().enumerate() {
+            s.set(k, &[b'0' + i as u8; MAX_VALUE_LEN]).unwrap();
+            s.set(k, &[b'a' + i as u8; MAX_VALUE_LEN]).unwrap();
+        }
+        let before = s.used();
+
+        let mut scratch = [0u8; 2048];
+        let reclaimed = s.compact(&mut scratch).unwrap();
+        assert!(reclaimed > 0);
+        assert_eq!(s.used(), before - reclaimed);
+
+        let mut out = [0u8; MAX_VALUE_LEN];
+        for (i, k) in keys.iter().enumerate() {
+            assert_eq!(s.get(k, &mut out).unwrap(), MAX_VALUE_LEN, "{:?} survived", k);
+            assert_eq!(out[0], b'a' + i as u8, "and kept its newest value");
+        }
     }
 
     #[test]

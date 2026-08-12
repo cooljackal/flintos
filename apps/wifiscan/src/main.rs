@@ -189,6 +189,82 @@ fn report_results() {
     }
 }
 
+/// Fill the `nvs` partition through the driver's own C entry points until it
+/// has to compact, then report what the compaction path did.
+///
+/// This is a diagnostic, and it writes junk into the partition that only
+/// `make erase` clears. It stays off unless something is being measured.
+#[cfg(feature = "blobs")]
+const NVS_FILL_PROBE: bool = false;
+
+/// Drive `nvs_set_blob` past the end of the log.
+///
+/// It goes through the C shim rather than `with_store`, because the thing in
+/// question is the *wiring* -- `nvs_set_blob` -> `set_tagged` -> `put`'s
+/// `Full` arm -> `compact` -> retry -- and calling `Store::set` directly would
+/// skip every step of it. One key is written over and over, so the live set
+/// stays at a single entry and a compaction that runs must reclaim nearly the
+/// whole partition.
+#[cfg(feature = "blobs")]
+fn fill_probe() {
+    use core::ffi::{c_char, c_void};
+
+    extern "C" {
+        fn nvs_open(name: *const c_char, mode: u32, out: *mut c_void) -> i32;
+        fn nvs_set_blob(handle: u32, key: *const c_char, value: *const c_void, len: usize) -> i32;
+    }
+
+    let mut handle: u32 = 0;
+    let rc = unsafe {
+        nvs_open(
+            b"probe\0".as_ptr() as *const c_char,
+            1,
+            (&mut handle) as *mut u32 as *mut c_void,
+        )
+    };
+    if rc != 0 {
+        api::log_error!("[wifi] probe: nvs_open rc={:#x}", rc);
+        return;
+    }
+
+    let payload = [0xa5u8; 100];
+    let mut writes = 0u32;
+    let mut last = 0i32;
+    // Enough to fill a 24 KiB log twice over, so a second compaction would
+    // show up as well as the first.
+    for _ in 0..400 {
+        last = unsafe {
+            nvs_set_blob(
+                handle,
+                b"fill\0".as_ptr() as *const c_char,
+                payload.as_ptr() as *const c_void,
+                payload.len(),
+            )
+        };
+        if last != 0 {
+            break;
+        }
+        writes += 1;
+    }
+
+    let used = radio_esp32::nvs::with_store(|s| s.used(), 0);
+    let p = radio_esp32::nvs::probe();
+    api::log_info!(
+        "[wifi] probe: {} writes, last rc={:#x}, used {}",
+        writes, last, used
+    );
+    // Two lines: the console truncates a long one, and a counter that is cut
+    // off is the same as a counter that was never printed.
+    api::log_info!(
+        "[wifi] probe: set_full={} no_heap={} compact_err={}",
+        p.set_full, p.no_heap, p.compact_err
+    );
+    api::log_info!(
+        "[wifi] probe: compacted={} reclaimed={} retry_ok={} retry_err={}",
+        p.compacted, p.reclaimed, p.retry_ok, p.retry_err
+    );
+}
+
 #[cfg(feature = "blobs")]
 fn run() {
     use radio_esp32::wifi;
@@ -217,6 +293,9 @@ fn run() {
         "[wifi] nvs: {} used, {} free, one get = {} us (rc {})",
         used, free, kernel::clock::now_us() - t, probe
     );
+    if NVS_FILL_PROBE {
+        fill_probe();
+    }
 
     // Installed before init, not after. The driver posts `WIFI_READY` from
     // inside `esp_wifi_start`, and a handler registered afterwards would miss
