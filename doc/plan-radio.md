@@ -426,6 +426,45 @@ software timer, so it advanced only when the driver gave up on each channel:
 `wifi::init` calls it now — a service the adapter depends on should not be
 each application's job to remember.
 
+### The soak, and what it overturned
+
+Run because "is what I already measured true" had gone unasked for too long.
+Two parts, and the second failed.
+
+**Steady state is solid.** One boot, 46 consecutive scans over 5.5 minutes:
+0 missed `SCAN_DONE`, 0 faults, 0 dropped events, 0 refused mutex unlocks,
+one event per scan and no duplicates, and scan times between 2065 and 2080 ms
+— a 15 ms spread over 46 samples.
+
+**Two things that spread corrects:**
+
+1. **There is no heap leak.** It was reported as "~1.9 KB per scan, steady
+   enough to be one allocation never freed". Over 46 scans it goes
+   121928 → 119904 → 118064 and then stays at **118064 for the remaining 43**.
+   That is the driver reaching its steady-state working set in the first three
+   scans, not a leak. D1 is closed.
+
+2. **The init hang is not fixed.** Five reboots of the same binary: boots 1
+   and 2 reached `driver up` and scanned; boots **3, 4 and 5 hung inside
+   `wifi::init`**, after `heap: 149392 bytes`, with no fault — the same
+   signature that was attributed first to NVS and then to the missing timer
+   service, and declared fixed twice.
+
+**It is correlated with how much is in the `nvs` partition.** After
+`make erase`, six consecutive boots all reached `driver up`. Before it, with a
+store that had accumulated appends across dozens of boots this session, three
+of five hung. `kvstore` is append-only with no compaction and the partition is
+24 KiB; a calibration is ~18 records, so roughly ten stores fill it — and a
+write onto bytes that are not erased returns `Ok` and lands as garbage,
+because NOR flash only clears bits.
+
+So the working theory is **`kvstore` log growth**, not the Wi-Fi driver, and
+`make erase` has been masking it all session — which is also why every
+"fixed" verdict held: each was measured shortly after an erase.
+
+This outranks the missing MAC interrupt. Every measurement behind B1 was taken
+on a board that boots reliably only some of the time.
+
 ### Where 5.2 stands
 
 **The whole scan cycle runs, repeatably.** Three boots, three scans each, no
