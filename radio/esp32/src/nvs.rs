@@ -202,7 +202,59 @@ fn put<S: Storage>(store: &mut Store<S>, ns: &[u8], key: &[u8], tag: u8, bytes: 
     vbuf[1..1 + bytes.len()].copy_from_slice(bytes);
     match store.set(k, &vbuf[..1 + bytes.len()]) {
         Ok(()) => ESP_OK,
+        Err(KvError::Full) => {
+            // Compact and retry once. The log is append-only, so a store the
+            // driver rewrites on every boot fills with superseded copies of a
+            // handful of keys -- and `Full` reaching the driver as
+            // `ESP_ERR_NVS_NOT_ENOUGH_SPACE` is what hung init.
+            if !compact(store) {
+                return map_err(KvError::Full);
+            }
+            match store.set(k, &vbuf[..1 + bytes.len()]) {
+                Ok(()) => ESP_OK,
+                Err(e) => map_err(e),
+            }
+        }
         Err(e) => map_err(e),
+    }
+}
+
+/// Bytes of scratch for a compaction.
+///
+/// Must hold the live set -- distinct keys times `kvstore::MAX_ENTRY`, not the
+/// whole log. The driver keeps a handful of keys and the RF calibration is
+/// fifteen chunks plus three, so 4 KiB is roughly twice what has ever been
+/// live.
+const COMPACT_SCRATCH: usize = 4096;
+
+/// Reclaim superseded entries. `false` if it could not be attempted.
+///
+/// The scratch comes from the heap rather than `.bss`: this runs at most once
+/// per boot, and 4 KiB of permanently reserved DRAM to serve it would cost
+/// more than the radio heap does.
+///
+/// **A reset during the rewrite loses the store** -- see
+/// `kvstore::Store::compact`, which explains why and what it would take to fix
+/// properly. Everything here is regenerable.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+fn compact<S: Storage>(store: &mut Store<S>) -> bool {
+    let scratch = unsafe { kernel::heap::alloc(COMPACT_SCRATCH, 4) };
+    if scratch.is_null() {
+        api::log_error!("radio: nvs is full and there is no heap to compact with");
+        return false;
+    }
+    let buf = unsafe { core::slice::from_raw_parts_mut(scratch, COMPACT_SCRATCH) };
+    let result = store.compact(buf);
+    unsafe { kernel::heap::free(scratch, kernel::heap::Caps::Internal) };
+    match result {
+        Ok(freed) => {
+            api::log_info!("radio: nvs compacted, {} bytes reclaimed", freed);
+            true
+        }
+        Err(e) => {
+            api::log_error!("radio: nvs compaction failed: {:?}", e);
+            false
+        }
     }
 }
 

@@ -124,6 +124,28 @@ struct Entry {
     val_len: usize,
 }
 
+/// Bytes the encoded entry at the start of `buf` occupies.
+fn encoded_len(buf: &[u8]) -> usize {
+    entry_len(buf[2] as usize, buf[3] as usize) as usize
+}
+
+/// Offset of the entry in `buf` whose key is `key`, if any.
+///
+/// `buf` is a run of encoded entries, as [`Store::compact`] builds. Walking it
+/// rather than indexing is what keeps compaction allocation-free.
+fn find_key(buf: &[u8], key: &[u8]) -> Option<usize> {
+    let mut at = 0;
+    while at + HEADER_LEN <= buf.len() {
+        let klen = buf[at + 2] as usize;
+        let total = encoded_len(&buf[at..]);
+        if klen == key.len() && &buf[at + HEADER_LEN..at + HEADER_LEN + klen] == key {
+            return Some(at);
+        }
+        at += total;
+    }
+    None
+}
+
 /// The log, over some [`Storage`].
 pub struct Store<S: Storage> {
     storage: S,
@@ -297,6 +319,76 @@ impl<S: Storage> Store<S> {
         Ok(val_len)
     }
 
+    /// Rewrite the log keeping only the newest entry for each key.
+    ///
+    /// # Why this exists
+    ///
+    /// The log is append-only: a `set` on an existing key appends a second
+    /// entry and the old one stays. Nothing reclaimed it, so a store written
+    /// to on every boot grew until `set` returned [`Error::Full`] — and the
+    /// Wi-Fi driver, handed `ESP_ERR_NVS_NOT_ENOUGH_SPACE`, did not come
+    /// back. Measured at +36 bytes and +116 us per boot before this existed.
+    ///
+    /// # The weaker guarantee, stated plainly
+    ///
+    /// esp-idf's `nvs_flash` and Zephyr's `subsys/fs/nvs` both compact by
+    /// *sector rotation*: live entries are copied to a fresh sector before the
+    /// old one is erased, so every entry is readable from flash at every
+    /// instant and a power cut costs nothing.
+    ///
+    /// **This cannot do that**, because [`Storage`] has no per-sector erase —
+    /// only [`Storage::erase_all`]. So the live set is copied into `scratch`,
+    /// the whole store is erased, and the entries are written back. **A reset
+    /// inside that window loses the store.** That is acceptable for what it
+    /// holds today — an RF calibration, regenerable in ~183 ms — and would not
+    /// be for anything that cannot be recomputed. Fixing it properly means
+    /// adding `erase_sector` to [`Storage`] and rotating; the trait is the
+    /// blocker, not the algorithm.
+    ///
+    /// # Scratch
+    ///
+    /// Must hold every *live* entry, not the whole log: distinct keys times
+    /// [`MAX_ENTRY`]. Returns [`Error::Full`] without touching the store if it
+    /// does not fit, so a caller that guessed too small loses nothing.
+    ///
+    /// Returns the number of bytes reclaimed.
+    pub fn compact(&mut self, scratch: &mut [u8]) -> Result<u32, Error> {
+        let before = self.tail;
+        let mut live: usize = 0;
+
+        // Forward, replacing in place: a later entry for a key supersedes an
+        // earlier one, so the scratch always holds the newest of each.
+        let mut buf = [0u8; MAX_ENTRY];
+        let mut at = 0;
+        while let Some(e) = self.entry_into(at, &mut buf)? {
+            let total = e.total as usize;
+            let key = &buf[HEADER_LEN..HEADER_LEN + e.key_len];
+            if let Some(prev) = find_key(&scratch[..live], key) {
+                // Drop the older copy, then append the newer below. Removing
+                // rather than overwriting in place because the two entries can
+                // be different lengths.
+                let plen = encoded_len(&scratch[prev..]);
+                scratch.copy_within(prev + plen..live, prev);
+                live -= plen;
+            }
+            if live + total > scratch.len() {
+                return Err(Error::Full);
+            }
+            scratch[live..live + total].copy_from_slice(&buf[..total]);
+            live += total;
+            at += e.total;
+        }
+
+        // Past this point the store is gone until the write-back finishes.
+        self.storage.erase_all()?;
+        self.tail = 0;
+        if live > 0 {
+            self.storage.write(0, &scratch[..live])?;
+            self.tail = live as u32;
+        }
+        Ok(before.saturating_sub(self.tail))
+    }
+
     /// Is `key` present?
     pub fn contains(&self, key: &[u8]) -> Result<bool, Error> {
         let mut out = [0u8; MAX_VALUE_LEN];
@@ -332,14 +424,14 @@ mod tests {
 
     /// Flash that behaves like flash: erased is 0xFF, and a write can only
     /// clear bits.
-    struct Fake {
+    pub(crate) struct Fake {
         bytes: [u8; CAP],
         /// Stop writing after this many bytes, to model losing power.
         stop_after: Option<usize>,
     }
 
     impl Fake {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self { bytes: [0xFF; CAP], stop_after: None }
         }
     }
@@ -689,5 +781,100 @@ mod tests {
         store.set(b"k", b"ok").expect("set");
         let n = store.get(b"k", &mut small).expect("get");
         assert_eq!(&small[..n], b"ok");
+    }
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+    use crate::tests::Fake;
+
+    fn store() -> Store<Fake> {
+        Store::open(Fake::new()).expect("open")
+    }
+
+    #[test]
+    fn compaction_keeps_the_newest_value_for_every_key() {
+        let mut s = store();
+        s.set(b"a", b"1").unwrap();
+        s.set(b"b", b"one").unwrap();
+        s.set(b"a", b"2").unwrap();
+        s.set(b"a", b"3").unwrap();
+        s.set(b"c", b"x").unwrap();
+        let before = s.used();
+
+        let mut scratch = [0u8; 1024];
+        let reclaimed = s.compact(&mut scratch).expect("compact");
+        assert!(reclaimed > 0, "two superseded copies of `a` should be gone");
+        assert_eq!(s.used(), before - reclaimed);
+
+        let mut out = [0u8; MAX_VALUE_LEN];
+        assert_eq!(s.get(b"a", &mut out).unwrap(), 1);
+        assert_eq!(&out[..1], b"3", "the newest value, not the first");
+        assert_eq!(s.get(b"b", &mut out).unwrap(), 3);
+        assert_eq!(&out[..3], b"one");
+        assert_eq!(s.get(b"c", &mut out).unwrap(), 1);
+        assert_eq!(&out[..1], b"x");
+    }
+
+    #[test]
+    fn compaction_is_idempotent() {
+        // A second pass over an already-compact log must reclaim nothing and
+        // change nothing -- otherwise a caller that compacts on every boot
+        // rewrites flash for no reason, which is wear for free.
+        let mut s = store();
+        s.set(b"k", b"v").unwrap();
+        s.set(b"j", b"w").unwrap();
+        let mut scratch = [0u8; 1024];
+        s.compact(&mut scratch).unwrap();
+        let after_first = s.used();
+        assert_eq!(s.compact(&mut scratch).unwrap(), 0);
+        assert_eq!(s.used(), after_first);
+    }
+
+    #[test]
+    fn compaction_makes_a_full_store_writable_again() {
+        // The failure this exists for: `set` returning `Full` on a store whose
+        // live set is tiny, because every rewrite of one key appended.
+        let mut s = store();
+        let big = [b'x'; MAX_VALUE_LEN];
+        let mut writes = 0;
+        while s.set(b"same", &big).is_ok() {
+            writes += 1;
+            assert!(writes < 10_000, "the store should fill");
+        }
+        assert_eq!(s.set(b"same", &big), Err(Error::Full));
+
+        let mut scratch = [0u8; 1024];
+        assert!(s.compact(&mut scratch).unwrap() > 0);
+        s.set(b"same", &big).expect("room again after compaction");
+
+        let mut out = [0u8; MAX_VALUE_LEN];
+        assert_eq!(s.get(b"same", &mut out).unwrap(), MAX_VALUE_LEN);
+    }
+
+    #[test]
+    fn a_scratch_too_small_refuses_and_leaves_the_store_alone() {
+        // Checked before the erase, so a caller that guessed wrong loses
+        // nothing. This is the test that would fail if `erase_all` ever moved
+        // above the scratch bounds check.
+        let mut s = store();
+        s.set(b"a", &[b'x'; MAX_VALUE_LEN]).unwrap();
+        s.set(b"b", &[b'y'; MAX_VALUE_LEN]).unwrap();
+        let before = s.used();
+
+        let mut tiny = [0u8; 64];
+        assert_eq!(s.compact(&mut tiny), Err(Error::Full));
+        assert_eq!(s.used(), before, "the store must be untouched");
+        let mut out = [0u8; MAX_VALUE_LEN];
+        assert_eq!(s.get(b"a", &mut out).unwrap(), MAX_VALUE_LEN);
+    }
+
+    #[test]
+    fn compacting_an_empty_store_does_nothing() {
+        let mut s = store();
+        let mut scratch = [0u8; 64];
+        assert_eq!(s.compact(&mut scratch).unwrap(), 0);
+        assert_eq!(s.used(), 0);
     }
 }
