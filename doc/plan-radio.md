@@ -493,6 +493,40 @@ limit — it modelled flash's *bit* behaviour and not its *transfer* behaviour.
 It has the cap now, and the test that fails without the fix is
 `a_live_set_wider_than_one_write_still_goes_back`.
 
+#### N2: the init hang reproduces on demand, and compaction does not fix it
+
+Five cold boots of one binary with 9988 of 24576 bytes in the store, no erase
+between them: **five hangs out of five**, every one stopping at the same line
+and the same millisecond.
+
+```text
+[  218][task:1] INFO  [wifi] nvs: 9988 used, 14588 free, one get = 14114 us
+                                        <- nothing further, no fault
+```
+
+That is a much better handle than the soak's "three of five". Three things it
+establishes, and one it does not:
+
+- **It is content-dependent.** The same binary with the partition erased boots,
+  scans, and reports `0 networks` in 2070 ms.
+- **Compaction does not prevent it.** The log only compacts when it is *full*,
+  and 9988 bytes is not full. Nothing about the N1 fix touches this.
+- **It is not fullness either.** 9988 of 24576 hangs.
+- **But it is also timing-marginal, which rules the simple story out.** The
+  same store, the same partition contents, with four `log_info!` lines added
+  inside `wifi::init`, boots — and the markers all print, so the region they
+  cover is not where it stops. A hang that four log lines move is not a hang
+  caused by the number of bytes on flash; the byte count is a condition, not
+  the mechanism.
+
+The reads are the thing those two have in common: one `get` over a
+9988-byte log costs **14106 us**, against 3347 us at 2272 bytes, and every one
+of them runs with the instruction cache off (see "flash and the radio cannot
+currently coexist" above). Whether that is what stalls it is unmeasured.
+
+Reproducing it: set `NVS_FILL_PROBE` in `apps/wifiscan` to `true`, boot once to
+fill the partition, set it back, and reboot without erasing.
+
 The counters behind those log lines live in `radio_esp32::nvs::probe()`, and
 the fill loop is `NVS_FILL_PROBE` in `apps/wifiscan`, off by default because it
 writes junk that only `make erase` clears. They exist because the run before
