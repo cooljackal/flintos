@@ -541,6 +541,18 @@ Zero. `appcpu::is_running()` is false in this application, so core 1 is never
 asked and never stalled. The park path is not the mechanism, and the whole
 second-core question is out of scope for N2.
 
+**Size alone does not reproduce it, measured.** Filling the log to 10024
+bytes — just past the 9988 that hung five times out of five — on the same boot
+that then runs `init` produced a clean bring-up: `driver up` at 293 ms, scan
+running. So "N bytes in the store" is not the condition. What separates the
+two is that the hung boots read a log written by *earlier* boots, while this
+one read a log it had just written itself. The erased-versus-9988 contrast
+still stands; the byte count on its own does not explain it.
+
+The tick was the other candidate and it is also out: `rearm_this_core_inner`
+in `arch/xtensa/src/tick.rs` already catches up when it has fallen behind by
+more than one period, so a long masked window costs ticks and not the timer.
+
 What that leaves is single-core: each window masks every non-IRAM interrupt
 (as both references do — `esp_intr_noniram_disable`, and NuttX's opstart at
 `esp32_spiflash.c:687-689`, which also takes `sched_lock`), and a 14 ms read

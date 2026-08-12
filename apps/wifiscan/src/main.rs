@@ -189,6 +189,23 @@ fn report_results() {
     }
 }
 
+/// How far `run` has got. Read by [`watchdog`] when `init` does not return.
+#[cfg(feature = "blobs")]
+static STAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Report the stage every second, from a task that `init` cannot block.
+#[cfg(feature = "blobs")]
+fn watchdog() {
+    for i in 1..=8 {
+        task::sleep_ms(1000);
+        let stage = STAGE.load(core::sync::atomic::Ordering::SeqCst);
+        if stage >= 2 {
+            return;
+        }
+        api::log_info!("[wifi] watch {}: still in stage {}", i, stage);
+    }
+}
+
 /// Fill the `nvs` partition through the driver's own C entry points until it
 /// has to compact, then report what the compaction path did.
 ///
@@ -196,6 +213,14 @@ fn report_results() {
 /// `make erase` clears. It stays off unless something is being measured.
 #[cfg(feature = "blobs")]
 const NVS_FILL_PROBE: bool = false;
+
+/// Stop filling once the log reaches this many bytes. Zero fills it right up.
+///
+/// 10000 is just above where five boots out of five hung; filling to it on the
+/// way past means the hang reproduces on the boot that creates the condition,
+/// instead of needing a second one.
+#[cfg(feature = "blobs")]
+const FILL_TARGET: u32 = 10_000;
 
 /// Drive `nvs_set_blob` past the end of the log.
 ///
@@ -231,8 +256,13 @@ fn fill_probe() {
     let mut writes = 0u32;
     let mut last = 0i32;
     // Enough to fill a 24 KiB log twice over, so a second compaction would
-    // show up as well as the first.
+    // show up as well as the first. It stops early at [`FILL_TARGET`] when
+    // that is set, which is how the init hang is reproduced on one boot
+    // rather than two.
     for _ in 0..400 {
+        if FILL_TARGET > 0 && radio_esp32::nvs::with_store(|s| s.used(), 0) >= FILL_TARGET {
+            break;
+        }
         last = unsafe {
             nvs_set_blob(
                 handle,
@@ -312,7 +342,17 @@ fn run() {
     // the events that say the thing it is waiting for already happened.
     radio_esp32::events::set_handler(Some(on_event));
 
+    // A hang inside `init` prints nothing, so the question "is the whole
+    // system dead, or is this one task stuck?" cannot be answered from the
+    // silence. This task answers it: it is above this one's priority, so if
+    // the tick still fires and the scheduler still runs, it wakes and reports
+    // how far `init` got. Silence from it too means the system is gone, not
+    // blocked. See doc/plan-radio.md, "N2".
+    task::spawn("wifiwatch", watchdog, Priority::Normal(3), 4096);
+
+    STAGE.store(1, core::sync::atomic::Ordering::SeqCst);
     let rc = unsafe { wifi::init() };
+    STAGE.store(2, core::sync::atomic::Ordering::SeqCst);
     if rc != 0 {
         api::log_error!("[wifi] esp_wifi_init_internal failed: {:#x}", rc);
         return idle();
