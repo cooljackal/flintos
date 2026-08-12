@@ -379,6 +379,14 @@ impl<S: Storage> Store<S> {
             at += e.total;
         }
 
+        // Nothing superseded: every byte in the log is live, so erasing and
+        // writing it back would put the same bytes in the same places at the
+        // cost of one erase cycle. Checked here rather than left to the
+        // caller, because the caller cannot know without doing this scan.
+        if live as u32 == before {
+            return Ok(0);
+        }
+
         // Past this point the store is gone until the write-back finishes.
         self.storage.erase_all()?;
         self.tail = 0;
@@ -453,11 +461,15 @@ mod tests {
         bytes: [u8; CAP],
         /// Stop writing after this many bytes, to model losing power.
         stop_after: Option<usize>,
+        /// How many times the store has been erased. Flash wears out, so a
+        /// compaction that erases when it had nothing to reclaim is a real
+        /// cost and worth a test.
+        pub(crate) erases: u32,
     }
 
     impl Fake {
         pub(crate) fn new() -> Self {
-            Self { bytes: [0xFF; CAP], stop_after: None }
+            Self { bytes: [0xFF; CAP], stop_after: None, erases: 0 }
         }
     }
 
@@ -488,6 +500,7 @@ mod tests {
         }
         fn erase_all(&mut self) -> Result<(), Error> {
             self.bytes = [0xFF; CAP];
+            self.erases += 1;
             Ok(())
         }
     }
@@ -919,6 +932,24 @@ mod compaction_tests {
             assert_eq!(s.get(k, &mut out).unwrap(), MAX_VALUE_LEN, "{:?} survived", k);
             assert_eq!(out[0], b'a' + i as u8, "and kept its newest value");
         }
+    }
+
+    #[test]
+    fn nothing_to_reclaim_costs_no_erase() {
+        // Zephyr's `nvs_gc` is driven by the write pointer crossing a sector,
+        // not by anything knowing in advance whether there is garbage to
+        // collect, so the no-garbage case has to be cheap. Erasing to write
+        // the same bytes back would spend a flash cycle for nothing.
+        let mut s = store();
+        s.set(b"a", b"1").unwrap();
+        s.set(b"b", b"2").unwrap();
+        let before = s.used();
+        let erases = s.storage.erases;
+
+        let mut scratch = [0u8; 512];
+        assert_eq!(s.compact(&mut scratch).unwrap(), 0);
+        assert_eq!(s.used(), before);
+        assert_eq!(s.storage.erases, erases, "no erase when nothing is superseded");
     }
 
     #[test]

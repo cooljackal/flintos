@@ -326,6 +326,13 @@ fn run() {
     if NVS_FILL_PROBE {
         fill_probe();
     }
+    // Before the driver reads anything out of it. The log accumulates a
+    // superseded calibration every boot, and what a read costs is what the
+    // log is long. See `radio_esp32::nvs::compact_if_grown`.
+    if radio_esp32::nvs::compact_if_grown() {
+        let (used, free) = radio_esp32::nvs::with_store(|s| (s.used(), s.free()), (0, 0));
+        api::log_info!("[wifi] nvs compacted at boot: {} used, {} free", used, free);
+    }
     // Every one of those reads ran with the cache off and the second core out
     // of the way. It is *asked* to park first; a fallback hardware stall is
     // what neither esp-idf nor NuttX does, and a stalled core can be holding a

@@ -541,6 +541,66 @@ Zero. `appcpu::is_running()` is false in this application, so core 1 is never
 asked and never stalled. The park path is not the mechanism, and the whole
 second-core question is out of scope for N2.
 
+#### N2 is a blocked task, not a dead system — and not the log length
+
+The `wifiwatch` task, spawned above the application's priority precisely to
+answer this, **runs for the whole hang**:
+
+```text
+[wifi] nvs: 2536 used, 22040 free, one get = 4097 us
+[wifi] watch 1: still in stage 1
+...
+[wifi] watch 8: still in stage 1
+```
+
+Three boots in a row, eight seconds each. So the scheduler is alive, the tick
+fires, tasks switch — **one task is blocked inside `wifi::init`** and
+everything else is fine. That is a wait that is never signalled: a semaphore,
+a queue, or a mutex the adapter hands the blob and never posts.
+
+And it happens at **2536 bytes**, with a read costing 4097 us. So the log
+length is not the condition either, and the section below — written when the
+only evidence was 9988 bytes hanging and an erased partition not — claims a
+fix that the next five boots refuted. The bounded log is still worth having
+for its own reasons; it does not fix this.
+
+The pattern across those five boots is **boots since erase**, not bytes: two
+clean, then three hung, and the store frozen at 2536 because a hung boot never
+writes a calibration. That matches the soak's "three of five" and the six
+clean boots after `make erase`.
+
+#### The log bound: Zephyr's invariant, not Zephyr's mechanism
+
+`nvs_gc` (`subsys/fs/nvs/nvs.c`) reclaims the sector the write pointer is
+leaving, so Zephyr's log is always about one sector long and a read never
+walks more than that. Ours compacted only at `Full`, so it sat at ten
+kilobytes for nearly all of its life and a read cost what the log was long.
+
+The literal trigger does not transfer, and trying it proved that: a
+calibration rewrite adds **36 bytes a boot**, so "the write pointer crossed a
+sector" fires about once in a hundred boots. Boot two after that change hung
+at 10096 bytes, having never crossed anything.
+
+What transfers is the invariant — *keep the log inside a sector*. Checked once
+at startup, after the heap exists and before the driver reads anything:
+
+```text
+[  218] nvs: 10132 used, 14444 free, one get = 14583 us   <- the hang condition
+[  218] radio: nvs compacted, 7740 bytes reclaimed
+[  219] nvs compacted at boot: 2392 used, 22184 free
+[  275] driver up                                          <- 5/5 hung here before
+```
+
+That boot met the 10132-byte condition and survived. It does **not** follow
+that the growth was the cause: the five boots after it hung three times at
+2536 bytes, so whatever N2 is, it is not the log length. What this change
+buys is a read that stays at ~4 ms instead of growing to ~15 ms, and a
+partition that cannot fill.
+
+`Store::compact` also no longer erases when nothing is superseded, so a
+threshold check that fires on a store of distinct keys costs a scan and no
+flash cycle.
+
 **Size alone does not reproduce it, measured.** Filling the log to 10024
 bytes — just past the 9988 that hung five times out of five — on the same boot
 that then runs `init` produced a clean bring-up: `driver up` at 293 ms, scan

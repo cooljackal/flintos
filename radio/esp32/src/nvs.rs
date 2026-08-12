@@ -388,6 +388,42 @@ pub fn with_store<R>(f: impl FnOnce(&mut Store<kernel::nvs::FlashStorage>) -> R,
     })
 }
 
+/// Bring the log back down if it has grown past a sector.
+///
+/// **Call after `kernel::heap::init`, before the driver starts.** The
+/// compaction scratch comes from the heap, so this cannot live inside
+/// [`init`], which runs before there is one.
+///
+/// # Why a threshold and not `Full`
+///
+/// Zephyr's `nvs_gc` (`subsys/fs/nvs/nvs.c`) reclaims the sector the write
+/// pointer is leaving, so its log is *always* about one sector long and a read
+/// never walks more than that. Waiting for `Full` — the only trigger this had
+/// — leaves the log long for nearly all of its life, and a read costs what the
+/// log is long: 3347 us over 2272 bytes against 14106 us over 9988.
+///
+/// The trigger cannot be Zephyr's literal one. A calibration rewrite adds 36
+/// bytes a boot, so "the write pointer crossed a sector" fires about once in
+/// a hundred boots and the log sits at ten kilobytes in between — measured,
+/// and the boot after it hung. The *invariant* is what transfers: keep the
+/// log inside a sector. Checked at startup rather than per write, because
+/// that is the one place a whole-store rewrite is safe to take.
+///
+/// Returns true if it compacted.
+#[cfg(target_os = "none")]
+pub fn compact_if_grown() -> bool {
+    let sector = <kernel::nvs::FlashStorage as Storage>::SECTOR_SIZE;
+    with_store(
+        |s| {
+            if s.used() <= sector {
+                return false;
+            }
+            compact(s)
+        },
+        false,
+    )
+}
+
 /// The namespace behind a handle, if it is open.
 #[cfg(target_os = "none")]
 fn namespace_of(handle: u32) -> Option<([u8; MAX_NAME_LEN], usize, bool)> {
