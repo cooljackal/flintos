@@ -428,48 +428,58 @@ each application's job to remember.
 
 ### The bug left in 5.2, and what it is not
 
-The first diagnosis of this was wrong, and the correction is the useful part.
+**Not fixed.** What follows is what has been ruled out, so the next attempt
+does not repeat it.
 
-It was written up as "a populated `nvs` partition hangs
-`esp_wifi_init_internal`", localised with raw-UART markers to inside
-`nvs_open`, and blamed on a read stalling with the cache off. **None of that
-survived the timer fix.** With `ets_timer::start` wired into `wifi::init`,
-init returns in 254 ms on every boot with the store populated, and `nvs_open`
-is called twice and returns both times. The init hang *was* the missing timer
-service, on a path only taken when the driver finds its NVS non-empty. The
-marker experiment had been run before that fix and never repeated after it.
+The first write-up called it "a populated `nvs` partition hangs
+`esp_wifi_init_internal`", localised inside `nvs_open` with raw-UART markers.
+**None of that survived the timer fix.** With `ets_timer::start` wired into
+`wifi::init`, init returns in 254 ms on every boot with the store populated,
+and `nvs_open` is called twice and returns both times. The init hang *was* the
+missing timer service, on a path the driver only takes when it finds its NVS
+non-empty; the markers had been run before that fix and never repeated after
+it. Re-measure after every fix, including the ones not aimed at the symptom in
+hand.
 
-What is actually left is a different, **timing-sensitive** hang, after init,
-on the stored-calibration path — `esp_wifi_set_mode` or `esp_wifi_start`
-never returns when the RF calibration is loaded from flash rather than
-computed. It disappears when *any* small amount of work is added nearby: two
-`raw_print` calls in the application are enough to make it run every time,
-scan included. That is a race, not a logic error, and the shape of it points
-at the cache-off window: the calibration load is the only flash read on that
-path, and `radio-timer` — a 1 ms task that did not exist before this session
-— is the only new thing that can be scheduled during it.
+What is actually there is a **timing-sensitive hang in `esp_wifi_start`**, on
+the boot where the RF calibration is loaded from flash rather than computed.
+No fault, no output, the board simply stops.
 
-Erasing the store avoids it (the calibration is recomputed, ~160 ms), so this
-does not block a demonstration; it blocks a second boot.
+Ruled out by experiment, each one build and one run:
 
-**What the references say about `nvs_enable`.** Worth recording because it was
-checked while chasing the wrong bug: **NuttX implements every `_nvs_*` entry
-as `DEBUGPANIC(); return -1;`** — it asserts the driver never calls them,
-which holds only because it sets `nvs_enable = 0`. Zephyr keeps
+| Change | Result |
+|---|---|
+| Two `raw_print` calls in the application, before `set_mode` | Runs every time, scan included |
+| `ets_timer::start` commented out | Init and start both fine; scan times out, as expected with no timers |
+| Timer service at `Normal(1)` (as written) | Hangs |
+| Timer service at esp-idf's priority 22 → `Critical(2)` | Hangs |
+| Timer service at 24 → `Critical(0)`, above `wifiT` | Ran once, hung on the next boot |
+
+So: **it needs the timer task to exist, and it is not a priority inversion.**
+A few microseconds of UART output anywhere nearby removes it. The remaining
+suspects are the cache-off window — the calibration load is the only flash
+read on that path, and `radio-timer` is the only thing new that can be
+scheduled around it — and `radio-timer`'s 4 KiB stack, which runs blob
+callbacks of unknown frame depth on a kernel with no MPU.
+
+`make erase` avoids it, so it blocks a second boot rather than a
+demonstration.
+
+**What the references say about `nvs_enable`**, checked while chasing the
+wrong bug and worth keeping: **NuttX implements every `_nvs_*` entry as
+`DEBUGPANIC(); return -1;`** — it asserts the driver never calls them, which
+holds only because it sets `nvs_enable = 0`. Zephyr keeps
 `WIFI_INIT_CONFIG_DEFAULT`'s `nvs_enable = WIFI_NVS_ENABLED`, gated on
 `CONFIG_ESP_WIFI_NVS_ENABLED`, and ships a real NVS port behind it. FlintOS
 keeps `nvs_enable = 1` and a working implementation, which is the stronger of
-the two positions — but if the driver's own NVS ever needs to be taken out of
-the picture, turning it off is a configuration both esp-idf and NuttX support
-rather than a workaround.
+the two positions.
 
 Two smaller things, still open:
 
 - **~184 bytes leak per scan**, steadily, across rounds.
-- **An atomic `fetch_add` inside the interrupt trampoline hangs the board**
-  before the driver finishes starting. Reproducible, unexplained, and worth
-  understanding rather than working around — that trampoline is load-bearing
-  for every interrupt in the system. It may well be the same race as above.
+- **An atomic `fetch_add` inside the interrupt trampoline hangs the board.**
+  Reproducible, unexplained, and plausibly the same race — both are "add a few
+  instructions to a path near the radio and the board stops".
 
 - **`wpa_crypto_funcs`.** In esp-idf this is filled from
   `libwpa_supplicant`, which is C source and not one of the blobs, so WPA2

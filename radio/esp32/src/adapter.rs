@@ -160,7 +160,7 @@ pub fn ms_from_ticks(ticks: u32) -> u32 {
 /// Espressif creates its tasks between 18 and 23 out of 25. Those map to the
 /// urgent end here, which is what they are asking for.
 #[inline]
-pub fn priority_from_freertos(prio: u32) -> hal::types::Priority {
+pub const fn priority_from_freertos(prio: u32) -> hal::types::Priority {
     const FREERTOS_MAX: u32 = 25;
     let clamped = if prio >= FREERTOS_MAX { FREERTOS_MAX - 1 } else { prio };
     // Mirror, then place in the Critical band's numeric range. Critical(0) is
@@ -168,7 +168,10 @@ pub fn priority_from_freertos(prio: u32) -> hal::types::Priority {
     // corrupts a frame rather than merely running late.
     let inverted = (FREERTOS_MAX - 1 - clamped) as u8;
     // 0..=15 is the width of one band.
-    hal::types::Priority::Critical(inverted.min(15))
+    // `.min(15)` would be neater; `Ord::min` is not const yet, and this
+    // function has to be usable in a `const` so `ets_timer` can name the same
+    // priority esp-idf gives its timer task.
+    hal::types::Priority::Critical(if inverted > 15 { 15 } else { inverted })
 }
 
 // ── Allocation ──────────────────────────────────────────────────────────────

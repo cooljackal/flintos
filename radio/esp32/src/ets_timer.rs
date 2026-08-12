@@ -128,6 +128,38 @@ fn scan_task() {
     }
 }
 
+/// `ESP_TASK_TIMER_PRIO` — esp-idf's own priority for this task.
+///
+/// `configMAX_PRIORITIES - 3`, which is 22 of 25. Put through the same
+/// inversion the adapter applies to the blob's own tasks, so the timer service
+/// lands one step below `wifiT` (23) and above everything else — the ordering
+/// esp-idf runs and the blob was tested against.
+///
+/// It was `Normal(1)`, which was a number with nothing behind it: every task
+/// the blob creates maps into the Critical band, so the service that fires the
+/// blob's timers could not preempt a single one of them. Taking the number
+/// from the reference instead of inventing one is right regardless of what it
+/// fixes.
+///
+/// **It does not fix the hang**, and that is worth recording so the next
+/// attempt does not start here. There is a timing-sensitive hang in
+/// `esp_wifi_start` on the stored-calibration path that appears only when this
+/// task exists — commenting out [`start`] removes it, at the cost of the scan.
+/// It survives this priority, and it survives 24 (above `wifiT`), which was
+/// tried on the theory that `wifiT` spins rather than blocks. See
+/// `doc/plan-radio.md`.
+const ESP_TASK_TIMER_PRIO: u32 = 22;
+
+/// Where that lands in FlintOS's numbering.
+const TIMER_PRIORITY: hal::types::Priority =
+    crate::adapter::priority_from_freertos(ESP_TASK_TIMER_PRIO);
+
+/// `CONFIG_ESP_TIMER_TASK_STACK_SIZE` is 3584. Rounded up, because what runs
+/// on this stack is blob callbacks of unknown frame depth — the same reason
+/// `radioprobe` asks for 16 KiB — and 512 bytes is cheap insurance against a
+/// silent overflow on a kernel with no MPU.
+const TIMER_STACK: usize = 4096;
+
 /// Whether [`start`] has already spawned the service task.
 static STARTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
@@ -155,12 +187,7 @@ pub fn start() {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    api::task::spawn(
-        "radio-timer",
-        scan_task,
-        hal::types::Priority::Normal(1),
-        4096,
-    );
+    api::task::spawn("radio-timer", scan_task, TIMER_PRIORITY, TIMER_STACK);
 }
 
 /// `_esp_timer_get_time()` — microseconds since boot.
