@@ -474,6 +474,46 @@ holds only because it sets `nvs_enable = 0`. Zephyr keeps
 keeps `nvs_enable = 1` and a working implementation, which is the stronger of
 the two positions.
 
+### What the references do with the blob's timers, and what ours does
+
+Checked because the hang needs `radio-timer` to exist, and the answer is that
+**our timer service is the wrong shape**, not merely the wrong priority.
+
+All three references route the five OSI timer entries the same way:
+
+| | `_timer_arm*` reaches | Backend | Dispatch |
+|---|---|---|---|
+| esp-idf v4.4 | `ets_timer_arm` → `esp_timer_start_once`/`_periodic` | **TG0 LAC timer**, 64-bit up-counter with a programmable alarm and a level interrupt | ISR does `vTaskNotifyGiveFromISR`; `timer_task` at `ESP_TASK_PRIO_MAX - 3` (22) on PRO_CPU |
+| NuttX | `esp_timer_arm_us` → `esp_timer_start_once`/`_periodic`, `dispatch_method = ESP_TIMER_TASK` | the same `esp_timer` | the same |
+| Arduino | esp-idf unchanged — arduino-esp32 ships the IDF as precompiled libraries | the same | the same |
+
+Arduino is not independent evidence; it is esp-idf with a different build
+system, and is listed so that is explicit rather than counted twice.
+
+**Ours is a task that wakes every millisecond and polls sixteen slots.**
+`_timer_arm_us(t, 100, false)` therefore fires at the next poll — up to ten
+times late, and jittered by whatever else is runnable. That is a functional
+gap rather than a performance one: the Wi-Fi MAC arms microsecond timers, and
+a state machine given them ten times late is being lied to.
+
+It is also the strongest remaining explanation for the hang, because it
+predicts both of its properties: it needs the timer task to exist (with no
+service, the driver blocks and times out cleanly instead), and it moves when a
+few microseconds of UART output shift the phase between the poll and what the
+blob expected.
+
+**The port costs no general-purpose timer, which is the thing that would
+otherwise block it.** The LAC timer is a separate counter inside a timer group
+(`TIMG_LACTCONFIG_REG`), not one of the four GP timers — which is exactly why
+esp-idf chose it. FlintOS has all four spoken for: TIMG1/T1 is
+`kernel::clock`, and TIMG0/T0, TIMG0/T1 and TIMG1/T0 drive on-target
+self-tests. TG0's LAC is free.
+
+So the next step for 5.2 is an alarm-driven `ets_timer` on TG0 LAC with an
+IRAM-safe ISR that wakes the service task, rather than a poll — matching all
+three references, and with the priority already taken from
+`ESP_TASK_TIMER_PRIO`.
+
 Two smaller things, still open:
 
 - **~184 bytes leak per scan**, steadily, across rounds.

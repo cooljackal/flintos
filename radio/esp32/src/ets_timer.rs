@@ -28,6 +28,37 @@
 //! armed for less than a tick fires at the next one. `_timer_arm_us` is
 //! therefore honest about milliseconds and approximate below that, which is
 //! documented on it rather than hidden.
+//!
+//! # The poll is the wrong shape, and this is where that gets fixed
+//!
+//! "Approximate below a millisecond" was written here as a limitation. It is
+//! a defect, and all three references agree on what the right shape is:
+//!
+//! - **esp-idf v4.4** routes `ets_timer_arm*` to `esp_timer_start_once` /
+//!   `_periodic`, backed by the **TG0 LAC timer** — a 64-bit up-counter with a
+//!   programmable alarm and a level interrupt. The ISR does
+//!   `vTaskNotifyGiveFromISR`; the callback runs on `timer_task` at
+//!   `ESP_TASK_PRIO_MAX - 3`.
+//! - **NuttX** does the same, explicitly with
+//!   `.dispatch_method = ESP_TIMER_TASK`.
+//! - **Arduino** is esp-idf with a different build system, so it inherits it.
+//!   Not independent evidence.
+//!
+//! An alarm, not a poll. `_timer_arm_us(t, 100, false)` here fires at the next
+//! millisecond — up to ten times late, and jittered by whatever else is
+//! runnable — and the Wi-Fi MAC arms microsecond timers. A state machine given
+//! them ten times late is being lied to.
+//!
+//! That is also the leading explanation for the timing-sensitive hang in
+//! `esp_wifi_start` (`doc/plan-radio.md`), because it predicts both of that
+//! bug's properties: it needs this task to exist, and it moves when a few
+//! microseconds of unrelated work shift the phase of the poll.
+//!
+//! **The port costs no general-purpose timer.** The LAC timer is a separate
+//! counter inside a timer group (`TIMG_LACTCONFIG_REG`), not one of the four
+//! GP timers — which is why esp-idf chose it, and it matters here because
+//! FlintOS has all four spoken for: TIMG1/T1 is `kernel::clock`, and TIMG0/T0,
+//! TIMG0/T1 and TIMG1/T0 drive on-target self-tests.
 
 use core::ffi::c_void;
 
