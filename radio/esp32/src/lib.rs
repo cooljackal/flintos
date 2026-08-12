@@ -52,6 +52,7 @@ pub mod adapter;
 pub mod calibration;
 pub mod coex;
 pub mod ets_timer;
+pub mod events;
 pub mod interrupts;
 pub mod nvs;
 pub mod phy;

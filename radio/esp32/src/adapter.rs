@@ -363,7 +363,28 @@ unsafe extern "C" fn osi_mutex_unlock(handle: *mut c_void) -> i32 {
         return PD_FALSE;
     }
     let m = unsafe { &mut *(handle as *mut RecursiveMutex) };
-    pd(m.unlock(dynobj::current_task()))
+    let ok = m.unlock(dynobj::current_task());
+    if !ok {
+        // Counted, not logged: this runs inside the blob's critical sections,
+        // where the console path is not available -- see `interrupts::ROUTES`.
+        MUTEX_UNLOCK_FAILED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+    pd(ok)
+}
+
+/// Unlocks the owning task did not own.
+///
+/// `RecursiveMutex::unlock` takes the caller's task id and refuses if it is not
+/// the holder. The blob's API lock is taken and released around an ioctl that
+/// hands work to `wifiT`, so if it is ever released from a different task than
+/// took it, the refusal is silent and the mutex stays held forever — which
+/// presents as `esp_wifi_*` never returning, on whatever task calls it next.
+static MUTEX_UNLOCK_FAILED: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
+
+/// How many unlocks have been refused. See [`MUTEX_UNLOCK_FAILED`].
+pub fn mutex_unlock_failures() -> u32 {
+    MUTEX_UNLOCK_FAILED.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 // ── Event groups ────────────────────────────────────────────────────────────
@@ -818,74 +839,10 @@ unsafe extern "C" fn wifi_reset_mac() {
 
 // ── Events ──────────────────────────────────────────────────────────────────
 
-/// What `_event_post` hands on: esp-idf's `esp_event_post` arguments, minus
-/// the timeout.
-///
-/// `base` is a C string the blob owns — `WIFI_EVENT` or `IP_EVENT` — and
-/// `data` points at `len` bytes that are **only valid for the duration of the
-/// call**. A handler that wants them later must copy them.
-pub type EventHandler = fn(base: *const core::ffi::c_char, id: i32, data: *mut c_void, len: usize);
-
-/// The registered handler, if any.
-static EVENT_HANDLER: kernel::smp::Spinlock<Option<EventHandler>> =
-    kernel::smp::Spinlock::new(None);
-
-/// Install the handler `_event_post` dispatches to. Returns the previous one.
-///
-/// # What this is not
-///
-/// esp-idf's `esp_event` is a task with a queue: `esp_event_post` copies the
-/// payload, puts it on the queue, and returns, and the handler runs later on
-/// the event task. **This dispatches synchronously, on the blob's own task,
-/// inside the blob's call stack.**
-///
-/// That is a real difference and it constrains the handler:
-///
-/// - It must not block. The Wi-Fi task is waiting on it, and the blob has
-///   timing requirements this is inside.
-/// - It must not call back into `esp_wifi_*`. The driver is part-way through
-///   an operation and its locks are held.
-/// - The payload does not outlive the call.
-///
-/// **Both references disagree with this, and 5.2 is where that showed.**
-/// esp-idf posts to `esp_event`'s loop task; Zephyr posts to a `k_msgq` and
-/// drains it on a dedicated thread, with a comment saying why — a handler must
-/// run "on its own stack" and must not "stall or overrun the Wi-Fi library
-/// task". Zephyr then reads its scan results *inside that handler*, which is
-/// the part this shape cannot support: a handler that called back into
-/// `esp_wifi_*` here would re-enter the driver from its own task.
-///
-/// The trade was written up as one consumer against a copy, an allocation and
-/// a context switch per event. That undervalued what the queue buys. Replacing
-/// this with a small queue and a dispatch task is the next piece of 5.2; see
-/// the piece-by-piece comparison in `doc/plan-radio.md`.
-pub fn set_event_handler(f: Option<EventHandler>) -> Option<EventHandler> {
-    EVENT_HANDLER.with(|h| core::mem::replace(h, f))
-}
-
-/// `_event_post(base, id, data, len, ticks)`.
-///
-/// Returns `ESP_OK` whether or not a handler is installed: the blob treats a
-/// failure here as a fatal error during init, and "nobody is listening" is not
-/// one. The timeout is ignored because the dispatch cannot block — see
-/// [`set_event_handler`].
-pub(crate) unsafe extern "C" fn event_post(
-    base: *const core::ffi::c_char,
-    id: i32,
-    data: *mut c_void,
-    len: usize,
-    _ticks: u32,
-) -> i32 {
-    // `try_with`, not `with`: a handler that posts an event would otherwise
-    // deadlock on the lock its own dispatch is holding, and a dropped event is
-    // the better failure.
-    let handler = EVENT_HANDLER.try_with(|h| *h).flatten();
-    match handler {
-        Some(f) => f(base, id, data, len),
-        None => api::log_trace!("radio: event {} with no handler installed", id),
-    }
-    0
-}
+// Events are queued and dispatched on their own task; see `crate::events`.
+// This used to hold a synchronous dispatcher and a `set_event_handler`, and
+// the reason it does not any more is written up there and in
+// `doc/plan-radio.md`.
 
 // ── The PHY ─────────────────────────────────────────────────────────────────
 //
@@ -1022,7 +979,7 @@ pub fn table() -> WifiOsiFuncs {
     t._wifi_thread_semphr_get = Some(wifi_thread_semphr_get);
     t._realloc_internal = Some(osi_realloc);
     t._wifi_realloc = Some(osi_realloc);
-    t._event_post = Some(event_post);
+    t._event_post = Some(crate::events::post);
     #[cfg(target_os = "none")]
     {
         t._rand = Some(osi_rand);

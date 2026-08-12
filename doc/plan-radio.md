@@ -337,7 +337,7 @@ during 3.6 rather than after it.
 | Step | Work | Done when |
 |---|---|---|
 | 5.1 | Bring up the Wi-Fi blobs | **Done.** `esp_wifi_init_internal` returns `ESP_OK` in 179 ms on an ESP32-DevKitC, with all 115 OSI entries filled. |
-| 5.2 | Station mode: scan | **Scanning works** — 2.1 s for all 13 channels, `SCAN_DONE` delivered, repeatable across boots with a stored calibration. Reading the results back (`esp_wifi_scan_get_ap_num`) does not return yet. See below. |
+| 5.2 | Station mode: scan | **The scan cycle works end to end** — start, `SCAN_DONE`, `ap_count`, `ap_records`, repeatable. It reports **zero networks**, so nothing is being received yet. See below. |
 | 5.3 | Station mode: associate | The device joins a WPA2 network and holds the association. |
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
 | 5.5 | On-target self-test | Scan and associate run in `make test-target`, skipped cleanly when no AP is configured. |
@@ -374,11 +374,11 @@ Two things are known to be needed beyond the struct:
 
 - **`_event_post`.** The driver reports scan completion and association
   through it, so 5.2 cannot observe its own result without it. It is wired
-  now — `adapter::set_event_handler` installs a callback that `_event_post`
-  calls **synchronously, on the blob's own task**, rather than through a queue
-  and an event task the way esp-idf does. That trade is the thing 5.2 tests:
-  the handler must not block and must not re-enter `esp_wifi_*`, and if a real
-  scan needs either, the queue is what replaces it.
+  now. It started as a synchronous call on the blob's own task; the
+  piece-by-piece comparison below found that both references queue instead, and
+  `radio_esp32::events` is that queue — a bounded ring filled by `_event_post`
+  and drained by a dedicated task, so a handler runs on its own stack and may
+  call back into `esp_wifi_*`.
 ### Where 5.2 actually is, measured
 
 **The scan works.** On an ESP32-DevKitC, from an erased flash:
@@ -426,95 +426,37 @@ software timer, so it advanced only when the driver gave up on each channel:
 `wifi::init` calls it now — a service the adapter depends on should not be
 each application's job to remember.
 
-### The bug that was left in 5.2, and where it went
+### Where 5.2 stands
 
-**Fixed by the LAC alarm.** The hang was the poll, and the write-up below is
-kept because two earlier diagnoses of it were wrong and the sequence is the
-useful part.
+**The whole scan cycle runs, repeatably.** Three boots, three scans each, no
+erase between them:
 
-It was first called "a populated `nvs` partition hangs
-`esp_wifi_init_internal`", localised inside `nvs_open` with raw-UART markers.
-That was the *missing timer service*, and the markers had been run before that
-fix and never repeated after it. Then it was called a priority inversion:
-`Normal(1)` for a service every blob task outranks. Raising it to esp-idf's 22,
-and then to 24 (above `wifiT`), changed nothing.
+```text
+[wifi] scan 1 started (0 refused mutex unlocks so far)
+[wifi] event WIFI_EVENT id=1 (scan-done) 8 bytes      <- on radio-event
+[wifi] 0 networks                                      <- read in the handler
+[wifi] scan 1 done in 2105 ms, 2 events, 0 dropped
+```
 
-What it was: the service woke once per scheduler tick and polled, so every
-timer the blob armed fired up to a millisecond late. Replacing the poll with
-the LAC alarm makes the stored-calibration boot run every time — init at
-254 ms, `STA_START`, and a scan completing in 2103 ms with a real
-`SCAN_DONE`, three boots out of three with no erase in between.
+`esp_wifi_scan_get_ap_num` returns now. It did not before the event queue, and
+the two earlier explanations for that were both wrong — first "a populated
+`nvs` partition" (it was the missing timer service), then a priority inversion
+(raising the timer task to 22, then above `wifiT`, changed nothing). What it
+actually was is the third divergence in the comparison below: the driver
+expects its results to be collected by whoever handled the event, on a task of
+its own, and we were reading them from the application after a blocking scan.
 
-**The next stopping point is `esp_wifi_scan_get_ap_num`**, immediately after
-the scan completes. It returned before the alarm landed (with zero results,
-because nothing was scanning); it does not return now. The suspicion is the
-service task's priority against the application's — `radio-timer` sits at
-`Critical(2)` and the application at `Normal(2)`, so a short periodic timer
-armed by the driver after a scan would starve the caller — but that is a
-guess, and it has not been measured.
+**It finds nothing.** Zero networks, every scan, in a room with several access
+points. So the scan machinery is right and the radio is not receiving —
+`_set_intr` routes MAC source 0 to a level-1 input and `INTENABLE` has the bit,
+but nothing has ever confirmed the interrupt is *delivered*. That is the next
+measurement, and it needs somewhere safe to count from: an atomic `fetch_add`
+inside the interrupt trampoline hangs the board before the driver finishes
+starting, which is still unexplained and is now the thing in the way.
 
-## Piece-by-piece against NuttX and Zephyr
-
-Written after a run of single-bug fixes, because chasing symptoms one at a
-time had stopped being the cheapest way to find things. Each row is what
-FlintOS does, what the two references do, and whether the difference is a
-decision or a defect. "Checked" means the reference source was read at the
-pinned revision; nothing here is from memory.
-
-### Where we match
-
-| Piece | Reference | FlintOS |
-|---|---|---|
-| OSI table | esp-idf and NuttX both fill every entry; neither leaves a null | 115/115 on target, `for_each_null` proves it |
-| Task priorities | Blob tasks 18–23 of 25, timer task at `ESP_TASK_PRIO_MAX - 3` | `priority_from_freertos` inverts into the Critical band; timer takes 22 from the same constant |
-| Stack depth | Bytes, not words (ESP-IDF port) | Bytes |
-| Task handles | `TaskHandle_t`, null means "self" | Id + 1, so task 0 is not null |
-| Timers | `esp_timer` on TG0 LAC, alarm + ISR + service task | `kernel::alarm` on TG0 LAC, same |
-| Mutexes | esp-idf takes **both** kinds with `xSemaphoreTakeRecursive` | One recursive type for both — at least as permissive |
-| Coexistence off | Both return 0 / NULL / nothing | Same, transcribed |
-| `_wifi_reset_mac` | esp-idf writes `DPORT_MAC_RST`; **NuttX's is a no-op** (mask resolves to 0) | Follows esp-idf |
-| Interrupts | `intr_matrix_set` + `xt_set_interrupt_handler`, MAC source 0 | Same, routed to a level-1 input |
-
-### Where we differ, and the three that are in one place
-
-**1. Event dispatch is synchronous.** Both references queue. Zephyr's comment
-on its event task says why, in as many words: *"Dispatch library-posted events
-on this dedicated task so a handler runs on its own stack and cannot stall or
-overrun the Wi-Fi library task."* esp-idf does the same through
-`esp_event`'s loop task. FlintOS calls the handler **inside the blob's call
-stack, on `wifiT`**.
-
-That was written up as a considered trade — one consumer, so a queue is a
-copy, an allocation and a context switch per event. The references disagree,
-and Zephyr disagrees for exactly the failure being seen.
-
-**2. The scan is blocking.** Zephyr calls `esp_wifi_scan_start(&cfg, false)`
-and waits for `WIFI_EVENT_SCAN_DONE`. FlintOS passes `block = true`, so the
-application task sits inside the driver for the whole 2.1 seconds.
-
-**3. Results are read on the wrong task.** Zephyr drains
-`esp_wifi_scan_get_ap_record` **from the event handler**, on its event task.
-FlintOS calls `esp_wifi_scan_get_ap_num` from the application task after the
-blocking scan returns — a third pattern neither reference uses, and the exact
-call that currently does not return.
-
-These are one divergence, not three: **the driver expects its results to be
-collected by whoever handles the event, on a task of its own.** Adopting the
-reference shape — a small event queue, a dispatch task, a non-blocking scan,
-results read in the handler — replaces all three and is the next thing to do,
-ahead of any further work on the symptom.
-
-### Smaller divergences, deliberate and recorded
-
-- **`nvs_enable = 1`.** NuttX sets 0 and panics if the driver ever calls
-  `_nvs_*`; Zephyr gates it on `CONFIG_ESP_WIFI_NVS_ENABLED`. Ours is on with
-  a working implementation, which is the stronger position and is now
-  exercised on every boot.
-- **No `esp_netif`, no `esp_event` loop.** Neither is needed to scan; both
-  arrive with #68.
-- **The event handler logs.** It runs on `wifiT`, which is precisely what
-  Zephyr's queue exists to avoid. Harmless while debugging, and it goes away
-  with the dispatch task.
+Also open: **~1.9 KB of heap goes per scan** (121928 → 119904 → 118064 across
+three), steady enough to be one allocation that is never freed rather than
+fragmentation.
 
 ### What the references do with the blob's timers, and what ours does
 

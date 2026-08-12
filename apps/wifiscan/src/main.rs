@@ -67,10 +67,9 @@ const MAX_RESULTS: usize = 24;
 
 /// What the event handler saw, for the main task to read.
 ///
-/// An `AtomicU32` rather than anything richer because the handler runs on the
-/// blob's own task, inside its call stack — see
-/// `radio_esp32::adapter::set_event_handler`. Storing a word is the most that
-/// can be done there without violating "must not block".
+/// An atomic because the two run on different tasks: the handler on
+/// `radio-event`, this on the application's. See
+/// `radio_esp32::events::set_handler`.
 #[cfg(feature = "blobs")]
 static EVENTS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
@@ -80,10 +79,9 @@ static SCAN_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBoo
 
 /// The driver's event callback.
 ///
-/// Runs on `wifiT`, synchronously, inside whatever the driver was doing. It
-/// therefore does exactly two things: count, and log. Logging is already the
-/// most this can afford — the UART write is bounded, but it is not free, and a
-/// handler that did real work here would hold the Wi-Fi task up.
+/// Runs on `radio-event`, on its own stack, with nothing of the driver's held
+/// — so it may call back into `esp_wifi_*`, and does. That is the whole reason
+/// the queue exists, and it is where Zephyr reads its scan results too.
 #[cfg(feature = "blobs")]
 fn on_event(base: *const core::ffi::c_char, id: i32, _data: *mut core::ffi::c_void, len: usize) {
     use core::sync::atomic::Ordering;
@@ -111,12 +109,85 @@ fn on_event(base: *const core::ffi::c_char, id: i32, _data: *mut core::ffi::c_vo
 
     if known && id == radio_esp32::wifi::event::SCAN_DONE {
         SCAN_DONE.store(true, Ordering::SeqCst);
+        report_results();
+    }
+}
+
+/// Read the scan out and print it. **Called from the event handler**, which is
+/// what Zephyr does and what the driver expects: the results belong to
+/// whoever handled `SCAN_DONE`, and reading them from another task after a
+/// blocking scan is a pattern neither reference uses.
+#[cfg(feature = "blobs")]
+fn report_results() {
+    use radio_esp32::scan;
+
+    let found = match unsafe { scan::ap_count() } {
+        Ok(n) => n,
+        Err(e) => {
+            api::log_error!("[wifi] ap_count failed: {:#x}", e);
+            return;
+        }
+    };
+
+    // Zeroed rather than `MaybeUninit`: 80 bytes times 24 is under 2 KiB
+    // against the event task's 8 KiB, and the driver writes every field it
+    // reports. The cost is one memset per scan against a class of bug that
+    // only appears when it returns fewer records than it said it would.
+    let mut records = [scan::ApRecord {
+        bssid: [0; 6],
+        ssid: [0; 33],
+        primary: 0,
+        second: 0,
+        rssi: 0,
+        authmode: 0,
+        pairwise_cipher: 0,
+        group_cipher: 0,
+        ant: 0,
+        flags: 0,
+        country: scan::Country { cc: [0; 3], schan: 0, nchan: 0, max_tx_power: 0, policy: 0 },
+    }; MAX_RESULTS];
+
+    let shown = match unsafe { scan::ap_records(&mut records) } {
+        Ok(n) => n as usize,
+        Err(e) => {
+            api::log_error!("[wifi] ap_records failed: {:#x}", e);
+            return;
+        }
+    };
+
+    if found as usize > shown {
+        api::log_warn!("[wifi] {} networks, showing {} (raise MAX_RESULTS)", found, shown);
+    } else {
+        api::log_info!("[wifi] {} networks", found);
+    }
+
+    for r in &records[..shown] {
+        let b = r.bssid;
+        // Printed as a byte count when the SSID is not UTF-8, which is legal
+        // 802.11 and does happen.
+        match r.ssid_str() {
+            Some("") => api::log_info!(
+                "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} <hidden>",
+                b[0], b[1], b[2], b[3], b[4], b[5],
+                r.primary, r.rssi, scan::auth_name(r.authmode)
+            ),
+            Some(name) => api::log_info!(
+                "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} {}",
+                b[0], b[1], b[2], b[3], b[4], b[5],
+                r.primary, r.rssi, scan::auth_name(r.authmode), name
+            ),
+            None => api::log_info!(
+                "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} <{} non-utf8 bytes>",
+                b[0], b[1], b[2], b[3], b[4], b[5],
+                r.primary, r.rssi, scan::auth_name(r.authmode), r.ssid_bytes().len()
+            ),
+        }
     }
 }
 
 #[cfg(feature = "blobs")]
 fn run() {
-    use radio_esp32::{adapter, scan, wifi};
+    use radio_esp32::wifi;
 
     task::sleep_ms(200);
     api::log_info!("[wifi] starting");
@@ -133,7 +204,7 @@ fn run() {
     // Installed before init, not after. The driver posts `WIFI_READY` from
     // inside `esp_wifi_start`, and a handler registered afterwards would miss
     // the events that say the thing it is waiting for already happened.
-    adapter::set_event_handler(Some(on_event));
+    radio_esp32::events::set_handler(Some(on_event));
 
     let rc = unsafe { wifi::init() };
     if rc != 0 {
@@ -196,97 +267,41 @@ fn scan_once(round: u32) {
 
     let config = scan::ScanConfig::default();
     let t0 = kernel::clock::now_us();
-    // Blocking: the driver waits on its own event group, which reaches
-    // `_event_group_wait_bits` and blocks *this* task rather than spinning.
-    let rc = unsafe { scan::start(&config, true) };
-    let elapsed = kernel::clock::now_us() - t0;
+    // **Non-blocking**, as Zephyr does. The results are collected by the
+    // handler when `SCAN_DONE` arrives; this task only asks and goes back to
+    // waiting. A blocking scan would sit inside the driver for the whole 2.1
+    // seconds and then read the results from the wrong task.
+    let rc = unsafe { scan::start(&config, false) };
     if rc != 0 {
-        api::log_error!("[wifi] scan {} failed: {:#x} after {} us", round, rc, elapsed);
+        api::log_error!("[wifi] scan {} refused: {:#x}", round, rc);
         return;
     }
-
-    // Both are worth reporting. A scan that completes without the event is a
-    // working scan and a broken `_event_post`, and the two are only
-    // distinguishable if the event is checked separately from the result.
     api::log_info!(
-        "[wifi] scan {} done in {} ms (scan-done event: {})",
+        "[wifi] scan {} started ({} refused mutex unlocks so far)",
         round,
-        elapsed / 1000,
-        if SCAN_DONE.load(Ordering::SeqCst) { "yes" } else { "NO" }
+        radio_esp32::adapter::mutex_unlock_failures()
     );
 
-    let found = match unsafe { scan::ap_count() } {
-        Ok(n) => n,
-        Err(e) => {
-            api::log_error!("[wifi] ap_count failed: {:#x}", e);
+    // Long enough for all thirteen channels at the driver's default dwell,
+    // plus slack. Reported if it passes without the event, because a scan that
+    // never completes and a scan whose completion is not delivered look the
+    // same from here and are different bugs.
+    let deadline = t0 + 6_000_000;
+    while kernel::clock::now_us() < deadline {
+        if SCAN_DONE.load(Ordering::SeqCst) {
+            api::log_info!(
+                "[wifi] scan {} done in {} ms, {} events, {} dropped, {} bytes free",
+                round,
+                (kernel::clock::now_us() - t0) / 1000,
+                EVENTS.load(Ordering::Relaxed),
+                radio_esp32::events::dropped(),
+                kernel::heap::free_bytes(kernel::heap::Caps::Internal)
+            );
             return;
         }
-    };
-
-    // Zeroed rather than `MaybeUninit`: 80 bytes times 24 is under 2 KiB, the
-    // task has 16, and the driver writes every field it reports. The cost is
-    // one memset per scan against a class of bug that only appears when the
-    // driver returns fewer records than it said it would.
-    let mut records = [scan::ApRecord {
-        bssid: [0; 6],
-        ssid: [0; 33],
-        primary: 0,
-        second: 0,
-        rssi: 0,
-        authmode: 0,
-        pairwise_cipher: 0,
-        group_cipher: 0,
-        ant: 0,
-        flags: 0,
-        country: scan::Country { cc: [0; 3], schan: 0, nchan: 0, max_tx_power: 0, policy: 0 },
-    }; MAX_RESULTS];
-
-    let shown = match unsafe { scan::ap_records(&mut records) } {
-        Ok(n) => n as usize,
-        Err(e) => {
-            api::log_error!("[wifi] ap_records failed: {:#x}", e);
-            return;
-        }
-    };
-
-    if found as usize > shown {
-        api::log_warn!(
-            "[wifi] {} networks found, showing {} (raise MAX_RESULTS)",
-            found,
-            shown
-        );
-    } else {
-        api::log_info!("[wifi] {} networks", found);
+        task::sleep_ms(50);
     }
-
-    for r in &records[..shown] {
-        let b = r.bssid;
-        // The SSID is printed as bytes when it is not UTF-8, which is legal
-        // 802.11 and does happen. `<{} bytes>` rather than a mangled name.
-        match r.ssid_str() {
-            Some("") => api::log_info!(
-                "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} <hidden>",
-                b[0], b[1], b[2], b[3], b[4], b[5],
-                r.primary, r.rssi, scan::auth_name(r.authmode)
-            ),
-            Some(name) => api::log_info!(
-                "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} {}",
-                b[0], b[1], b[2], b[3], b[4], b[5],
-                r.primary, r.rssi, scan::auth_name(r.authmode), name
-            ),
-            None => api::log_info!(
-                "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} <{} non-utf8 bytes>",
-                b[0], b[1], b[2], b[3], b[4], b[5],
-                r.primary, r.rssi, scan::auth_name(r.authmode), r.ssid_bytes().len()
-            ),
-        }
-    }
-
-    api::log_info!(
-        "[wifi] {} events, {} bytes of heap free",
-        EVENTS.load(Ordering::Relaxed),
-        kernel::heap::free_bytes(kernel::heap::Caps::Internal)
-    );
+    api::log_error!("[wifi] scan {} produced no SCAN_DONE within 6 s", round);
 }
 
 /// Stop, but stay alive so the console keeps working and the log above stays

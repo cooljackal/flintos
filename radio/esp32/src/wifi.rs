@@ -222,7 +222,7 @@ impl WifiInitConfig {
             // `esp_event_send_internal` calls `esp_event_post` — the OSI
             // entry — and then forwards to the legacy loop, which FlintOS has
             // no equivalent of and nothing here needs.
-            event_handler: Some(crate::adapter::event_post),
+            event_handler: Some(crate::events::post),
             osi_funcs,
             wpa_crypto_funcs: WpaCryptoFuncs::empty(),
             static_rx_buf_num: 10,
@@ -299,7 +299,7 @@ unsafe impl Sync for EventBase {}
 /// `wifi_init.c`, which is C source rather than one of the archives, and
 /// expands to exactly this: a `const char *` holding the string `"WIFI_EVENT"`.
 ///
-/// [`crate::adapter::EventHandler`] is handed this pointer, and comparing
+/// [`crate::events::EventHandler`] is handed this pointer, and comparing
 /// against `&WIFI_EVENT` is how a handler tells a Wi-Fi event from an IP one.
 #[no_mangle]
 pub static WIFI_EVENT: EventBase = EventBase(WIFI_EVENT_NAME.as_ptr().cast());
@@ -426,6 +426,9 @@ pub unsafe fn init() -> i32 {
     // advances. See `crate::ets_timer::start` — this call is the whole reason
     // a scan used to time out.
     crate::ets_timer::start();
+    // Same reason, same place: the driver posts `WIFI_READY` from inside
+    // `esp_wifi_start`, and a queue nobody drains is a handler that never runs.
+    crate::events::start();
 
     let table = OSI_TABLE.0.get();
     unsafe { table.write(crate::adapter::table()) };

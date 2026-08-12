@@ -223,7 +223,7 @@ extern "C" {
 /// all-channel active scan is well over a second. The blocking form is what
 /// makes a scan readable without an event loop; the non-blocking form needs
 /// [`crate::wifi::event::SCAN_DONE`] through
-/// [`crate::adapter::set_event_handler`].
+/// [`crate::events::set_handler`].
 ///
 /// **Blocking here blocks the calling task, not the Wi-Fi task.** The driver
 /// waits on its own event group, which reaches `_event_group_wait_bits` in the
