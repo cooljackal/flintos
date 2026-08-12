@@ -290,9 +290,16 @@ fn scan_once(round: u32) {
     // plus slack. Reported if it passes without the event, because a scan that
     // never completes and a scan whose completion is not delivered look the
     // same from here and are different bugs.
+    let mut raw_seen: u32 = 0;
     let deadline = t0 + 6_000_000;
     while kernel::clock::now_us() < deadline {
         if SCAN_DONE.load(Ordering::SeqCst) {
+            api::log_info!(
+                "[wifi] raw INTERRUPT {:#010x} core {} crossbar[src0]={:?}",
+                raw_seen,
+                kernel::smp::current_core().0,
+                unsafe { soc_esp32::intr_map::routed_to(0) }
+            );
             api::log_info!(
                 "[wifi] scan {} done in {} ms, {} events, {} dropped, {} bytes free",
                 round,
@@ -303,7 +310,13 @@ fn scan_once(round: u32) {
             );
             return;
         }
-        task::sleep_ms(50);
+        // Sample the raw INTERRUPT register, which is what the crossbar sets
+        // *before* INTENABLE decides whether the CPU takes it. Bit 0 asserting
+        // here with `fires(0)` still zero would mean the source arrives and
+        // the dispatch path drops it; never asserting means the crossbar or
+        // the MAC, not us.
+        raw_seen |= unsafe { kernel::arch::registers::read_interrupt() };
+        task::sleep_ms(1);
     }
     api::log_error!("[wifi] scan {} produced no SCAN_DONE within 6 s", round);
 }

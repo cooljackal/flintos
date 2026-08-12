@@ -453,9 +453,25 @@ to CPU input 0, `INTENABLE` carries the bit, and
 `interrupts::fires(0)` reads **zero** after every scan.
 
 That counter is only possible because of the `SCOMPARE1` fix below; it used to
-hang the board. What is left is why a routed, unmasked, connected source
-delivers nothing — the crossbar write, the PHY's receive path, or the driver
-never enabling reception.
+hang the board.
+
+**The OS side is now ruled out, by measurement rather than inspection:**
+
+| Checked | Reads | Verdict |
+|---|---|---|
+| Crossbar, `DPORT_PRO_WIFI_MAC_INTR_MAP` | `routed_to(0) == Some(0)` | source 0 → CPU int 0, as written |
+| `INTENABLE`, core 0 | `0x000002c1` — bits 0, 6, 7, 9 | the MAC's input is unmasked |
+| Raw `INTERRUPT`, sampled every 1 ms through a whole scan | `0x00018000` — bits 15, 16 only | **bit 0 never asserts** |
+
+Both references do exactly what we do here and no more: esp-idf's
+`set_intr_wrapper` is one call to `intr_matrix_set`, NuttX's is
+`esp_rom_route_intr_matrix` plus bookkeeping for its own vector table, and
+both leave the unmasking to `_ints_on`. There is nothing in either that this
+adapter omits.
+
+So the Wi-Fi MAC is not asserting its interrupt line, and the cause is
+upstream of the crossbar — the RF/PHY receive path, or the driver never
+putting the MAC into a receiving state. That is where 5.2 continues.
 
 Also open: **~1.9 KB of heap goes per scan** (121928 → 119904 → 118064 across
 three), steady enough to be one allocation that is never freed rather than
