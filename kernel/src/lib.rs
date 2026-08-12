@@ -51,6 +51,7 @@ pub use esp32_rng as rng;
 
 #[cfg(all(feature = "self-test", target_os = "none"))]
 pub mod selftest;
+pub mod alarm;
 pub mod clock;
 pub mod queue;
 pub mod scheduler;

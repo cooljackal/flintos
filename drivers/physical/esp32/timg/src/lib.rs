@@ -38,6 +38,8 @@
 
 #![no_std]
 
+pub mod lact;
+
 use soc_esp32::addr::{TIMG0_BASE, TIMG1_BASE};
 use soc_esp32::reg;
 

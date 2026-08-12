@@ -71,10 +71,6 @@ use kernel::smp::Spinlock;
 /// than silently dropping a timer.
 pub const MAX_TIMERS: usize = 16;
 
-/// How often the scan task wakes. One scheduler tick — the finest it can
-/// usefully be, since `sleep_ms` resolves to ticks anyway.
-const SCAN_PERIOD_MS: u32 = 1;
-
 /// One armed or idle timer.
 ///
 /// The callback pointer and its argument are held as `usize` for the same
@@ -140,10 +136,42 @@ fn collect_due(table: &mut [Slot; MAX_TIMERS], now_us: u64, out: &mut [(usize, u
     n
 }
 
-/// The scan task. Wakes each tick, fires what is due.
-fn scan_task() {
+/// The soonest deadline in the table, or `None` if nothing is armed.
+///
+/// Split out and tested for the same reason as [`collect_due`]: getting this
+/// wrong does not crash, it makes one timer late by however long the *next*
+/// one is away, which reads as a radio that is intermittently slow.
+fn next_deadline(table: &[Slot; MAX_TIMERS]) -> Option<u64> {
+    table
+        .iter()
+        .filter(|s| s.handle != 0 && s.fire_at_us != 0)
+        .map(|s| s.fire_at_us)
+        .min()
+}
+
+/// The service task. Sleeps until the next deadline, fires what is due.
+///
+/// **Woken by the LAC alarm, not by the tick.** The first version slept a
+/// millisecond at a time and polled, which put a floor of one scheduler tick
+/// under every timer the blob armed — see the module docs for why that is a
+/// defect rather than a limitation.
+fn service_task() {
     loop {
-        api::task::sleep_ms(SCAN_PERIOD_MS);
+        // Arm for the soonest deadline before sleeping, so the alarm that
+        // wakes this task is the one that matters. Read under the lock, armed
+        // outside it: `set_after_us` touches hardware and there is no reason
+        // to hold a lock the ISR path also wants across a register write.
+        let now = kernel::clock::now_us();
+        let next = TIMERS.with(|t| next_deadline(t));
+        match next {
+            Some(at) => kernel::alarm::set_after_us(at.saturating_sub(now)),
+            None => kernel::alarm::cancel(),
+        }
+
+        // The timeout is a backstop. A missed alarm, or a host with no LAC
+        // timer at all, makes this late rather than dead.
+        kernel::alarm::wait(IDLE_WAKE_MS);
+
         let now = kernel::clock::now_us();
         let mut due = [(0usize, 0usize); MAX_TIMERS];
         // The lock is dropped before any callback runs. A blob callback can
@@ -159,6 +187,24 @@ fn scan_task() {
     }
 }
 
+/// How long to sleep when nothing is armed, and the backstop when something
+/// is. Long enough to cost nothing when the radio is idle, short enough that a
+/// lost alarm is a stutter rather than a hang.
+const IDLE_WAKE_MS: u32 = 50;
+
+/// Make the service task re-read the table now.
+///
+/// The alarm holds one deadline, and the task arms it for the soonest thing it
+/// knew about when it went to sleep. Arming a 100 µs timer after that would
+/// otherwise wait for the 50 ms backstop — the exact defect the alarm exists
+/// to remove, reintroduced at the other end. So every arm pulls the alarm in
+/// to now; the task wakes, re-reads, and arms the real deadline.
+///
+/// One spurious interrupt per arm, against a timer that could be 500× late.
+fn kick() {
+    kernel::alarm::set_after_us(0);
+}
+
 /// `ESP_TASK_TIMER_PRIO` — esp-idf's own priority for this task.
 ///
 /// `configMAX_PRIORITIES - 3`, which is 22 of 25. Put through the same
@@ -172,13 +218,10 @@ fn scan_task() {
 /// from the reference instead of inventing one is right regardless of what it
 /// fixes.
 ///
-/// **It does not fix the hang**, and that is worth recording so the next
-/// attempt does not start here. There is a timing-sensitive hang in
-/// `esp_wifi_start` on the stored-calibration path that appears only when this
-/// task exists — commenting out [`start`] removes it, at the cost of the scan.
-/// It survives this priority, and it survives 24 (above `wifiT`), which was
-/// tried on the theory that `wifiT` spins rather than blocks. See
-/// `doc/plan-radio.md`.
+/// On its own it fixed nothing: the timing-sensitive hang in `esp_wifi_start`
+/// survived this priority and survived 24 (above `wifiT`), which was tried on
+/// the theory that `wifiT` spins rather than blocks. What it was hiding was
+/// the poll — see the module docs.
 const ESP_TASK_TIMER_PRIO: u32 = 22;
 
 /// Where that lands in FlintOS's numbering.
@@ -196,8 +239,13 @@ static STARTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool:
 
 /// Start the timer service. Idempotent.
 ///
+/// Brings up [`kernel::alarm`] — TG0's LAC timer — and spawns the service task.
 /// Nothing arms a timer until the blob does, so this is cheap until then: a
-/// task that wakes once a tick and walks 16 slots.
+/// task asleep on a 50 ms backstop.
+///
+/// The alarm is initialised here rather than in `kernel::boot` because the
+/// radio is its only user, and an application that never touches the radio
+/// should not spend a CPU interrupt on it.
 ///
 /// # Nothing called this, and the radio could not scan
 ///
@@ -218,7 +266,14 @@ pub fn start() {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    api::task::spawn("radio-timer", scan_task, TIMER_PRIORITY, TIMER_STACK);
+    #[cfg(target_os = "none")]
+    if !unsafe { kernel::alarm::init() } {
+        // Not fatal: `wait` falls back to its timeout, which is the old
+        // behaviour at 50 ms instead of 1 ms. Say so, because a radio running
+        // on the backstop will look like a radio with bad timing.
+        api::log_error!("radio: no LAC alarm; timers will be served on a 50 ms backstop");
+    }
+    api::task::spawn("radio-timer", service_task, TIMER_PRIORITY, TIMER_STACK);
 }
 
 /// `_esp_timer_get_time()` — microseconds since boot.
@@ -257,7 +312,9 @@ pub unsafe extern "C" fn timer_setfn(timer: *mut c_void, f: *mut c_void, arg: *m
     });
     if !ok {
         api::log_error!("radio: no free timer slot; MAX_TIMERS is {}", MAX_TIMERS);
+        return;
     }
+    kick();
 }
 
 /// Shared by [`timer_arm`] and [`timer_arm_us`].
@@ -277,7 +334,9 @@ fn arm(handle: usize, delay_us: u64, repeat: bool, what: &str) {
     });
     if !ok {
         api::log_error!("radio: no free timer slot; MAX_TIMERS is {}", MAX_TIMERS);
+        return;
     }
+    kick();
 }
 
 /// `_timer_arm(timer, ms, repeat)`.
@@ -358,6 +417,28 @@ mod tests {
         assert_eq!(collect_due(&mut t, 500, &mut out), 1);
         assert_eq!(out[0], (7, 8));
         assert_eq!(collect_due(&mut t, 5_000, &mut out), 0, "a one-shot must not repeat");
+    }
+
+    #[test]
+    fn the_next_deadline_is_the_soonest_armed_one() {
+        // What the service task arms the alarm for. Taking the wrong one does
+        // not crash: it makes a timer late by however far away the next one
+        // is, which reads as a radio that is intermittently slow.
+        let mut t = empty();
+        assert_eq!(next_deadline(&t), None, "nothing armed");
+        t[3] = Slot { handle: 3, callback: 1, arg: 0, fire_at_us: 9_000, period_us: 0 };
+        t[7] = Slot { handle: 7, callback: 1, arg: 0, fire_at_us: 1_500, period_us: 0 };
+        t[9] = Slot { handle: 9, callback: 1, arg: 0, fire_at_us: 4_000, period_us: 0 };
+        assert_eq!(next_deadline(&t), Some(1_500));
+
+        // A disarmed slot keeps its handle and loses its deadline, and must
+        // not be picked -- `fire_at_us == 0` is "disarmed", not "due now".
+        t[7].fire_at_us = 0;
+        assert_eq!(next_deadline(&t), Some(4_000));
+
+        // Nor may a free slot with leftover contents count.
+        t[3] = Slot { handle: 0, fire_at_us: 1, ..Slot::FREE };
+        assert_eq!(next_deadline(&t), Some(4_000));
     }
 
     #[test]

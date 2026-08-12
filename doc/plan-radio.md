@@ -337,7 +337,7 @@ during 3.6 rather than after it.
 | Step | Work | Done when |
 |---|---|---|
 | 5.1 | Bring up the Wi-Fi blobs | **Done.** `esp_wifi_init_internal` returns `ESP_OK` in 179 ms on an ESP32-DevKitC, with all 115 OSI entries filled. |
-| 5.2 | Station mode: scan | **Scanning works** — 2.1 s for all 13 channels, `SCAN_DONE` delivered, repeatable after `make erase`. One timing-sensitive hang left on the stored-calibration path. See below. |
+| 5.2 | Station mode: scan | **Scanning works** — 2.1 s for all 13 channels, `SCAN_DONE` delivered, repeatable across boots with a stored calibration. Reading the results back (`esp_wifi_scan_get_ap_num`) does not return yet. See below. |
 | 5.3 | Station mode: associate | The device joins a WPA2 network and holds the association. |
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
 | 5.5 | On-target self-test | Scan and associate run in `make test-target`, skipped cleanly when no AP is configured. |
@@ -426,53 +426,32 @@ software timer, so it advanced only when the driver gave up on each channel:
 `wifi::init` calls it now — a service the adapter depends on should not be
 each application's job to remember.
 
-### The bug left in 5.2, and what it is not
+### The bug that was left in 5.2, and where it went
 
-**Not fixed.** What follows is what has been ruled out, so the next attempt
-does not repeat it.
+**Fixed by the LAC alarm.** The hang was the poll, and the write-up below is
+kept because two earlier diagnoses of it were wrong and the sequence is the
+useful part.
 
-The first write-up called it "a populated `nvs` partition hangs
+It was first called "a populated `nvs` partition hangs
 `esp_wifi_init_internal`", localised inside `nvs_open` with raw-UART markers.
-**None of that survived the timer fix.** With `ets_timer::start` wired into
-`wifi::init`, init returns in 254 ms on every boot with the store populated,
-and `nvs_open` is called twice and returns both times. The init hang *was* the
-missing timer service, on a path the driver only takes when it finds its NVS
-non-empty; the markers had been run before that fix and never repeated after
-it. Re-measure after every fix, including the ones not aimed at the symptom in
-hand.
+That was the *missing timer service*, and the markers had been run before that
+fix and never repeated after it. Then it was called a priority inversion:
+`Normal(1)` for a service every blob task outranks. Raising it to esp-idf's 22,
+and then to 24 (above `wifiT`), changed nothing.
 
-What is actually there is a **timing-sensitive hang in `esp_wifi_start`**, on
-the boot where the RF calibration is loaded from flash rather than computed.
-No fault, no output, the board simply stops.
+What it was: the service woke once per scheduler tick and polled, so every
+timer the blob armed fired up to a millisecond late. Replacing the poll with
+the LAC alarm makes the stored-calibration boot run every time — init at
+254 ms, `STA_START`, and a scan completing in 2103 ms with a real
+`SCAN_DONE`, three boots out of three with no erase in between.
 
-Ruled out by experiment, each one build and one run:
-
-| Change | Result |
-|---|---|
-| Two `raw_print` calls in the application, before `set_mode` | Runs every time, scan included |
-| `ets_timer::start` commented out | Init and start both fine; scan times out, as expected with no timers |
-| Timer service at `Normal(1)` (as written) | Hangs |
-| Timer service at esp-idf's priority 22 → `Critical(2)` | Hangs |
-| Timer service at 24 → `Critical(0)`, above `wifiT` | Ran once, hung on the next boot |
-
-So: **it needs the timer task to exist, and it is not a priority inversion.**
-A few microseconds of UART output anywhere nearby removes it. The remaining
-suspects are the cache-off window — the calibration load is the only flash
-read on that path, and `radio-timer` is the only thing new that can be
-scheduled around it — and `radio-timer`'s 4 KiB stack, which runs blob
-callbacks of unknown frame depth on a kernel with no MPU.
-
-`make erase` avoids it, so it blocks a second boot rather than a
-demonstration.
-
-**What the references say about `nvs_enable`**, checked while chasing the
-wrong bug and worth keeping: **NuttX implements every `_nvs_*` entry as
-`DEBUGPANIC(); return -1;`** — it asserts the driver never calls them, which
-holds only because it sets `nvs_enable = 0`. Zephyr keeps
-`WIFI_INIT_CONFIG_DEFAULT`'s `nvs_enable = WIFI_NVS_ENABLED`, gated on
-`CONFIG_ESP_WIFI_NVS_ENABLED`, and ships a real NVS port behind it. FlintOS
-keeps `nvs_enable = 1` and a working implementation, which is the stronger of
-the two positions.
+**The next stopping point is `esp_wifi_scan_get_ap_num`**, immediately after
+the scan completes. It returned before the alarm landed (with zero results,
+because nothing was scanning); it does not return now. The suspicion is the
+service task's priority against the application's — `radio-timer` sits at
+`Critical(2)` and the application at `Normal(2)`, so a short periodic timer
+armed by the driver after a scan would starve the caller — but that is a
+guess, and it has not been measured.
 
 ### What the references do with the blob's timers, and what ours does
 
@@ -509,10 +488,10 @@ esp-idf chose it. FlintOS has all four spoken for: TIMG1/T1 is
 `kernel::clock`, and TIMG0/T0, TIMG0/T1 and TIMG1/T0 drive on-target
 self-tests. TG0's LAC is free.
 
-So the next step for 5.2 is an alarm-driven `ets_timer` on TG0 LAC with an
-IRAM-safe ISR that wakes the service task, rather than a poll — matching all
-three references, and with the priority already taken from
-`ESP_TASK_TIMER_PRIO`.
+That is now done: `kernel::alarm` owns TG0's LAC counter,
+`esp32-timg::lact` drives it, and `radio_esp32::ets_timer` sleeps on the alarm
+instead of the tick. The handler is registered IRAM-safe, so the radio's timers
+keep running through a flash operation.
 
 Two smaller things, still open:
 
