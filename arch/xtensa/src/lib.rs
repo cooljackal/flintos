@@ -55,14 +55,14 @@ pub const TRAP_STACK_BYTES: usize = TRAP_FRAME_BYTES + ABI_SAVE_AREA_BYTES;
 
 const _: () = {
     // vectors.S spells this out as a literal in three places: the scratch frame
-    // pointer, the `addi a1, a1, -112`, and the `addi a0, a1, 112` that
+    // pointer, the `addi a1, a1, -128`, and the frame-base `addi` that
     // recovers the original stack pointer. If TaskContext grows, this fires and
     // says where to look — which beats the alternative, where the trap entry
     // silently writes two fields into the register save area it was supposed to
     // leave alone.
     assert!(
-        TRAP_STACK_BYTES == 112,
-        "TaskContext changed size: update the -112/+112 literals in vectors.S"
+        TRAP_STACK_BYTES == 128,
+        "TaskContext changed size: update the -128 literals in vectors.S"
     );
     // Xtensa requires a 16-byte-aligned stack pointer. An unaligned frame makes
     // every later `entry` misalign too, and the fault surfaces somewhere else

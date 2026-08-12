@@ -45,6 +45,25 @@ pub struct TaskContext {
     pub windowbase: u32,
     /// Bitmask of active register windows.
     pub windowstart: u32,
+    /// `SCOMPARE1`, the comparand for `S32C1I`.
+    ///
+    /// **Saving this is what makes atomics usable in an interrupt handler.**
+    /// LLVM lowers an atomic read-modify-write on Xtensa into a retry loop:
+    /// load, compute, `wsr.scompare1`, `s32c1i`, branch back if the store
+    /// found a different value. An interrupt landing inside that loop whose
+    /// handler also does an atomic RMW overwrites `SCOMPARE1`, and the
+    /// interrupted loop then compares against the *handler's* comparand
+    /// forever.
+    ///
+    /// Both references save it: NuttX in `xtensa_context.S`
+    /// (`rsr a3, SCOMPARE1` into `REG_SCOMPARE1`, restored at the matching
+    /// `wsr`), and Zephyr as `uintptr_t scompare1` in its saved frame under
+    /// `#if XCHAL_HAVE_S32C1I`.
+    pub scompare1: u32,
+    /// Padding to a 16-byte multiple, which Xtensa requires of a stack
+    /// pointer. Not spare space to grow into without re-checking the literals
+    /// in `vectors.S`.
+    pub _reserved: [u32; 3],
 }
 
 impl TaskContext {
@@ -60,6 +79,8 @@ impl TaskContext {
             a: [0; 16],
             windowbase: 0,
             windowstart: 0,
+            scompare1: 0,
+            _reserved: [0; 3],
         }
     }
 }
@@ -68,7 +89,7 @@ impl TaskContext {
 /// below. If either drifts, the handler reads and writes the wrong words with
 /// no diagnostic at all, so tie them together here.
 const _: () = {
-    assert!(core::mem::size_of::<TaskContext>() == 96);
+    assert!(core::mem::size_of::<TaskContext>() == 112);
     // 16-byte aligned, as Xtensa requires of a stack pointer.
     assert!(core::mem::size_of::<TaskContext>() % 16 == 0);
 };

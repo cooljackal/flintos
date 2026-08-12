@@ -258,7 +258,7 @@ _flint_trap_entry:
     // *below* it, and the matching underflow reads them back from the same
     // place when the task returns. Both addresses come from a1 in the window
     // being spilled. If a1 has been moved down to make room for a trap frame,
-    // the spill lands 112 bytes away from where the underflow will look, and
+    // the spill lands 128 bytes away from where the underflow will look, and
     // the task returns into whatever was already in that memory. On hardware
     // that surfaced as a stack pointer of 0x3f401da7 -- a rodata address --
     // which then faulted this very instruction sequence and escalated to a
@@ -276,10 +276,10 @@ _flint_trap_entry:
     wsr.excsave1 a2
     wsr.excsave2 a3
 
-    // -112 = size_of::<TaskContext>() + the 16-byte ABI save area. Asserted
+    // -128 = size_of::<TaskContext>() + the 16-byte ABI save area. Asserted
     // in lib.rs (TRAP_STACK_BYTES) so a change to TaskContext fails the build
     // here rather than quietly writing two fields into the save area.
-    addi a3, a1, -112           // frame base, 16 bytes clear of the ABI save area
+    addi a3, a1, -128           // frame base, 16 bytes clear of the ABI save area
 
     rsr.epc1   a2
     s32i a2,  a3, 0x00          // pc
@@ -293,6 +293,12 @@ _flint_trap_entry:
     s32i a2,  a3, 0x10
     rsr.lcount a2
     s32i a2,  a3, 0x14
+    // SCOMPARE1: the comparand of an in-flight `s32c1i` retry loop. A handler
+    // that performs an atomic read-modify-write clobbers it, and the
+    // interrupted loop then spins against the wrong value forever. NuttX and
+    // Zephyr both save it here; see `hal::TaskContext::scompare1`.
+    rsr.scompare1 a2
+    s32i a2,  a3, 0x60
 
     // ── Leave exception mode ──────────────────────────────────────────────
     //
@@ -335,10 +341,10 @@ _flint_trap_entry:
     rotw 4
 
     // ── Phase 2: the frame proper ─────────────────────────────────────────
-    addi a1, a1, -112           // 96-byte frame + the 16-byte ABI save area above it
+    addi a1, a1, -128           // 112-byte frame + the 16-byte ABI save area above it
 
     s32i a0,  a1, 0x18
-    addi a0,  a1, 112           // the interrupted SP
+    addi a0,  a1, 128           // the interrupted SP
     s32i a0,  a1, 0x1C          // a[1]
     s32i a2,  a1, 0x20
     s32i a3,  a1, 0x24
@@ -391,6 +397,8 @@ _flint_trap_entry:
     wsr.lend a2
     l32i a2, a1, 0x14
     wsr.lcount a2
+    l32i a2, a1, 0x60
+    wsr.scompare1 a2
     l32i a2, a1, 0x00
     wsr.epc1 a2
     rsync

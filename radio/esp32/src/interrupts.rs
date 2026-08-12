@@ -66,6 +66,7 @@ static INSTALLED: kernel::smp::Spinlock<[Installed; CPU_INTS]> =
 /// this lock for the length of one array write — so the losing case is a
 /// single missed interrupt during installation, against a hang.
 fn trampoline<const N: usize>() {
+    FIRES[N].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     let slot = INSTALLED.try_with(|t| t[N]);
     if let Some(Installed { handler: Some(f), arg }) = slot {
         unsafe { f(arg as *mut c_void) }
@@ -109,6 +110,27 @@ pub fn for_each_route(mut f: impl FnMut(Route)) {
     for route in snapshot.into_iter().flatten() {
         f(route);
     }
+}
+
+/// How many times each trampoline has run.
+///
+/// An atomic increment in trap context, which is the most that can be afforded
+/// there and enough to answer the question that matters: a scan that finds
+/// nothing is a completely different bug depending on whether the MAC
+/// interrupt is arriving.
+///
+/// **This hung the board until `SCOMPARE1` was saved across a trap.** The
+/// increment lowers to an `s32c1i` retry loop, and clobbering the comparand of
+/// an interrupted loop makes it spin forever — see `hal::TaskContext`.
+#[allow(clippy::declare_interior_mutable_const)]
+const ZERO: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static FIRES: [core::sync::atomic::AtomicU32; CPU_INTS] = [ZERO; CPU_INTS];
+
+/// How many times CPU interrupt `n`'s trampoline has run.
+pub fn fires(n: usize) -> u32 {
+    FIRES
+        .get(n)
+        .map_or(0, |c| c.load(core::sync::atomic::Ordering::Relaxed))
 }
 
 /// One distinct `fn()` per CPU interrupt, which is the whole trick.

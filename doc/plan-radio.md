@@ -447,12 +447,15 @@ expects its results to be collected by whoever handled the event, on a task of
 its own, and we were reading them from the application after a blocking scan.
 
 **It finds nothing.** Zero networks, every scan, in a room with several access
-points. So the scan machinery is right and the radio is not receiving —
-`_set_intr` routes MAC source 0 to a level-1 input and `INTENABLE` has the bit,
-but nothing has ever confirmed the interrupt is *delivered*. That is the next
-measurement, and it needs somewhere safe to count from: an atomic `fetch_add`
-inside the interrupt trampoline hangs the board before the driver finishes
-starting, which is still unexplained and is now the thing in the way.
+points. So the scan machinery is right and the radio is not receiving. **Measured
+now, not guessed: the MAC interrupt never fires.** `_set_intr` routes source 0
+to CPU input 0, `INTENABLE` carries the bit, and
+`interrupts::fires(0)` reads **zero** after every scan.
+
+That counter is only possible because of the `SCOMPARE1` fix below; it used to
+hang the board. What is left is why a routed, unmasked, connected source
+delivers nothing — the crossbar write, the PHY's receive path, or the driver
+never enabling reception.
 
 Also open: **~1.9 KB of heap goes per scan** (121928 → 119904 → 118064 across
 three), steady enough to be one allocation that is never freed rather than

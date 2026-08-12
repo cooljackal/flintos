@@ -158,7 +158,11 @@ fn report_results() {
     if found as usize > shown {
         api::log_warn!("[wifi] {} networks, showing {} (raise MAX_RESULTS)", found, shown);
     } else {
-        api::log_info!("[wifi] {} networks", found);
+        let mut fired = 0;
+        radio_esp32::interrupts::for_each_route(|r| {
+            fired += radio_esp32::interrupts::fires(r.num as usize);
+        });
+        api::log_info!("[wifi] {} networks, {} radio interrupts", found, fired);
     }
 
     for r in &records[..shown] {
