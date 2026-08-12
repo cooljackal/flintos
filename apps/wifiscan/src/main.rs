@@ -205,6 +205,19 @@ fn run() {
     let heap = unsafe { kernel::heap::init_from_map() };
     api::log_info!("[wifi] heap: {} bytes", heap);
 
+    // How full the append-only log is, and what one read of it costs. The
+    // init hang tracks this number; see doc/plan-radio.md.
+    let (used, free) = radio_esp32::nvs::with_store(|s| (s.used(), s.free()), (0, 0));
+    let t = kernel::clock::now_us();
+    let probe = radio_esp32::nvs::with_store(
+        |s| { let mut b = [0u8; 128]; s.get(b"rfcal.v", &mut b).map(|n| n as i32).unwrap_or(-1) },
+        -2,
+    );
+    api::log_info!(
+        "[wifi] nvs: {} used, {} free, one get = {} us (rc {})",
+        used, free, kernel::clock::now_us() - t, probe
+    );
+
     // Installed before init, not after. The driver posts `WIFI_READY` from
     // inside `esp_wifi_start`, and a handler registered afterwards would miss
     // the events that say the thing it is waiting for already happened.
