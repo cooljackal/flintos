@@ -6,17 +6,30 @@ Instructions for AI agents. `CLAUDE.md` points here.
 
 ## Answer format
 
-**Bottom line, key findings, next steps. Nothing else.**
+**Start with a bottom line. Then a table or bullets. Nothing else.**
 
-- Lead with the answer. No preamble, no recap of what was asked.
-- Bullets, not prose. A finding is one line plus its cost.
+- **Every reply opens with the bottom line** — one or two sentences saying
+  what happened and what it means. Not a heading, not a preamble, not a recap
+  of the question. If the reply is one line long, that line is the bottom
+  line.
+- **Tables and bullets, not prose.** A table for results — what was done,
+  what came of it. Bullets where a table does not fit. A finding is one line.
+- **Plain language.** Say what a thing *is* before naming it, and prefer the
+  plain word to the symbol: "the receiver's interrupt mask was never switched
+  on" rather than `WMAC_INT_ENA == 0`. Register names, symbol names, file
+  paths and line numbers are evidence — put them in the table cell or the
+  commit message, not in the sentence carrying the meaning. A reply should be
+  readable by someone who has not been staring at this code all week.
+- **Short.** The user asks for detail when they want it, and asking is
+  cheaper than reading past it. Past ~15 lines, cut.
 - No section headings unless there are genuinely three or more sections.
 - Do not narrate the work, re-explain a fix already described in a commit
   message, or restate the same point in a summary at the end.
 - Detail belongs in the commit message and the code comments, which is where
   someone will look for it later. The chat reply is a status report.
-- Long output is a failure mode, not thoroughness. If a reply runs past ~15
-  lines, cut it.
+- **Say which parts are measured and which are inferred.** A plausible
+  mechanism is not a finding. This project has repeatedly had a confident
+  explanation killed by the next measurement.
 
 ## Rules
 
