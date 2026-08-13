@@ -698,6 +698,46 @@ So the Wi-Fi MAC is not asserting its interrupt line, and the cause is
 upstream of the crossbar — the RF/PHY receive path, or the driver never
 putting the MAC into a receiving state. That is where 5.2 continues.
 
+### B1 located: the MAC's own interrupt mask is never armed
+
+Sampled every millisecond through a whole scan, OR-accumulated:
+
+```text
+[wifi] raw INTERRUPT 0x00018000 core 0 crossbar[src0]=Some(0)
+[wifi] wmac raw 0x0000cc13 ena 0x00000000
+```
+
+`WMAC_INT_RAW` carries bits 0, 1, 4, 10, 11, 14 and 15 during a scan, so **the
+MAC core is generating events** — it is not deaf, and the PHY, the
+calibration, the power domain and the clocks were never the problem.
+`WMAC_INT_ENA` is **zero**, so none of it leaves the block. That is why every
+downstream measurement was correct and useless: source 0 routes to CPU
+interrupt 0, `INTENABLE` carries the bit, the handler is installed, and the
+MAC never asks.
+
+**The register belongs to `libpp`.** Searched every archive for the block's
+base as a literal: `libpp.a` references `0x3ff73000` three times, and
+`libnet80211`, `libcore`, `librtc` and `libphy` not at all. `0x3ff73000` and
+the `0x60033000` the application reads are the ESP32's two windows onto the
+same peripherals — `0x3ff40000` and `0x60000000`, same `0x33000` offset — so
+the reads are valid and libpp is the only thing that touches it.
+
+**Neither reference arms it from the adapter, and neither do we:**
+
+| Entry | NuttX | Ours |
+|---|---|---|
+| `_set_isr` | `xt_set_interrupt_handler`, records only (`esp32_wifi_adapter.c:1086-1096`) | records into a slot behind a per-CPU-interrupt trampoline |
+| `_set_intr` | `esp_rom_route_intr_matrix` + vector-table bookkeeping, no enable, no MAC write (1554-1589) | `interrupt::connect` + records the route |
+| `_clear_intr` | empty stub (1591-1596) | empty stub |
+
+Zephyr has no adapter of its own — it takes esp-idf's `wifi_os_adapter` from
+`hal_espressif`, so its answer is esp-idf's, and esp-idf's `set_intr_wrapper`
+is one `intr_matrix_set`.
+
+So the mask is armed inside `libpp` when the driver decides receive should be
+on, and **that decision is what is not being reached**. B1 is now a question
+about the driver's start path, not about interrupts, the PHY, or the OS.
+
 ### B2 done, B1 unchanged
 
 The bring-up order now matches Zephyr: `esp_wifi_init`, then
