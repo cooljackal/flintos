@@ -226,6 +226,37 @@ fn osi_calls(stage: &str) {
     }
 }
 
+/// Print every task the driver asked for, and whether it ever ran.
+///
+/// The question: does the driver ever ask for the second core? That core is
+/// not started here, and a task pinned to it would be created, reported as a
+/// success, and then never run — which would explain both the hang during
+/// start-up and the receiver never being switched on. Entirely unconfirmed
+/// until one of these lines shows a core of 1.
+#[cfg(feature = "blobs")]
+fn task_report(stage: &str) {
+    radio_esp32::tasks::for_each_create(|c| {
+        let (entered, exited) = radio_esp32::tasks::slot_counts(c.slot as usize);
+        api::log_info!(
+            "[wifi] task/{} slot {} core {} -> {:?} prio {} stack {}",
+            stage,
+            c.slot,
+            c.core_id,
+            c.pinned_to,
+            c.prio,
+            c.stack
+        );
+        api::log_info!(
+            "[wifi] task/{} slot {} spawned {} ran {} returned {}",
+            stage,
+            c.slot,
+            c.spawned,
+            entered,
+            exited
+        );
+    });
+}
+
 /// Which task is running `run`, so [`watchdog`] can ask what it is blocked on.
 #[cfg(feature = "blobs")]
 static RUN_TASK: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
@@ -272,6 +303,7 @@ fn watchdog() {
         // reaches the dump after `driver up`.
         if i == 1 {
             osi_calls("hang");
+            task_report("hang");
         }
     }
 }
@@ -462,6 +494,7 @@ fn run() {
     }
     api::log_info!("[wifi] driver up");
     osi_calls("init");
+    task_report("init");
 
     // NULL, start, *then* STA — Zephyr's order, not the obvious one.
     // `esp32_wifi_dev_init` calls `esp_wifi_init`, then
@@ -488,6 +521,7 @@ fn run() {
     }
     api::log_info!("[wifi] station started");
     osi_calls("start");
+    task_report("start");
 
     // What the driver actually asked for. Recorded by `_set_intr` rather than
     // logged from inside it: see `radio_esp32::interrupts::for_each_route`.

@@ -178,8 +178,80 @@ fn claim() -> Option<usize> {
     })
 }
 
+// ── What the blob asked for, and what happened ──────────────────────────────
+
+/// One `_task_create` request, as it arrived and as it was resolved.
+///
+/// Recorded rather than logged: this runs on the blob's init path, and
+/// logging from inside the blob has hung the board before. The application
+/// reads it back afterwards.
+///
+/// The question it exists to answer: **does the driver ever ask for the
+/// second core?** That core is not started in this application
+/// (`soc_esp32::appcpu::is_running()` is false, measured), and
+/// [`create`] maps a request for it onto `Affinity::Core(1)` because
+/// `MAX_CORES` is 2 — a task pinned to a core that never runs is created
+/// successfully, reports success to the blob, and then sits there. That would
+/// explain both the init hang and the receiver never being switched on, and
+/// it is entirely unconfirmed until one of these records shows `core_id` of 1.
+#[derive(Clone, Copy)]
+pub struct Created {
+    pub core_id: u32,
+    pub prio: u32,
+    pub stack: u32,
+    /// `Some(n)` for a specific core, `None` for no preference.
+    pub pinned_to: Option<u8>,
+    pub slot: u8,
+    pub spawned: bool,
+}
+
+/// More than [`SLOTS`], because a refused request is worth seeing too and
+/// those never occupy a slot.
+const MAX_CREATES: usize = 16;
+
+static CREATES: kernel::smp::Spinlock<([Option<Created>; MAX_CREATES], usize)> =
+    kernel::smp::Spinlock::new(([None; MAX_CREATES], 0));
+
+fn note_create(c: Created) {
+    CREATES.with(|(table, n)| {
+        if *n < MAX_CREATES {
+            table[*n] = Some(c);
+            *n += 1;
+        }
+    });
+}
+
+/// Every task the blob has asked for, in order.
+pub fn for_each_create(mut f: impl FnMut(&Created)) {
+    CREATES.with(|(table, n)| {
+        for c in table[..*n].iter().flatten() {
+            f(c);
+        }
+    });
+}
+
+#[allow(clippy::declare_interior_mutable_const)]
+const ZERO: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Times each slot's trampoline has been entered, and returned from.
+///
+/// A slot created but never entered is a task that was never scheduled, which
+/// is the whole point of the exercise.
+static ENTERED: [core::sync::atomic::AtomicU32; SLOTS] = [ZERO; SLOTS];
+static EXITED: [core::sync::atomic::AtomicU32; SLOTS] = [ZERO; SLOTS];
+
+/// Entered and exited counts for slot `n`.
+pub fn slot_counts(n: usize) -> (u32, u32) {
+    use core::sync::atomic::Ordering;
+    if n >= SLOTS {
+        return (0, 0);
+    }
+    (ENTERED[n].load(Ordering::Relaxed), EXITED[n].load(Ordering::Relaxed))
+}
+
 /// The trap-free half for slot `N`: what the kernel actually starts.
 fn trampoline<const N: usize>() {
+    ENTERED[N].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // Record the id here as well as in `create`, because on two cores the task
     // can be picked up and run before `spawn_task_on` has even returned to the
     // caller. Whoever arrives first wins and both write the same value.
@@ -195,6 +267,7 @@ fn trampoline<const N: usize>() {
     // A FreeRTOS task entry never returns; the port faults if one does. Reach
     // this and something in the blob is wrong, so say which task and take the
     // same exit `_task_delete` would rather than run off the end of the stack.
+    EXITED[N].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     api::log_error!("radio: blob task '{}' returned from its entry point", slot.task);
     release_slot_of(slot.task);
     dynobj::delete_self();
@@ -285,6 +358,18 @@ pub unsafe extern "C" fn create(
         stack_depth as usize,
         affinity,
     );
+
+    note_create(Created {
+        core_id,
+        prio,
+        stack: stack_depth,
+        pinned_to: match affinity {
+            Affinity::Core(c) => Some(c.0),
+            _ => None,
+        },
+        slot: n as u8,
+        spawned: spawned.is_some(),
+    });
 
     match spawned {
         Some(id) => {
