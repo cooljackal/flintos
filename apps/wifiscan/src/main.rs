@@ -515,6 +515,25 @@ fn scan_once(round: u32) {
     // plus slack. Reported if it passes without the event, because a scan that
     // never completes and a scan whose completion is not delivered look the
     // same from here and are different bugs.
+    // The MAC's own interrupt registers, sampled alongside the CPU's.
+    //
+    // `WMAC_INT_RAW` is what the MAC sets when it has something to say;
+    // `WMAC_INT_ENA` is the MAC's own mask, which is *inside* the block and
+    // has nothing to do with the crossbar or `INTENABLE`. Three outcomes and
+    // they point in three different directions:
+    //
+    //   ENA zero          — the blob never armed the MAC's receive interrupts.
+    //   RAW bits, no CPU  — frames arrive; the loss is between MAC and CPU.
+    //   both zero         — nothing is being received at all.
+    //
+    // Reads only. Nothing here writes a MAC register, so it cannot be what
+    // `coex_bt_high_prio` was.
+    const WMAC_BASE: usize = 0x6003_3000;
+    const WMAC_INT_RAW: usize = WMAC_BASE + 0x0004;
+    const WMAC_INT_ENA: usize = WMAC_BASE + 0x0010;
+    let mut mac_raw_seen: u32 = 0;
+    let mut mac_ena_seen: u32 = 0;
+
     let mut raw_seen: u32 = 0;
     let deadline = t0 + 6_000_000;
     while kernel::clock::now_us() < deadline {
@@ -524,6 +543,11 @@ fn scan_once(round: u32) {
                 raw_seen,
                 kernel::smp::current_core().0,
                 unsafe { soc_esp32::intr_map::routed_to(0) }
+            );
+            api::log_info!(
+                "[wifi] wmac raw {:#010x} ena {:#010x}",
+                mac_raw_seen,
+                mac_ena_seen
             );
             api::log_info!(
                 "[wifi] scan {} done in {} ms, {} events, {} dropped, {} bytes free",
@@ -541,6 +565,8 @@ fn scan_once(round: u32) {
         // the dispatch path drops it; never asserting means the crossbar or
         // the MAC, not us.
         raw_seen |= unsafe { kernel::arch::registers::read_interrupt() };
+        mac_raw_seen |= unsafe { (WMAC_INT_RAW as *const u32).read_volatile() };
+        mac_ena_seen |= unsafe { (WMAC_INT_ENA as *const u32).read_volatile() };
         task::sleep_ms(1);
     }
     api::log_error!("[wifi] scan {} produced no SCAN_DONE within 6 s", round);
