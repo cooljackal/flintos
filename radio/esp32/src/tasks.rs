@@ -169,6 +169,33 @@ unsafe fn store_name(n: usize, name: *const c_char) -> &'static str {
     core::str::from_utf8(bytes).unwrap_or(FALLBACK_NAME)
 }
 
+/// Which core to put a task on, given what the driver asked for.
+///
+/// The case this exists for: **a request for a core that is not running.**
+/// This chip has two, and applications that use one leave the second held in
+/// reset. Pinning a task there is not an error anyone reports — the task is
+/// created, success goes back to the driver, and it then waits forever for a
+/// thread that can never be scheduled. Sending it wherever it *can* run is the
+/// only useful answer, and it is what esp-idf arrives at from the other
+/// direction: its "which core" setting is offered only when the second core
+/// is enabled (`components/esp_wifi/Kconfig:184-190`), so a single-core build
+/// cannot ask for the second core in the first place.
+///
+/// Not currently reached — measured, the driver asks for core 0, which is
+/// also what this tree tells it to use. It is here because the cost of being
+/// wrong is a hang with nothing pointing at it.
+fn affinity_for(core_id: u32, second_core_running: bool) -> Affinity {
+    match u8::try_from(core_id) {
+        Ok(0) => Affinity::Core(hal::smp::CoreId(0)),
+        Ok(c) if (c as usize) < hal::smp::MAX_CORES && second_core_running => {
+            Affinity::Core(hal::smp::CoreId(c))
+        }
+        // Either no preference (`tskNO_AFFINITY` is too large for a `u8`), or
+        // a core that cannot run it.
+        _ => Affinity::Any,
+    }
+}
+
 /// Take a free slot, or `None` if all [`SLOTS`] are in use.
 fn claim() -> Option<usize> {
     SLOTS_TABLE.with(|t| {
@@ -347,10 +374,13 @@ pub unsafe extern "C" fn create(
         t[n].arg = param as usize;
     });
 
-    let affinity = match u8::try_from(core_id) {
-        Ok(c) if (c as usize) < hal::smp::MAX_CORES => Affinity::Core(hal::smp::CoreId(c)),
-        _ => Affinity::Any,
-    };
+    // SAFETY: a register read, and the answer is only used to choose an
+    // affinity — a core that starts between here and the spawn costs nothing.
+    #[cfg(target_os = "none")]
+    let second_core = unsafe { soc_esp32::appcpu::is_running() };
+    #[cfg(not(target_os = "none"))]
+    let second_core = false;
+    let affinity = affinity_for(core_id, second_core);
     let spawned = dynobj::spawn_task_on(
         task_name,
         TRAMPOLINES[n],
@@ -439,6 +469,37 @@ pub unsafe extern "C" fn delete(handle: *mut c_void) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn a_task_never_goes_to_a_core_that_is_not_running() {
+        // The whole point. Asking for the second core while it is held in
+        // reset used to pin the task there, and a task pinned to a core that
+        // never runs is created, reported as a success, and then waits for
+        // ever.
+        assert_eq!(affinity_for(1, false), Affinity::Any);
+        assert_eq!(affinity_for(1, true), Affinity::Core(hal::smp::CoreId(1)));
+    }
+
+    #[test]
+    fn core_zero_is_always_core_zero() {
+        assert_eq!(affinity_for(0, false), Affinity::Core(hal::smp::CoreId(0)));
+        assert_eq!(affinity_for(0, true), Affinity::Core(hal::smp::CoreId(0)));
+    }
+
+    #[test]
+    fn no_preference_stays_no_preference() {
+        // FreeRTOS spells "anywhere" as a value far too large for a core
+        // number, and `_task_create` passes u32::MAX for the same reason.
+        assert_eq!(affinity_for(0x7FFF_FFFF, true), Affinity::Any);
+        assert_eq!(affinity_for(u32::MAX, true), Affinity::Any);
+    }
+
+    #[test]
+    fn a_core_this_chip_does_not_have_is_not_invented() {
+        assert_eq!(affinity_for(2, true), Affinity::Any);
+    }
+
     use super::*;
 
     #[test]
