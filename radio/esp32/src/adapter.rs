@@ -245,6 +245,137 @@ pub mod calls {
     }
 }
 
+// ── Allocation trace ────────────────────────────────────────────────────────
+
+/// One allocation, as the driver asked for it and as it was answered.
+///
+/// Counts alone hide what matters: they are cumulative, so they cannot say
+/// what is still held, and they merge entries that the driver chose between
+/// deliberately. `_malloc_internal` and `_wifi_malloc` mean different things
+/// to the caller even where they mean the same thing to us, and which one was
+/// asked for is evidence about what the memory was for.
+///
+/// Bounded, and the overflow is counted rather than silently dropped: a trace
+/// that quietly stops is worse than one that says where it stopped.
+#[derive(Clone, Copy)]
+pub struct Alloc {
+    /// Which entry the driver called. Indexes [`ALLOC_NAMES`].
+    pub kind: u8,
+    /// Which stage of bring-up, as the application marked it.
+    pub phase: u8,
+    pub size: u32,
+    pub ptr: usize,
+    /// True once a `_free` has arrived for this pointer.
+    pub freed: bool,
+}
+
+pub const ALLOC_NAMES: [&str; 7] = [
+    "malloc",
+    "malloc_internal",
+    "wifi_malloc",
+    "calloc_internal",
+    "wifi_calloc",
+    "zalloc_internal",
+    "wifi_zalloc",
+];
+
+pub const A_MALLOC: u8 = 0;
+pub const A_MALLOC_INTERNAL: u8 = 1;
+pub const A_WIFI_MALLOC: u8 = 2;
+pub const A_CALLOC_INTERNAL: u8 = 3;
+pub const A_WIFI_CALLOC: u8 = 4;
+pub const A_ZALLOC_INTERNAL: u8 = 5;
+pub const A_WIFI_ZALLOC: u8 = 6;
+
+const MAX_ALLOCS: usize = 96;
+
+struct Trace {
+    records: [Alloc; MAX_ALLOCS],
+    used: usize,
+    /// Allocations past the end of the table, and frees that matched nothing
+    /// in it -- both of which make the live set below an under-count.
+    overflow: u32,
+    unmatched_frees: u32,
+    phase: u8,
+}
+
+const EMPTY: Alloc = Alloc { kind: 0, phase: 0, size: 0, ptr: 0, freed: false };
+
+static TRACE: kernel::smp::Spinlock<Trace> = kernel::smp::Spinlock::new(Trace {
+    records: [EMPTY; MAX_ALLOCS],
+    used: 0,
+    overflow: 0,
+    unmatched_frees: 0,
+    phase: 0,
+});
+
+/// Mark which stage of bring-up the records that follow belong to.
+pub fn set_alloc_phase(phase: u8) {
+    TRACE.with(|t| t.phase = phase);
+}
+
+fn note_alloc(kind: u8, size: usize, ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    TRACE.with(|t| {
+        if t.used >= MAX_ALLOCS {
+            t.overflow += 1;
+            return;
+        }
+        let n = t.used;
+        t.records[n] = Alloc {
+            kind,
+            phase: t.phase,
+            size: size as u32,
+            ptr: ptr as usize,
+            freed: false,
+        };
+        t.used = n + 1;
+    });
+}
+
+fn note_free(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    TRACE.with(|t| {
+        let addr = ptr as usize;
+        // Last match first: an address can be reused after a free, and the
+        // most recent record for it is the live one.
+        let n = t.used;
+        for r in t.records[..n].iter_mut().rev() {
+            if r.ptr == addr && !r.freed {
+                r.freed = true;
+                return;
+            }
+        }
+        t.unmatched_frees += 1;
+    });
+}
+
+/// Every allocation still outstanding, oldest first.
+pub fn for_each_live_alloc(mut f: impl FnMut(&Alloc)) {
+    TRACE.with(|t| {
+        let n = t.used;
+        for r in t.records[..n].iter().filter(|r| !r.freed) {
+            f(r);
+        }
+    });
+}
+
+/// Recorded, still held, bytes still held, records lost to the table filling,
+/// and frees that matched nothing.
+pub fn alloc_totals() -> (u32, u32, u32, u32, u32) {
+    TRACE.with(|t| {
+        let n = t.used;
+        let live = t.records[..n].iter().filter(|r| !r.freed);
+        let count = live.clone().count() as u32;
+        let bytes = live.map(|r| r.size).sum::<u32>();
+        (n as u32, count, bytes, t.overflow, t.unmatched_frees)
+    })
+}
+
 // ── Allocation ──────────────────────────────────────────────────────────────
 
 /// `_malloc`, `_malloc_internal`, `_wifi_malloc`.
@@ -253,8 +384,22 @@ pub mod calls {
 /// RAM and DMA-capable, so there is nothing for the variants to distinguish.
 /// They stay separate entries because the blob calls them by name.
 pub(crate) unsafe extern "C" fn osi_malloc(size: usize) -> *mut c_void {
+    unsafe { alloc_as(A_MALLOC_INTERNAL, size) }
+}
+
+/// `_wifi_malloc`. Same memory as `_malloc_internal` here — everything the
+/// radio heap holds is internal and DMA-capable — but a separate entry so the
+/// trace records which one the driver chose.
+unsafe extern "C" fn osi_wifi_malloc(size: usize) -> *mut c_void {
+    unsafe { alloc_as(A_WIFI_MALLOC, size) }
+}
+
+/// The body all the malloc-shaped entries share.
+unsafe fn alloc_as(kind: u8, size: usize) -> *mut c_void {
     calls::bump(calls::MALLOC);
-    unsafe { heap::alloc(size, 8) as *mut c_void }
+    let p = unsafe { heap::alloc(size, 8) as *mut c_void };
+    note_alloc(kind, size, p);
+    p
 }
 
 /// `_malloc` alone takes `unsigned int` rather than `size_t` in the header.
@@ -262,10 +407,19 @@ pub(crate) unsafe extern "C" fn osi_malloc(size: usize) -> *mut c_void {
 /// interchangeable to the compiler and — more to the point — matching the
 /// header exactly is the whole discipline of this file.
 unsafe extern "C" fn osi_malloc_uint(size: u32) -> *mut c_void {
-    unsafe { osi_malloc(size as usize) }
+    unsafe { alloc_as(A_MALLOC, size as usize) }
 }
 
 unsafe extern "C" fn osi_calloc(n: usize, size: usize) -> *mut c_void {
+    unsafe { calloc_as(A_CALLOC_INTERNAL, n, size) }
+}
+
+/// `_wifi_calloc`. As [`osi_wifi_malloc`]: same memory, separate entry.
+unsafe extern "C" fn osi_wifi_calloc(n: usize, size: usize) -> *mut c_void {
+    unsafe { calloc_as(A_WIFI_CALLOC, n, size) }
+}
+
+unsafe fn calloc_as(kind: u8, n: usize, size: usize) -> *mut c_void {
     calls::bump(calls::CALLOC);
     let bytes = match n.checked_mul(size) {
         Some(b) => b,
@@ -275,15 +429,22 @@ unsafe extern "C" fn osi_calloc(n: usize, size: usize) -> *mut c_void {
     if !p.is_null() {
         unsafe { core::ptr::write_bytes(p, 0, bytes) };
     }
+    note_alloc(kind, bytes, p as *mut c_void);
     p as *mut c_void
 }
 
 unsafe extern "C" fn osi_zalloc(size: usize) -> *mut c_void {
-    unsafe { osi_calloc(1, size) }
+    unsafe { calloc_as(A_ZALLOC_INTERNAL, 1, size) }
+}
+
+/// `_wifi_zalloc`. As [`osi_wifi_malloc`]: same memory, separate entry.
+unsafe extern "C" fn osi_wifi_zalloc(size: usize) -> *mut c_void {
+    unsafe { calloc_as(A_WIFI_ZALLOC, 1, size) }
 }
 
 pub(crate) unsafe extern "C" fn osi_free(p: *mut c_void) {
     calls::bump(calls::FREE);
+    note_free(p);
     if !p.is_null() {
         unsafe { heap::free(p as *mut u8, Caps::Internal) };
     }
@@ -1161,11 +1322,11 @@ pub fn table() -> WifiOsiFuncs {
 
     t._malloc = Some(osi_malloc_uint);
     t._malloc_internal = Some(osi_malloc);
-    t._wifi_malloc = Some(osi_malloc);
+    t._wifi_malloc = Some(osi_wifi_malloc);
     t._calloc_internal = Some(osi_calloc);
-    t._wifi_calloc = Some(osi_calloc);
+    t._wifi_calloc = Some(osi_wifi_calloc);
     t._zalloc_internal = Some(osi_zalloc);
-    t._wifi_zalloc = Some(osi_zalloc);
+    t._wifi_zalloc = Some(osi_wifi_zalloc);
     t._free = Some(osi_free);
     t._get_free_heap_size = Some(osi_get_free_heap_size);
 

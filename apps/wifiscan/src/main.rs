@@ -170,6 +170,7 @@ fn report_results() {
             radio_esp32::adapter::PHY_DISABLES.load(core::sync::atomic::Ordering::Relaxed)
         );
         osi_calls("scan");
+        alloc_report("scan");
     }
 
     for r in &records[..shown] {
@@ -224,6 +225,41 @@ fn osi_calls(stage: &str) {
         }
         i += 2;
     }
+}
+
+/// Print what the driver has allocated and still holds.
+///
+/// Counts alone hide the live set, so this reports each outstanding block with
+/// the entry that asked for it, its size and its address, plus totals and the
+/// two ways the trace can under-report: records lost once the table filled,
+/// and frees that matched nothing recorded.
+#[cfg(feature = "blobs")]
+fn alloc_report(stage: &str) {
+    use radio_esp32::adapter;
+    let (seen, live, bytes, lost, stray) = adapter::alloc_totals();
+    api::log_info!(
+        "[wifi] mem/{} {} seen, {} live, {} bytes",
+        stage, seen, live, bytes
+    );
+    if lost > 0 || stray > 0 {
+        api::log_warn!("[wifi] mem/{} {} lost, {} stray frees", stage, lost, stray);
+    }
+    let mut shown = 0;
+    adapter::for_each_live_alloc(|a| {
+        // Bounded: the console is the bottleneck, and the large blocks are
+        // what the receive path would need.
+        if shown < 20 && a.size >= 64 {
+            api::log_info!(
+                "[wifi] mem/{} p{} {} {} at {:#x}",
+                stage,
+                a.phase,
+                adapter::ALLOC_NAMES[a.kind as usize],
+                a.size,
+                a.ptr
+            );
+            shown += 1;
+        }
+    });
 }
 
 /// Print every task the driver asked for, and whether it ever ran.
@@ -298,6 +334,25 @@ fn watchdog() {
                 "[wifi] watch {}: stage {}, not blocked in a queue primitive",
                 i, stage
             ),
+        }
+        // Every other task too, not just this one. The driver's worker does
+        // enter its entry point on a hung boot -- measured -- so what it is
+        // itself waiting for is the question, and it is the same record.
+        for id in 0..kernel::MAX_TASKS as u32 {
+            if id == who {
+                continue;
+            }
+            if let Some(w) = kernel::queue::waiting_on(id) {
+                let what = radio_esp32::adapter::describe(w.addr);
+                api::log_info!(
+                    "[wifi] watch {}: task {} on {} {} {}",
+                    i,
+                    id,
+                    what.map(|d| d.kind).unwrap_or("unknown"),
+                    what.map(|d| d.nth).unwrap_or(0),
+                    if w.send { "send" } else { "recv" }
+                );
+            }
         }
         // The counts matter most on the boot that hangs, and that boot never
         // reaches the dump after `driver up`.
@@ -495,6 +550,8 @@ fn run() {
     api::log_info!("[wifi] driver up");
     osi_calls("init");
     task_report("init");
+    alloc_report("init");
+    radio_esp32::adapter::set_alloc_phase(1);
 
     // NULL, start, *then* STA — Zephyr's order, not the obvious one.
     // `esp32_wifi_dev_init` calls `esp_wifi_init`, then
@@ -522,6 +579,8 @@ fn run() {
     api::log_info!("[wifi] station started");
     osi_calls("start");
     task_report("start");
+    alloc_report("start");
+    radio_esp32::adapter::set_alloc_phase(2);
 
     // What the driver actually asked for. Recorded by `_set_intr` rather than
     // logged from inside it: see `radio_esp32::interrupts::for_each_route`.
