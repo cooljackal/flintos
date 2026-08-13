@@ -50,6 +50,22 @@
 //!   needs eighteen of them. [`CalibrationMode::Partial`] is the right
 //!   decision and the store is the right idea; the log is the wrong shape.
 
+/// Call `coex_bt_high_prio` on the enable that takes the reference count up.
+///
+/// **Off: it stops the scan cycle dead.** esp-idf calls it on every such
+/// enable (`phy_init.c:242`), on the ESP32 branch, outside any
+/// `CONFIG_BT_ENABLED` guard, and the reason to try it was good — the packet
+/// traffic arbiter sits between the two basebands and does not consult
+/// whether Bluetooth was ever built in. On this tree it makes things worse:
+/// scan 1 completes and scans 2 through 8 produce no `SCAN_DONE` at all.
+///
+/// Nothing new is linked either way — `libnet80211.a` already imports the
+/// symbol and `librtc.a` defines it — so this is the call and not the link,
+/// which is what separates it from the `esp_wifi_internal_reg_rxcb` attempt.
+/// The likely reason is that esp-idf reaches it with the coexistence
+/// subsystem initialised, and `crate::coex` is nineteen stubs.
+const COEX_HIGH_PRIO: bool = false;
+
 use crate::calibration::{CalibrationMode, CAL_DATA_LEN};
 // `calibration::load`/`save_or_reset` and `Invalid` are named only by the
 // target-only halves below, which is why they are imported there.
@@ -74,6 +90,18 @@ extern "C" {
 
     /// `void phy_close_rf(void)` — the counterpart to a successful enable.
     fn phy_close_rf();
+
+    /// `void coex_bt_high_prio(void)`, from `librtc.a`.
+    ///
+    /// esp-idf calls this on every `esp_phy_enable` that takes the reference
+    /// count from zero (`phy_init.c:242`), on the ESP32 branch, **outside**
+    /// any `CONFIG_BT_ENABLED` guard — so a Wi-Fi-only build calls it too.
+    ///
+    /// It costs nothing at the link: `libnet80211.a` already imports it, so
+    /// `librtc.a` is resolved and linked with or without this declaration.
+    /// That matters, because adding an archive to this link is what broke the
+    /// driver the last time a blob symbol was introduced.
+    fn coex_bt_high_prio();
 
     /// `char* get_phy_version_str(void)` — the blob's own version string,
     /// which esp-idf logs at every boot.
@@ -152,13 +180,22 @@ pub unsafe fn enable(mask: u32) -> Result<(), PhyError> {
     // them without a clock reads as the blob misbehaving.
     unsafe { soc_esp32::dport::radio_clock_enable(soc_esp32::dport::RADIO_CLK_COMMON | mask) };
 
-    let first = STATE.with(|s| {
+    let (first, taking_it_up) = STATE.with(|s| {
         s.refs += 1;
-        !s.registered
+        (!s.registered, s.refs == 1)
     });
 
     if !first {
         unsafe { phy_wakeup_init() };
+        // esp-idf also calls `phy_digital_regs_load` here, and stores the
+        // registers in `esp_phy_disable`. Not implemented: measured on the
+        // board, the driver enables the PHY once and never disables it
+        // (`phy 1 on, 0 off` across three scans), so this branch does not run
+        // and neither does the store. It becomes real work the moment
+        // something cycles the PHY — modem sleep, or BLE sharing it.
+        if taking_it_up {
+            unsafe { coex_bt_high_prio() };
+        }
         return Ok(());
     }
 
@@ -166,6 +203,15 @@ pub unsafe fn enable(mask: u32) -> Result<(), PhyError> {
     match result {
         Ok(()) => {
             STATE.with(|s| s.registered = true);
+            // Last in the sequence, as esp-idf has it: after the calibration
+            // branch, inside the reference-count-was-zero arm
+            // (`phy_init.c:242`). The ESP32's packet traffic arbiter sits
+            // between the two basebands and does not consult whether
+            // Bluetooth was ever built in, which is why esp-idf calls this
+            // unconditionally on this target.
+            if COEX_HIGH_PRIO && taking_it_up {
+                unsafe { coex_bt_high_prio() };
+            }
             Ok(())
         }
         Err(e) => {

@@ -382,6 +382,31 @@ fn run() {
         esp32_flash::LAST_CACHE_STATE.load(core::sync::atomic::Ordering::Relaxed)
     );
 
+    // The Wi-Fi power domain, before anything touches the radio.
+    //
+    // esp-idf clears `RTC_CNTL_WIFI_FORCE_PD` and `RTC_CNTL_WIFI_FORCE_ISO` in
+    // `esp_wifi_bt_power_domain_on` (`phy_init.c:280-291`), called as the first
+    // statement of `esp_wifi_init` (`wifi_init.c:182`) -- the wrapper this tree
+    // bypasses by calling `esp_wifi_init_internal` directly. Both bits reset to
+    // 0, so this may well be a no-op; the bootloader is what could have set
+    // them, and that is a question to read rather than answer from the header.
+    {
+        const RTC_BASE: usize = 0x3FF4_8000;
+        const DIG_PWC: usize = RTC_BASE + 0x84;
+        const DIG_ISO: usize = RTC_BASE + 0x88;
+        const WIFI_FORCE_PD: u32 = 1 << 17;
+        const WIFI_FORCE_ISO: u32 = 1 << 28;
+        let pwc = unsafe { (DIG_PWC as *const u32).read_volatile() };
+        let iso = unsafe { (DIG_ISO as *const u32).read_volatile() };
+        api::log_info!(
+            "[wifi] rtc pwc={:#010x} iso={:#010x} force_pd={} force_iso={}",
+            pwc,
+            iso,
+            pwc & WIFI_FORCE_PD != 0,
+            iso & WIFI_FORCE_ISO != 0
+        );
+    }
+
     // Installed before init, not after. The driver posts `WIFI_READY` from
     // inside `esp_wifi_start`, and a handler registered afterwards would miss
     // the events that say the thing it is waiting for already happened.
