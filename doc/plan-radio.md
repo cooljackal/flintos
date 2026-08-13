@@ -541,6 +541,27 @@ Zero. `appcpu::is_running()` is false in this application, so core 1 is never
 asked and never stalled. The park path is not the mechanism, and the whole
 second-core question is out of scope for N2.
 
+#### Nine boots after an erase, all clean
+
+The instrumented binary, `make erase`, then nine consecutive boots:
+
+| Boot | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| `used` | 0 | 2272 | 2308 | 2344 | 2380 | 2416 | 2452 | 2488 | 2524 |
+| one get, us | 184 | 3846 | 3986 | 4090 | 4242 | 4378 | 4523 | 4651 | 4791 |
+| up | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+Growth is +36 bytes and about +130 us a boot, dead linear. **No hang, so the
+wait instrument caught nothing.** That is a longer clean run than the earlier
+"three of five hung", on a binary that differs in two ways: the log is bounded
+now, and `block_send`/`block_recv` take one more lock to record the wait. The
+second may well have moved the timing — that is a real possibility and not a
+reason to call N2 fixed.
+
+The bound is `nvs::compact_if_grown`, at one sector. At +36 bytes a boot from
+2524 it will not fire until boot ~53, so nine boots do not exercise it; what
+they show is the growth it is there to stop.
+
 #### N2 is a blocked task, not a dead system — and not the log length
 
 The `wifiwatch` task, spawned above the application's priority precisely to
