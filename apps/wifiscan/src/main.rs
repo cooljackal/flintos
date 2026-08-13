@@ -399,15 +399,27 @@ fn run() {
     }
     api::log_info!("[wifi] driver up");
 
-    let rc = unsafe { wifi::set_mode(wifi::mode::STA) };
+    // NULL, start, *then* STA — Zephyr's order, not the obvious one.
+    // `esp32_wifi_dev_init` calls `esp_wifi_init`, then
+    // `esp_wifi_set_mode(ESP32_WIFI_MODE_NULL)`, then starts, and only moves to
+    // STA when something asks it to (`drivers/wifi/esp32/src/esp_wifi_drv.c`,
+    // lines 1854-1867). Going straight to STA before the start is what this
+    // did, and the difference is what state the MAC is brought up in.
+    let rc = unsafe { wifi::set_mode(wifi::mode::NULL) };
     if rc != 0 {
-        api::log_error!("[wifi] set_mode(STA) failed: {:#x}", rc);
+        api::log_error!("[wifi] set_mode(NULL) failed: {:#x}", rc);
         return idle();
     }
 
     let rc = unsafe { wifi::start() };
     if rc != 0 {
         api::log_error!("[wifi] esp_wifi_start failed: {:#x}", rc);
+        return idle();
+    }
+
+    let rc = unsafe { wifi::set_mode(wifi::mode::STA) };
+    if rc != 0 {
+        api::log_error!("[wifi] set_mode(STA) failed: {:#x}", rc);
         return idle();
     }
     api::log_info!("[wifi] station started");

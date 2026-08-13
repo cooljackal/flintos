@@ -698,6 +698,30 @@ So the Wi-Fi MAC is not asserting its interrupt line, and the cause is
 upstream of the crossbar — the RF/PHY receive path, or the driver never
 putting the MAC into a receiving state. That is where 5.2 continues.
 
+### B2 done, B1 unchanged
+
+The bring-up order now matches Zephyr: `esp_wifi_init`, then
+`esp_wifi_set_mode(NULL)`, then `esp_wifi_start`, and STA only afterwards
+(`drivers/wifi/esp32/src/esp_wifi_drv.c:1854-1867` -- it sets NULL at init and
+moves to STA when something asks). This tree went straight to STA before the
+start. Changed, boots clean, scan completes in 2073 ms -- and still
+**0 networks, 0 radio interrupts**. So the order was wrong and was not the
+cause.
+
+Two B1 candidates checked and eliminated without a board:
+
+| Candidate | Verdict |
+|---|---|
+| `phy_wifi_enable_set(1)`, which NuttX calls beside `esp_phy_enable` (`esp32_wifi_adapter.c` ~2280-2310) | **Not applicable.** The symbol is absent from every archive in the pinned v4.4 blob set; NuttX tracks a newer one. `libphy.a` exports `enable_wifi_agc`, `mac_enable_bb` and `phy_enable_low_rate`, all called from inside `libpp`. |
+| Wi-Fi clock mask | Correct. `_wifi_clock_enable` sets `RADIO_CLK_WIFI` = `DPORT_WIFI_CLK_WIFI_EN` (0x406, bits 1, 2, 10), which is what NuttX's `wifi_clock_enable` sets and nothing more. |
+
+**The untested divergence left over from the same reading:** Zephyr registers
+an RX callback during init --
+`esp_wifi_internal_reg_rxcb(ESP_IF_WIFI_STA, eth_esp32_rx)`
+(`esp_wifi_drv.c:1779`) -- and this tree registers none, having no netif to
+deliver frames to. Whether the driver enables hardware receive at all without
+one is unknown, and it is the next thing to try.
+
 ### What the references do with the blob's timers, and what ours does
 
 Checked because the hang needs `radio-timer` to exist, and the answer is that
