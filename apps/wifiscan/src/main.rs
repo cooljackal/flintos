@@ -193,7 +193,17 @@ fn report_results() {
 #[cfg(feature = "blobs")]
 static STAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
+/// Which task is running `run`, so [`watchdog`] can ask what it is blocked on.
+#[cfg(feature = "blobs")]
+static RUN_TASK: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
+
 /// Report the stage every second, from a task that `init` cannot block.
+///
+/// The stage alone said "blocked, not dead". What it could not say is *on
+/// what*: every blocking primitive the blob gets — queue send and receive,
+/// semaphore take, mutex lock — funnels through `kernel::queue::block_*`, and
+/// that now records the object's address, which `radio_esp32::adapter::describe`
+/// turns back into "the fourth semaphore the driver created".
 #[cfg(feature = "blobs")]
 fn watchdog() {
     for i in 1..=8 {
@@ -202,7 +212,29 @@ fn watchdog() {
         if stage >= 2 {
             return;
         }
-        api::log_info!("[wifi] watch {}: still in stage {}", i, stage);
+        let who = RUN_TASK.load(core::sync::atomic::Ordering::SeqCst);
+        match kernel::queue::waiting_on(who) {
+            Some(w) => {
+                let what = radio_esp32::adapter::describe(w.addr);
+                api::log_info!(
+                    "[wifi] watch {}: stage {}, blocked on {} {} at {:#x}, {} since tick {}",
+                    i,
+                    stage,
+                    what.map(|d| d.kind).unwrap_or("unknown object"),
+                    what.map(|d| d.nth).unwrap_or(0),
+                    w.addr,
+                    if w.send { "send" } else { "recv" },
+                    w.since
+                );
+                if w.timeout_ms == u32::MAX {
+                    api::log_info!("[wifi] watch {}:   timeout is FOREVER", i);
+                }
+            }
+            None => api::log_info!(
+                "[wifi] watch {}: stage {}, not blocked in a queue primitive",
+                i, stage
+            ),
+        }
     }
 }
 
@@ -355,6 +387,7 @@ fn run() {
     // the tick still fires and the scheduler still runs, it wakes and reports
     // how far `init` got. Silence from it too means the system is gone, not
     // blocked. See doc/plan-radio.md, "N2".
+    RUN_TASK.store(kernel::dynobj::current_task(), core::sync::atomic::Ordering::SeqCst);
     task::spawn("wifiwatch", watchdog, Priority::Normal(3), 4096);
 
     STAGE.store(1, core::sync::atomic::Ordering::SeqCst);

@@ -11,7 +11,7 @@
 //!
 //! All waiter-table access happens under one lock, `QUEUE_WAITERS`.
 
-use crate::scheduler::{self, TaskState};
+use crate::scheduler::{self, TaskState, MAX_TASKS};
 
 const MAX_WAITERS: usize = 16;
 const MAX_QUEUES: usize = 16;
@@ -249,10 +249,11 @@ pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
         Some(c) => c,
         None => return false, // table/list full — cannot block
     };
+    note_wait(cur, Wait { addr: q_addr, send: true, timeout_ms, since: now });
     scheduler::request_switch();
 
     // Resumed: still listed ⇒ timed out; removed ⇒ woken by a slot.
-    with_waiters(|w| {
+    let woken = with_waiters(|w| {
         if let Some(l) = w.find(q_addr) {
             if contains(&l.send_waiters, l.send_count, cur) {
                 remove(&mut l.send_waiters, &mut l.send_count, cur);
@@ -260,7 +261,61 @@ pub fn block_send(q_addr: usize, timeout_ms: u32) -> bool {
             }
         }
         true
-    })
+    });
+    clear_wait(cur);
+    woken
+}
+
+/// What a task is blocked on, and since when.
+///
+/// Every blocking primitive the blob is given — queue send and receive,
+/// semaphore take, mutex lock — funnels through [`block_send`] and
+/// [`block_recv`], so recording here covers all four. It exists because a wait
+/// that is never signalled looks exactly like a dead system from outside: the
+/// task is simply not runnable, and nothing says which object it is holding
+/// out for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Wait {
+    /// The object's address, which is the key the waiter list is filed under.
+    pub addr: usize,
+    /// True for a send (waiting for space), false for a receive (waiting for
+    /// an item, a permit, or an unlock).
+    pub send: bool,
+    /// What the caller asked for. [`dynobj::FOREVER`](crate::dynobj::FOREVER)
+    /// is `u32::MAX`.
+    pub timeout_ms: u32,
+    /// The tick the wait began on.
+    pub since: u64,
+}
+
+static WAITS: crate::smp::Spinlock<[Option<Wait>; MAX_TASKS]> =
+    crate::smp::Spinlock::new([None; MAX_TASKS]);
+
+fn note_wait(task: u32, w: Wait) {
+    let i = task as usize;
+    if i < MAX_TASKS {
+        WAITS.with(|t| t[i] = Some(w));
+    }
+}
+
+fn clear_wait(task: u32) {
+    let i = task as usize;
+    if i < MAX_TASKS {
+        WAITS.with(|t| t[i] = None);
+    }
+}
+
+/// What `task` is blocked on, if it is blocked in a queue primitive.
+///
+/// Stale by design in one direction only: it is cleared on the way out, so a
+/// task that is running reports `None`, and a task that reports a wait really
+/// is in one.
+pub fn waiting_on(task: u32) -> Option<Wait> {
+    let i = task as usize;
+    if i >= MAX_TASKS {
+        return None;
+    }
+    WAITS.with(|t| t[i])
 }
 
 /// Block the caller waiting to receive on an empty queue. See [`block_send`].
@@ -297,9 +352,10 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
         Some(c) => c,
         None => return false,
     };
+    note_wait(cur, Wait { addr: q_addr, send: false, timeout_ms, since: now });
     scheduler::request_switch();
 
-    with_waiters(|w| {
+    let woken = with_waiters(|w| {
         if let Some(l) = w.find(q_addr) {
             if contains(&l.recv_waiters, l.recv_count, cur) {
                 remove(&mut l.recv_waiters, &mut l.recv_count, cur);
@@ -307,7 +363,9 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
             }
         }
         true
-    })
+    });
+    clear_wait(cur);
+    woken
 }
 
 /// Wake one receiver after a successful send (a message is now available).

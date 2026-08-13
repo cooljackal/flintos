@@ -247,9 +247,55 @@ unsafe fn unbox<T>(handle: *mut c_void) -> Option<T> {
     Some(value)
 }
 
+/// What the blob asked us to make, indexed by the handle it got back.
+///
+/// `kernel::queue::Wait` reports the address a task is blocked on, and an
+/// address on its own says nothing. This turns it back into "the fourth
+/// semaphore the driver created", which is a thing that can be compared
+/// against what esp-idf's adapter does at the same point in init.
+///
+/// Bounded and never reused: an entry that falls off the end is reported as
+/// unknown rather than silently mislabelled.
+const MAX_OBJECTS: usize = 48;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ObjectId {
+    pub kind: &'static str,
+    /// Which one of its kind, in creation order, from 1.
+    pub nth: u32,
+}
+
+static OBJECTS: kernel::smp::Spinlock<([(usize, ObjectId); MAX_OBJECTS], usize)> =
+    kernel::smp::Spinlock::new(([(0, ObjectId { kind: "", nth: 0 }); MAX_OBJECTS], 0));
+
+fn note_object(addr: *mut c_void, kind: &'static str) {
+    if addr.is_null() {
+        return;
+    }
+    OBJECTS.with(|(table, n)| {
+        if *n >= MAX_OBJECTS {
+            return;
+        }
+        let nth = 1 + table[..*n].iter().filter(|(_, id)| id.kind == kind).count() as u32;
+        table[*n] = (addr as usize, ObjectId { kind, nth });
+        *n += 1;
+    });
+}
+
+/// What was created at `addr`, if the adapter made it.
+pub fn describe(addr: usize) -> Option<ObjectId> {
+    OBJECTS.with(|(table, n)| {
+        table[..*n].iter().find(|(a, _)| *a == addr).map(|(_, id)| *id)
+    })
+}
+
 unsafe extern "C" fn osi_queue_create(len: u32, item_size: u32) -> *mut c_void {
     match DynQueue::create(len as usize, item_size as usize) {
-        Some(q) => unsafe { box_up(q) },
+        Some(q) => {
+            let h = unsafe { box_up(q) };
+            note_object(h, "queue");
+            h
+        }
         None => core::ptr::null_mut(),
     }
 }
@@ -310,7 +356,11 @@ unsafe extern "C" fn osi_queue_msg_waiting(handle: *mut c_void) -> u32 {
 
 unsafe extern "C" fn osi_semphr_create(max: u32, init: u32) -> *mut c_void {
     match Semaphore::create(max, init) {
-        Some(s) => unsafe { box_up(s) },
+        Some(s) => {
+            let h = unsafe { box_up(s) };
+            note_object(h, "semaphore");
+            h
+        }
         None => core::ptr::null_mut(),
     }
 }
@@ -343,7 +393,9 @@ unsafe extern "C" fn osi_semphr_give(handle: *mut c_void) -> i32 {
 /// succeeded is not a trade worth making for the non-recursive entry — the
 /// blob's own code decides which it asked for.
 unsafe extern "C" fn osi_mutex_create() -> *mut c_void {
-    unsafe { box_up(RecursiveMutex::new()) }
+    let h = unsafe { box_up(RecursiveMutex::new()) };
+    note_object(h, "mutex");
+    h
 }
 
 unsafe extern "C" fn osi_mutex_delete(handle: *mut c_void) {
