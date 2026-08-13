@@ -698,7 +698,7 @@ So the Wi-Fi MAC is not asserting its interrupt line, and the cause is
 upstream of the crossbar — the RF/PHY receive path, or the driver never
 putting the MAC into a receiving state. That is where 5.2 continues.
 
-### B1 located: the MAC's own interrupt mask is never armed
+### B1 narrowed: the receive-interrupt transition is not happening
 
 Sampled every millisecond through a whole scan, OR-accumulated:
 
@@ -708,8 +708,9 @@ Sampled every millisecond through a whole scan, OR-accumulated:
 ```
 
 `WMAC_INT_RAW` carries bits 0, 1, 4, 10, 11, 14 and 15 during a scan, so **the
-MAC core is generating events** — it is not deaf, and the PHY, the
-calibration, the power domain and the clocks were never the problem.
+MAC core is generating events**. That is activity, not decode: it does not
+by itself establish that frames are being received and demodulated, and it
+should not be read that far. What it does rule out is a block sitting inert.
 `WMAC_INT_ENA` is **zero**, so none of it leaves the block. That is why every
 downstream measurement was correct and useless: source 0 routes to CPU
 interrupt 0, `INTENABLE` carries the bit, the handler is installed, and the
@@ -734,9 +735,21 @@ Zephyr has no adapter of its own — it takes esp-idf's `wifi_os_adapter` from
 `hal_espressif`, so its answer is esp-idf's, and esp-idf's `set_intr_wrapper`
 is one `intr_matrix_set`.
 
-So the mask is armed inside `libpp` when the driver decides receive should be
-on, and **that decision is what is not being reached**. B1 is now a question
-about the driver's start path, not about interrupts, the PHY, or the OS.
+So the mask is armed inside `libpp`, and **the transition that would arm it
+is not happening**. Which prerequisite prevents it is not identified. Two
+readings fit equally: the driver reaches the decision and declines, or it is
+waiting on something it has not been given and never reaches the decision at
+all. Nothing measured separates them.
+
+The eliminations above are real and worth keeping — the tuning data, the
+power domain, the clocks, the enable sequence, the thread affinity. They do
+not add up to "our side is correct": every one of them rules out a specific
+mechanism, and the leading theory remains that something this tree supplies
+is subtly wrong in a way the driver accepts and then acts on.
+
+The start-up hang has the same shape — a wait that never completes — and
+**no evidence links the two**. They are tracked separately until something
+does.
 
 ### B2 done, B1 unchanged
 
