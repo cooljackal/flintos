@@ -252,6 +252,7 @@ pub unsafe extern "C" fn create(
     task_handle: *mut c_void,
     core_id: u32,
 ) -> i32 {
+    crate::adapter::calls::bump(crate::adapter::calls::TASK_CREATE);
     if entry.is_null() {
         api::log_error!("radio: _task_create with a null entry point");
         return PD_FALSE;

@@ -345,6 +345,7 @@ fn arm(handle: usize, delay_us: u64, repeat: bool, what: &str) {
 /// `timer` is identity only. Called by the blob.
 #[no_mangle]
 pub unsafe extern "C" fn timer_arm(timer: *mut c_void, ms: u32, repeat: bool) {
+    crate::adapter::calls::bump(crate::adapter::calls::TIMER_ARM);
     arm(timer as usize, (ms as u64).saturating_mul(1_000), repeat, "_timer_arm");
 }
 

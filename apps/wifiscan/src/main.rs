@@ -169,6 +169,7 @@ fn report_results() {
             radio_esp32::adapter::PHY_ENABLES.load(core::sync::atomic::Ordering::Relaxed),
             radio_esp32::adapter::PHY_DISABLES.load(core::sync::atomic::Ordering::Relaxed)
         );
+        osi_calls("scan");
     }
 
     for r in &records[..shown] {
@@ -198,6 +199,32 @@ fn report_results() {
 /// How far `run` has got. Read by [`watchdog`] when `init` does not return.
 #[cfg(feature = "blobs")]
 static STAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Print the OSI call counts, two entries to a line.
+///
+/// Two to a line because a long one killed the event task once, and this is
+/// called from the event handler as well as the application task.
+#[cfg(feature = "blobs")]
+fn osi_calls(stage: &str) {
+    use radio_esp32::adapter::calls;
+    let mut i = 0;
+    while i < calls::N {
+        let b = i + 1;
+        if b < calls::N {
+            api::log_info!(
+                "[wifi] osi/{} {}={} {}={}",
+                stage,
+                calls::NAMES[i],
+                calls::get(i),
+                calls::NAMES[b],
+                calls::get(b)
+            );
+        } else {
+            api::log_info!("[wifi] osi/{} {}={}", stage, calls::NAMES[i], calls::get(i));
+        }
+        i += 2;
+    }
+}
 
 /// Which task is running `run`, so [`watchdog`] can ask what it is blocked on.
 #[cfg(feature = "blobs")]
@@ -240,6 +267,11 @@ fn watchdog() {
                 "[wifi] watch {}: stage {}, not blocked in a queue primitive",
                 i, stage
             ),
+        }
+        // The counts matter most on the boot that hangs, and that boot never
+        // reaches the dump after `driver up`.
+        if i == 1 {
+            osi_calls("hang");
         }
     }
 }
@@ -429,6 +461,7 @@ fn run() {
         return idle();
     }
     api::log_info!("[wifi] driver up");
+    osi_calls("init");
 
     // NULL, start, *then* STA — Zephyr's order, not the obvious one.
     // `esp32_wifi_dev_init` calls `esp_wifi_init`, then
@@ -454,6 +487,7 @@ fn run() {
         return idle();
     }
     api::log_info!("[wifi] station started");
+    osi_calls("start");
 
     // What the driver actually asked for. Recorded by `_set_intr` rather than
     // logged from inside it: see `radio_esp32::interrupts::for_each_route`.

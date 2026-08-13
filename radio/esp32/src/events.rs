@@ -172,6 +172,7 @@ pub unsafe extern "C" fn post(
     len: usize,
     _ticks: u32,
 ) -> i32 {
+    crate::adapter::calls::bump(crate::adapter::calls::EVENT_POST);
     let mut e = Event { base: base as usize, id, len: 0, data: [0; MAX_PAYLOAD] };
     if !data.is_null() && len > 0 {
         let n = len.min(MAX_PAYLOAD);

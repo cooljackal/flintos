@@ -174,6 +174,77 @@ pub const fn priority_from_freertos(prio: u32) -> hal::types::Priority {
     hal::types::Priority::Critical(if inverted > 15 { 15 } else { inverted })
 }
 
+// ── Call counting ───────────────────────────────────────────────────────────
+
+/// How often the blob has used the entries its start path leans on.
+///
+/// `libpp` arms the MAC's receive interrupt only once it has decided receive
+/// should be on, and it is not reaching that decision — see
+/// `doc/plan-radio.md`. A branch it takes silently is invisible from here, but
+/// the *calls it makes on the way* are not: an entry that never fires, or
+/// fires far fewer times than the ones around it, is the shadow of the branch
+/// that was not taken.
+///
+/// Only the entries that carry the start path, not all 115. Allocation,
+/// because a descriptor ring that fails an internal check is skipped without
+/// a word; the queue and semaphore pairs, because that is how `pp_task` moves
+/// between states; and the two context predicates, because the blob guards
+/// raw register writes on them and a wrong answer there is exactly a
+/// hardware-write that never happens.
+pub mod calls {
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    pub const MALLOC: usize = 0;
+    pub const CALLOC: usize = 1;
+    pub const FREE: usize = 2;
+    pub const QUEUE_CREATE: usize = 3;
+    pub const QUEUE_SEND: usize = 4;
+    pub const QUEUE_RECV: usize = 5;
+    pub const SEMPHR_CREATE: usize = 6;
+    pub const SEMPHR_TAKE: usize = 7;
+    pub const SEMPHR_GIVE: usize = 8;
+    pub const IS_FROM_ISR: usize = 9;
+    pub const ENV_IS_CHIP: usize = 10;
+    pub const TASK_CREATE: usize = 11;
+    pub const EVENT_POST: usize = 12;
+    pub const TIMER_ARM: usize = 13;
+    pub const N: usize = 14;
+
+    /// In the same order as the constants above.
+    pub const NAMES: [&str; N] = [
+        "malloc",
+        "calloc",
+        "free",
+        "queue_create",
+        "queue_send",
+        "queue_recv",
+        "semphr_create",
+        "semphr_take",
+        "semphr_give",
+        "is_from_isr",
+        "env_is_chip",
+        "task_create",
+        "event_post",
+        "timer_arm",
+    ];
+
+    #[allow(clippy::declare_interior_mutable_const)]
+    const ZERO: AtomicU32 = AtomicU32::new(0);
+    static COUNTS: [AtomicU32; N] = [ZERO; N];
+
+    /// Count one call. Cheap enough for the ISR-reachable entries: a relaxed
+    /// add, no lock, and nothing that can block.
+    #[inline]
+    pub(crate) fn bump(which: usize) {
+        COUNTS[which].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The count for `which`.
+    pub fn get(which: usize) -> u32 {
+        COUNTS[which].load(Ordering::Relaxed)
+    }
+}
+
 // ── Allocation ──────────────────────────────────────────────────────────────
 
 /// `_malloc`, `_malloc_internal`, `_wifi_malloc`.
@@ -182,6 +253,7 @@ pub const fn priority_from_freertos(prio: u32) -> hal::types::Priority {
 /// RAM and DMA-capable, so there is nothing for the variants to distinguish.
 /// They stay separate entries because the blob calls them by name.
 pub(crate) unsafe extern "C" fn osi_malloc(size: usize) -> *mut c_void {
+    calls::bump(calls::MALLOC);
     unsafe { heap::alloc(size, 8) as *mut c_void }
 }
 
@@ -194,6 +266,7 @@ unsafe extern "C" fn osi_malloc_uint(size: u32) -> *mut c_void {
 }
 
 unsafe extern "C" fn osi_calloc(n: usize, size: usize) -> *mut c_void {
+    calls::bump(calls::CALLOC);
     let bytes = match n.checked_mul(size) {
         Some(b) => b,
         None => return core::ptr::null_mut(),
@@ -210,6 +283,7 @@ unsafe extern "C" fn osi_zalloc(size: usize) -> *mut c_void {
 }
 
 pub(crate) unsafe extern "C" fn osi_free(p: *mut c_void) {
+    calls::bump(calls::FREE);
     if !p.is_null() {
         unsafe { heap::free(p as *mut u8, Caps::Internal) };
     }
@@ -290,6 +364,7 @@ pub fn describe(addr: usize) -> Option<ObjectId> {
 }
 
 unsafe extern "C" fn osi_queue_create(len: u32, item_size: u32) -> *mut c_void {
+    calls::bump(calls::QUEUE_CREATE);
     match DynQueue::create(len as usize, item_size as usize) {
         Some(q) => {
             let h = unsafe { box_up(q) };
@@ -307,6 +382,7 @@ unsafe extern "C" fn osi_queue_delete(handle: *mut c_void) {
 }
 
 unsafe extern "C" fn osi_queue_send(handle: *mut c_void, item: *mut c_void, ticks: u32) -> i32 {
+    calls::bump(calls::QUEUE_SEND);
     if handle.is_null() {
         return PD_FALSE;
     }
@@ -338,6 +414,7 @@ unsafe extern "C" fn osi_queue_send_from_isr(
 }
 
 unsafe extern "C" fn osi_queue_recv(handle: *mut c_void, item: *mut c_void, ticks: u32) -> i32 {
+    calls::bump(calls::QUEUE_RECV);
     if handle.is_null() {
         return PD_FALSE;
     }
@@ -355,6 +432,7 @@ unsafe extern "C" fn osi_queue_msg_waiting(handle: *mut c_void) -> u32 {
 // ── Semaphores and mutexes ──────────────────────────────────────────────────
 
 unsafe extern "C" fn osi_semphr_create(max: u32, init: u32) -> *mut c_void {
+    calls::bump(calls::SEMPHR_CREATE);
     match Semaphore::create(max, init) {
         Some(s) => {
             let h = unsafe { box_up(s) };
@@ -370,6 +448,7 @@ unsafe extern "C" fn osi_semphr_delete(handle: *mut c_void) {
 }
 
 unsafe extern "C" fn osi_semphr_take(handle: *mut c_void, ticks: u32) -> i32 {
+    calls::bump(calls::SEMPHR_TAKE);
     if handle.is_null() {
         return PD_FALSE;
     }
@@ -380,6 +459,7 @@ unsafe extern "C" fn osi_semphr_take(handle: *mut c_void, ticks: u32) -> i32 {
 #[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
 #[inline(never)]
 unsafe extern "C" fn osi_semphr_give(handle: *mut c_void) -> i32 {
+    calls::bump(calls::SEMPHR_GIVE);
     if handle.is_null() {
         return PD_FALSE;
     }
@@ -521,6 +601,7 @@ unsafe extern "C" fn osi_task_yield_from_isr() {
 #[cfg_attr(target_os = "none", link_section = ".iram1.radio")]
 #[inline(never)]
 unsafe extern "C" fn osi_is_from_isr() -> bool {
+    calls::bump(calls::IS_FROM_ISR);
     kernel::interrupt::in_interrupt()
 }
 
@@ -542,6 +623,7 @@ unsafe extern "C" fn osi_spin_lock_delete(handle: *mut c_void) {
 /// skip timing workarounds that only apply to the FPGA, so answering "chip"
 /// on a chip is not a stub.
 unsafe extern "C" fn env_is_chip() -> bool {
+    calls::bump(calls::ENV_IS_CHIP);
     true
 }
 
