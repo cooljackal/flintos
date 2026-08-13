@@ -915,8 +915,19 @@ unsafe extern "C" fn wifi_reset_mac() {
 /// The signature has no return value, so a failure has nowhere to go but the
 /// log. That is Espressif's choice, not ours: `esp_phy_enable` is `void` too,
 /// and aborts internally if it cannot allocate.
+/// How many times the blob has asked for the PHY, and given it back.
+///
+/// esp-idf's `esp_phy_enable` restores the digital PHY registers on every
+/// enable after the first (`phy_digital_regs_load`, `phy_init.c:237-238`) and
+/// saves them on the way down; this crate does neither. That only matters if
+/// the driver cycles the PHY at all, and nothing here knew whether it did.
+/// Counted rather than assumed, before writing the restore.
+pub static PHY_ENABLES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+pub static PHY_DISABLES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 #[cfg(target_os = "none")]
 unsafe extern "C" fn phy_enable() {
+    PHY_ENABLES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     if let Err(e) = unsafe { crate::phy::enable(soc_esp32::dport::RADIO_CLK_WIFI) } {
         api::log_error!("radio: the blob asked for the PHY and it failed: {:?}", e);
     }
@@ -925,6 +936,7 @@ unsafe extern "C" fn phy_enable() {
 /// `_phy_disable`.
 #[cfg(target_os = "none")]
 unsafe extern "C" fn phy_disable() {
+    PHY_DISABLES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     unsafe { crate::phy::disable(soc_esp32::dport::RADIO_CLK_WIFI) };
 }
 

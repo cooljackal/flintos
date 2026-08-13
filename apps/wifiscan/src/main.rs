@@ -163,6 +163,12 @@ fn report_results() {
             fired += radio_esp32::interrupts::fires(r.num as usize);
         });
         api::log_info!("[wifi] {} networks, {} radio interrupts", found, fired);
+        // Short, deliberately: a long line here killed the event task once.
+        api::log_info!(
+            "[wifi] phy {} on, {} off",
+            radio_esp32::adapter::PHY_ENABLES.load(core::sync::atomic::Ordering::Relaxed),
+            radio_esp32::adapter::PHY_DISABLES.load(core::sync::atomic::Ordering::Relaxed)
+        );
     }
 
     for r in &records[..shown] {

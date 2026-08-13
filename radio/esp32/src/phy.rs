@@ -225,8 +225,23 @@ unsafe fn register_with(
     // is calibrating for rather than whatever the stored blob carried.
     data[4..10].copy_from_slice(mac);
 
-    let init = crate::phy_init::init_data(kernel::board::active::PHY_MAX_TX_POWER_DBM);
-    let rc = unsafe { register_chipv7_phy(init.as_ptr(), data.as_mut_ptr(), mode as u32) };
+    // Four-byte aligned on purpose, not by luck. `esp_phy_init_data_t` is a
+    // struct of `uint8_t`, so C gives it alignment 1 and Rust gives `[u8; 128]`
+    // the same -- but the PHY writes hardware registers from it, which means
+    // 32-bit loads. Today's build happens to put it at `sp + 36`, which is
+    // aligned; that offset is the compiler's stack layout and moves whenever
+    // this function is edited. An unaligned 32-bit load on Xtensa does not
+    // fault here, it returns rotated bytes, so the failure would be a PHY
+    // programmed with garbage and a `register_chipv7_phy` that still returns 0.
+    #[repr(C, align(4))]
+    struct AlignedInitData([u8; crate::phy_init::PHY_INIT_DATA_LEN]);
+    const _: () = assert!(core::mem::align_of::<AlignedInitData>() == 4);
+
+    let init = AlignedInitData(crate::phy_init::init_data(
+        kernel::board::active::PHY_MAX_TX_POWER_DBM,
+    ));
+    debug_assert_eq!(init.0.as_ptr() as usize % 4, 0);
+    let rc = unsafe { register_chipv7_phy(init.0.as_ptr(), data.as_mut_ptr(), mode as u32) };
     if rc != 0 {
         api::log_error!("radio: register_chipv7_phy failed with {}", rc);
         return Err(PhyError::Register(rc));
