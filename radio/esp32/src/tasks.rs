@@ -276,6 +276,31 @@ pub fn slot_counts(n: usize) -> (u32, u32) {
     (ENTERED[n].load(Ordering::Relaxed), EXITED[n].load(Ordering::Relaxed))
 }
 
+/// Hold each blob task at the door for this long before it enters the
+/// driver's code. **Fault injection, zero by default.**
+///
+/// The start-up hang looks like a handshake the caller waits on and never
+/// gets, and it appears in roughly one boot in three, which is a hard rate to
+/// study by rebooting. Delaying the worker turns a suspected ordering race
+/// into something with a dial on it: if the failure rate climbs with the
+/// delay, ordering is implicated; a sharp threshold points at a timeout
+/// instead; no change weakens this particular theory without clearing the
+/// field.
+///
+/// This is evidence-gathering, not a fix, and it is never on in a build
+/// anyone ships. The application sets it and says so in its output.
+static START_DELAY_MS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Set the injected delay. See [`START_DELAY_MS`].
+pub fn set_start_delay_ms(ms: u32) {
+    START_DELAY_MS.store(ms, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// The injected delay, for an application that wants to report it.
+pub fn start_delay_ms() -> u32 {
+    START_DELAY_MS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// The trap-free half for slot `N`: what the kernel actually starts.
 fn trampoline<const N: usize>() {
     ENTERED[N].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -288,6 +313,12 @@ fn trampoline<const N: usize>() {
         }
         t[N]
     });
+    // Before the blob's code, not after: the point is to move when the task
+    // starts doing its work relative to the caller that is waiting for it.
+    let delay = START_DELAY_MS.load(core::sync::atomic::Ordering::Relaxed);
+    if delay > 0 {
+        api::task::sleep_ms(delay);
+    }
     if let Some(f) = slot.entry {
         unsafe { f(slot.arg as *mut c_void) };
     }

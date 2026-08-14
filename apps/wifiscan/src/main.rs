@@ -227,6 +227,26 @@ fn osi_calls(stage: &str) {
     }
 }
 
+/// Fault injection: hold the driver's own threads at the door this long
+/// before they enter its code. **Zero for a normal build.**
+///
+/// The start-up hang is roughly one boot in three, which is a poor rate to
+/// study by rebooting. If it is an ordering race around the first handshake,
+/// moving when the worker starts should move the failure rate; a sharp
+/// threshold would point at a timeout instead, and no change would weaken
+/// this particular theory. Several values, several boots each — one boot can
+/// expose a failure but says nothing about timing.
+#[cfg(feature = "blobs")]
+const WORKER_START_DELAY_MS: u32 = 0;
+
+/// The control: the same wait, somewhere that is not the worker's ordering.
+///
+/// Without it, a change in failure rate could be the delay disturbing timing
+/// generally rather than the worker's position in particular. Set this to the
+/// same value as the injection on a control run, and the injection to zero.
+#[cfg(feature = "blobs")]
+const CONTROL_DELAY_MS: u32 = 0;
+
 /// Print what the driver has allocated and still holds.
 ///
 /// Counts alone hide the live set, so this reports each outstanding block with
@@ -530,6 +550,18 @@ fn run() {
     // inside `esp_wifi_start`, and a handler registered afterwards would miss
     // the events that say the thing it is waiting for already happened.
     radio_esp32::events::set_handler(Some(on_event));
+
+    radio_esp32::tasks::set_start_delay_ms(WORKER_START_DELAY_MS);
+    if CONTROL_DELAY_MS > 0 {
+        task::sleep_ms(CONTROL_DELAY_MS);
+    }
+    if WORKER_START_DELAY_MS > 0 || CONTROL_DELAY_MS > 0 {
+        api::log_warn!(
+            "[wifi] fault injection: worker delay {} ms, control delay {} ms",
+            WORKER_START_DELAY_MS,
+            CONTROL_DELAY_MS
+        );
+    }
 
     // A hang inside `init` prints nothing, so the question "is the whole
     // system dead, or is this one task stuck?" cannot be answered from the
