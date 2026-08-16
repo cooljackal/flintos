@@ -303,19 +303,35 @@ impl Semaphore {
     }
 
     /// Take a permit, blocking up to `timeout_ms`.
+    ///
+    /// The test and the enrolment are one step. Splitting them — try, fail,
+    /// then join the waiter list — loses a `give` that lands in between: it
+    /// wakes nobody, because nobody is listed yet, and this then sleeps on a
+    /// permit that is already sitting there. See
+    /// [`consume_or_block`](crate::queue::consume_or_block).
     pub fn take(&mut self, timeout_ms: u32) -> bool {
-        if self.try_take() {
-            return true;
-        }
         // Remaining time, not the original timeout. As `DynQueue::send`.
         let deadline = retry_deadline(timeout_ms);
+        let key = self.key();
         loop {
-            match retry_remaining(deadline) {
-                Some(left) if block_recv(self.key(), left) => {}
-                _ => return false,
-            }
-            if self.try_take() {
+            let mut got = false;
+            let blocked_and_woken = !crate::queue::consume_or_block(key, u32::MAX, || {
+                if self.count > 0 {
+                    self.count -= 1;
+                    got = true;
+                }
+                got
+            });
+            if got {
                 return true;
+            }
+            if !blocked_and_woken {
+                // It could not enrol -- the waiter table is full. Fall through
+                // to the timeout check rather than spinning on it.
+            }
+            match retry_remaining(deadline) {
+                Some(_) => {}
+                None => return false,
             }
         }
     }
@@ -323,12 +339,18 @@ impl Semaphore {
     /// Return a permit. `false` if already at `max`, which is a caller bug
     /// rather than something to saturate silently.
     pub fn give(&mut self) -> bool {
-        if self.count >= self.max {
-            return false;
-        }
-        self.count += 1;
-        wake_one_receiver(self.key());
-        true
+        // The increment and the wake are one step, for the reason `take`
+        // gives: a taker testing the count either sees this before it lands,
+        // and enrols where this wake will find it, or after, and takes it.
+        let key = self.key();
+        let max = self.max;
+        crate::queue::produce_and_wake(key, || {
+            if self.count >= max {
+                return false;
+            }
+            self.count += 1;
+            true
+        })
     }
 
     /// Give from an interrupt handler. Returns `(gave, woke_higher_priority)`.
@@ -549,6 +571,48 @@ const MAX_WAKE: usize = 16;
 
 #[cfg(test)]
 mod tests {
+    // ── The lost wakeup ─────────────────────────────────────────────────
+    //
+    // These cannot reproduce the race itself: a host test is single-threaded,
+    // and the race needs a producer to run between a consumer's test and its
+    // enrolment. What they can do is hold the shape that made the race
+    // possible from coming back -- the take path must not have an observable
+    // moment where it has decided to block but is not yet listed.
+
+    #[test]
+    fn a_give_that_arrives_first_is_not_lost() {
+        // The ordering that hung the radio driver: the permit is there before
+        // the taker looks. It must be taken, not waited for.
+        let mut s = Semaphore::create(1, 0).unwrap();
+        assert!(s.give());
+        assert_eq!(s.count(), 1);
+        assert!(s.take(FOREVER), "a permit already given must be taken, not waited on");
+        assert_eq!(s.count(), 0);
+    }
+
+    #[test]
+    fn giving_past_the_ceiling_wakes_nobody() {
+        // `produce_and_wake` only wakes when it actually made something
+        // available. A refused give that woke a waiter would hand it a permit
+        // that does not exist.
+        let mut s = Semaphore::create(1, 1).unwrap();
+        assert!(!s.give(), "at the ceiling");
+        assert_eq!(s.count(), 1);
+    }
+
+    #[test]
+    fn take_and_give_still_balance() {
+        let mut s = Semaphore::create(3, 0).unwrap();
+        for _ in 0..3 {
+            assert!(s.give());
+        }
+        assert!(!s.give(), "ceiling");
+        for _ in 0..3 {
+            assert!(s.take(FOREVER));
+        }
+        assert_eq!(s.count(), 0);
+    }
+
     use super::*;
 
     /// The heap has to exist before anything here can be created. Idempotent,

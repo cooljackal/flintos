@@ -368,6 +368,121 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
     woken
 }
 
+/// Test a resource and enrol as a waiter **without a gap between the two**.
+///
+/// # The bug this exists to remove
+///
+/// Every blocking primitive here used to be written as "try, and if that
+/// fails, block": `Semaphore::take` called `try_take`, which took its own
+/// look at the count and released whatever it held, and only then called
+/// [`block_recv`] to join the waiter list. A producer landing in that gap
+/// makes the resource available and wakes *nobody*, because there is nobody
+/// enrolled yet — and the consumer then blocks on a resource that is already
+/// there. With a finite timeout that is a stall; with an infinite one, which
+/// is what the radio driver asks for, it never ends.
+///
+/// It is not theoretical: the driver's start-up hung on a semaphore that had
+/// been given exactly once and taken exactly once.
+///
+/// `ready` runs while this holds the scheduler and the waiter table, which is
+/// the same pair the wake path takes and in the same order. So a producer
+/// cannot run between the test and the enrolment: it is waiting for one of
+/// these two locks.
+///
+/// Returns `true` when `ready` claimed the resource — the caller has it and
+/// did not block. `false` means it blocked and has since been woken or timed
+/// out, and should test again.
+///
+/// `ready` must not take either lock itself, and must not block. It is a
+/// count decrement or a byte copy, nothing more.
+pub fn consume_or_block(q_addr: usize, timeout_ms: u32, ready: impl FnOnce() -> bool) -> bool {
+    if crate::interrupt::in_interrupt() {
+        crate::debug::log::write(
+            api::debug::log::Level::Error,
+            &format_args!("queue::consume_or_block called from interrupt context (q={:#x})", q_addr),
+        );
+        // Still give it its chance: a try-style call from an interrupt is
+        // legal, it just cannot block afterwards.
+        return ready();
+    }
+    let now = scheduler::with(|s| s.ticks());
+    let blocked = scheduler::with(|sched| {
+        with_waiters(|w| {
+            if ready() {
+                return None;
+            }
+            let cur = sched.current();
+            let dl = deadline_for(timeout_ms, now);
+            if let Some(tcb) = &mut sched.tasks[cur as usize] {
+                tcb.sleep_until = dl;
+            }
+            let listed = match w.find_or_create(q_addr) {
+                Some(l) => push(&mut l.recv_waiters, &mut l.recv_count, cur),
+                None => false,
+            };
+            if listed {
+                sched.block_current(TaskState::BlockedRecv);
+                Some(cur)
+            } else {
+                // The table is full. Not blocking is the honest answer: the
+                // caller loops and tries again rather than sleeping through a
+                // wakeup that could never reach it.
+                None
+            }
+        })
+    });
+    let Some(cur) = blocked else {
+        // Either `ready` claimed it, or there was no room to wait. The caller
+        // re-tests either way, and `ready` reports which by its own effect.
+        return true;
+    };
+    note_wait(cur, Wait { addr: q_addr, send: false, timeout_ms, since: now });
+    scheduler::request_switch();
+    with_waiters(|w| {
+        if let Some(l) = w.find(q_addr) {
+            if contains(&l.recv_waiters, l.recv_count, cur) {
+                remove(&mut l.recv_waiters, &mut l.recv_count, cur);
+            }
+        }
+    });
+    clear_wait(cur);
+    false
+}
+
+/// Make a resource available and wake one waiter, with no gap between.
+///
+/// The producer half of [`consume_or_block`]. `produce` runs under the same
+/// two locks, so a consumer testing the resource either sees it before this
+/// runs — and enrols — or after, and takes it. There is no third case.
+///
+/// `produce` returns whether it actually made anything available; a
+/// semaphore already at its ceiling has not, and waking for it would be a
+/// spurious wakeup rather than a delivery.
+pub fn produce_and_wake(q_addr: usize, produce: impl FnOnce() -> bool) -> bool {
+    scheduler::with(|sched| {
+        let (made, id) = with_waiters(|w| {
+            let made = produce();
+            let id = if made {
+                w.find(q_addr).and_then(|l| {
+                    pop_first_blocked(
+                        sched,
+                        &mut l.recv_waiters,
+                        &mut l.recv_count,
+                        TaskState::BlockedRecv,
+                    )
+                })
+            } else {
+                None
+            };
+            (made, id)
+        });
+        if let Some(id) = id {
+            sched.unblock(id);
+        }
+        made
+    })
+}
+
 /// Wake one receiver after a successful send (a message is now available).
 pub fn wake_one_receiver(q_addr: usize) {
     scheduler::with(|sched| {
