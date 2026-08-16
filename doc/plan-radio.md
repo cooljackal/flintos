@@ -698,6 +698,39 @@ So the Wi-Fi MAC is not asserting its interrupt line, and the cause is
 upstream of the crossbar — the RF/PHY receive path, or the driver never
 putting the MAC into a receiving state. That is where 5.2 continues.
 
+### Retracted: the register readings behind this section were wrong
+
+**The two addresses sampled were not interrupt registers.** `0x60033004` and
+`0x60033010` are Wi-Fi *address-filter* slots. The value read back as evidence
+of MAC activity, `0x0000cc13`, is this board's own MAC address suffix —
+`c0:49:ef:d1:13:cc` — sitting in a filter slot, not an interrupt status word.
+Reception is enabled at `0x60033084`; interrupt status lives at `0x60033c48`.
+Neither was ever read.
+
+So everything below that rests on "the MAC generates events and its interrupt
+mask is zero" is unsupported. What survives is narrower: the scan completes
+and reports nothing, and every OS-side path listed in the eliminations was
+checked against the references and matched. Where the receive path actually
+stops is unmeasured.
+
+The eliminations themselves stand — the tuning data, the power domain, the
+clocks, the enable sequence, the thread affinity — because none of them
+depended on those two reads.
+
+**And there is a defect in this tree that the evidence now points at
+instead.** `Semaphore::take` calls `try_take`, which fails and releases its
+lock, and only then calls `block_recv` to enrol as a waiter. A `give` landing
+in that window wakes nobody and the permit is left sitting while the caller
+blocks — for ever, when the timeout is infinite, which is what the driver
+asks for. That is exactly the start-up hang: one give, one take, still
+blocked, which was recorded here as unexplained. The same shape is in the
+queue and event-group paths.
+
+Fix that before remeasuring anything on the radio, then read the real
+registers: `0x60033084` for receive enable, `0x60033088`-`0x60033090` for the
+descriptors, `0x600332cc` and `0x600332d0` for the receive counters, and
+`0x60033c48` for interrupt status.
+
 ### B1 narrowed: the receive-interrupt transition is not happening
 
 Sampled every millisecond through a whole scan, OR-accumulated:
