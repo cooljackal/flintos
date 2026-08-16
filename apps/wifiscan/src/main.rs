@@ -634,6 +634,17 @@ fn run() {
         "[wifi] intenable={:#010x}",
         unsafe { kernel::arch::registers::read_intenable() }
     );
+    // The driver's own MAC handler is `wDev_ProcessFiq`, the only function in
+    // the blobs that reads or clears the receiver's event word. In this image
+    // it links at 0x40082630. If what the driver installed is not that, we
+    // wired up the wrong thing and everything downstream is explained.
+    radio_esp32::interrupts::for_each_route(|r| {
+        api::log_info!(
+            "[wifi] isr cpu-int {} -> {:#010x}",
+            r.num,
+            radio_esp32::interrupts::installed_handler(r.num as usize)
+        );
+    });
 
     // Scans, forever, so the output can be watched while networks come and go
     // — and so a driver that works once and wedges on the second attempt is

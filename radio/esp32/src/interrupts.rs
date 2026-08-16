@@ -155,6 +155,23 @@ static TRAMPOLINES: [fn(); CPU_INTS] = [
 /// # Safety
 /// `f` is called in trap context with `arg`. Called by the blob.
 #[no_mangle]
+/// The handler the driver installed for CPU interrupt `n`, as an address.
+///
+/// Zero if none. The point of comparison: the driver's own MAC handler is
+/// `wDev_ProcessFiq`, which links at a known address, and it is the only
+/// function in the blobs that reads or clears the receiver's event word. If
+/// what we recorded is not that function, we wired up something else and
+/// every observation downstream of the interrupt is explained.
+pub fn installed_handler(n: usize) -> usize {
+    if n >= CPU_INTS {
+        return 0;
+    }
+    INSTALLED.with(|t| match t[n].handler {
+        Some(f) => f as usize,
+        None => 0,
+    })
+}
+
 pub unsafe extern "C" fn set_isr(n: i32, f: *mut c_void, arg: *mut c_void) {
     let Ok(idx) = usize::try_from(n) else {
         api::log_error!("radio: _set_isr with a negative interrupt number {}", n);
