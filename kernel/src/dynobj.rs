@@ -39,7 +39,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::heap::{self, Caps};
 use crate::queue::{
-    block_recv, block_send, retry_deadline, retry_remaining, wake_one_receiver, wake_one_sender,
+    retry_deadline, retry_remaining, wake_one_receiver,
 };
 
 /// Wait forever. Matches the convention the static queues already use.
@@ -189,25 +189,28 @@ impl DynQueue {
                 q.try_send(item)
             }
         };
-        if put(self) {
-            wake_one_receiver(self.key());
-            return true;
-        }
         // The deadline is computed once and the *remaining* time passed each
         // time round. Re-passing `timeout_ms` would re-arm the full wait on
         // every retry, so a caller asking for 10 ms could wait indefinitely
         // under contention -- see `queue::retry_deadline`.
+        //
+        // The copy-in and the enrolment are one step, and so are the copy-in
+        // and the receiver's wakeup. See `queue::produce_or_block`: split
+        // apart, a receiver that finds the queue empty between them is never
+        // told the item arrived.
         let deadline = retry_deadline(timeout_ms);
+        let key = self.key();
         loop {
-            // `block_send` refuses in interrupt context and on timeout, which
-            // is what stops this looping forever.
-            match retry_remaining(deadline) {
-                Some(left) if block_send(self.key(), left) => {}
-                _ => return false,
-            }
-            if put(self) {
-                wake_one_receiver(self.key());
+            let mut sent = false;
+            crate::queue::produce_or_block(key, u32::MAX, || {
+                sent = put(self);
+                sent
+            });
+            if sent {
                 return true;
+            }
+            if retry_remaining(deadline).is_none() {
+                return false;
             }
         }
     }
@@ -217,20 +220,20 @@ impl DynQueue {
     /// # Safety
     /// As [`DynQueue::try_recv`].
     pub unsafe fn recv(&mut self, out: *mut u8, timeout_ms: u32) -> bool {
-        if unsafe { self.try_recv(out) } {
-            wake_one_sender(self.key());
-            return true;
-        }
         // Remaining time, not the original timeout. As `DynQueue::send`.
         let deadline = retry_deadline(timeout_ms);
+        let key = self.key();
         loop {
-            match retry_remaining(deadline) {
-                Some(left) if block_recv(self.key(), left) => {}
-                _ => return false,
-            }
-            if unsafe { self.try_recv(out) } {
-                wake_one_sender(self.key());
+            let mut got = false;
+            crate::queue::consume_or_block_waking_sender(key, u32::MAX, || {
+                got = unsafe { self.try_recv(out) };
+                got
+            });
+            if got {
                 return true;
+            }
+            if retry_remaining(deadline).is_none() {
+                return false;
             }
         }
     }
@@ -416,18 +419,23 @@ impl RecursiveMutex {
 
     /// Lock, blocking up to `timeout_ms`.
     pub fn lock(&mut self, me: u32, timeout_ms: u32) -> bool {
-        if self.try_lock(me) {
-            return true;
-        }
-        // Remaining time, not the original timeout. As `DynQueue::send`.
+        // Remaining time, not the original timeout. As `DynQueue::send`. The
+        // test and the enrolment are one step, as everywhere else here: an
+        // unlock between them would wake nobody and this would wait on a lock
+        // that is already free.
         let deadline = retry_deadline(timeout_ms);
+        let key = self.key();
         loop {
-            match retry_remaining(deadline) {
-                Some(left) if block_recv(self.key(), left) => {}
-                _ => return false,
-            }
-            if self.try_lock(me) {
+            let mut held = false;
+            crate::queue::consume_or_block(key, u32::MAX, || {
+                held = self.try_lock(me);
+                held
+            });
+            if held {
                 return true;
+            }
+            if retry_remaining(deadline).is_none() {
+                return false;
             }
         }
     }
@@ -438,10 +446,15 @@ impl RecursiveMutex {
         if self.owner != me || self.depth == 0 {
             return false;
         }
+        let key = self.key();
         self.depth -= 1;
         if self.depth == 0 {
-            self.owner = NO_OWNER;
-            wake_one_receiver(self.key());
+            // Releasing and waking are one step: a waiter testing the lock in
+            // between would find it taken and enrol after the wake had gone.
+            crate::queue::produce_and_wake(key, || {
+                self.owner = NO_OWNER;
+                true
+            });
         }
         true
     }
@@ -484,10 +497,18 @@ impl EventGroup {
     /// ignored.
     pub fn set(&self, bits: u32) -> u32 {
         let bits = bits & EVENT_BITS_MASK;
-        let after = self.bits.fetch_or(bits, Ordering::AcqRel) | bits;
+        // The set and the first wake are one step, so a waiter testing the
+        // bits cannot slip between them and enrol after the wake has gone.
+        // The rest of the wakes are ordinary: those waiters are already
+        // enrolled, and waking an unsatisfied one costs it a re-block.
+        let mut after = 0;
+        crate::queue::produce_and_wake(self.key(), || {
+            after = self.bits.fetch_or(bits, Ordering::AcqRel) | bits;
+            true
+        });
         // Wake all: a waiter whose condition is still unmet re-blocks. Waking
         // one would strand a task whose bits are set behind one whose are not.
-        for _ in 0..MAX_WAKE {
+        for _ in 1..MAX_WAKE {
             wake_one_receiver(self.key());
         }
         after
@@ -537,18 +558,22 @@ impl EventGroup {
                 }
             })
         };
-        if let Some(v) = take() {
-            return Some(v);
-        }
-        // Remaining time, not the original timeout. As `DynQueue::send`.
+        // Remaining time, not the original timeout. As `DynQueue::send`. The
+        // test runs under the same locks as `set`'s wake, so a set landing
+        // between the test and the enrolment is not lost.
         let deadline = retry_deadline(timeout_ms);
+        let key = self.key();
         loop {
-            match retry_remaining(deadline) {
-                Some(left) if block_recv(self.key(), left) => {}
-                _ => return None,
+            let mut got = None;
+            crate::queue::consume_or_block(key, u32::MAX, || {
+                got = take();
+                got.is_some()
+            });
+            if got.is_some() {
+                return got;
             }
-            if let Some(v) = take() {
-                return Some(v);
+            if retry_remaining(deadline).is_none() {
+                return None;
             }
         }
     }

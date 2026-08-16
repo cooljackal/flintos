@@ -396,6 +396,46 @@ pub fn block_recv(q_addr: usize, timeout_ms: u32) -> bool {
 /// `ready` must not take either lock itself, and must not block. It is a
 /// count decrement or a byte copy, nothing more.
 pub fn consume_or_block(q_addr: usize, timeout_ms: u32, ready: impl FnOnce() -> bool) -> bool {
+    test_or_enrol(q_addr, timeout_ms, false, false, ready)
+}
+
+/// As [`consume_or_block`], and wake one sender when the test succeeds.
+///
+/// A queue receive frees a slot, so whoever was waiting for space should be
+/// told — under the same locks, for the same reason.
+pub fn consume_or_block_waking_sender(
+    q_addr: usize,
+    timeout_ms: u32,
+    ready: impl FnOnce() -> bool,
+) -> bool {
+    test_or_enrol(q_addr, timeout_ms, false, true, ready)
+}
+
+/// The producer's mirror: try to make something available, and if that fails
+/// join the queue of those waiting for room.
+///
+/// On success one receiver is woken, because an item has appeared.
+pub fn produce_or_block(
+    q_addr: usize,
+    timeout_ms: u32,
+    produce: impl FnOnce() -> bool,
+) -> bool {
+    test_or_enrol(q_addr, timeout_ms, true, true, produce)
+}
+
+/// The body all four share.
+///
+/// `sending` picks which waiter list this task joins when the test fails, and
+/// which state it blocks in. `wake_other` wakes one waiter from the *opposite*
+/// list when the test succeeds — a receive frees a slot, a send provides an
+/// item, and a semaphore does neither.
+fn test_or_enrol(
+    q_addr: usize,
+    timeout_ms: u32,
+    sending: bool,
+    wake_other: bool,
+    ready: impl FnOnce() -> bool,
+) -> bool {
     if crate::interrupt::in_interrupt() {
         crate::debug::log::write(
             api::debug::log::Level::Error,
@@ -406,9 +446,29 @@ pub fn consume_or_block(q_addr: usize, timeout_ms: u32, ready: impl FnOnce() -> 
         return ready();
     }
     let now = scheduler::with(|s| s.ticks());
+    let mut to_wake = None;
     let blocked = scheduler::with(|sched| {
-        with_waiters(|w| {
+        let r = with_waiters(|w| {
             if ready() {
+                if wake_other {
+                    to_wake = w.find(q_addr).and_then(|l| {
+                        if sending {
+                            pop_first_blocked(
+                                sched,
+                                &mut l.recv_waiters,
+                                &mut l.recv_count,
+                                TaskState::BlockedRecv,
+                            )
+                        } else {
+                            pop_first_blocked(
+                                sched,
+                                &mut l.send_waiters,
+                                &mut l.send_count,
+                                TaskState::BlockedSend,
+                            )
+                        }
+                    });
+                }
                 return None;
             }
             let cur = sched.current();
@@ -417,11 +477,21 @@ pub fn consume_or_block(q_addr: usize, timeout_ms: u32, ready: impl FnOnce() -> 
                 tcb.sleep_until = dl;
             }
             let listed = match w.find_or_create(q_addr) {
-                Some(l) => push(&mut l.recv_waiters, &mut l.recv_count, cur),
+                Some(l) => {
+                    if sending {
+                        push(&mut l.send_waiters, &mut l.send_count, cur)
+                    } else {
+                        push(&mut l.recv_waiters, &mut l.recv_count, cur)
+                    }
+                }
                 None => false,
             };
             if listed {
-                sched.block_current(TaskState::BlockedRecv);
+                sched.block_current(if sending {
+                    TaskState::BlockedSend
+                } else {
+                    TaskState::BlockedRecv
+                });
                 Some(cur)
             } else {
                 // The table is full. Not blocking is the honest answer: the
@@ -429,18 +499,26 @@ pub fn consume_or_block(q_addr: usize, timeout_ms: u32, ready: impl FnOnce() -> 
                 // wakeup that could never reach it.
                 None
             }
-        })
+        });
+        if let Some(id) = to_wake {
+            sched.unblock(id);
+        }
+        r
     });
     let Some(cur) = blocked else {
         // Either `ready` claimed it, or there was no room to wait. The caller
         // re-tests either way, and `ready` reports which by its own effect.
         return true;
     };
-    note_wait(cur, Wait { addr: q_addr, send: false, timeout_ms, since: now });
+    note_wait(cur, Wait { addr: q_addr, send: sending, timeout_ms, since: now });
     scheduler::request_switch();
     with_waiters(|w| {
         if let Some(l) = w.find(q_addr) {
-            if contains(&l.recv_waiters, l.recv_count, cur) {
+            if sending {
+                if contains(&l.send_waiters, l.send_count, cur) {
+                    remove(&mut l.send_waiters, &mut l.send_count, cur);
+                }
+            } else if contains(&l.recv_waiters, l.recv_count, cur) {
                 remove(&mut l.recv_waiters, &mut l.recv_count, cur);
             }
         }
