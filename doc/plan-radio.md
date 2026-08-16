@@ -698,6 +698,33 @@ So the Wi-Fi MAC is not asserting its interrupt line, and the cause is
 upstream of the crossbar — the RF/PHY receive path, or the driver never
 putting the MAC into a receiving state. That is where 5.2 continues.
 
+### Who touches the receiver's event word: exactly one function
+
+From the blobs, no board needed. `hal_mac_interrupt_get_event` and
+`hal_mac_interrupt_clr_event` are defined in `hal_mac.o` and referenced from
+**one object only**, `wdev.o`, by **one function**, `wDev_ProcessFiq` — the
+driver's own MAC interrupt handler.
+
+That closes the loophole in the zero reading. Nothing else in the driver
+reads or clears the event word, and `wDev_ProcessFiq` is not running, because
+the CPU-side interrupt has never fired. So a raised event would still be
+sitting there when sampled, and it never is. **The receiver is enabled and is
+not raising events**, which is a stronger statement than the earlier one and
+this time rests on measurement plus the blob's own symbols rather than on an
+assumed register map.
+
+In our image `wDev_ProcessFiq` links at `0x40082630`, in IRAM as it must be.
+
+The event word is at `0x3ff73c48` and its clear at `0x3ff73c4c`. The
+neighbouring `0x3ff73c40` is referenced eleven times and is the obvious
+candidate for the enable, unidentified so far.
+
+**The next check is one line and needs no new machinery.** The adapter
+records the handler pointer the driver installs through `_set_isr`. Print it
+and compare against `0x40082630`. If they match, the registration is right
+and the silence is upstream of it. If they do not, the driver's handler is
+not the one we wired up, and that would explain everything downstream of it.
+
 ### Retracted: the register readings behind this section were wrong
 
 **The two addresses sampled were not interrupt registers.** `0x60033004` and
