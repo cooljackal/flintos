@@ -674,24 +674,38 @@ fn scan_once(round: u32) {
     // plus slack. Reported if it passes without the event, because a scan that
     // never completes and a scan whose completion is not delivered look the
     // same from here and are different bugs.
-    // The MAC's own interrupt registers, sampled alongside the CPU's.
+    // The receiver's own registers, sampled through the scan.
     //
-    // `WMAC_INT_RAW` is what the MAC sets when it has something to say;
-    // `WMAC_INT_ENA` is the MAC's own mask, which is *inside* the block and
-    // has nothing to do with the crossbar or `INTENABLE`. Three outcomes and
-    // they point in three different directions:
+    // **The previous version of this read the wrong addresses.** 0x60033004
+    // and 0x60033010 are address-filter slots, and the value read back as
+    // evidence of activity was this board's own MAC address sitting in one.
+    // These are the right ones:
     //
-    //   ENA zero          — the blob never armed the MAC's receive interrupts.
-    //   RAW bits, no CPU  — frames arrive; the loss is between MAC and CPU.
-    //   both zero         — nothing is being received at all.
+    //   0x60033084             receive enable
+    //   0x60033088 - 0x60033090  descriptor state
+    //   0x600332cc, 0x600332d0   receive counters
+    //   0x60033c48             interrupt status
     //
-    // Reads only. Nothing here writes a MAC register, so it cannot be what
-    // `coex_bt_high_prio` was.
-    const WMAC_BASE: usize = 0x6003_3000;
-    const WMAC_INT_RAW: usize = WMAC_BASE + 0x0004;
-    const WMAC_INT_ENA: usize = WMAC_BASE + 0x0010;
-    let mut mac_raw_seen: u32 = 0;
-    let mut mac_ena_seen: u32 = 0;
+    // Enable and descriptors are state, so first and last are what matter.
+    // The counters are counters: OR-ing them would be meaningless, so the
+    // first and last readings are kept and the difference is the answer.
+    // Interrupt status is accumulated, because a bit can come and go between
+    // samples.
+    //
+    // Reads only.
+    const RX_ENABLE: usize = 0x6003_3084;
+    const DESC_0: usize = 0x6003_3088;
+    const DESC_1: usize = 0x6003_308C;
+    const DESC_2: usize = 0x6003_3090;
+    const RX_COUNT_A: usize = 0x6003_32CC;
+    const RX_COUNT_B: usize = 0x6003_32D0;
+    const INT_STATUS: usize = 0x6003_3C48;
+    let rd = |a: usize| unsafe { (a as *const u32).read_volatile() };
+
+    let rx_en_first = rd(RX_ENABLE);
+    let desc_first = (rd(DESC_0), rd(DESC_1), rd(DESC_2));
+    let count_first = (rd(RX_COUNT_A), rd(RX_COUNT_B));
+    let mut int_seen: u32 = 0;
 
     let mut raw_seen: u32 = 0;
     let deadline = t0 + 6_000_000;
@@ -704,9 +718,20 @@ fn scan_once(round: u32) {
                 unsafe { soc_esp32::intr_map::routed_to(0) }
             );
             api::log_info!(
-                "[wifi] wmac raw {:#010x} ena {:#010x}",
-                mac_raw_seen,
-                mac_ena_seen
+                "[wifi] rx enable {:#010x} -> {:#010x}, int {:#010x}",
+                rx_en_first,
+                rd(RX_ENABLE),
+                int_seen
+            );
+            api::log_info!(
+                "[wifi] rx desc {:#x} {:#x} {:#x} -> {:#x} {:#x} {:#x}",
+                desc_first.0, desc_first.1, desc_first.2,
+                rd(DESC_0), rd(DESC_1), rd(DESC_2)
+            );
+            api::log_info!(
+                "[wifi] rx count {} {} -> {} {}",
+                count_first.0, count_first.1,
+                rd(RX_COUNT_A), rd(RX_COUNT_B)
             );
             api::log_info!(
                 "[wifi] scan {} done in {} ms, {} events, {} dropped, {} bytes free",
@@ -724,8 +749,7 @@ fn scan_once(round: u32) {
         // the dispatch path drops it; never asserting means the crossbar or
         // the MAC, not us.
         raw_seen |= unsafe { kernel::arch::registers::read_interrupt() };
-        mac_raw_seen |= unsafe { (WMAC_INT_RAW as *const u32).read_volatile() };
-        mac_ena_seen |= unsafe { (WMAC_INT_ENA as *const u32).read_volatile() };
+        int_seen |= rd(INT_STATUS);
         task::sleep_ms(1);
     }
     api::log_error!("[wifi] scan {} produced no SCAN_DONE within 6 s", round);
