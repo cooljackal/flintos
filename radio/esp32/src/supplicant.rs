@@ -350,12 +350,16 @@ unsafe extern "C" fn eapol_tx_done(_arg: *mut c_void) {
             KEY_FLAG_PAIRWISE | KEY_FLAG_TX,
         );
     }
-    // Group key (GTK): AES-CCMP, no peer address, its own index, RX. The AP's
+    // Group key (GTK): AES-CCMP, its own index, RX. The address is the AP's,
+    // not null and not broadcast — esp-idf's wpa_supplicant_install_gtk passes
+    // sm->bssid here (with the broadcast address commented out beside it), and
+    // the blob copies six bytes from it unconditionally, so a null pointer
+    // faults the copy exactly as the pairwise install's null RSC did. The AP's
     // RSC would refine replay detection and is a later refinement.
     unsafe {
         esp_wifi_set_sta_key_internal(
             ALG_CCMP,
-            core::ptr::null(),
+            bssid.as_ptr(),
             keys.gtk_id as i32,
             0,
             seq.as_ptr(),
