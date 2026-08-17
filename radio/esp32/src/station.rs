@@ -150,9 +150,15 @@ impl StaConfig {
                 authmode: auth::OPEN,
             },
             pmf_cfg: PmfConfig {
-                // WPA3 requires PMF; offer it as capable for everything so a
-                // transitional network can pick it, required only where it must.
-                capable: true,
+                // Declare the capability we actually have. This supplicant does
+                // WPA2-PSK only — no PMF/BIP, no SAE. WPA3-SAE *requires* PMF, so
+                // advertising PMF-capable on a WPA2/WPA3-transitional AP invites
+                // the blob to negotiate SAE, whose authentication it cannot
+                // complete (the wpa3_* callbacks are unset) — 802.11 auth then
+                // expires (disconnect reason 2) before association. Not capable
+                // for PSK keeps the connection on the WPA2 path; only the (as yet
+                // unbuilt) SAE path asks for PMF.
+                capable: matches!(req.security, Security::Wpa3Sae),
                 required: matches!(req.security, Security::Wpa3Sae),
             },
             caps: 0,
@@ -270,6 +276,9 @@ fn bridge(base: *const c_char, id: i32, data: *mut core::ffi::c_void, len: usize
     if !core::ptr::eq(base, wifi::WIFI_EVENT.0) {
         return;
     }
+    // Diagnostic: the raw event id, so the 802.11 progression (does association
+    // ever complete?) is visible without inferring it from the mapped events.
+    api::log_info!("[wifi] event id={} len={}", id, len);
 
     let event = match id {
         wifi::event::SCAN_DONE => {
@@ -288,6 +297,8 @@ fn bridge(base: *const c_char, id: i32, data: *mut core::ffi::c_void, len: usize
         wifi::event::STA_DISCONNECTED if len >= core::mem::size_of::<StaDisconnected>() => {
             let e = unsafe { &*(data as *const StaDisconnected) };
             STATE.store(ST_DISCONNECTED, Ordering::SeqCst);
+            // Diagnostic: the raw reason code, finer than the mapped variant.
+            api::log_warn!("[wifi] disconnect reason code {}", e.reason);
             Some(StationEvent::Disconnected {
                 reason: reason_from_code(e.reason),
             })
