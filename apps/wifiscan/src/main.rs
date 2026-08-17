@@ -713,6 +713,30 @@ fn scan_once(round: u32) {
     const INT_STATUS: usize = 0x6003_3C48;
     let rd = |a: usize| unsafe { (a as *const u32).read_volatile() };
 
+    // The descriptor structure itself, not the register that points at it.
+    //
+    // The allocation trace says the driver zallocs 120 bytes at 0x3ffdcea0
+    // during init, and the hardware descriptor register holds that same
+    // address -- so this is the thing DMA writes into when a frame lands.
+    // Thirty words, sampled at the start, once mid-scan, and at the end,
+    // because a descriptor filled and recycled during the scan would look
+    // untouched from the ends alone.
+    const DESC: usize = 0x3ffd_cea0;
+    // Reading thirty words every millisecond through every scan is a
+    // diagnostic, not something a normal build should do.
+    const DESC_TRACE: bool = false;
+    const DESC_WORDS: usize = 30;
+    let snap = |into: &mut [u32; DESC_WORDS]| {
+        for (i, w) in into.iter_mut().enumerate() {
+            *w = unsafe { (( DESC + i * 4) as *const u32).read_volatile() };
+        }
+    };
+    let mut desc_a = [0u32; DESC_WORDS];
+    let mut desc_mid = [0u32; DESC_WORDS];
+    let mut desc_b = [0u32; DESC_WORDS];
+    let mut desc_changed: u32 = 0;
+    snap(&mut desc_a);
+
     let rx_en_first = rd(RX_ENABLE);
     let desc_first = (rd(DESC_0), rd(DESC_1), rd(DESC_2));
     let count_first = (rd(RX_COUNT_A), rd(RX_COUNT_B));
@@ -739,6 +763,16 @@ fn scan_once(round: u32) {
                 desc_first.0, desc_first.1, desc_first.2,
                 rd(DESC_0), rd(DESC_1), rd(DESC_2)
             );
+            snap(&mut desc_b);
+            api::log_info!("[wifi] desc changed words {:#010x}", desc_changed);
+            api::log_info!(
+                "[wifi] desc a {:#x} {:#x} {:#x} {:#x}",
+                desc_a[0], desc_a[1], desc_a[2], desc_a[3]
+            );
+            api::log_info!(
+                "[wifi] desc b {:#x} {:#x} {:#x} {:#x}",
+                desc_b[0], desc_b[1], desc_b[2], desc_b[3]
+            );
             api::log_info!(
                 "[wifi] rx count {} {} -> {} {}",
                 count_first.0, count_first.1,
@@ -761,6 +795,16 @@ fn scan_once(round: u32) {
         // the MAC, not us.
         raw_seen |= unsafe { kernel::arch::registers::read_interrupt() };
         int_seen |= rd(INT_STATUS);
+        // Which words ever differ from the opening snapshot, as a bitmap.
+        // A word that changes and changes back still shows here.
+        if DESC_TRACE {
+            snap(&mut desc_mid);
+            for i in 0..DESC_WORDS {
+                if desc_mid[i] != desc_a[i] {
+                    desc_changed |= 1 << i;
+                }
+            }
+        }
         task::sleep_ms(1);
     }
     api::log_error!("[wifi] scan {} produced no SCAN_DONE within 6 s", round);
