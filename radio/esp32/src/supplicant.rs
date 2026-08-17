@@ -396,6 +396,16 @@ unsafe extern "C" fn parse_wpa_ie(wpa_ie: *const u8, wpa_ie_len: usize, data: *m
     let Some(info) = rsn::parse(ie) else {
         return -1;
     };
+    // Diagnostic: the AP's key management and RSN capabilities. caps bit 7
+    // (0x0080) is MFPC (PMF capable), bit 6 (0x0040) is MFPR (PMF required) —
+    // the pair that decides whether a non-PMF WPA2 station can associate at all.
+    api::log_info!(
+        "[wpa] parse_wpa_ie: km={:#06x} pair={} grp={} caps={:#06x}",
+        info.key_mgmt,
+        info.pairwise_cipher,
+        info.group_cipher,
+        info.capabilities
+    );
 
     // Only now, with the element fully validated, populate the struct.
     let out = data.cast::<WifiWpaIe>();
