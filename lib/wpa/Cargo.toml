@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "wpa"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "First-party no_std WPA2/WPA3 supplicant: the 4-way handshake"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# The supplicant is pure protocol over pure crypto: EAPOL-Key frames in, key
+# material and response frames out, as data. It touches no hardware and knows
+# no radio -- that keeps it portable across every FlintOS target and testable
+# on a host against captured handshakes. The radio integration (sending frames,
+# installing keys) lives in whatever backend drives a specific radio.
+[dependencies]
+crypto = { path = "../crypto" }

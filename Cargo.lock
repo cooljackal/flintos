@@ -351,6 +351,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wpa"
+version = "0.1.0"
+dependencies = [
+ "crypto",
+]
+
+[[package]]
 name = "ws2812"
 version = "0.1.0"
 dependencies = [

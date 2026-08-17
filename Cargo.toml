@@ -93,6 +93,7 @@ members = [
     "radio/esp32",
     "lib/led-strip",
     "lib/crypto",
+    "lib/wpa",
 ]
 
 # Shared metadata. Every member inherits these with `field.workspace = true`
