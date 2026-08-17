@@ -49,5 +49,13 @@ pub use hal::types::{Priority, TaskId};
 pub use hal::bus;
 pub use hal::bus::{Bus, BusError, BusHandle, BusResult, BusSpeed, PhysicalBus};
 
+/// Wi-Fi station interface, re-exported from `hal::wifi` the same way `bus` is.
+/// A radio backend (blob or pure-Rust) implements `api::wifi::Station`.
+pub use hal::wifi;
+pub use hal::wifi::{
+    ApInfo, ConnectRequest, Credentials, DisconnectReason, ScanRequest, Security, Ssid, Station,
+    StationEvent, StationState, StationStatus, WifiError, WifiResult,
+};
+
 /// Re-export metrics types at crate root.
 pub use debug::metrics::{Counter, Gauge};

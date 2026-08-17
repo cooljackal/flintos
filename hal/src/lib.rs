@@ -21,6 +21,7 @@ pub mod pinmux;
 pub mod smp;
 pub mod tick;
 pub mod types;
+pub mod wifi;
 
 pub use bus::*;
 pub use critical_section::CriticalSection;
