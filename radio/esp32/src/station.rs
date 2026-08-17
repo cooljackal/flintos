@@ -105,6 +105,9 @@ const _: () = {
 /// `esp_wifi_types.h`.
 mod auth {
     pub const OPEN: u32 = 0;
+    // Named for completeness and used in the tests; the connect threshold is
+    // OPEN now (see `from_request`), so non-test code no longer reads it.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const WPA2_PSK: u32 = 3;
     pub const WPA3_PSK: u32 = 6;
     pub const WPA2_WPA3_PSK: u32 = 7;
@@ -138,12 +141,13 @@ impl StaConfig {
             sort_method: 0, // by signal
             threshold: ScanThreshold {
                 rssi: -127, // accept any signal
-                authmode: match req.security {
-                    Security::Open => auth::OPEN,
-                    Security::Wpa2Psk => auth::WPA2_PSK,
-                    Security::Wpa3Sae => auth::WPA3_PSK,
-                    Security::Wpa2Wpa3Psk => auth::WPA2_WPA3_PSK,
-                },
+                // No security floor. Setting one to the requested mode filters
+                // the connect scan, and on a WPA2/WPA3-transitional AP that
+                // advertises a mode "above" the request it removes the very AP
+                // we want and the driver reports NoApFound. Security is enforced
+                // by the passphrase and the handshake, not by this filter; the
+                // reference leaves it open too.
+                authmode: auth::OPEN,
             },
             pmf_cfg: PmfConfig {
                 // WPA3 requires PMF; offer it as capable for everything so a

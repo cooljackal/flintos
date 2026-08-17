@@ -38,6 +38,10 @@ const SSID: Option<&str> = option_env!("FLINT_WIFI_SSID");
 #[cfg(feature = "blobs")]
 const PASS: Option<&str> = option_env!("FLINT_WIFI_PASS");
 
+/// Set when the diagnostic scan finishes.
+#[cfg(feature = "blobs")]
+static SCAN_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// The build with no archives to call.
 #[cfg(not(feature = "blobs"))]
 fn run() {
@@ -91,6 +95,21 @@ fn run() {
     }
     api::log_info!("[wifi] station up");
 
+    // Scan first and print what the radio sees, so a failed connect can be
+    // told apart from a network that simply is not visible — and so the exact
+    // SSID bytes and security of the target are on the record.
+    {
+        let req = hal::wifi::ScanRequest::default();
+        if station.scan(&req).is_ok() {
+            let deadline = kernel::clock::now_us() + 6_000_000;
+            while !SCAN_DONE.load(core::sync::atomic::Ordering::SeqCst)
+                && kernel::clock::now_us() < deadline
+            {
+                task::sleep_ms(50);
+            }
+        }
+    }
+
     let (Some(ssid), Some(pass)) = (SSID, PASS) else {
         api::log_warn!("[wifi] no credentials compiled in; set FLINT_WIFI_SSID / FLINT_WIFI_PASS");
         return idle();
@@ -129,7 +148,32 @@ fn run() {
 fn on_event(event: hal::wifi::StationEvent) {
     use hal::wifi::StationEvent;
     match event {
-        StationEvent::ScanDone { count } => api::log_info!("[wifi] scan done: {} APs", count),
+        StationEvent::ScanDone { count } => {
+            api::log_info!("[wifi] scan done: {} APs", count);
+            // Print each SSID and its security, so the connect target can be
+            // compared against exactly what the radio sees. Uses the raw scan
+            // records for the auth-mode name.
+            let mut records = [radio_esp32::scan::ApRecord::ZEROED; 24];
+            if let Ok(n) = unsafe { radio_esp32::scan::ap_records(&mut records) } {
+                for r in &records[..n as usize] {
+                    match r.ssid_str() {
+                        Some(s) => api::log_info!(
+                            "[wifi]   \"{}\" ch{} {} dBm {}",
+                            s,
+                            r.primary,
+                            r.rssi,
+                            radio_esp32::scan::auth_name(r.authmode)
+                        ),
+                        None => api::log_info!(
+                            "[wifi]   <{} non-utf8 bytes> ch{}",
+                            r.ssid_bytes().len(),
+                            r.primary
+                        ),
+                    }
+                }
+            }
+            SCAN_DONE.store(true, core::sync::atomic::Ordering::SeqCst);
+        }
         StationEvent::Connected { bssid, channel } => api::log_info!(
             "[wifi] CONNECTED to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} on channel {}",
             bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], channel
