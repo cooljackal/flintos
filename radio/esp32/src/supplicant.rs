@@ -210,12 +210,20 @@ unsafe extern "C" fn sta_connect(bssid: *mut u8) -> i32 {
     // `wpa_config_bss` → `wpa_config_assoc_ie`; the first-party `sta_connect`
     // replaces that C path, so it must install the IE itself or the association
     // request goes out with no security element and a secured AP rejects it.
-    // The blob copies the bytes synchronously (esp-idf frees them right after
-    // this call), so a stack copy suffices. Done outside the lock: it calls into
-    // the blob, which may arm timers of its own.
+    //
+    // The last argument is the *flag*, and it is not "enable": flag=1 means the
+    // pointer already addresses a persistent `wifi_appie { u16 len; u8 data[] }`
+    // whose IE begins at byte 2 — esp-idf's `set_assoc_ie` reserves those two
+    // bytes (`assoc_ie_buf[LEN+2]`, `assoc_wpa_ie = buf + 2`). Passing our raw
+    // 22-byte element with flag=1 made the blob write the length over our
+    // `0x30,0x14` element header and transmit a malformed IE, which the AP
+    // rejected. flag=0 is the copy path: the blob allocates len+2, copies our
+    // bytes after its own length field, and owns the result — so a stack buffer
+    // is fine (esp-idf uses flag=0 with a buffer it frees right after). Done
+    // outside the lock: it calls into the blob, which may arm timers of its own.
     let mut ie = wpa::keydata::RSN_IE_WPA2_PSK_CCMP;
     let set_rc =
-        unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 1) };
+        unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 0) };
     api::log_info!("[wpa] sta_connect: assoc IE install rc={}", set_rc);
 
     // Diagnostic: read the IE back out of slot 4 and confirm the blob retained
