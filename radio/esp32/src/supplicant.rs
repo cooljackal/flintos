@@ -25,7 +25,7 @@
 use core::ffi::c_void;
 
 use kernel::smp::Spinlock;
-use wpa::{Action, Supplicant};
+use wpa::{rsn, Action, Supplicant};
 
 use crate::wifi::WpaCallbacks;
 
@@ -318,6 +318,81 @@ fn frame_into(out: &mut [u8], dest: &[u8; 6], src: &[u8; 6], payload: &[u8]) -> 
     total
 }
 
+// ── RSN/WPA information-element parsing ───────────────────────────────────────
+
+/// `wifi_wpa_ie_t` from esp_wifi_driver.h at v4.4 — where the blob wants a
+/// beacon's security written. The layout is asserted, not trusted; the blob
+/// reads these exact fields at these exact offsets.
+///
+/// The value encoding matches `wpa_parse_wpa_ie_wrapper`: `proto` and `key_mgmt`
+/// are the supplicant's internal bitmasks, the cipher fields are the public
+/// `WIFI_CIPHER_TYPE_*` numbers — which is what [`rsn::parse`] already produces.
+#[repr(C)]
+struct WifiWpaIe {
+    proto: i32,
+    pairwise_cipher: i32,
+    group_cipher: i32,
+    key_mgmt: i32,
+    capabilities: i32,
+    num_pmkid: usize,
+    pmkid: *const u8,
+    mgmt_group_cipher: i32,
+}
+
+// The v4.4 layout on the 32-bit target, asserted rather than trusted. The
+// struct carries a `usize` and a pointer, so it is only 32 bytes where those
+// are four each — the target ABI. On a 64-bit host (where this crate still
+// compiles for its unit tests) it is 40, and the assert would be checking a
+// layout the blob never sees, so it is scoped to the width that ships.
+#[cfg(target_pointer_width = "32")]
+const _: () = {
+    use core::mem::offset_of;
+    assert!(core::mem::size_of::<WifiWpaIe>() == 32);
+    assert!(offset_of!(WifiWpaIe, proto) == 0);
+    assert!(offset_of!(WifiWpaIe, pairwise_cipher) == 4);
+    assert!(offset_of!(WifiWpaIe, group_cipher) == 8);
+    assert!(offset_of!(WifiWpaIe, key_mgmt) == 12);
+    assert!(offset_of!(WifiWpaIe, capabilities) == 16);
+    assert!(offset_of!(WifiWpaIe, num_pmkid) == 20);
+    assert!(offset_of!(WifiWpaIe, pmkid) == 24);
+    assert!(offset_of!(WifiWpaIe, mgmt_group_cipher) == 28);
+};
+
+/// `wpa_parse_wpa_ie`: classify a network's security from its RSN/WPA element.
+///
+/// `wpa_ie` starts at the element id and runs `wpa_ie_len` bytes; `data` is a
+/// `wifi_wpa_ie_t` to fill. Returns 0 when the element parses, -1 when it is
+/// malformed — matching the wrapper this replaces. The output struct is written
+/// only after [`rsn::parse`] has validated the whole element, so a malformed
+/// beacon cannot leave partially trusted security behind.
+unsafe extern "C" fn parse_wpa_ie(wpa_ie: *const u8, wpa_ie_len: usize, data: *mut c_void) -> i32 {
+    if wpa_ie.is_null() || data.is_null() {
+        return -1;
+    }
+    let ie = unsafe { core::slice::from_raw_parts(wpa_ie, wpa_ie_len) };
+    let Some(info) = rsn::parse(ie) else {
+        return -1;
+    };
+
+    // Only now, with the element fully validated, populate the struct.
+    let out = data.cast::<WifiWpaIe>();
+    let pmkid = match info.pmkid_offset {
+        Some(off) => unsafe { wpa_ie.add(off) },
+        None => core::ptr::null(),
+    };
+    unsafe {
+        (*out).proto = info.proto as i32;
+        (*out).pairwise_cipher = info.pairwise_cipher as i32;
+        (*out).group_cipher = info.group_cipher as i32;
+        (*out).key_mgmt = info.key_mgmt as i32;
+        (*out).capabilities = info.capabilities as i32;
+        (*out).num_pmkid = info.num_pmkid;
+        (*out).pmkid = pmkid;
+        (*out).mgmt_group_cipher = info.mgmt_group_cipher as i32;
+    }
+    0
+}
+
 // ── Registration ─────────────────────────────────────────────────────────────
 
 /// The full `wpa_funcs` table: the six station callbacks driving the handshake,
@@ -337,7 +412,7 @@ static mut CALLBACKS: WpaCallbacks = WpaCallbacks {
     ap_rx_eapol: None,
     ap_get_peer_spp_msg: None,
     config_parse_string: None,
-    parse_wpa_ie: None,
+    parse_wpa_ie: Some(parse_wpa_ie),
     config_bss: None,
     michael_mic_failure: None,
     wpa3_build_sae_msg: None,

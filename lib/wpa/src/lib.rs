@@ -37,5 +37,6 @@
 pub mod eapol;
 pub mod handshake;
 pub mod keydata;
+pub mod rsn;
 
 pub use handshake::{Action, Rng, State, Supplicant};
