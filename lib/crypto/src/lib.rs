@@ -35,6 +35,7 @@ pub mod cmac;
 pub mod hmac;
 pub mod keywrap;
 pub mod pbkdf2;
+pub mod prf;
 pub mod sha1;
 pub mod sha256;
 
@@ -43,5 +44,6 @@ pub use cmac::aes_cmac;
 pub use hmac::{hmac_sha1, hmac_sha256};
 pub use keywrap::{aes_unwrap, aes_wrap};
 pub use pbkdf2::{pbkdf2_sha1, wpa_psk};
+pub use prf::{ptk, sha1_prf};
 pub use sha1::Sha1;
 pub use sha256::Sha256;
