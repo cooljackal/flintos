@@ -329,6 +329,13 @@ unsafe extern "C" fn eapol_tx_done(_arg: *mut c_void) {
     api::log_info!("[wpa] eapol tx done: installing PTK + GTK, auth done");
     let (bssid, _own) = STATE.with(|st| (st.bssid, st.own_mac));
 
+    // The receive sequence counter. A freshly installed key starts at zero, so
+    // the same zeroed buffer serves both installs. It must be a valid pointer of
+    // WPA_KEY_RSC_LEN (8) bytes: the blob copies that fixed length out of `seq`
+    // regardless of the `seq_len` we pass, so a null pointer (as the pairwise
+    // install used to pass) faults the blob's memcpy on a read from address 0.
+    let seq = [0u8; 8];
+
     // Pairwise key (PTK's TK): AES-CCMP, keyed to the AP, index 0, TX.
     unsafe {
         esp_wifi_set_sta_key_internal(
@@ -336,17 +343,15 @@ unsafe extern "C" fn eapol_tx_done(_arg: *mut c_void) {
             bssid.as_ptr(),
             0,
             1,
-            core::ptr::null(),
-            0,
+            seq.as_ptr(),
+            seq.len(),
             keys.tk.as_ptr(),
             keys.tk.len(),
             KEY_FLAG_PAIRWISE | KEY_FLAG_TX,
         );
     }
-    // Group key (GTK): AES-CCMP, no peer address, its own index, RX. The
-    // receive sequence counter starts at zero here; the AP's RSC would refine
-    // replay detection and is a later refinement.
-    let seq = [0u8; 6];
+    // Group key (GTK): AES-CCMP, no peer address, its own index, RX. The AP's
+    // RSC would refine replay detection and is a later refinement.
     unsafe {
         esp_wifi_set_sta_key_internal(
             ALG_CCMP,
