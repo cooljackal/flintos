@@ -18,6 +18,8 @@ rust-version.workspace = true
 # into the drivers; see tools/check-layers.sh.
 [dependencies]
 hal = { path = "../../hal" }
+wpa = { path = "../../lib/wpa" }
+crypto = { path = "../../lib/crypto" }
 api = { path = "../../api" }
 kernel = { path = "../../kernel", default-features = false }
 

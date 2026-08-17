@@ -263,10 +263,12 @@ name = "radio-esp32"
 version = "0.1.0"
 dependencies = [
  "api",
+ "crypto",
  "hal",
  "kernel",
  "kvstore",
  "soc-esp32",
+ "wpa",
 ]
 
 [[package]]

@@ -59,6 +59,7 @@ pub mod phy;
 pub mod phy_init;
 pub mod scan;
 pub mod station;
+pub mod supplicant;
 pub mod tasks;
 pub mod wifi;
 pub mod osi;

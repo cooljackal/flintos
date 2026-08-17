@@ -347,6 +347,12 @@ impl Station for EspStation {
 
     fn connect(&mut self, request: &ConnectRequest) -> WifiResult<()> {
         let cfg = StaConfig::from_request(request)?;
+        // Stage the credentials for the supplicant: when the driver calls back
+        // into `sta_connect` it derives the PMK from these. Only a passphrase
+        // needs staging; an open network runs no handshake.
+        if let Credentials::Passphrase(p) = request.credentials {
+            crate::supplicant::stage_credentials(request.ssid.as_bytes(), p);
+        }
         let rc = unsafe { wifi::esp_wifi_set_config(IF_STA, &cfg) };
         backend_result(rc)?;
         STATE.store(ST_CONNECTING, Ordering::SeqCst);
