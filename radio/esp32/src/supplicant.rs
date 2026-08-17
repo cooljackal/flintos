@@ -209,14 +209,13 @@ unsafe extern "C" fn sta_connect(bssid: *mut u8) -> i32 {
     // the blob, which may arm timers of its own.
     let mut ie = wpa::keydata::RSN_IE_WPA2_PSK_CCMP;
     unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 1) };
-    // Diagnostic: the auth mode the blob chose. It should be WIFI_AUTH_WPA2_PSK
-    // (3) now the parser hides SAE — WIFI_AUTH_WPA2_WPA3_PSK (7) would mean the
-    // blob still sees transition mode and may take the WPA3 path.
+    api::log_info!("[wpa] sta_connect: PMK derived, RSN assoc IE installed");
+    // Diagnostic on its own short line (the combined message overran the log
+    // buffer and truncated). It should read WIFI_AUTH_WPA2_PSK (3) now the
+    // parser hides SAE; WIFI_AUTH_WPA2_WPA3_PSK (7) would mean the blob still
+    // sees transition mode.
     let authmode = unsafe { esp_wifi_sta_get_prof_authmode_internal() };
-    api::log_info!(
-        "[wpa] sta_connect: PMK derived, RSN assoc IE installed, authmode={}",
-        authmode
-    );
+    api::log_info!("[wpa] authmode={}", authmode);
     0
 }
 
