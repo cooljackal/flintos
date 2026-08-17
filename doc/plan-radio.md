@@ -10,7 +10,7 @@ coming. That position was correct while the cost was unexamined; this document
 is the examined version. The route is viable, the price is known, and the price
 is high.
 
-**Status:** Phase 0, Phase 1 and Phase 2 are done, and Phase 3 is at 3.5.
+**Status:** Phases 0–3 are done, and Phase 5 is at 5.3: **the scan works** — 14–16 networks per scan, interrupts serviced. Associate (5.3) is next and needs the crypto table filled. Phase 4 (BLE, #66) has not started.
 
 Phase 0's four prerequisites all landed — the DPORT stall (#56), general-purpose
 timers (#25), the DMA engine (#18) and persistent configuration (#32). Phase 1
@@ -337,7 +337,7 @@ during 3.6 rather than after it.
 | Step | Work | Done when |
 |---|---|---|
 | 5.1 | Bring up the Wi-Fi blobs | **Done.** `esp_wifi_init_internal` returns `ESP_OK` in 179 ms on an ESP32-DevKitC, with all 115 OSI entries filled. |
-| 5.2 | Station mode: scan | **The scan cycle works end to end** — start, `SCAN_DONE`, `ap_count`, `ap_records`, repeatable. It reports **zero networks**, so nothing is being received yet. See below. |
+| 5.2 | Station mode: scan | ✅ **Done.** 14–16 networks per scan on an ESP32-DevKitC, radio interrupts serviced, repeatable across scans. Root cause of the long "zero networks" hunt: the two common-clock OSI callbacks were raw bit operations rather than reference-counted, so the driver's temporary release gated the PHY clock off mid-operation; plus the supplicant callback table the public `esp_wifi_init` registers and the direct internal call skipped. See the closing section. |
 | 5.3 | Station mode: associate | The device joins a WPA2 network and holds the association. |
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
 | 5.5 | On-target self-test | Scan and associate run in `make test-target`, skipped cleanly when no AP is configured. |

@@ -46,15 +46,13 @@ with the Wi-Fi radio and is unusable whenever the radio is up. An API handing
 out ADC2 channels invites a bug that appears the day someone turns on
 networking and not before.
 
-The radios are 🚧 rather than ⛔ because the groundwork is done and the
-PHY comes up on real silicon, and no packet has been sent. Measured on a
-WROOM-32: the vendor archives link, `register_chipv7_phy` accepts FlintOS's
-init data and eFuse MAC, a full RF calibration takes ~183 ms, a re-enable
-~250 µs, and the calibration persists across a reboot through the flash
-key/value store. Referencing `esp_wifi_init_internal` links with zero
-undefined symbols, so the OSI table is complete enough to start — but nothing
-has called it yet, there is no event loop for the driver to report a scan
-through, and WPA2 needs a crypto table FlintOS has not got. See
+Wi-Fi is 🚧 because **scanning works and association does not yet**.
+Measured on a WROOM-32: the vendor archives link against FlintOS's 115-entry
+OS-interface table, the PHY calibrates in ~183 ms and persists its
+calibration across reboots, and a station-mode scan finds 14–16 networks
+per sweep with radio interrupts serviced, repeatably (`apps/wifiscan`).
+Joining a network is next and needs the WPA2 crypto table FlintOS has not
+got. BLE is 🚧 on the strength of the shared groundwork alone. See
 [doc/plan-radio.md](doc/plan-radio.md) for what is left.
 
 Per-peripheral detail — which registers, which pins, what is untested — lives
