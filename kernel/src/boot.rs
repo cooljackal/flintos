@@ -120,6 +120,16 @@ pub extern "C" fn FlintMain() -> ! {
         debug::fault::raw_print("[FLINT] startup::init done\r\n");
     }
 
+    // Step 1b: raise the CPU to 240 MHz. The bootloader hands off at 80 MHz and
+    // expects the application to do this; the Wi-Fi blob is built and timed for
+    // 240. APB stays 80 MHz, so the console just opened is unaffected. Done here
+    // — single-core, before the frequency is measured below, before the radio
+    // (the other PLL user) exists — so nothing races the clock switch.
+    #[cfg(target_os = "none")]
+    unsafe {
+        soc_esp32::cpu_clk::set_240mhz();
+    }
+
     // If the last boot panicked, say so now that there is a console to say it
     // on. The snapshot lives in a region the linker keeps out of .bss, so it
     // survives a soft reset -- which is the only reason writing it was ever
