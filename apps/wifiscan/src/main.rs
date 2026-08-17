@@ -144,7 +144,13 @@ fn report_results() {
         group_cipher: 0,
         ant: 0,
         flags: 0,
-        country: scan::Country { cc: [0; 3], schan: 0, nchan: 0, max_tx_power: 0, policy: 0 },
+        country: scan::Country {
+            cc: [0; 3],
+            schan: 0,
+            nchan: 0,
+            max_tx_power: 0,
+            policy: 0,
+        },
     }; MAX_RESULTS];
 
     let shown = match unsafe { scan::ap_records(&mut records) } {
@@ -156,7 +162,11 @@ fn report_results() {
     };
 
     if found as usize > shown {
-        api::log_warn!("[wifi] {} networks, showing {} (raise MAX_RESULTS)", found, shown);
+        api::log_warn!(
+            "[wifi] {} networks, showing {} (raise MAX_RESULTS)",
+            found,
+            shown
+        );
     } else {
         let mut fired = 0;
         radio_esp32::interrupts::for_each_route(|r| {
@@ -175,23 +185,27 @@ fn report_results() {
 
     for r in &records[..shown] {
         let b = r.bssid;
+        // Flint registers only the discovery-safe subset of IDF's supplicant
+        // callbacks. Until the real IE parser lands, the blob leaves every
+        // auth mode at zero; calling that "open" would be actively misleading.
+        let auth = "unparsed";
         // Printed as a byte count when the SSID is not UTF-8, which is legal
         // 802.11 and does happen.
         match r.ssid_str() {
             Some("") => api::log_info!(
                 "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} <hidden>",
                 b[0], b[1], b[2], b[3], b[4], b[5],
-                r.primary, r.rssi, scan::auth_name(r.authmode)
+                r.primary, r.rssi, auth
             ),
             Some(name) => api::log_info!(
                 "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} {}",
                 b[0], b[1], b[2], b[3], b[4], b[5],
-                r.primary, r.rssi, scan::auth_name(r.authmode), name
+                r.primary, r.rssi, auth, name
             ),
             None => api::log_info!(
                 "[wifi]   {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  ch{:<3} {:>4} dBm  {:<9} <{} non-utf8 bytes>",
                 b[0], b[1], b[2], b[3], b[4], b[5],
-                r.primary, r.rssi, scan::auth_name(r.authmode), r.ssid_bytes().len()
+                r.primary, r.rssi, auth, r.ssid_bytes().len()
             ),
         }
     }
@@ -259,7 +273,10 @@ fn alloc_report(stage: &str) {
     let (seen, live, bytes, lost, stray) = adapter::alloc_totals();
     api::log_info!(
         "[wifi] mem/{} {} seen, {} live, {} bytes",
-        stage, seen, live, bytes
+        stage,
+        seen,
+        live,
+        bytes
     );
     if lost > 0 || stray > 0 {
         api::log_warn!("[wifi] mem/{} {} lost, {} stray frees", stage, lost, stray);
@@ -352,7 +369,8 @@ fn watchdog() {
             }
             None => api::log_info!(
                 "[wifi] watch {}: stage {}, not blocked in a queue primitive",
-                i, stage
+                i,
+                stage
             ),
         }
         // Every other task too, not just this one. The driver's worker does
@@ -458,17 +476,24 @@ fn fill_probe() {
     let p = radio_esp32::nvs::probe();
     api::log_info!(
         "[wifi] probe: {} writes, last rc={:#x}, used {}",
-        writes, last, used
+        writes,
+        last,
+        used
     );
     // Two lines: the console truncates a long one, and a counter that is cut
     // off is the same as a counter that was never printed.
     api::log_info!(
         "[wifi] probe: set_full={} no_heap={} compact_err={}",
-        p.set_full, p.no_heap, p.compact_err
+        p.set_full,
+        p.no_heap,
+        p.compact_err
     );
     api::log_info!(
         "[wifi] probe: compacted={} reclaimed={} retry_ok={} retry_err={}",
-        p.compacted, p.reclaimed, p.retry_ok, p.retry_err
+        p.compacted,
+        p.reclaimed,
+        p.retry_ok,
+        p.retry_err
     );
 }
 
@@ -493,12 +518,18 @@ fn run() {
     let (used, free) = radio_esp32::nvs::with_store(|s| (s.used(), s.free()), (0, 0));
     let t = kernel::clock::now_us();
     let probe = radio_esp32::nvs::with_store(
-        |s| { let mut b = [0u8; 128]; s.get(b"rfcal.v", &mut b).map(|n| n as i32).unwrap_or(-1) },
+        |s| {
+            let mut b = [0u8; 128];
+            s.get(b"rfcal.v", &mut b).map(|n| n as i32).unwrap_or(-1)
+        },
         -2,
     );
     api::log_info!(
         "[wifi] nvs: {} used, {} free, one get = {} us (rc {})",
-        used, free, kernel::clock::now_us() - t, probe
+        used,
+        free,
+        kernel::clock::now_us() - t,
+        probe
     );
     if NVS_FILL_PROBE {
         fill_probe();
@@ -569,7 +600,10 @@ fn run() {
     // the tick still fires and the scheduler still runs, it wakes and reports
     // how far `init` got. Silence from it too means the system is gone, not
     // blocked. See doc/plan-radio.md, "N2".
-    RUN_TASK.store(kernel::dynobj::current_task(), core::sync::atomic::Ordering::SeqCst);
+    RUN_TASK.store(
+        kernel::dynobj::current_task(),
+        core::sync::atomic::Ordering::SeqCst,
+    );
     task::spawn("wifiwatch", watchdog, Priority::Normal(3), 4096);
 
     STAGE.store(1, core::sync::atomic::Ordering::SeqCst);
@@ -585,15 +619,13 @@ fn run() {
     alloc_report("init");
     radio_esp32::adapter::set_alloc_phase(1);
 
-    // NULL, start, *then* STA — Zephyr's order, not the obvious one.
-    // `esp32_wifi_dev_init` calls `esp_wifi_init`, then
-    // `esp_wifi_set_mode(ESP32_WIFI_MODE_NULL)`, then starts, and only moves to
-    // STA when something asks it to (`drivers/wifi/esp32/src/esp_wifi_drv.c`,
-    // lines 1854-1867). Going straight to STA before the start is what this
-    // did, and the difference is what state the MAC is brought up in.
-    let rc = unsafe { wifi::set_mode(wifi::mode::NULL) };
+    // The public esp-idf v4.4 scan sequence creates the station interface
+    // before `esp_wifi_start`. Starting in NULL mode and switching afterwards
+    // appeared harmless while the shared PHY clocks were accidentally off;
+    // once reception ran, `scan_get_type` dereferenced the absent interface.
+    let rc = unsafe { wifi::set_mode(wifi::mode::STA) };
     if rc != 0 {
-        api::log_error!("[wifi] set_mode(NULL) failed: {:#x}", rc);
+        api::log_error!("[wifi] set_mode(STA) failed: {:#x}", rc);
         return idle();
     }
 
@@ -603,11 +635,6 @@ fn run() {
         return idle();
     }
 
-    let rc = unsafe { wifi::set_mode(wifi::mode::STA) };
-    if rc != 0 {
-        api::log_error!("[wifi] set_mode(STA) failed: {:#x}", rc);
-        return idle();
-    }
     api::log_info!("[wifi] station started");
     osi_calls("start");
     task_report("start");
@@ -630,10 +657,9 @@ fn run() {
     if routes == 0 {
         api::log_warn!("[wifi] the driver routed no interrupts; nothing will arrive");
     }
-    api::log_info!(
-        "[wifi] intenable={:#010x}",
-        unsafe { kernel::arch::registers::read_intenable() }
-    );
+    api::log_info!("[wifi] intenable={:#010x}", unsafe {
+        kernel::arch::registers::read_intenable()
+    });
     // The driver's own MAC handler is `wDev_ProcessFiq`, the only function in
     // the blobs that reads or clears the receiver's event word. In this image
     // it links at 0x40082630. If what the driver installed is not that, we
@@ -728,7 +754,7 @@ fn scan_once(round: u32) {
     const DESC_WORDS: usize = 30;
     let snap = |into: &mut [u32; DESC_WORDS]| {
         for (i, w) in into.iter_mut().enumerate() {
-            *w = unsafe { (( DESC + i * 4) as *const u32).read_volatile() };
+            *w = unsafe { ((DESC + i * 4) as *const u32).read_volatile() };
         }
     };
     let mut desc_a = [0u32; DESC_WORDS];
@@ -760,23 +786,35 @@ fn scan_once(round: u32) {
             );
             api::log_info!(
                 "[wifi] rx desc {:#x} {:#x} {:#x} -> {:#x} {:#x} {:#x}",
-                desc_first.0, desc_first.1, desc_first.2,
-                rd(DESC_0), rd(DESC_1), rd(DESC_2)
+                desc_first.0,
+                desc_first.1,
+                desc_first.2,
+                rd(DESC_0),
+                rd(DESC_1),
+                rd(DESC_2)
             );
             snap(&mut desc_b);
             api::log_info!("[wifi] desc changed words {:#010x}", desc_changed);
             api::log_info!(
                 "[wifi] desc a {:#x} {:#x} {:#x} {:#x}",
-                desc_a[0], desc_a[1], desc_a[2], desc_a[3]
+                desc_a[0],
+                desc_a[1],
+                desc_a[2],
+                desc_a[3]
             );
             api::log_info!(
                 "[wifi] desc b {:#x} {:#x} {:#x} {:#x}",
-                desc_b[0], desc_b[1], desc_b[2], desc_b[3]
+                desc_b[0],
+                desc_b[1],
+                desc_b[2],
+                desc_b[3]
             );
             api::log_info!(
                 "[wifi] rx count {} {} -> {} {}",
-                count_first.0, count_first.1,
-                rd(RX_COUNT_A), rd(RX_COUNT_B)
+                count_first.0,
+                count_first.1,
+                rd(RX_COUNT_A),
+                rd(RX_COUNT_B)
             );
             api::log_info!(
                 "[wifi] scan {} done in {} ms, {} events, {} dropped, {} bytes free",

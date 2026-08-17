@@ -162,7 +162,11 @@ pub fn ms_from_ticks(ticks: u32) -> u32 {
 #[inline]
 pub const fn priority_from_freertos(prio: u32) -> hal::types::Priority {
     const FREERTOS_MAX: u32 = 25;
-    let clamped = if prio >= FREERTOS_MAX { FREERTOS_MAX - 1 } else { prio };
+    let clamped = if prio >= FREERTOS_MAX {
+        FREERTOS_MAX - 1
+    } else {
+        prio
+    };
     // Mirror, then place in the Critical band's numeric range. Critical(0) is
     // the most urgent thing FlintOS has, and a radio that misses its window
     // corrupts a frame rather than merely running late.
@@ -299,7 +303,13 @@ struct Trace {
     phase: u8,
 }
 
-const EMPTY: Alloc = Alloc { kind: 0, phase: 0, size: 0, ptr: 0, freed: false };
+const EMPTY: Alloc = Alloc {
+    kind: 0,
+    phase: 0,
+    size: 0,
+    ptr: 0,
+    freed: false,
+};
 
 static TRACE: kernel::smp::Spinlock<Trace> = kernel::smp::Spinlock::new(Trace {
     records: [EMPTY; MAX_ALLOCS],
@@ -520,7 +530,10 @@ fn note_object(addr: *mut c_void, kind: &'static str) {
 /// What was created at `addr`, if the adapter made it.
 pub fn describe(addr: usize) -> Option<ObjectId> {
     OBJECTS.with(|(table, n)| {
-        table[..*n].iter().find(|(a, _)| *a == addr).map(|(_, id)| *id)
+        table[..*n]
+            .iter()
+            .find(|(a, _)| *a == addr)
+            .map(|(_, id)| *id)
     })
 }
 
@@ -672,8 +685,7 @@ unsafe extern "C" fn osi_mutex_unlock(handle: *mut c_void) -> i32 {
 /// hands work to `wifiT`, so if it is ever released from a different task than
 /// took it, the refusal is silent and the mutex stays held forever — which
 /// presents as `esp_wifi_*` never returning, on whatever task calls it next.
-static MUTEX_UNLOCK_FAILED: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static MUTEX_UNLOCK_FAILED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// How many unlocks have been refused. See [`MUTEX_UNLOCK_FAILED`].
 pub fn mutex_unlock_failures() -> u32 {
@@ -911,14 +923,23 @@ struct WifiStaticQueue {
 /// field happened to be.
 unsafe extern "C" fn wifi_create_queue(len: i32, item_size: i32) -> *mut c_void {
     let (Ok(len), Ok(item_size)) = (u32::try_from(len), u32::try_from(item_size)) else {
-        api::log_error!("radio: _wifi_create_queue({}, {}) is not a queue", len, item_size);
+        api::log_error!(
+            "radio: _wifi_create_queue({}, {}) is not a queue",
+            len,
+            item_size
+        );
         return core::ptr::null_mut();
     };
     let handle = unsafe { osi_queue_create(len, item_size) };
     if handle.is_null() {
         return core::ptr::null_mut();
     }
-    let wrapper = unsafe { box_up(WifiStaticQueue { handle, storage: core::ptr::null_mut() }) };
+    let wrapper = unsafe {
+        box_up(WifiStaticQueue {
+            handle,
+            storage: core::ptr::null_mut(),
+        })
+    };
     if wrapper.is_null() {
         unsafe { osi_queue_delete(handle) };
     }
@@ -967,12 +988,8 @@ static THREAD_SEMPHRS: kernel::smp::Spinlock<[Option<ThreadSemaphore>; THREAD_SE
 /// all, and a wait that should block would return immediately.
 unsafe extern "C" fn wifi_thread_semphr_get() -> *mut c_void {
     let me = dynobj::current_task();
-    let existing = THREAD_SEMPHRS.with(|t| {
-        t.iter()
-            .flatten()
-            .find(|s| s.task == me)
-            .map(|s| s.handle)
-    });
+    let existing =
+        THREAD_SEMPHRS.with(|t| t.iter().flatten().find(|s| s.task == me).map(|s| s.handle));
     if let Some(handle) = existing {
         return handle as *mut c_void;
     }
@@ -983,14 +1000,15 @@ unsafe extern "C" fn wifi_thread_semphr_get() -> *mut c_void {
         api::log_error!("radio: no heap for task {}'s thread semaphore", me);
         return core::ptr::null_mut();
     }
-    let stored = THREAD_SEMPHRS.with(|t| {
-        match t.iter_mut().find(|s| s.is_none()) {
-            Some(slot) => {
-                *slot = Some(ThreadSemaphore { task: me, handle: handle as usize });
-                true
-            }
-            None => false,
+    let stored = THREAD_SEMPHRS.with(|t| match t.iter_mut().find(|s| s.is_none()) {
+        Some(slot) => {
+            *slot = Some(ThreadSemaphore {
+                task: me,
+                handle: handle as usize,
+            });
+            true
         }
+        None => false,
     });
     if !stored {
         // Hand it over anyway rather than fail the call: the blob gets a
@@ -1148,10 +1166,11 @@ unsafe extern "C" fn wifi_reset_mac() {
 // "the PHY" and "the clocks both radios share" got respected here.
 //
 // The blob calls the common-clock pair *and* enable, and `crate::phy::enable`
-// turns the common bits on as well. That is not a bug and it matches IDF:
-// `esp_phy_enable` calls `esp_phy_common_clock_enable` itself. Setting a bit
-// that is already set costs nothing; the refcount that matters is the one on
-// registration, and it lives in `crate::phy`.
+// takes a common-clock reference as well. That is deliberate and matches IDF:
+// `esp_phy_enable` calls `esp_phy_common_clock_enable` itself, whose backend
+// reference-counts both owners. A raw clear here used to shut the PHY clocks
+// off while `esp_phy_enable` still owned them, leaving every PHY register at
+// zero and scans permanently empty.
 
 /// `_phy_enable`. Wi-Fi's clocks and the PHY behind them.
 ///
@@ -1190,17 +1209,16 @@ unsafe extern "C" fn phy_disable() {
 /// this rather than the one above.
 #[cfg(target_os = "none")]
 unsafe extern "C" fn phy_common_clock_enable() {
-    unsafe { soc_esp32::dport::radio_clock_enable(soc_esp32::dport::RADIO_CLK_COMMON) };
+    unsafe { crate::phy::common_clock_enable() };
 }
 
 /// `_phy_common_clock_disable`.
 ///
-/// Turns off bits the *other* radio may still need. Safe today because BLE is
-/// #66 and nothing else holds them; when both radios run, this wants the same
-/// treatment `crate::phy` gives registration.
+/// Releases the driver's temporary common-clock reference. The physical-layer
+/// owner and, later, Bluetooth hold independent references to the same gates.
 #[cfg(target_os = "none")]
 unsafe extern "C" fn phy_common_clock_disable() {
-    unsafe { soc_esp32::dport::radio_clock_disable(soc_esp32::dport::RADIO_CLK_COMMON) };
+    unsafe { crate::phy::common_clock_disable() };
 }
 
 /// `_phy_update_country_info`. **Exactly `ESP_OK`, and that is the whole of
@@ -1846,7 +1864,11 @@ mod by_name {
     /// # Safety
     /// `dst` must have room for `n` bytes.
     #[no_mangle]
-    pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    pub unsafe extern "C" fn strncpy(
+        dst: *mut c_char,
+        src: *const c_char,
+        n: usize,
+    ) -> *mut c_char {
         let mut i = 0;
         while i < n {
             let c = unsafe { *src.add(i) };
@@ -2081,25 +2103,49 @@ mod tests {
     /// is what [`the_only_gaps_left_are_the_ones_that_need_hardware`] is for.
     const NEEDS_HARDWARE: &[&str] = &[
         // The interrupt mask and the critical section: `INTENABLE` and `PS`.
-        "_ints_on", "_ints_off", "_wifi_int_disable", "_wifi_int_restore",
+        "_ints_on",
+        "_ints_off",
+        "_wifi_int_disable",
+        "_wifi_int_restore",
         // DPORT: clock gates, the MAC reset, and the erratum bracket.
-        "_wifi_clock_enable", "_wifi_clock_disable", "_wifi_reset_mac",
+        "_wifi_clock_enable",
+        "_wifi_clock_disable",
+        "_wifi_reset_mac",
         "_dport_access_stall_other_cpu_start_wrap",
         "_dport_access_stall_other_cpu_end_wrap",
         // RTC and APB, which are the same story.
-        "_wifi_rtc_enable_iso", "_wifi_rtc_disable_iso",
-        "_wifi_apb80m_request", "_wifi_apb80m_release",
+        "_wifi_rtc_enable_iso",
+        "_wifi_rtc_disable_iso",
+        "_wifi_apb80m_request",
+        "_wifi_apb80m_release",
         // The PHY, which is the RF blob itself.
-        "_phy_enable", "_phy_disable", "_phy_common_clock_enable",
-        "_phy_common_clock_disable", "_phy_update_country_info",
+        "_phy_enable",
+        "_phy_disable",
+        "_phy_common_clock_enable",
+        "_phy_common_clock_disable",
+        "_phy_update_country_info",
         // The hardware RNG, the eFuse MAC and the microsecond timer.
-        "_rand", "_random", "_get_random", "_read_mac", "_get_time",
+        "_rand",
+        "_random",
+        "_get_random",
+        "_read_mac",
+        "_get_time",
         // Logging through the blob's own varargs entry points.
-        "_log_write", "_log_writev",
+        "_log_write",
+        "_log_writev",
         // NVS, which is a flash region.
-        "_nvs_open", "_nvs_close", "_nvs_commit", "_nvs_erase_key",
-        "_nvs_set_i8", "_nvs_get_i8", "_nvs_set_u8", "_nvs_get_u8",
-        "_nvs_set_u16", "_nvs_get_u16", "_nvs_set_blob", "_nvs_get_blob",
+        "_nvs_open",
+        "_nvs_close",
+        "_nvs_commit",
+        "_nvs_erase_key",
+        "_nvs_set_i8",
+        "_nvs_get_i8",
+        "_nvs_set_u8",
+        "_nvs_get_u8",
+        "_nvs_set_u16",
+        "_nvs_get_u16",
+        "_nvs_set_blob",
+        "_nvs_get_blob",
     ];
 
     #[test]
@@ -2147,5 +2193,4 @@ mod tests {
         assert_eq!(map_level(99), Some(Level::Error));
         assert_eq!(map_level(u32::MAX), Some(Level::Error));
     }
-
 }

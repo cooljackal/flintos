@@ -981,6 +981,26 @@ unrelated.
 
 ---
 
+## Empty-scan resolution (2026-08-16)
+
+- **Measured root cause:** the two common-clock OSI callbacks performed raw
+  set/clear operations, while IDF reference-counts them. The driver's temporary
+  release cleared `RADIO_CLK_COMMON` although the PHY still held a reference;
+  all 21 PHY digital registers consequently read zero.
+- **Measured result:** reference-counting the common clocks brought up PHY
+  calibration, filled the receive path, and produced 10 AP records plus 58
+  radio interrupts on the same board that previously returned zero.
+- **Second required integration step:** IDF's public `esp_wifi_init` registers
+  supplicant callbacks after `esp_wifi_init_internal`. A scan-safe table is now
+  registered because station start and scan dereference it before association.
+  Security metadata remains deliberately marked unparsed until the real
+  supplicant and crypto functions are supplied.
+- **Startup order corrected:** station mode is selected before start, matching
+  IDF. The earlier NULL-start-STA order only appeared viable while PHY clocks
+  were off.
+
+---
+
 ## Non-goals
 
 - **Asymmetric-core packages.** Out of scope for the whole project.

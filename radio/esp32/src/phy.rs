@@ -10,7 +10,7 @@
 //!
 //! `esp_phy_enable` in `phy_init.c`, reduced to what FlintOS has:
 //!
-//! 1. Turn on the radio clocks (`DPORT_WIFI_CLK_EN`).
+//! 1. Take a reference to the shared radio clocks (`DPORT_WIFI_CLK_EN`).
 //! 2. First time only: load a stored calibration, hand it and the init data
 //!    to `register_chipv7_phy`, and store the result back if it was
 //!    recalculated.
@@ -120,10 +120,59 @@ extern "C" {
 /// twice.
 struct State {
     refs: u32,
+    common_clock_refs: u32,
     registered: bool,
 }
 
-static STATE: Spinlock<State> = Spinlock::new(State { refs: 0, registered: false });
+impl State {
+    fn acquire_common_clock(&mut self) -> bool {
+        let first = self.common_clock_refs == 0;
+        self.common_clock_refs = self.common_clock_refs.saturating_add(1);
+        first
+    }
+
+    fn release_common_clock(&mut self) -> bool {
+        if self.common_clock_refs == 0 {
+            return false;
+        }
+        self.common_clock_refs -= 1;
+        self.common_clock_refs == 0
+    }
+}
+
+static STATE: Spinlock<State> = Spinlock::new(State {
+    refs: 0,
+    common_clock_refs: 0,
+    registered: false,
+});
+
+/// Take one reference to the clock gates shared by Wi-Fi and Bluetooth.
+///
+/// esp-idf reference-counts `wifi_bt_common_module_enable`: the Wi-Fi driver
+/// takes a temporary reference of its own around the longer-lived reference
+/// held by `esp_phy_enable`. Treating either callback as a raw bit operation
+/// lets the temporary disable shut the PHY off while its owner is still live.
+///
+/// # Safety
+/// Writes DPORT on the first reference. Every call must be paired with
+/// [`common_clock_disable`].
+pub unsafe fn common_clock_enable() {
+    let first = STATE.with(State::acquire_common_clock);
+    if first {
+        unsafe { soc_esp32::dport::radio_clock_enable(soc_esp32::dport::RADIO_CLK_COMMON) };
+    }
+}
+
+/// Release one reference to the clock gates shared by Wi-Fi and Bluetooth.
+///
+/// # Safety
+/// Must match a prior [`common_clock_enable`].
+pub unsafe fn common_clock_disable() {
+    let last = STATE.with(State::release_common_clock);
+    if last {
+        unsafe { soc_esp32::dport::radio_clock_disable(soc_esp32::dport::RADIO_CLK_COMMON) };
+    }
+}
 
 /// Why the PHY could not be brought up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,9 +225,11 @@ pub unsafe fn version_str() -> &'static str {
 /// calibration is to survive a reboot -- without it this still works, and
 /// simply recalibrates every time.
 pub unsafe fn enable(mask: u32) -> Result<(), PhyError> {
-    // The clocks first: everything below touches PHY registers, and reaching
-    // them without a clock reads as the blob misbehaving.
-    unsafe { soc_esp32::dport::radio_clock_enable(soc_esp32::dport::RADIO_CLK_COMMON | mask) };
+    // The clocks first: everything below touches PHY registers. The common
+    // group is reference-counted separately because the blob also takes and
+    // releases temporary references through the OSI table.
+    unsafe { common_clock_enable() };
+    unsafe { soc_esp32::dport::radio_clock_enable(mask) };
 
     let (first, taking_it_up) = STATE.with(|s| {
         s.refs += 1;
@@ -220,6 +271,7 @@ pub unsafe fn enable(mask: u32) -> Result<(), PhyError> {
             // never opened.
             STATE.with(|s| s.refs = s.refs.saturating_sub(1));
             unsafe { soc_esp32::dport::radio_clock_disable(mask) };
+            unsafe { common_clock_disable() };
             Err(e)
         }
     }
@@ -239,11 +291,13 @@ unsafe fn register_once() -> Result<(), PhyError> {
     // of thing it exists for.
     let buf = unsafe { kernel::heap::alloc(CAL_DATA_LEN, 4) };
     if buf.is_null() {
-        api::log_error!("radio: no room for {} bytes of calibration data", CAL_DATA_LEN);
+        api::log_error!(
+            "radio: no room for {} bytes of calibration data",
+            CAL_DATA_LEN
+        );
         return Err(PhyError::OutOfMemory);
     }
-    let data: &mut [u8; CAL_DATA_LEN] =
-        unsafe { &mut *(buf as *mut [u8; CAL_DATA_LEN]) };
+    let data: &mut [u8; CAL_DATA_LEN] = unsafe { &mut *(buf as *mut [u8; CAL_DATA_LEN]) };
     data.fill(0);
 
     let result = unsafe { register_with(data, version, &mac) };
@@ -322,7 +376,10 @@ fn load_stored(out: &mut [u8; CAL_DATA_LEN], version: u32, mac: &[u8; 6]) -> boo
             false
         }
         Err(e) => {
-            api::log_warn!("radio: stored RF calibration rejected ({:?}); calibrating in full", e);
+            api::log_warn!(
+                "radio: stored RF calibration rejected ({:?}); calibrating in full",
+                e
+            );
             false
         }
     }
@@ -341,7 +398,10 @@ fn store(data: &[u8; CAL_DATA_LEN], version: u32, mac: &[u8; 6]) {
     );
     match r {
         Ok(()) => api::log_info!("radio: RF calibration stored"),
-        Err(e) => api::log_warn!("radio: could not store RF calibration ({:?}); it will be recalculated next boot", e),
+        Err(e) => api::log_warn!(
+            "radio: could not store RF calibration ({:?}); it will be recalculated next boot",
+            e
+        ),
     }
 }
 
@@ -364,10 +424,8 @@ pub unsafe fn disable(mask: u32) {
     });
     if last {
         unsafe { phy_close_rf() };
-        // The common clocks stay on. They are shared with the other radio,
-        // and this crate does not know whether it is up -- see
-        // `dport::radio_clock_disable`.
         unsafe { soc_esp32::dport::radio_clock_disable(mask) };
+        unsafe { common_clock_disable() };
     }
 }
 
@@ -411,6 +469,7 @@ mod tests {
         // four billion and leave the RF permanently open.
         STATE.with(|s| {
             s.refs = 0;
+            s.common_clock_refs = 0;
             s.registered = false;
         });
         let dropped = STATE.with(|s| {
@@ -418,5 +477,18 @@ mod tests {
             s.refs
         });
         assert_eq!(dropped, 0, "saturating, not wrapping");
+    }
+    #[test]
+    fn common_clock_only_transitions_on_first_and_last_reference() {
+        let mut state = State {
+            refs: 0,
+            common_clock_refs: 0,
+            registered: false,
+        };
+        assert!(state.acquire_common_clock());
+        assert!(!state.acquire_common_clock());
+        assert!(!state.release_common_clock());
+        assert!(state.release_common_clock());
+        assert!(!state.release_common_clock());
     }
 }

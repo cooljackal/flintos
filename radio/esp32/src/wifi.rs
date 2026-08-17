@@ -345,10 +345,94 @@ extern "C" {
     /// `esp_err_t esp_wifi_init_internal(const wifi_init_config_t *config)`,
     /// from `esp_private/wifi.h` at v4.4. Defined in `libnet80211.a`.
     fn esp_wifi_init_internal(config: *const WifiInitConfig) -> i32;
+    fn esp_wifi_register_wpa_cb_internal(callbacks: *mut WpaCallbacks) -> i32;
     fn esp_wifi_set_mode(mode: u32) -> i32;
     fn esp_wifi_start() -> i32;
     fn esp_wifi_stop() -> i32;
 }
+
+#[repr(C)]
+/// The v4.4 driver's station-security hooks.
+///
+/// The public `esp_wifi_init` wrapper calls `esp_supplicant_init` after the
+/// internal initializer and registers this table. Flint links only the driver
+/// archives, so it must still register a table even for passive scanning: the
+/// station-start and scan paths dereference it before authentication begins.
+/// These callbacks deliberately support discovery only. Association needs the
+/// real supplicant and crypto implementations.
+struct WpaCallbacks {
+    sta_init: Option<unsafe extern "C" fn() -> bool>,
+    sta_deinit: Option<unsafe extern "C" fn() -> bool>,
+    sta_connect: Option<unsafe extern "C" fn(*mut u8) -> i32>,
+    sta_disconnected: Option<unsafe extern "C" fn(u8)>,
+    sta_rx_eapol: Option<unsafe extern "C" fn(*mut u8, *mut u8, u32) -> i32>,
+    sta_in_4way_handshake: Option<unsafe extern "C" fn() -> bool>,
+    ap_init: Option<unsafe extern "C" fn() -> *mut c_void>,
+    ap_deinit: Option<unsafe extern "C" fn(*mut c_void) -> bool>,
+    ap_join: Option<unsafe extern "C" fn() -> bool>,
+    ap_remove: Option<unsafe extern "C" fn(*mut c_void) -> bool>,
+    ap_get_wpa_ie: Option<unsafe extern "C" fn(*mut u8) -> *mut u8>,
+    ap_rx_eapol: Option<unsafe extern "C" fn() -> bool>,
+    ap_get_peer_spp_msg: Option<unsafe extern "C" fn()>,
+    config_parse_string: Option<unsafe extern "C" fn(*const u8, *mut usize) -> *mut u8>,
+    parse_wpa_ie: Option<unsafe extern "C" fn(*const u8, usize, *mut c_void) -> i32>,
+    config_bss: Option<unsafe extern "C" fn(*mut u8) -> i32>,
+    michael_mic_failure: Option<unsafe extern "C" fn(u16) -> i32>,
+    wpa3_build_sae_msg: Option<unsafe extern "C" fn() -> *mut u8>,
+    wpa3_parse_sae_msg: Option<unsafe extern "C" fn() -> i32>,
+    sta_rx_mgmt: Option<unsafe extern "C" fn() -> i32>,
+    config_done: Option<unsafe extern "C" fn()>,
+    sta_profile_match: Option<unsafe extern "C" fn(*mut u8) -> bool>,
+}
+
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<WpaCallbacks>() == 22 * 4);
+
+unsafe extern "C" fn scan_sta_init() -> bool {
+    true
+}
+unsafe extern "C" fn scan_sta_deinit() -> bool {
+    true
+}
+unsafe extern "C" fn scan_sta_connect(_bssid: *mut u8) -> i32 {
+    -1
+}
+unsafe extern "C" fn scan_sta_disconnected(_reason: u8) {}
+unsafe extern "C" fn scan_sta_rx_eapol(_src: *mut u8, _buf: *mut u8, _len: u32) -> i32 {
+    -1
+}
+unsafe extern "C" fn scan_sta_in_4way_handshake() -> bool {
+    false
+}
+unsafe extern "C" fn scan_config_done() {}
+unsafe extern "C" fn scan_sta_profile_match(_bssid: *mut u8) -> bool {
+    false
+}
+
+static mut OPEN_SCAN_WPA_CALLBACKS: WpaCallbacks = WpaCallbacks {
+    sta_init: Some(scan_sta_init),
+    sta_deinit: Some(scan_sta_deinit),
+    sta_connect: Some(scan_sta_connect),
+    sta_disconnected: Some(scan_sta_disconnected),
+    sta_rx_eapol: Some(scan_sta_rx_eapol),
+    sta_in_4way_handshake: Some(scan_sta_in_4way_handshake),
+    ap_init: None,
+    ap_deinit: None,
+    ap_join: None,
+    ap_remove: None,
+    ap_get_wpa_ie: None,
+    ap_rx_eapol: None,
+    ap_get_peer_spp_msg: None,
+    config_parse_string: None,
+    parse_wpa_ie: None,
+    config_bss: None,
+    michael_mic_failure: None,
+    wpa3_build_sae_msg: None,
+    wpa3_parse_sae_msg: None,
+    sta_rx_mgmt: None,
+    config_done: Some(scan_config_done),
+    sta_profile_match: Some(scan_sta_profile_match),
+};
 
 /// `esp_wifi_set_mode`. One of [`mode`].
 ///
@@ -436,7 +520,15 @@ pub unsafe fn init() -> i32 {
     // the inline `wpa_crypto_funcs` out of it during the call. `osi_funcs` is
     // the one field it keeps, and that now points at a `static`.
     let config = WifiInitConfig::defaults(unsafe { &*table });
-    unsafe { esp_wifi_init_internal(&config) }
+    let result = unsafe { esp_wifi_init_internal(&config) };
+    if result != 0 {
+        return result;
+    }
+    // `esp_wifi_init_internal` is only the middle of IDF's public initializer.
+    // Its next mandatory step is `esp_supplicant_init`, which installs a
+    // non-null callback table. The scan-only table keeps those unconditional
+    // driver calls valid without pretending association is implemented.
+    unsafe { esp_wifi_register_wpa_cb_internal(core::ptr::addr_of_mut!(OPEN_SCAN_WPA_CALLBACKS)) }
 }
 
 /// The table the driver was given, for a caller that wants to check it.
