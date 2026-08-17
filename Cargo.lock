@@ -59,6 +59,10 @@ name = "build"
 version = "0.1.0"
 
 [[package]]
+name = "crypto"
+version = "0.1.0"
+
+[[package]]
 name = "demo"
 version = "0.1.0"
 dependencies = [

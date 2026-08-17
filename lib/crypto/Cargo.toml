@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "crypto"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "First-party no_std crypto primitives for the WPA2/WPA3 supplicant"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No dependencies, by policy and by design. These are the primitives the radio
+# adapter's `wpa_crypto_funcs` table is built from, and esp-idf gets them from
+# mbedTLS backed by the ESP32's SHA and AES accelerators. The software cores
+# here are the reference and the fallback; a later hardware-backed core swaps
+# in behind the same trait without any composition (HMAC, PBKDF2, CCM) knowing.
+[dependencies]
