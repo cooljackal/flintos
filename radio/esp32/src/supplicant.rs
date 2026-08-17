@@ -206,6 +206,7 @@ unsafe extern "C" fn sta_connect(bssid: *mut u8) -> i32 {
     // the blob, which may arm timers of its own.
     let mut ie = wpa::keydata::RSN_IE_WPA2_PSK_CCMP;
     unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 1) };
+    api::log_info!("[wpa] sta_connect: PMK derived, RSN assoc IE installed");
     0
 }
 
@@ -225,16 +226,18 @@ unsafe extern "C" fn sta_rx_eapol(_src: *mut u8, buf: *mut u8, len: u32) -> i32 
         return -1;
     }
     let frame = unsafe { core::slice::from_raw_parts(buf, len as usize) };
+    api::log_info!("[wpa] rx eapol: {} bytes", len);
 
     // A place to copy the outgoing frame to, so the supplicant's borrow of its
     // own buffer ends before we transmit. Handshake frames are ~120 bytes.
     let mut tx = [0u8; 300];
     let mut tx_len = 0usize;
     let mut dest = [0u8; 6];
-    let mut newly_complete = None;
+    let mut label = "ignored";
 
     STATE.with(|st| {
         let Some(sup) = st.sup.as_mut() else {
+            label = "no supplicant";
             return;
         };
         dest = st.bssid;
@@ -242,9 +245,11 @@ unsafe extern "C" fn sta_rx_eapol(_src: *mut u8, buf: *mut u8, len: u32) -> i32 
         match sup.on_eapol(frame, &mut rng) {
             Action::None => {}
             Action::Send(reply) => {
+                label = "sent reply";
                 tx_len = frame_into(&mut tx, &dest, &st.own_mac, reply);
             }
             Action::Complete { reply, tk, gtk } => {
+                label = "complete; msg4 sent";
                 tx_len = frame_into(&mut tx, &dest, &st.own_mac, reply);
                 // Hold the keys until message 4 has actually been sent.
                 st.pending = Some(PendingKeys {
@@ -253,7 +258,6 @@ unsafe extern "C" fn sta_rx_eapol(_src: *mut u8, buf: *mut u8, len: u32) -> i32 
                     gtk_len: gtk.len,
                     gtk_id: gtk.key_id,
                 });
-                newly_complete = Some(());
             }
         }
     });
@@ -261,7 +265,7 @@ unsafe extern "C" fn sta_rx_eapol(_src: *mut u8, buf: *mut u8, len: u32) -> i32 
     if tx_len > 0 {
         unsafe { esp_wifi_internal_tx(IF_STA, tx.as_ptr() as *const c_void, tx_len as u16) };
     }
-    let _ = newly_complete; // key install happens in the tx-done callback
+    api::log_info!("[wpa] eapol handled: {}", label);
     1
 }
 
@@ -284,6 +288,7 @@ unsafe extern "C" fn eapol_tx_done(_arg: *mut c_void) {
     let Some(keys) = keys else {
         return; // message 2's completion — nothing pending
     };
+    api::log_info!("[wpa] eapol tx done: installing PTK + GTK, auth done");
     let (bssid, _own) = STATE.with(|st| (st.bssid, st.own_mac));
 
     // Pairwise key (PTK's TK): AES-CCMP, keyed to the AP, index 0, TX.
