@@ -60,12 +60,6 @@ extern "C" {
     /// uint8_t flag)`. Installs an application information element into the
     /// frames the blob sends — here the RSN element for the association request.
     fn esp_wifi_set_appie_internal(ty: u8, ie: *mut u8, len: u16, flag: u8) -> i32;
-    /// `uint8_t esp_wifi_sta_get_prof_authmode_internal(void)`. The auth mode
-    /// the blob settled on for this connection — an *internal* enum value.
-    fn esp_wifi_sta_get_prof_authmode_internal() -> u8;
-    /// `struct wifi_appie *esp_wifi_get_appie_internal(uint8_t type)`. Reads an
-    /// installed application IE back; the struct is `{ u16 len; u8 data[] }`.
-    fn esp_wifi_get_appie_internal(ty: u8) -> *const u8;
 }
 
 /// `WIFI_APPIE_RSN` — the RSN element carried in the (re)association request.
@@ -224,27 +218,10 @@ unsafe extern "C" fn sta_connect(bssid: *mut u8) -> i32 {
     let mut ie = wpa::keydata::RSN_IE_WPA2_PSK_CCMP;
     let set_rc =
         unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 0) };
-    api::log_info!("[wpa] sta_connect: assoc IE install rc={}", set_rc);
-
-    // Diagnostic: read the IE back out of slot 4 and confirm the blob retained
-    // exactly the 22 bytes we installed, before it builds the association. The
-    // returned `struct wifi_appie` is { u16 len; u8 data[] }.
-    let stored = unsafe { esp_wifi_get_appie_internal(WIFI_APPIE_RSN) };
-    if stored.is_null() {
-        api::log_warn!("[wpa] assoc IE slot 4 empty after install");
-    } else {
-        let len = unsafe { stored.cast::<u16>().read_unaligned() } as usize;
-        let data = unsafe { stored.cast::<u8>().add(2) };
-        let got = unsafe { core::slice::from_raw_parts(data, len.min(ie.len())) };
-        let matches = len == ie.len() && got == &ie[..];
-        api::log_info!("[wpa] assoc IE stored len={} matches={}", len, matches);
+    if set_rc != 0 {
+        api::log_error!("[wpa] assoc IE install failed: {}", set_rc);
+        return -1;
     }
-
-    // Diagnostic: the auth mode the blob settled on. This is the *internal*
-    // enum (esp_wifi_driver.h), not the public wifi_auth_mode_t: WPA2_AUTH_PSK
-    // is 5, WPA3_AUTH_PSK (SAE) is 9. It should read 5 now the parser hides SAE.
-    let authmode = unsafe { esp_wifi_sta_get_prof_authmode_internal() };
-    api::log_info!("[wpa] authmode={}", authmode);
     0
 }
 
@@ -264,18 +241,15 @@ unsafe extern "C" fn sta_rx_eapol(_src: *mut u8, buf: *mut u8, len: u32) -> i32 
         return -1;
     }
     let frame = unsafe { core::slice::from_raw_parts(buf, len as usize) };
-    api::log_info!("[wpa] rx eapol: {} bytes", len);
 
     // A place to copy the outgoing frame to, so the supplicant's borrow of its
     // own buffer ends before we transmit. Handshake frames are ~120 bytes.
     let mut tx = [0u8; 300];
     let mut tx_len = 0usize;
     let mut dest = [0u8; 6];
-    let mut label = "ignored";
 
     STATE.with(|st| {
         let Some(sup) = st.sup.as_mut() else {
-            label = "no supplicant";
             return;
         };
         dest = st.bssid;
@@ -283,11 +257,9 @@ unsafe extern "C" fn sta_rx_eapol(_src: *mut u8, buf: *mut u8, len: u32) -> i32 
         match sup.on_eapol(frame, &mut rng) {
             Action::None => {}
             Action::Send(reply) => {
-                label = "sent reply";
                 tx_len = frame_into(&mut tx, &dest, &st.own_mac, reply);
             }
             Action::Complete { reply, tk, gtk } => {
-                label = "complete; msg4 sent";
                 tx_len = frame_into(&mut tx, &dest, &st.own_mac, reply);
                 // Hold the keys until message 4 has actually been sent.
                 st.pending = Some(PendingKeys {
@@ -303,7 +275,6 @@ unsafe extern "C" fn sta_rx_eapol(_src: *mut u8, buf: *mut u8, len: u32) -> i32 
     if tx_len > 0 {
         unsafe { esp_wifi_internal_tx(IF_STA, tx.as_ptr() as *const c_void, tx_len as u16) };
     }
-    api::log_info!("[wpa] eapol handled: {}", label);
     1
 }
 
@@ -326,7 +297,6 @@ unsafe extern "C" fn eapol_tx_done(_arg: *mut c_void) {
     let Some(keys) = keys else {
         return; // message 2's completion — nothing pending
     };
-    api::log_info!("[wpa] eapol tx done: installing PTK + GTK, auth done");
     let (bssid, _own) = STATE.with(|st| (st.bssid, st.own_mac));
 
     // The receive sequence counter. A freshly installed key starts at zero, so
@@ -456,19 +426,6 @@ unsafe extern "C" fn parse_wpa_ie(wpa_ie: *const u8, wpa_ie_len: usize, data: *m
     if key_mgmt == 0 {
         return -1;
     }
-
-    // Diagnostic: the AP's key management (raw vs the masked value we report)
-    // and RSN capabilities. caps bit 7 (0x0080) is MFPC (PMF capable), bit 6
-    // (0x0040) is MFPR (PMF required) — the pair that decides whether a non-PMF
-    // WPA2 station can associate at all.
-    api::log_info!(
-        "[wpa] parse_wpa_ie: km={:#06x}->{:#06x} pair={} grp={} caps={:#06x}",
-        info.key_mgmt,
-        key_mgmt,
-        info.pairwise_cipher,
-        info.group_cipher,
-        info.capabilities
-    );
 
     // Only now, with the element fully validated, populate the struct.
     let out = data.cast::<WifiWpaIe>();

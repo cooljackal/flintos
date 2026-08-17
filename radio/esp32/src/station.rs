@@ -276,9 +276,6 @@ fn bridge(base: *const c_char, id: i32, data: *mut core::ffi::c_void, len: usize
     if !core::ptr::eq(base, wifi::WIFI_EVENT.0) {
         return;
     }
-    // Diagnostic: the raw event id, so the 802.11 progression (does association
-    // ever complete?) is visible without inferring it from the mapped events.
-    api::log_info!("[wifi] event id={} len={}", id, len);
 
     let event = match id {
         wifi::event::SCAN_DONE => {
@@ -297,8 +294,6 @@ fn bridge(base: *const c_char, id: i32, data: *mut core::ffi::c_void, len: usize
         wifi::event::STA_DISCONNECTED if len >= core::mem::size_of::<StaDisconnected>() => {
             let e = unsafe { &*(data as *const StaDisconnected) };
             STATE.store(ST_DISCONNECTED, Ordering::SeqCst);
-            // Diagnostic: the raw reason code, finer than the mapped variant.
-            api::log_warn!("[wifi] disconnect reason code {}", e.reason);
             Some(StationEvent::Disconnected {
                 reason: reason_from_code(e.reason),
             })
