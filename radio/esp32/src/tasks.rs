@@ -531,9 +531,7 @@ mod tests {
         assert_eq!(affinity_for(2, true), Affinity::Any);
     }
 
-    use super::*;
-
-    #[test]
+        #[test]
     fn there_is_one_trampoline_per_slot() {
         // Written out by hand, so the thing that goes wrong is a duplicated
         // index -- `trampoline::<3>` twice would run two blob tasks from one

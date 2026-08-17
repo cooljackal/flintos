@@ -147,14 +147,6 @@ static TRAMPOLINES: [fn(); CPU_INTS] = [
 
 /// `_set_isr(n, f, arg)` — install `f` as the handler for CPU interrupt `n`.
 ///
-/// esp-idf's `xt_set_interrupt_handler`. Installing is separate from routing:
-/// the blob calls this first and `_set_intr` after, or the other way round,
-/// and neither order may lose the other's work. So this only records the
-/// handler, and [`set_intr`] does the routing and unmasking.
-///
-/// # Safety
-/// `f` is called in trap context with `arg`. Called by the blob.
-#[no_mangle]
 /// The handler the driver installed for CPU interrupt `n`, as an address.
 ///
 /// Zero if none. The point of comparison: the driver's own MAC handler is
@@ -172,6 +164,14 @@ pub fn installed_handler(n: usize) -> usize {
     })
 }
 
+/// esp-idf's `xt_set_interrupt_handler`. Installing is separate from routing:
+/// the blob calls this first and `_set_intr` after, or the other way round,
+/// and neither order may lose the other's work. So this only records the
+/// handler, and [`set_intr`] does the routing and unmasking.
+///
+/// # Safety
+/// `f` is called in trap context with `arg`. Called by the blob.
+#[no_mangle]
 pub unsafe extern "C" fn set_isr(n: i32, f: *mut c_void, arg: *mut c_void) {
     let Ok(idx) = usize::try_from(n) else {
         api::log_error!("radio: _set_isr with a negative interrupt number {}", n);

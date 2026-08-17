@@ -572,9 +572,8 @@ impl EventGroup {
             if got.is_some() {
                 return got;
             }
-            if retry_remaining(deadline).is_none() {
-                return None;
-            }
+            // Out of time is a timeout, and this returns `None` for one.
+            retry_remaining(deadline)?;
         }
     }
 }
