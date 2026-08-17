@@ -419,13 +419,15 @@ static mut CALLBACKS: WpaCallbacks = WpaCallbacks {
     wpa3_parse_sae_msg: None,
     sta_rx_mgmt: None,
     config_done: Some(config_done),
-    sta_profile_match: Some(sta_profile_match),
+    // NULL, as esp-idf's non-roaming, non-MBO build leaves it (esp_wpa_main.c
+    // and esp_common.c both). A stub returning false here reads to the blob as
+    // "this candidate does not match my profile" and rejects every scanned AP —
+    // a visible, correctly classified network then fails connect with
+    // NoApFound before the handshake is ever reached.
+    sta_profile_match: None,
 };
 
 unsafe extern "C" fn config_done() {}
-unsafe extern "C" fn sta_profile_match(_bssid: *mut u8) -> bool {
-    false
-}
 
 /// Register the supplicant's callback table with the blob. Called once, from
 /// [`crate::wifi::init`], in place of the old scan-only stubs.
