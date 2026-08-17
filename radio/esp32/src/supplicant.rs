@@ -60,6 +60,9 @@ extern "C" {
     /// uint8_t flag)`. Installs an application information element into the
     /// frames the blob sends — here the RSN element for the association request.
     fn esp_wifi_set_appie_internal(ty: u8, ie: *mut u8, len: u16, flag: u8) -> i32;
+    /// `uint8_t esp_wifi_sta_get_prof_authmode_internal(void)`. The auth mode
+    /// the blob settled on for this connection (a `wifi_auth_mode_t`).
+    fn esp_wifi_sta_get_prof_authmode_internal() -> u8;
 }
 
 /// `WIFI_APPIE_RSN` — the RSN element carried in the (re)association request.
@@ -206,7 +209,14 @@ unsafe extern "C" fn sta_connect(bssid: *mut u8) -> i32 {
     // the blob, which may arm timers of its own.
     let mut ie = wpa::keydata::RSN_IE_WPA2_PSK_CCMP;
     unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 1) };
-    api::log_info!("[wpa] sta_connect: PMK derived, RSN assoc IE installed");
+    // Diagnostic: the auth mode the blob chose. It should be WIFI_AUTH_WPA2_PSK
+    // (3) now the parser hides SAE — WIFI_AUTH_WPA2_WPA3_PSK (7) would mean the
+    // blob still sees transition mode and may take the WPA3 path.
+    let authmode = unsafe { esp_wifi_sta_get_prof_authmode_internal() };
+    api::log_info!(
+        "[wpa] sta_connect: PMK derived, RSN assoc IE installed, authmode={}",
+        authmode
+    );
     0
 }
 
@@ -396,12 +406,28 @@ unsafe extern "C" fn parse_wpa_ie(wpa_ie: *const u8, wpa_ie_len: usize, data: *m
     let Some(info) = rsn::parse(ie) else {
         return -1;
     };
-    // Diagnostic: the AP's key management and RSN capabilities. caps bit 7
-    // (0x0080) is MFPC (PMF capable), bit 6 (0x0040) is MFPR (PMF required) —
-    // the pair that decides whether a non-PMF WPA2 station can associate at all.
+
+    // Advertise to the blob only the AKMs this build can actually run. The
+    // parser faithfully reports what the AP offers — on a WPA2/WPA3-transitional
+    // network that is PSK|SAE — but we implement WPA2-PSK only. Handing the blob
+    // SAE lets it select the WPA3 side of transition mode, whose authentication
+    // we cannot complete; masking to PSK keeps the connection on the WPA2 path.
+    // An AP with no AKM we support is unusable to us: report it unparsed so it
+    // is not offered as connectable.
+    const SUPPORTED_AKM: u32 = rsn::akm::PSK;
+    let key_mgmt = info.key_mgmt & SUPPORTED_AKM;
+    if key_mgmt == 0 {
+        return -1;
+    }
+
+    // Diagnostic: the AP's key management (raw vs the masked value we report)
+    // and RSN capabilities. caps bit 7 (0x0080) is MFPC (PMF capable), bit 6
+    // (0x0040) is MFPR (PMF required) — the pair that decides whether a non-PMF
+    // WPA2 station can associate at all.
     api::log_info!(
-        "[wpa] parse_wpa_ie: km={:#06x} pair={} grp={} caps={:#06x}",
+        "[wpa] parse_wpa_ie: km={:#06x}->{:#06x} pair={} grp={} caps={:#06x}",
         info.key_mgmt,
+        key_mgmt,
         info.pairwise_cipher,
         info.group_cipher,
         info.capabilities
@@ -417,7 +443,7 @@ unsafe extern "C" fn parse_wpa_ie(wpa_ie: *const u8, wpa_ie_len: usize, data: *m
         (*out).proto = info.proto as i32;
         (*out).pairwise_cipher = info.pairwise_cipher as i32;
         (*out).group_cipher = info.group_cipher as i32;
-        (*out).key_mgmt = info.key_mgmt as i32;
+        (*out).key_mgmt = key_mgmt as i32;
         (*out).capabilities = info.capabilities as i32;
         (*out).num_pmkid = info.num_pmkid;
         (*out).pmkid = pmkid;
