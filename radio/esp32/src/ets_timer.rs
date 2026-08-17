@@ -66,10 +66,14 @@ use kernel::smp::Spinlock;
 
 /// Timers the blob may have at once.
 ///
-/// esp-idf's Wi-Fi driver uses a handful; 16 is slack over what has been
-/// observed rather than a measured bound, and running out is reported rather
-/// than silently dropping a timer.
-pub const MAX_TIMERS: usize = 16;
+/// The ROM's own `ets_timer` is an unbounded linked list, so this is a static
+/// stand-in, not a value the reference fixes. 16 covered scanning — but a
+/// connect arms more (auth and association timeouts on top of the scan and
+/// connection-management timers), and overran 16 by two at the association
+/// step, failing with `AssocFailed`. 32 is headroom over that; [`note_peak`]
+/// logs the real high-water mark so the number stays honest, and running out
+/// is still reported rather than silently dropping a timer.
+pub const MAX_TIMERS: usize = 32;
 
 /// One armed or idle timer.
 ///
@@ -93,6 +97,37 @@ impl Slot {
 }
 
 static TIMERS: Spinlock<[Slot; MAX_TIMERS]> = Spinlock::new([Slot::FREE; MAX_TIMERS]);
+
+/// The most timers seen live at once, for [`note_peak`].
+static HIGH_WATER: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Report a new high-water mark of live timers, once, when it is set.
+///
+/// [`MAX_TIMERS`] is a guess at the blob's peak; this keeps the guess honest.
+/// It reports two counts because they answer different questions: *live* is
+/// every slot the blob holds (armed or not — a disarmed timer keeps its slot
+/// until `_timer_done`), and that is what the cap must cover; *armed* is how
+/// many are actually counting down. A live count that settles says how much
+/// headroom the cap has; one that climbs without bound, while armed stays
+/// small, is the signature of a timer abandoned without `_timer_done` — a slot
+/// leak — rather than a cap set too low. Called off the arm/setfn path only, so
+/// the extra lock never lands in a callback or a tick.
+fn note_peak() {
+    use core::sync::atomic::Ordering;
+    let (live, armed) = TIMERS.with(|t| {
+        let live = t.iter().filter(|s| s.handle != 0).count();
+        let armed = t.iter().filter(|s| s.handle != 0 && s.fire_at_us != 0).count();
+        (live, armed)
+    });
+    if live > HIGH_WATER.fetch_max(live, Ordering::Relaxed) {
+        api::log_info!(
+            "radio: timers high-water {} of {} ({} armed)",
+            live,
+            MAX_TIMERS,
+            armed
+        );
+    }
+}
 
 /// Find the slot for `handle`, or claim a free one.
 fn slot_for(table: &mut [Slot; MAX_TIMERS], handle: usize) -> Option<usize> {
@@ -314,6 +349,7 @@ pub unsafe extern "C" fn timer_setfn(timer: *mut c_void, f: *mut c_void, arg: *m
         api::log_error!("radio: no free timer slot; MAX_TIMERS is {}", MAX_TIMERS);
         return;
     }
+    note_peak();
     kick();
 }
 
@@ -336,6 +372,7 @@ fn arm(handle: usize, delay_us: u64, repeat: bool, what: &str) {
         api::log_error!("radio: no free timer slot; MAX_TIMERS is {}", MAX_TIMERS);
         return;
     }
+    note_peak();
     kick();
 }
 
