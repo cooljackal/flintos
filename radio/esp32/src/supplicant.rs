@@ -61,8 +61,11 @@ extern "C" {
     /// frames the blob sends — here the RSN element for the association request.
     fn esp_wifi_set_appie_internal(ty: u8, ie: *mut u8, len: u16, flag: u8) -> i32;
     /// `uint8_t esp_wifi_sta_get_prof_authmode_internal(void)`. The auth mode
-    /// the blob settled on for this connection (a `wifi_auth_mode_t`).
+    /// the blob settled on for this connection — an *internal* enum value.
     fn esp_wifi_sta_get_prof_authmode_internal() -> u8;
+    /// `struct wifi_appie *esp_wifi_get_appie_internal(uint8_t type)`. Reads an
+    /// installed application IE back; the struct is `{ u16 len; u8 data[] }`.
+    fn esp_wifi_get_appie_internal(ty: u8) -> *const u8;
 }
 
 /// `WIFI_APPIE_RSN` — the RSN element carried in the (re)association request.
@@ -99,12 +102,13 @@ struct SupState {
     /// Keys derived on message 3, waiting for message 4 to leave before they
     /// are installed. `None` until then.
     pending: Option<PendingKeys>,
-    /// The credentials the application staged, for `sta_connect` to derive the
-    /// PMK from. SSID length in `ssid_len`.
-    ssid: [u8; 32],
-    ssid_len: usize,
-    passphrase: [u8; 64],
-    pass_len: usize,
+    /// The pre-shared key, derived from the passphrase and SSID by the
+    /// application in [`stage_credentials`] — on its own generous stack, once,
+    /// rather than in `sta_connect` on the blob's tight Wi-Fi task (which the
+    /// blob calls twice per connect). `pmk_ready` gates its use; the passphrase
+    /// itself is never kept here.
+    pmk: [u8; 32],
+    pmk_ready: bool,
 }
 
 /// The two keys to install once message 4 is out.
@@ -121,23 +125,19 @@ static STATE: Spinlock<SupState> = Spinlock::new(SupState {
     bssid: [0; 6],
     own_mac: [0; 6],
     pending: None,
-    ssid: [0; 32],
-    ssid_len: 0,
-    passphrase: [0; 64],
-    pass_len: 0,
+    pmk: [0; 32],
+    pmk_ready: false,
 });
 
-/// Stage the network the application is about to connect to, so `sta_connect`
-/// can derive the PMK when the blob calls it. Set by
-/// [`crate::station`]'s `connect`.
+/// Stage the network the application is about to connect to. Derives the PMK
+/// here — on the caller's (application) stack, where PBKDF2's 4096 iterations
+/// have room — and keeps only the 32-byte result, so `sta_connect` need not run
+/// it on the blob's Wi-Fi task. Called by [`crate::station`]'s `connect`.
 pub(crate) fn stage_credentials(ssid: &[u8], passphrase: &[u8]) {
+    let pmk = crypto::wpa_psk(passphrase, ssid);
     STATE.with(|st| {
-        st.ssid = [0; 32];
-        st.ssid_len = ssid.len().min(32);
-        st.ssid[..st.ssid_len].copy_from_slice(&ssid[..st.ssid_len]);
-        st.passphrase = [0; 64];
-        st.pass_len = passphrase.len().min(64);
-        st.passphrase[..st.pass_len].copy_from_slice(&passphrase[..st.pass_len]);
+        st.pmk = pmk;
+        st.pmk_ready = true;
     });
 }
 
@@ -190,14 +190,20 @@ unsafe extern "C" fn sta_connect(bssid: *mut u8) -> i32 {
         return -1;
     }
 
-    STATE.with(|st| {
-        // Derive the PMK from the staged passphrase and SSID.
-        let pmk = crypto::wpa_psk(&st.passphrase[..st.pass_len], &st.ssid[..st.ssid_len]);
+    let ready = STATE.with(|st| {
+        if !st.pmk_ready {
+            return false;
+        }
         st.bssid = aa;
         st.own_mac = own;
         st.pending = None;
-        st.sup = Some(Supplicant::new(pmk, aa, own));
+        st.sup = Some(Supplicant::new(st.pmk, aa, own));
+        true
     });
+    if !ready {
+        api::log_error!("[wpa] sta_connect with no PMK staged");
+        return -1;
+    }
 
     // Install the station's RSN IE for the association request — the same
     // element the handshake presents in message 2. esp-idf does this in
@@ -208,12 +214,27 @@ unsafe extern "C" fn sta_connect(bssid: *mut u8) -> i32 {
     // this call), so a stack copy suffices. Done outside the lock: it calls into
     // the blob, which may arm timers of its own.
     let mut ie = wpa::keydata::RSN_IE_WPA2_PSK_CCMP;
-    unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 1) };
-    api::log_info!("[wpa] sta_connect: PMK derived, RSN assoc IE installed");
-    // Diagnostic on its own short line (the combined message overran the log
-    // buffer and truncated). It should read WIFI_AUTH_WPA2_PSK (3) now the
-    // parser hides SAE; WIFI_AUTH_WPA2_WPA3_PSK (7) would mean the blob still
-    // sees transition mode.
+    let set_rc =
+        unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 1) };
+    api::log_info!("[wpa] sta_connect: assoc IE install rc={}", set_rc);
+
+    // Diagnostic: read the IE back out of slot 4 and confirm the blob retained
+    // exactly the 22 bytes we installed, before it builds the association. The
+    // returned `struct wifi_appie` is { u16 len; u8 data[] }.
+    let stored = unsafe { esp_wifi_get_appie_internal(WIFI_APPIE_RSN) };
+    if stored.is_null() {
+        api::log_warn!("[wpa] assoc IE slot 4 empty after install");
+    } else {
+        let len = unsafe { stored.cast::<u16>().read_unaligned() } as usize;
+        let data = unsafe { stored.cast::<u8>().add(2) };
+        let got = unsafe { core::slice::from_raw_parts(data, len.min(ie.len())) };
+        let matches = len == ie.len() && got == &ie[..];
+        api::log_info!("[wpa] assoc IE stored len={} matches={}", len, matches);
+    }
+
+    // Diagnostic: the auth mode the blob settled on. This is the *internal*
+    // enum (esp_wifi_driver.h), not the public wifi_auth_mode_t: WPA2_AUTH_PSK
+    // is 5, WPA3_AUTH_PSK (SAE) is 9. It should read 5 now the parser hides SAE.
     let authmode = unsafe { esp_wifi_sta_get_prof_authmode_internal() };
     api::log_info!("[wpa] authmode={}", authmode);
     0
