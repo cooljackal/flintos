@@ -58,6 +58,7 @@ members = [
     "apps/smp",
     "apps/spidma",
     "apps/flashprobe",
+    "apps/wificonnect",
     "apps/radioprobe",
     "apps/wifiscan",
 

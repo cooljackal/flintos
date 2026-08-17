@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "wificonnect"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Joins a WPA2 network with the first-party Rust supplicant and reports the result"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../kernel", default-features = false }
+api = { path = "../../api" }
+hal = { path = "../../hal" }
+soc-esp32 = { path = "../../soc/esp32" }
+# The reason this application exists: the generalized station interface and the
+# ESP32 backend that drives the first-party supplicant.
+radio-esp32 = { path = "../../radio/esp32" }
+
+[build-dependencies]
+build = { path = "../../tools/build" }
+
+[features]
+default = ["debug-level-1"]
+
+# See wifiscan: link Espressif's archives. Off by default; the useful build is
+#     FLINT_WIFI_SSID=.. FLINT_WIFI_PASS=.. make flash APP=wificonnect BOARD=.. EXTRA_FEATURES=blobs
+blobs = []
+
+board-m5-atom-lite = ["kernel/board-m5-atom-lite", "radio-esp32/board-m5-atom-lite"]
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix", "radio-esp32/board-m5-atom-matrix"]
+board-esp32-wrover = ["kernel/board-esp32-wrover", "radio-esp32/board-esp32-wrover"]
+board-esp32-devkitc = ["kernel/board-esp32-devkitc", "radio-esp32/board-esp32-devkitc"]
+
+debug-level-0 = ["kernel/debug-level-0"]
+debug-level-1 = ["kernel/debug-level-1"]
+debug-level-2 = ["kernel/debug-level-2"]
+debug-level-3 = ["kernel/debug-level-3"]
+
+radio-wifi = ["kernel/radio-wifi"]
+radio-bt = []
+radio-ble = ["radio-bt", "kernel/radio-ble"]
+radio-bt-classic = ["radio-bt", "kernel/radio-bt-classic"]

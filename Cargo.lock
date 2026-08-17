@@ -340,6 +340,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wificonnect"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "hal",
+ "kernel",
+ "radio-esp32",
+ "soc-esp32",
+]
+
+[[package]]
 name = "wifiscan"
 version = "0.1.0"
 dependencies = [
