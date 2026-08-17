@@ -30,6 +30,10 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod hmac;
+pub mod sha1;
 pub mod sha256;
 
+pub use hmac::{hmac_sha1, hmac_sha256};
+pub use sha1::Sha1;
 pub use sha256::Sha256;
