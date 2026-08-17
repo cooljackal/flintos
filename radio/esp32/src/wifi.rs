@@ -349,6 +349,15 @@ extern "C" {
     fn esp_wifi_set_mode(mode: u32) -> i32;
     fn esp_wifi_start() -> i32;
     fn esp_wifi_stop() -> i32;
+
+    /// `esp_err_t esp_wifi_set_config(wifi_interface_t, wifi_config_t*)`.
+    /// The station's target network. `iface` is `WIFI_IF_STA` (0).
+    pub(crate) fn esp_wifi_set_config(iface: u32, conf: *const crate::station::StaConfig) -> i32;
+    /// `esp_err_t esp_wifi_connect(void)`. Begins association; the outcome
+    /// arrives as [`event::STA_CONNECTED`] or [`event::STA_DISCONNECTED`].
+    pub(crate) fn esp_wifi_connect() -> i32;
+    /// `esp_err_t esp_wifi_disconnect(void)`.
+    pub(crate) fn esp_wifi_disconnect() -> i32;
 }
 
 #[repr(C)]

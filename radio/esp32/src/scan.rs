@@ -40,6 +40,17 @@ pub struct Country {
     pub policy: u32,
 }
 
+impl Country {
+    /// An all-zero country, for [`ApRecord::ZEROED`].
+    pub const ZEROED: Self = Country {
+        cc: [0; 3],
+        schan: 0,
+        nchan: 0,
+        max_tx_power: 0,
+        policy: 0,
+    };
+}
+
 /// `wifi_ap_record_t`. One access point, as the driver saw it.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -70,6 +81,23 @@ pub struct ApRecord {
 }
 
 impl ApRecord {
+    /// An all-zero record, for a caller allocating a buffer to scan into. The
+    /// driver overwrites every field it reports, so the zeros are only ever a
+    /// starting state.
+    pub const ZEROED: Self = ApRecord {
+        bssid: [0; 6],
+        ssid: [0; 33],
+        primary: 0,
+        second: 0,
+        rssi: 0,
+        authmode: 0,
+        pairwise_cipher: 0,
+        group_cipher: 0,
+        ant: 0,
+        flags: 0,
+        country: Country::ZEROED,
+    };
+
     /// The SSID as a string, stopping at the first NUL.
     ///
     /// Returns `None` for an SSID that is not UTF-8. That is legal in 802.11 —
