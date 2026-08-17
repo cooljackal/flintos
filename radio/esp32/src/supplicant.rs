@@ -56,7 +56,14 @@ extern "C" {
     fn esp_wifi_auth_done_internal() -> bool;
     /// `int esp_wifi_register_tx_cb_internal(wifi_tx_cb_t, uint8_t id)`.
     fn esp_wifi_register_tx_cb_internal(cb: unsafe extern "C" fn(*mut c_void), id: u8) -> i32;
+    /// `int esp_wifi_set_appie_internal(uint8_t type, uint8_t *ie, uint16_t len,
+    /// uint8_t flag)`. Installs an application information element into the
+    /// frames the blob sends — here the RSN element for the association request.
+    fn esp_wifi_set_appie_internal(ty: u8, ie: *mut u8, len: u16, flag: u8) -> i32;
 }
+
+/// `WIFI_APPIE_RSN` — the RSN element carried in the (re)association request.
+const WIFI_APPIE_RSN: u8 = 4;
 
 /// `WIFI_IF_STA`.
 const IF_STA: u32 = 0;
@@ -188,6 +195,17 @@ unsafe extern "C" fn sta_connect(bssid: *mut u8) -> i32 {
         st.pending = None;
         st.sup = Some(Supplicant::new(pmk, aa, own));
     });
+
+    // Install the station's RSN IE for the association request — the same
+    // element the handshake presents in message 2. esp-idf does this in
+    // `wpa_config_bss` → `wpa_config_assoc_ie`; the first-party `sta_connect`
+    // replaces that C path, so it must install the IE itself or the association
+    // request goes out with no security element and a secured AP rejects it.
+    // The blob copies the bytes synchronously (esp-idf frees them right after
+    // this call), so a stack copy suffices. Done outside the lock: it calls into
+    // the blob, which may arm timers of its own.
+    let mut ie = wpa::keydata::RSN_IE_WPA2_PSK_CCMP;
+    unsafe { esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ie.as_mut_ptr(), ie.len() as u16, 1) };
     0
 }
 
