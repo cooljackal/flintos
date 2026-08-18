@@ -220,8 +220,10 @@ fn reason_from_code(code: u8) -> DisconnectReason {
         203 => DisconnectReason::AssocFailed,         // ASSOC_FAIL
         204 => DisconnectReason::HandshakeTimeout,    // HANDSHAKE_TIMEOUT
         8 => DisconnectReason::Requested,             // ASSOC_LEAVE (we asked)
-        // 2 AUTH_EXPIRE, 4 DISASSOC_DUE_TO_INACTIVITY, 200 BEACON_TIMEOUT, ...
-        2 | 4 | 200 => DisconnectReason::ConnectionLost,
+        4 => DisconnectReason::AssocExpired,          // ASSOC_EXPIRE (went idle)
+        7 => DisconnectReason::NotAssociated,         // NOT_ASSOCED (aged out)
+        // 2 AUTH_EXPIRE, 200 BEACON_TIMEOUT, ...
+        2 | 200 => DisconnectReason::ConnectionLost,
         _ => DisconnectReason::Unspecified,
     }
 }
@@ -438,6 +440,9 @@ mod tests {
         assert_eq!(reason_from_code(201), DisconnectReason::NoApFound);
         assert_eq!(reason_from_code(15), DisconnectReason::FourWayTimeout);
         assert_eq!(reason_from_code(8), DisconnectReason::Requested);
+        assert_eq!(reason_from_code(4), DisconnectReason::AssocExpired);
+        assert_eq!(reason_from_code(7), DisconnectReason::NotAssociated);
+        assert_eq!(reason_from_code(2), DisconnectReason::ConnectionLost);
         assert_eq!(reason_from_code(99), DisconnectReason::Unspecified);
     }
 

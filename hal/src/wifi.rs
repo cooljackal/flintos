@@ -221,6 +221,14 @@ pub enum DisconnectReason {
     HandshakeTimeout,
     /// The link was up and then lost — beacons stopped, or the AP kicked us.
     ConnectionLost,
+    /// The AP dropped the association because the station went idle. Common
+    /// when nothing runs above the link — no DHCP, no traffic — so the AP ages
+    /// the station out.
+    AssocExpired,
+    /// The AP replied that the station is not associated (an 802.11 class-3
+    /// frame from a non-associated station). Typically the aftermath of the AP
+    /// having already aged the association out.
+    NotAssociated,
     /// This station asked to disconnect. Not a failure.
     Requested,
 }
