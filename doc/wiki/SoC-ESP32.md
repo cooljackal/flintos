@@ -138,7 +138,8 @@ behind each cell.
 | TIMG | ✅ | Four 64-bit timers, 16-bit prescaler, one-shot and periodic alarms firing from the ISR. Microsecond resolution, checked against the scheduler tick. The tick itself stays on the Xtensa CCOMPARE. |
 | ADC, DAC, touch | ⛔ | Not started — see the issue tracker. |
 | I2S, TWAI, SDIO, EMAC | ⛔ | Not started. |
-| Wi-Fi, Bluetooth | ⛔ | Not planned. |
+| Wi-Fi (station) | 🚧 | Scans, associates, and completes a WPA2-PSK connection — held against a WPA2/WPA3-transition AP for minutes on hardware. The 4-way handshake and key derivation are a first-party Rust supplicant (`lib/wpa` over `lib/crypto`), not a vendored C one; the Espressif blob is MAC/PHY only. Partial: no IP layer yet — no DHCP, keepalive or GTK-rekey — so the link drops at the AP's inactivity timeout. `apps/wificonnect` joins a network. |
+| Bluetooth | ⛔ | Not planned. |
 
 ## Peripheral map
 
@@ -216,8 +217,11 @@ Neither hazard was reachable while one core ran. Both are live now.
 
 - **APB = 80 MHz**, fixed. Every peripheral divisor derives from this, *not*
   from the CPU frequency.
-- **CPU** = 80/160/240 MHz. FlintOS measures it at boot against the RTC slow
-  clock rather than assuming — see the `cpu_hz=` banner line.
+- **CPU = 240 MHz.** The bootloader hands off at 80 MHz; FlintOS raises it to
+  240 at boot (`cpu_clk::set_240mhz`, called from `kernel/boot.rs`), then
+  measures the result against the RTC slow clock rather than assuming it — see
+  the `cpu_hz=` banner line. APB is untouched, so nothing derived from it (UART
+  baud, the timer groups) changes.
 
 ## Memory
 

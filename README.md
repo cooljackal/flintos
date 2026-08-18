@@ -46,13 +46,21 @@ with the Wi-Fi radio and is unusable whenever the radio is up. An API handing
 out ADC2 channels invites a bug that appears the day someone turns on
 networking and not before.
 
-Wi-Fi is 🚧 because **scanning works and association does not yet**.
-Measured on a WROOM-32: the vendor archives link against FlintOS's 115-entry
-OS-interface table, the PHY calibrates in ~183 ms and persists its
-calibration across reboots, and a station-mode scan finds 14–16 networks
-per sweep with radio interrupts serviced, repeatably (`apps/wifiscan`).
-Joining a network is next and needs the WPA2 crypto table FlintOS has not
-got. BLE is 🚧 on the strength of the shared groundwork alone. See
+Wi-Fi is 🚧 because **a station scans, associates and completes a WPA2-PSK
+handshake, but there is no IP layer yet**. Measured on a WROOM-32: the vendor
+archives link against FlintOS's 115-entry OS-interface table, the PHY calibrates
+in ~183 ms and persists its calibration across reboots, and a station-mode scan
+finds 14–16 networks per sweep with radio interrupts serviced, repeatably
+(`apps/wifiscan`). Joining now works too: the station associates and runs the
+4-way handshake to a WPA2/WPA3-transition AP, with key derivation in a
+first-party Rust supplicant (`lib/wpa` over `lib/crypto`) rather than a vendored
+C one — the Espressif blob provides MAC/PHY only. `apps/wificonnect` joins a
+WPA2 network this way (SSID and passphrase from `FLINT_WIFI_SSID` /
+`FLINT_WIFI_PASS` at build time) and held the link for minutes on real hardware.
+Staying online past the AP's inactivity timeout is what's next: there is no
+DHCP/IP stack, keepalive or GTK-rekey handling yet
+([#74](https://github.com/cooljackal/flintos/issues/74)). BLE is 🚧 on the
+strength of the shared groundwork alone. See
 [doc/plan-radio.md](doc/plan-radio.md) for what is left.
 
 Per-peripheral detail — which registers, which pins, what is untested — lives
@@ -382,8 +390,8 @@ Real output from an ESP32-PICO, trimmed:
 [FLINT] PS=0x0006000f WOE=1 (window overflow/underflow enabled)
 [FLINT] SP=0x3ffb36e0 task_stack_pool=[0x3ffc0000, 0x3ffd8000)
 [FLINT] startup::init done
-[FLINT] cpu_hz=80000000 (measured: CCOUNT timed against RTC slow clock)
-[FLINT] tick period=80000 CCOUNT ticks
+[FLINT] cpu_hz=240000000 (measured: CCOUNT timed against RTC slow clock)
+[FLINT] tick period=240000 CCOUNT ticks
 [    0][task:0] INFO  [kernel] FlintOS boot complete, entering idle
 [FLINT] interrupts unmasked, entering idle
 [    2][task:1] INFO  [sensor] prio=Normal(1) n=1

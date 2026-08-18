@@ -49,7 +49,7 @@ like broken hardware.
 [FLINT] VECBASE=0x40080000 _vector_table_start=0x40080000 MATCH (vector table installed)
 [FLINT] PS=0x0006000f WOE=1 (window overflow/underflow enabled)
 [FLINT] SP=0x3ffb41d0 task_stack_pool=[0x3ffc0000, 0x3ffd8000)
-[FLINT] cpu_hz=80000000 (measured: CCOUNT timed against RTC slow clock)
+[FLINT] cpu_hz=240000000 (measured: CCOUNT timed against RTC slow clock)
 [    2][task:1] INFO  [sensor] prio=Normal(1) n=1
 [    5][task:2] INFO  [consumer] prio=Normal(5) n=1
 [  505][task:1] INFO  [sensor] prio=Normal(1) n=2

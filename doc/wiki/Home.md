@@ -16,8 +16,11 @@ Pre-alpha. Boots, schedules and preempts on real silicon (ESP32-PICO and
 WROOM-32), on both cores. Young, most drivers thin, API will change. Don't
 ship it.
 
-The radio is the current work. The PHY registers and calibrates on hardware
-and the calibration survives a reboot; **nothing has transmitted**. See
+The radio works as a Wi-Fi station: it scans, associates, and completes a
+**WPA2-PSK connection**, verified holding a link to a real AP for minutes on
+hardware. The 4-way handshake runs in a first-party Rust supplicant, not a
+vendored C one. There is no IP layer yet — no DHCP, no sockets — so the link
+drops at the AP's inactivity timeout. `apps/wificonnect` joins a network. See
 [`doc/plan-radio.md`](https://github.com/cooljackal/flintos/blob/main/doc/plan-radio.md).
 
 32-bit only — see [Architecture](Architecture#word-size).

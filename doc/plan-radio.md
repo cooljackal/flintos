@@ -10,7 +10,7 @@ coming. That position was correct while the cost was unexamined; this document
 is the examined version. The route is viable, the price is known, and the price
 is high.
 
-**Status:** Phases 0–3 are done, and Phase 5 is at 5.3: **the scan works** — 14–16 networks per scan, interrupts serviced. Associate (5.3) is next and needs the crypto table filled. Phase 4 (BLE, #66) has not started.
+**Status:** Phases 0–3 are done, and Phase 5 station mode is up through the WPA2-PSK connection (5.1–5.3): the radio scans, associates, and completes a full four-way handshake, verified on hardware against a WPA2/WPA3-transition AP and holding the link for minutes (issue #67, closed). What is left is staying connected — there is no IP stack yet, no keepalive, and no GTK rekey (#74). Phase 4 (BLE, #66) has not started.
 
 Phase 0's four prerequisites all landed — the DPORT stall (#56), general-purpose
 timers (#25), the DMA engine (#18) and persistent configuration (#32). Phase 1
@@ -338,7 +338,7 @@ during 3.6 rather than after it.
 |---|---|---|
 | 5.1 | Bring up the Wi-Fi blobs | **Done.** `esp_wifi_init_internal` returns `ESP_OK` in 179 ms on an ESP32-DevKitC, with all 115 OSI entries filled. |
 | 5.2 | Station mode: scan | ✅ **Done.** 14–16 networks per scan on an ESP32-DevKitC, radio interrupts serviced, repeatable across scans. Root cause of the long "zero networks" hunt: the two common-clock OSI callbacks were raw bit operations rather than reference-counted, so the driver's temporary release gated the PHY clock off mid-operation; plus the supplicant callback table the public `esp_wifi_init` registers and the direct internal call skipped. See the closing section. |
-| 5.3 | Station mode: associate | The device joins a WPA2 network and holds the association. |
+| 5.3 | Station mode: associate | ✅ **Done.** Joins a WPA2-PSK network and holds it for minutes on an ESP32-DevKitC, against a WPA2/WPA3-transition AP (#67). The four-way handshake and key derivation run in FlintOS's own Rust supplicant (`lib/wpa` on `lib/crypto`), not a vendored C supplicant; the blob provides MAC/PHY only. Staying connected past the AP's inactivity timeout is #74. |
 | 5.4 | Coexistence, if BLE and Wi-Fi run together | Both work concurrently under load, not just separately. |
 | 5.5 | On-target self-test | Scan and associate run in `make test-target`, skipped cleanly when no AP is configured. |
 
@@ -884,9 +884,12 @@ Two smaller things, still open:
 
 - **`wpa_crypto_funcs`.** In esp-idf this is filled from
   `libwpa_supplicant`, which is C source and not one of the blobs, so WPA2
-  (5.3) means providing AES, SHA, HMAC and PBKDF2 ourselves. An **open** scan
-  (5.2) should not need it, which is the reason to do 5.2 before 5.3 rather
-  than in issue order.
+  (5.3) means providing AES, SHA, HMAC and PBKDF2 ourselves. That crypto now
+  exists — `lib/crypto` (PBKDF2, HMAC-SHA1, AES, CMAC, keywrap and friends),
+  all host-tested — and the four-way handshake runs above it in `lib/wpa`,
+  FlintOS's own Rust supplicant, hardware-validated under 5.3. An **open** scan
+  (5.2) did not need it, which is the reason 5.2 came before 5.3 rather than in
+  issue order.
 
 ---
 
@@ -998,6 +1001,32 @@ unrelated.
 - **Startup order corrected:** station mode is selected before start, matching
   IDF. The earlier NULL-start-STA order only appeared viable while PHY clocks
   were off.
+
+---
+
+## WPA2 station connect (2026-08-17)
+
+- **Done, on hardware.** The station completes a full WPA2-PSK connection and
+  holds the link for minutes against a WPA2/WPA3-transition AP. Scan and
+  associate (5.2, 5.3) close with it; issue #67 is closed.
+- **The supplicant is first-party Rust, not a vendored C one.** The four-way
+  handshake and key derivation run in `lib/wpa`, built on `lib/crypto`
+  (PBKDF2, HMAC-SHA1, AES, CMAC, keywrap — all host-tested). The Espressif blob
+  (libnet80211/libpp) provides MAC/PHY only.
+- **The integration seam.** The blob drives a `wpa_funcs` callback table
+  registered through `esp_wifi_register_wpa_cb_internal`; the station callbacks
+  (sta_init/connect/rx_eapol and the rest) are filled in
+  `radio/esp32/src/supplicant.rs`. `parse_wpa_ie` classifies AP security; the
+  station RSN IE is installed for the association request via
+  `esp_wifi_set_appie_internal` (flag=0, copy path); the AKM list is masked to
+  PSK so the blob does not select SAE; keys install through
+  `esp_wifi_set_sta_key_internal` after message 4.
+- **New app.** `apps/wificonnect` joins a WPA2 network, with credentials
+  supplied from the environment at build.
+- **What is not done (#74).** Staying connected past the AP's inactivity
+  timeout: there is no DHCP or IP stack yet, no keepalive, and no GTK-rekey
+  handling — the supplicant handles the initial four-way only. Nothing above
+  the link works: no networking, no sockets, no IP.
 
 ---
 

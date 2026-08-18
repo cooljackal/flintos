@@ -181,9 +181,10 @@ the window state itself.
 ## Tick
 
 Timer0 CCOMPARE. The CPU frequency is **measured** at boot against the RTC slow
-clock, not assumed — the ESP32 boots at 80 MHz but can be 160 or 240, and every
-timeout in the system scales by it. `XtensaTick::freq_measured()` says whether
-the measurement worked; the boot banner prints it.
+clock, not assumed — the ESP32 boots at 80 MHz, FlintOS raises it to 240 (in
+`kernel/boot.rs`), and every timeout in the system scales by whatever the
+measurement reports. `XtensaTick::freq_measured()` says whether the measurement
+worked; the boot banner prints it.
 
 ## Assembly build
 

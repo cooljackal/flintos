@@ -71,7 +71,26 @@ A kernel that provides a different one refuses to build and points here.
   rather than committed. **`make blob-symbols`** reports what they still need
   from us.
 
+- **A station connects with WPA2-PSK**, through a supplicant of our own. It
+  scans, associates and runs the 4-way handshake to a WPA2/WPA3-transition AP —
+  verified on a WROOM-32, which held the link for minutes. The handshake and key
+  derivation live in `lib/wpa` over `lib/crypto`, first-party Rust; the
+  Espressif blob (libnet80211/libpp) provides MAC and PHY only, not a vendored C
+  supplicant. **No IP layer yet** — no DHCP, no sockets, no keepalive or
+  GTK-rekey handling, so the link drops at the AP's inactivity timeout
+  ([#74](https://github.com/cooljackal/flintos/issues/74)). Associating and
+  authenticating is done; joining and staying online is next.
+
+- **`apps/wificonnect`** joins a WPA2 network. The SSID and passphrase come from
+  `FLINT_WIFI_SSID` / `FLINT_WIFI_PASS` in the environment at build time.
+
 ### Changed
+
+- **The CPU runs at 240 MHz.** The bootloader hands off at its 80 MHz default;
+  `soc/esp32/cpu_clk::set_240mhz`, called from `kernel/boot.rs`, raises it — the
+  clock Espressif builds and times the Wi-Fi blob against. APB stays fixed at
+  80 MHz, so UART and the timers are unaffected. Boot still measures the clock,
+  and now reads 240 MHz rather than 80.
 
 - **The memory map is generated.** `arch/xtensa/flint32.ld` still contains the
   numbers, and `tools/build::link()` rewrites them when a radio feature needs
