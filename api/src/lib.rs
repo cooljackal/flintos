@@ -47,7 +47,7 @@ pub use hal::types::{Priority, TaskId};
 /// `hal` or `arch-*` directly — the dependency graph is the layer
 /// boundary, checked in CI by `tools/check-layers.sh`.
 pub use hal::bus;
-pub use hal::bus::{Bus, BusError, BusHandle, BusResult, BusSpeed, PhysicalBus};
+pub use hal::bus::{Bus, BusError, BusHandle, BusResult, BusSpeed, CsHold, Op, PhysicalBus};
 
 /// Wi-Fi station interface, re-exported from `hal::wifi` the same way `bus` is.
 /// A radio backend (blob or pure-Rust) implements `api::wifi::Station`.

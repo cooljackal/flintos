@@ -25,7 +25,7 @@ use super::Check;
 pub(crate) fn spi_bus_loopback_round_trips(scratch: u8, sck: u8, miso_placeholder: u8) -> Check {
     use core::ptr::addr_of_mut;
     use esp32_spi::Esp32Spi;
-    use hal::bus::{BusConfig, BusSpeed, PhysicalBus, SpiMode};
+    use hal::bus::{BusConfig, BusSpeed, Op, PhysicalBus, SpiMode};
     use hal::pinmux::{PinConfig, PinMux, Signal};
     use soc_esp32::{addr, Esp32PinMux};
     use spi_bus::SpiBus;
@@ -76,7 +76,8 @@ pub(crate) fn spi_bus_loopback_round_trips(scratch: u8, sck: u8, miso_placeholde
     let mut rx = [0xA5u8; LEN];
 
     use api::bus::Bus;
-    bus.transfer(&tx, &mut rx).map_err(|_| "the SPI-bus transfer failed")?;
+    bus.transfer(&mut [Op::exchange(&tx, &mut rx)])
+        .map_err(|_| "the SPI-bus transfer failed")?;
 
     if rx != tx {
         return Err("the SPI-bus loopback data did not match what was sent");

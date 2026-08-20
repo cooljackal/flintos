@@ -238,7 +238,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusError, BusSpeed};
+    use api::bus::{Bus, BusError, Op};
     use std::boxed::Box;
     use std::sync::Mutex;
     use std::vec::Vec;
@@ -255,35 +255,32 @@ mod tests {
     }
 
     impl Bus for Fake {
-        fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-            let start = *tx.first().ok_or(BusError::InvalidConfig)?;
-            for (i, out) in rx.iter_mut().enumerate() {
-                *out = self.get(start + i as u8).ok_or(BusError::DeviceNotResponding)?;
-            }
-            Ok(())
-        }
-        fn write(&self, data: &[u8]) -> BusResult<()> {
-            if data.len() == 2 {
-                self.writes.lock().unwrap().push((data[0], data[1]));
-                let mut regs = self.regs.lock().unwrap();
-                match regs.iter_mut().find(|(r, _)| *r == data[0]) {
-                    Some(e) => e.1 = data[1],
-                    None => regs.push((data[0], data[1])),
+        fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
+            for op in ops.iter_mut() {
+                match (op.tx, op.rx.as_deref_mut()) {
+                    // Register read starting at `tx[0]`.
+                    (Some(tx), Some(rx)) => {
+                        let start = *tx.first().ok_or(BusError::InvalidConfig)?;
+                        for (i, out) in rx.iter_mut().enumerate() {
+                            *out = self.get(start + i as u8).ok_or(BusError::DeviceNotResponding)?;
+                        }
+                    }
+                    // Register write: [reg, value].
+                    (Some(data), None) if data.len() == 2 => {
+                        self.writes.lock().unwrap().push((data[0], data[1]));
+                        let mut regs = self.regs.lock().unwrap();
+                        match regs.iter_mut().find(|(r, _)| *r == data[0]) {
+                            Some(e) => e.1 = data[1],
+                            None => regs.push((data[0], data[1])),
+                        }
+                    }
+                    _ => {}
                 }
             }
             Ok(())
         }
-        fn read(&self, _: &mut [u8]) -> BusResult<()> {
-            Ok(())
-        }
-        fn set_speed(&self, _: BusSpeed) -> BusResult<()> {
-            Ok(())
-        }
-        fn select(&self) -> BusResult<()> {
-            Ok(())
-        }
-        fn deselect(&self) -> BusResult<()> {
-            Ok(())
+        fn max_transfer(&self) -> usize {
+            64
         }
     }
 

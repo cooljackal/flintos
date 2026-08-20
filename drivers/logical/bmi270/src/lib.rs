@@ -131,7 +131,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusError, BusSpeed};
+    use api::bus::{Bus, BusError, Op};
     use std::boxed::Box;
     use std::sync::Mutex;
     use std::vec::Vec;
@@ -143,29 +143,23 @@ mod tests {
     }
 
     impl Bus for FakeDevice {
-        fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-            let reg = *tx.first().ok_or(BusError::InvalidConfig)?;
-            self.asked.lock().unwrap().push(reg);
-            let val = self.regs.iter().find(|(r, _)| *r == reg).map(|(_, v)| *v);
-            // A real device NAKs an address it does not implement; returning
-            // zeros would let a driver read a plausible value out of nothing.
-            rx[0] = val.ok_or(BusError::InvalidConfig)?;
+        fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
+            for op in ops.iter_mut() {
+                if let (Some(tx), Some(rx)) = (op.tx, op.rx.as_deref_mut()) {
+                    let reg = *tx.first().ok_or(BusError::InvalidConfig)?;
+                    self.asked.lock().unwrap().push(reg);
+                    let val = self.regs.iter().find(|(r, _)| *r == reg).map(|(_, v)| *v);
+                    // A real device NAKs an address it does not implement;
+                    // returning zeros would let a driver read a plausible value
+                    // out of nothing.
+                    rx[0] = val.ok_or(BusError::InvalidConfig)?;
+                }
+                // Writes (register configuration) are accepted silently.
+            }
             Ok(())
         }
-        fn write(&self, _: &[u8]) -> BusResult<()> {
-            Ok(())
-        }
-        fn read(&self, _: &mut [u8]) -> BusResult<()> {
-            Ok(())
-        }
-        fn set_speed(&self, _: BusSpeed) -> BusResult<()> {
-            Ok(())
-        }
-        fn select(&self) -> BusResult<()> {
-            Ok(())
-        }
-        fn deselect(&self) -> BusResult<()> {
-            Ok(())
+        fn max_transfer(&self) -> usize {
+            64
         }
     }
 

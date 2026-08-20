@@ -2,16 +2,15 @@
 
 //! I2C bus abstraction.
 //!
-//! Wraps a [`PhysicalBus`] impl with a fixed slave address and
-//! exposes the [`Bus`] trait.  Messages are formatted as raw
-//! I2C frames with the slave address in the first byte.
+//! Wraps a [`PhysicalBus`] impl with a fixed slave address and exposes the
+//! [`Bus`] trait as a list of [`Op`]s. Each op is framed as a raw I2C frame
+//! with the slave address in the first byte.
 
 #![no_std]
 
-use api::bus::{Bus, BusError, BusResult, BusSpeed, PhysicalBus};
+use api::bus::{spin_rough_us, Bus, BusError, BusResult, Op, PhysicalBus};
 
-/// I2C bus abstraction.
-/// Largest payload one transfer can carry, bounded by the controller's FIFO.
+/// Largest op payload, bounded by the controller's FIFO.
 const MAX_PAYLOAD: usize = 64;
 
 pub struct I2cBus {
@@ -27,46 +26,47 @@ impl I2cBus {
 }
 
 impl Bus for I2cBus {
-    // Every method passes the address UNSHIFTED as `tx[0]`; the physical
-    // driver adds the R/W bit. See `hal::PhysicalBus::raw_transfer`. This crate
-    // used to pre-shift in `write` and not in `transfer`, disagreeing with the
+    // Every op passes the address UNSHIFTED as `tx[0]`; the physical driver
+    // adds the R/W bit. See `hal::PhysicalBus::raw_transfer`. This crate used
+    // to pre-shift in `write` and not in `transfer`, disagreeing with the
     // physical driver and with itself.
-    fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-        let mut buf = [0u8; MAX_PAYLOAD + 1];
-        let len = tx.len().min(MAX_PAYLOAD);
-        buf[0] = self.addr;
-        buf[1..=len].copy_from_slice(&tx[..len]);
-        // rx is passed through, so the caller's buffer is what gets filled.
-        // The old version read into a throwaway array and dropped it.
-        self.phys.raw_transfer(&buf[..=len], rx)
-    }
-
-    fn write(&self, data: &[u8]) -> BusResult<()> {
-        let mut buf = [0u8; MAX_PAYLOAD + 1];
-        let len = data.len().min(MAX_PAYLOAD);
-        buf[0] = self.addr;
-        buf[1..=len].copy_from_slice(&data[..len]);
-        self.phys.raw_transfer(&buf[..=len], &mut [])
-    }
-
-    fn read(&self, buf: &mut [u8]) -> BusResult<()> {
-        // Address only: no data bytes means a plain read, not a zero-length
-        // write followed by one. The old version sent a zeroed tx, which
-        // addressed the I2C general-call address rather than the device.
-        self.phys.raw_transfer(&[self.addr], buf)
-    }
-
-    fn set_speed(&self, _speed: BusSpeed) -> BusResult<()> {
-        Err(BusError::InvalidConfig)
-    }
-
-    fn select(&self) -> BusResult<()> {
+    fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
+        for op in ops.iter_mut() {
+            if op.word_bits != 8 {
+                return Err(BusError::InvalidConfig);
+            }
+            match (op.tx, op.rx.as_deref_mut()) {
+                // Write (optionally with a repeated-start read): address, then
+                // the payload; the caller's `rx` is what gets filled.
+                (Some(tx), rx_opt) => {
+                    let mut buf = [0u8; MAX_PAYLOAD + 1];
+                    let len = tx.len().min(MAX_PAYLOAD);
+                    buf[0] = self.addr;
+                    buf[1..=len].copy_from_slice(&tx[..len]);
+                    match rx_opt {
+                        Some(rx) => self.phys.raw_transfer(&buf[..=len], rx)?,
+                        None => self.phys.raw_transfer(&buf[..=len], &mut [])?,
+                    }
+                }
+                // Plain read: address only, no data bytes — not a zero-length
+                // write, which would address the I2C general-call address.
+                (None, Some(rx)) => self.phys.raw_transfer(&[self.addr], rx)?,
+                (None, None) => {}
+            }
+            // I2C has no separate chip-select line; `op.cs` is not meaningful.
+            if op.delay_us > 0 {
+                spin_rough_us(op.delay_us);
+            }
+        }
         Ok(())
     }
 
-    fn deselect(&self) -> BusResult<()> {
-        Ok(())
+    fn max_transfer(&self) -> usize {
+        MAX_PAYLOAD
     }
+
+    // I2C clock is fixed at init on this controller; `set_speed` keeps the
+    // trait default (`InvalidConfig`).
 }
 
 #[cfg(test)]
@@ -119,20 +119,20 @@ mod tests {
         // which that driver shifts again to 0xD8 -- an address no device
         // answers to, and a fault that looks like bad wiring.
         let (bus, rec) = bus_with(&[]);
-        bus.write(&[0xF4, 0x27]).unwrap();
+        bus.transfer(&mut [Op::write(&[0xF4, 0x27])]).unwrap();
         assert_eq!(rec.seen.lock().unwrap()[0], 0x76, "address must not be pre-shifted");
     }
 
     #[test]
-    fn all_three_methods_address_the_device_the_same_way() {
+    fn all_three_shapes_address_the_device_the_same_way() {
         // This crate used to pre-shift in `write` and not in `transfer`.
-        for (name, run) in [("write", 0), ("read", 1), ("transfer", 2)] {
+        for (name, run) in [("write", 0), ("read", 1), ("exchange", 2)] {
             let (bus, rec) = bus_with(&[0xAA; 4]);
             let mut rx = [0u8; 2];
             match run {
-                0 => bus.write(&[0x01]).unwrap(),
-                1 => bus.read(&mut rx).unwrap(),
-                _ => bus.transfer(&[0x01], &mut rx).unwrap(),
+                0 => bus.transfer(&mut [Op::write(&[0x01])]).unwrap(),
+                1 => bus.transfer(&mut [Op::read(&mut rx)]).unwrap(),
+                _ => bus.transfer(&mut [Op::exchange(&[0x01], &mut rx)]).unwrap(),
             }
             assert_eq!(rec.seen.lock().unwrap()[0], 0x76, "{name} addressed differently");
         }
@@ -140,19 +140,19 @@ mod tests {
 
     #[test]
     fn a_read_returns_the_bytes_to_the_caller() {
-        // `transfer` used to read into a throwaway buffer and drop it, and
-        // returned Ok -- so a sensor driver saw zeros and no error.
+        // A read used to go into a throwaway buffer and get dropped, returning
+        // Ok -- so a sensor driver saw zeros and no error.
         let (bus, _) = bus_with(&[0xDE, 0xAD, 0xBE]);
         let mut buf = [0u8; 3];
-        bus.read(&mut buf).unwrap();
+        bus.transfer(&mut [Op::read(&mut buf)]).unwrap();
         assert_eq!(buf, [0xDE, 0xAD, 0xBE]);
     }
 
     #[test]
-    fn a_transfer_returns_the_bytes_to_the_caller() {
+    fn an_exchange_returns_the_bytes_to_the_caller() {
         let (bus, _) = bus_with(&[0x12, 0x34]);
         let mut buf = [0u8; 2];
-        bus.transfer(&[0xF7], &mut buf).unwrap();
+        bus.transfer(&mut [Op::exchange(&[0xF7], &mut buf)]).unwrap();
         assert_eq!(buf, [0x12, 0x34]);
     }
 
@@ -162,14 +162,23 @@ mod tests {
         // address 0x00 rather than the device.
         let (bus, rec) = bus_with(&[0; 4]);
         let mut buf = [0u8; 4];
-        bus.read(&mut buf).unwrap();
+        bus.transfer(&mut [Op::read(&mut buf)]).unwrap();
         assert_eq!(&rec.seen.lock().unwrap()[..], &[0x76], "read sends only the address");
     }
 
     #[test]
     fn a_write_carries_its_payload_after_the_address() {
         let (bus, rec) = bus_with(&[]);
-        bus.write(&[0xF4, 0x27]).unwrap();
+        bus.transfer(&mut [Op::write(&[0xF4, 0x27])]).unwrap();
         assert_eq!(&rec.seen.lock().unwrap()[..], &[0x76, 0xF4, 0x27]);
+    }
+
+    #[test]
+    fn a_non_byte_word_is_rejected() {
+        let (bus, _) = bus_with(&[]);
+        assert_eq!(
+            bus.transfer(&mut [Op::write(&[0x01]).with_word_bits(7)]),
+            Err(BusError::InvalidConfig)
+        );
     }
 }

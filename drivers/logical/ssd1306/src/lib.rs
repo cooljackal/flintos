@@ -253,7 +253,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusSpeed, BusResult};
+    use api::bus::{Bus, BusResult, Op};
     use std::sync::Mutex;
     use std::vec::Vec;
 
@@ -270,18 +270,18 @@ mod tests {
     }
 
     impl Bus for MockDisplayBus {
-        fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-            let _ = (tx, rx);
+        fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
+            for op in ops.iter_mut() {
+                // The display is write-only; record the command/data bytes.
+                if let Some(tx) = op.tx {
+                    self.writes.lock().unwrap().extend_from_slice(tx);
+                }
+            }
             Ok(())
         }
-        fn write(&self, data: &[u8]) -> BusResult<()> {
-            self.writes.lock().unwrap().extend_from_slice(data);
-            Ok(())
+        fn max_transfer(&self) -> usize {
+            64
         }
-        fn read(&self, _buf: &mut [u8]) -> BusResult<()> { Ok(()) }
-        fn set_speed(&self, _speed: BusSpeed) -> BusResult<()> { Err(api::bus::BusError::InvalidConfig) }
-        fn select(&self) -> BusResult<()> { Ok(()) }
-        fn deselect(&self) -> BusResult<()> { Ok(()) }
     }
 
     // Tests run single-threaded on the host and every handle built from

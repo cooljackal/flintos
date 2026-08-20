@@ -2,7 +2,7 @@
 
 #![no_std]
 
-use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, SpiMode};
+use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, PhysicalBus, SpiMode};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
@@ -158,6 +158,28 @@ impl Esp32Spi {
         (self.base + offset) as *mut u32
     }
 
+    /// Program SPI_CLOCK for `speed_hz` off the APB clock.
+    ///
+    /// clkcnt_N and clkcnt_L hold the same value: the frequency is
+    /// APB / ((pre + 1) * (N + 1)), and L is the low-phase count, not an
+    /// independent divisor. clkcnt_H is the high-phase boundary, so N/2 gives a
+    /// roughly even duty cycle. Matches esp-idf's `spi_ll_master_cal_clock`.
+    ///
+    /// A previous revision wrote N = div/2 and L = div-1, which agree only at
+    /// div == 2 (40 MHz off an 80 MHz APB, the one value both board manifests
+    /// ask for) and ran at roughly double the requested clock otherwise.
+    fn apply_clock(&self, speed_hz: u32) {
+        let div = (APB_HZ / speed_hz.max(1)).max(2);
+        let n = div - 1;
+        unsafe {
+            self.reg(SPI_CLOCK).write_volatile(
+                ((n & 0x3F) << 12) |        // clkcnt_N
+                (((n / 2) & 0x3F) << 6) |   // clkcnt_H
+                (n & 0x3F),                 // clkcnt_L
+            );
+        }
+    }
+
     /// Perform a polled SPI transfer (up to 64 bytes).
     pub fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
         let len = tx.len().min(rx.len()).min(SPI_MAX_BYTES);
@@ -230,31 +252,9 @@ impl PhysicalBus for Esp32Spi {
 
                 route_pins(instance, *mosi, *miso, *sck)?;
 
-                let speed_hz = max_speed.hz();
-                let div = (APB_HZ / speed_hz).max(2);
+                self.apply_clock(max_speed.hz());
 
                 unsafe {
-                    // Clock configuration.
-                    //
-                    // clkcnt_N and clkcnt_L must hold the same value: the
-                    // resulting frequency is APB / ((pre + 1) * (N + 1)), and L
-                    // is the low-phase count, not an independent divisor.
-                    // clkcnt_H is the high-phase boundary, so N/2 gives a
-                    // roughly even duty cycle. Matches esp-idf's
-                    // `spi_ll_master_cal_clock`.
-                    //
-                    // A previous revision wrote N = div/2 and L = div-1. Those
-                    // agree only at div == 2, which is what both board
-                    // manifests happen to ask for (40 MHz off an 80 MHz APB) --
-                    // so it was correct for every configuration in the tree and
-                    // ran at roughly double the requested clock for any other.
-                    let n = div - 1;
-                    self.reg(SPI_CLOCK).write_volatile(
-                        ((n & 0x3F) << 12) |        // clkcnt_N
-                        (((n / 2) & 0x3F) << 6) |   // clkcnt_H
-                        (n & 0x3F)                  // clkcnt_L
-                    );
-
                     // SPI mode (CPOL, CPHA).
                     let (cpol, cpha) = match mode {
                         SpiMode::Mode0 => (0, 0),
@@ -280,6 +280,17 @@ impl PhysicalBus for Esp32Spi {
 
     fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
         self.transfer(tx, rx)
+    }
+
+    /// Re-clock a live controller: only SPI_CLOCK changes, so a transfer in
+    /// between runs at the new rate with no other disturbance.
+    fn set_speed(&self, speed: BusSpeed) -> BusResult<()> {
+        let hz = speed.hz();
+        if hz == 0 || hz > APB_HZ {
+            return Err(BusError::InvalidConfig);
+        }
+        self.apply_clock(hz);
+        Ok(())
     }
 
     fn set_enabled(&mut self, _enabled: bool) {}

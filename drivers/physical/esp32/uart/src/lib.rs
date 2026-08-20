@@ -2,7 +2,7 @@
 
 #![no_std]
 
-use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, UartDataBits, UartParity, UartStopBits};
+use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, PhysicalBus, UartDataBits, UartParity, UartStopBits};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
 use soc_esp32::{dport, poll, Esp32PinMux, APB_HZ};
@@ -293,6 +293,14 @@ impl PhysicalBus for Esp32Uart {
             rx[i] = byte;
         }
         Ok(())
+    }
+
+    /// Re-program the baud rate on a live port. `BusSpeed` is read as the
+    /// baud in Hz. The FIFO is drained first, so the last character at the old
+    /// rate is not re-framed mid-byte.
+    fn set_speed(&self, speed: BusSpeed) -> BusResult<()> {
+        self.flush();
+        self.set_baud(speed.hz())
     }
 
     /// No-op.

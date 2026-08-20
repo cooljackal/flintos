@@ -399,7 +399,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusResult, BusSpeed};
+    use api::bus::{Bus, BusResult, Op};
     use std::sync::Mutex;
     use std::vec::Vec;
 
@@ -429,27 +429,31 @@ mod tests {
     }
 
     impl Bus for MockBmeBus {
-        fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-            match tx.first().copied() {
-                Some(REG_ID) => rx[0] = self.chip_id,
-                Some(REG_CALIB_00) => rx.copy_from_slice(&self.calib_low),
-                Some(REG_CALIB_26) => rx.copy_from_slice(&self.calib_high),
-                Some(REG_PRESS_MSB) => {
-                    let n = rx.len();
-                    rx.copy_from_slice(&self.data[..n]);
+        fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
+            for op in ops.iter_mut() {
+                match (op.tx, op.rx.as_deref_mut()) {
+                    // Register read: `transfer`/`write_read` send the address,
+                    // the answer comes back in `rx`.
+                    (Some(tx), Some(rx)) => match tx.first().copied() {
+                        Some(REG_ID) => rx[0] = self.chip_id,
+                        Some(REG_CALIB_00) => rx.copy_from_slice(&self.calib_low),
+                        Some(REG_CALIB_26) => rx.copy_from_slice(&self.calib_high),
+                        Some(REG_PRESS_MSB) => {
+                            let n = rx.len();
+                            rx.copy_from_slice(&self.data[..n]);
+                        }
+                        _ => {}
+                    },
+                    // Register write.
+                    (Some(tx), None) => self.writes.lock().unwrap().extend_from_slice(tx),
+                    _ => {}
                 }
-                _ => {}
             }
             Ok(())
         }
-        fn write(&self, data: &[u8]) -> BusResult<()> {
-            self.writes.lock().unwrap().extend_from_slice(data);
-            Ok(())
+        fn max_transfer(&self) -> usize {
+            64
         }
-        fn read(&self, _buf: &mut [u8]) -> BusResult<()> { Ok(()) }
-        fn set_speed(&self, _speed: BusSpeed) -> BusResult<()> { Err(BusError::InvalidConfig) }
-        fn select(&self) -> BusResult<()> { Ok(()) }
-        fn deselect(&self) -> BusResult<()> { Ok(()) }
     }
 
     fn le16(v: i32) -> [u8; 2] {
