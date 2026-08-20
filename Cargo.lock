@@ -257,7 +257,6 @@ dependencies = [
  "kvstore",
  "soc-esp32",
  "spi-bus",
- "uart-bus",
 ]
 
 [[package]]
@@ -380,13 +379,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "uart-bus"
-version = "0.1.0"
-dependencies = [
- "api",
-]
-
-[[package]]
 name = "uartecho"
 version = "0.1.0"
 dependencies = [
@@ -396,7 +388,6 @@ dependencies = [
  "hal",
  "kernel",
  "soc-esp32",
- "uart-bus",
 ]
 
 [[package]]

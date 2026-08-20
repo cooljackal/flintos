@@ -181,21 +181,21 @@ pub fn run() {
         ),
     }
 
-    // UART-bus (Layer 2) loopback: fold UART2's TX onto RX over the scratch pad
-    // and require a byte-exact round trip through the `UartBus` wrapper. Needs
-    // the scratch pad plus one spare pad (placeholder RX) the board declares.
+    // UART ByteStream loopback: internally loop UART2's TX→RX and require a
+    // byte-exact round trip through the stream API. Needs the scratch pad plus
+    // one spare pad (placeholder RX) the board declares.
     match (
         crate::board::active::LOOPBACK_SCRATCH_GPIO,
         crate::board::active::LOOPBACK_AUX_GPIOS,
     ) {
         (Some(scratch), Some((_, rx_placeholder))) => check(
-            "uart_bus_loopback_round_trips",
-            uart::uart_bus_loopback_round_trips(scratch, rx_placeholder),
+            "uart_bytestream_loopback_round_trips",
+            uart::uart_bytestream_loopback_round_trips(scratch, rx_placeholder),
             &mut pass,
             &mut fail,
         ),
         _ => skip(
-            "uart_bus_loopback_round_trips",
+            "uart_bytestream_loopback_round_trips",
             "this board declares no free UART loopback GPIOs",
         ),
     }

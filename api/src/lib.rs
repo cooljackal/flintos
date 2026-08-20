@@ -49,6 +49,12 @@ pub use hal::types::{Priority, TaskId};
 pub use hal::bus;
 pub use hal::bus::{Bus, BusError, BusHandle, BusResult, BusSpeed, CsHold, Op, PhysicalBus};
 
+/// Byte-stream subsystem surface (UART), re-exported like `bus` so Layer-2/3
+/// drivers depend only on `api`. A UART is a stream, not a `Bus` — see
+/// `hal::stream`.
+pub use hal::stream;
+pub use hal::stream::{ByteStream, StreamErrors};
+
 /// Wi-Fi station interface, re-exported from `hal::wifi` the same way `bus` is.
 /// A radio backend (blob or pure-Rust) implements `api::wifi::Station`.
 pub use hal::wifi;

@@ -78,8 +78,6 @@ esp32-i2s = { path = "../drivers/physical/esp32/i2s" }
 # The SPI-bus (Layer 2) loopback self-test drives the wrapper over this driver.
 esp32-spi = { path = "../drivers/physical/esp32/spi" }
 spi-bus = { path = "../drivers/bus/spi-bus" }
-# The UART-bus (Layer 2) loopback self-test drives the wrapper over esp32-uart.
-uart-bus = { path = "../drivers/bus/uart-bus" }
 
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs

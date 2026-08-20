@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! UART through the Layer-2 `Bus`, looped TX→RX on-chip.
+//! UART as a `ByteStream`, looped TX→RX on-chip.
 //!
-//! **The UART porting template.** `apps/imu` shows the three-layer stack for
-//! I²C; this is its UART counterpart — Layer 1 (`esp32-uart`) under Layer 2
-//! (`uart-bus`), driven through the transfer-list [`Bus`] API. There is no
-//! Layer-3 device here: the point is the bus, so it echoes to itself.
+//! **The UART template.** `apps/imu` shows the three-layer stack for I²C, an
+//! *addressed bus*. A UART is not a bus — it is a byte stream, with no address,
+//! no chip-select, and no rx-matches-tx (see `hal::stream`). So there is no
+//! Layer-2 wrapper to insert: the driver exposes [`ByteStream`] directly, and
+//! this app drives it.
 //!
 //! ```text
-//!   Layer 2   uart-bus     the transfer-list Bus (Op lists)
-//!   Layer 1   esp32-uart   the controller's registers
+//!   stream API   ByteStream    non-blocking write/read counts, line errors
+//!   Layer 1      esp32-uart    the controller's registers
 //! ```
 //!
 //! # No wire needed
@@ -17,29 +18,28 @@
 //! UART2 (never UART0 — that is the console) is put in its internal loopback
 //! mode (CONF0 bit 14), which routes TX→RX on-chip. The pins are still routed
 //! for real, so bring-up is exercised, but the data does not depend on an
-//! analog pad edge — which for an async UART matters, since the receiver frames
-//! on start-bit edges rather than a shared clock.
+//! analog pad edge.
 //!
 //! Enabling the receiver latches one spurious byte into the RX FIFO; the bring-
-//! up drains it, and each round drains any residue before the exchange, so the
-//! echo stays byte-aligned. See `kernel::selftest_uart` for the full story.
+//! up drains it, and each round drains any residue before echoing, so the read
+//! stays aligned. See `kernel::selftest_uart` for the full story.
 //!
 //! # Porting to a real link
 //!
-//! Drop `set_loopback`, route TX/RX to the real pins, and either drive the
-//! `Bus` directly as below or hand a Layer-3 driver a `BusHandle::new(&uart_bus)`
-//! exactly as `apps/imu` does. The Layer-1/Layer-2 bring-up is unchanged.
+//! Drop `set_loopback`, route TX/RX to the real pins, and read/write the stream
+//! as below. `write` and `read` are non-blocking and return counts, so a real
+//! peer that is slow or silent never stalls the task — loop over the remainder.
 
 #![no_std]
 #![no_main]
 
 use core::ptr::addr_of;
 
-use api::bus::{Bus, BusConfig, Op, PhysicalBus, UartDataBits, UartParity, UartStopBits};
+use api::bus::{BusConfig, UartDataBits, UartParity, UartStopBits};
+use api::stream::ByteStream;
 use api::task;
 use hal::types::Priority;
 use soc_esp32::addr;
-use uart_bus::UartBus;
 
 kernel::flint_app!(main, abi = 1);
 
@@ -49,10 +49,9 @@ use kernel::board::active as board;
 /// SPI flash on many modules, so UART2 is the safe spare.
 const UART_BASE: u32 = addr::UART2_BASE;
 
-/// Layers 1 and 2 outlive the setup calls. `PHYS` is kept typed (not just as a
-/// `&dyn`) so the loop can drain the RX FIFO between rounds.
-static mut PHYS: Option<esp32_uart::Esp32Uart> = None;
-static mut BUS: Option<UartBus> = None;
+/// The driver outlives the setup call: the stream methods take `&self` and the
+/// loop borrows it for the life of the program.
+static mut UART: Option<esp32_uart::Esp32Uart> = None;
 
 fn main() {
     task::spawn("uartecho", run, Priority::Normal(1), 4096);
@@ -78,9 +77,7 @@ fn run() {
         park();
     }
 
-    let (Some(bus), Some(phys)) =
-        (unsafe { (*addr_of!(BUS)).as_ref() }, unsafe { (*addr_of!(PHYS)).as_ref() })
-    else {
+    let Some(uart) = (unsafe { (*addr_of!(UART)).as_ref() }) else {
         park();
     };
 
@@ -90,53 +87,64 @@ fn run() {
 
         // Discard any byte the receiver latched while the line was idle, so the
         // echo this round reads back is the byte it sent, not a leftover.
-        while phys.getc().is_some() {}
+        let mut sink = [0u8; 8];
+        while uart.read(&mut sink) > 0 {}
 
         let mut tx = [0u8; 8];
         for (i, b) in tx.iter_mut().enumerate() {
             *b = round.wrapping_add(i as u8).wrapping_mul(37).wrapping_add(11);
         }
-        let mut rx = [0x3Cu8; 8];
+        // write is non-blocking: for 8 bytes into a 128-byte FIFO it all fits,
+        // but a real link would loop over what it did not take.
+        let _ = uart.write(&tx);
 
-        match bus.transfer(&mut [Op::exchange(&tx, &mut rx)]) {
-            Ok(()) if rx == tx => api::log_info!("[uartecho] round {}: {:?} echoed OK", round, tx),
-            Ok(()) => api::log_error!("[uartecho] round {}: sent {:?}, got {:?}", round, tx, rx),
-            Err(e) => api::log_error!("[uartecho] round {}: transfer failed: {:?}", round, e),
+        // Read the echo back, non-blocking, until the whole pattern arrives.
+        let mut rx = [0u8; 8];
+        let mut got = 0usize;
+        let mut spins = 0u32;
+        while got < rx.len() {
+            got += uart.read(&mut rx[got..]);
+            spins += 1;
+            if spins > 100_000 {
+                break;
+            }
+        }
+
+        if got == rx.len() && rx == tx {
+            api::log_info!("[uartecho] round {}: {:?} echoed OK", round, tx);
+        } else {
+            api::log_error!("[uartecho] round {}: sent {:?}, got {:?} ({} bytes)", round, tx, rx, got);
         }
         round = round.wrapping_add(1);
     }
 }
 
-/// Layer 1 + Layer 2 bring-up: init the port, loop it internally, drain the
-/// enable-time spurious byte, and wrap it in a `UartBus`.
+/// Layer 1 bring-up: init the port, loop it internally, drain the enable-time
+/// spurious byte.
 ///
 /// # Safety
 /// Claims UART2 and the two pads for the life of the program, and stores the
-/// driver and bus in statics the loop borrows.
+/// driver in a static the loop borrows.
 unsafe fn bring_up(tx_pin: u8, rx_pin: u8) -> Option<()> {
-    let mut phys = esp32_uart::Esp32Uart::new(UART_BASE);
-    PhysicalBus::init(
-        &mut phys,
-        &BusConfig::Uart {
-            tx: tx_pin,
-            rx: rx_pin,
-            baud: 115_200,
-            data_bits: UartDataBits::Bits8,
-            parity: UartParity::None,
-            stop_bits: UartStopBits::Stop1,
-        },
-    )
+    let mut uart = esp32_uart::Esp32Uart::new(UART_BASE);
+    uart.init(&BusConfig::Uart {
+        tx: tx_pin,
+        rx: rx_pin,
+        baud: 115_200,
+        data_bits: UartDataBits::Bits8,
+        parity: UartParity::None,
+        stop_bits: UartStopBits::Stop1,
+    })
     .ok()?;
 
     // Route TX→RX internally: a clean digital path, no pad edge to mis-frame.
-    phys.set_loopback(true);
-    PHYS = Some(phys);
+    uart.set_loopback(true);
+    UART = Some(uart);
 
     // Absorb the spurious byte the receiver latches when it comes up.
-    let phys_ref: &'static esp32_uart::Esp32Uart = (*addr_of!(PHYS)).as_ref()?;
-    while phys_ref.getc().is_some() {}
-
-    BUS = Some(UartBus::new(phys_ref));
+    let uart_ref: &'static esp32_uart::Esp32Uart = (*addr_of!(UART)).as_ref()?;
+    let mut sink = [0u8; 8];
+    while uart_ref.read(&mut sink) > 0 {}
     Some(())
 }
 

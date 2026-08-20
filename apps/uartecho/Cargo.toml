@@ -16,13 +16,13 @@ kernel = { path = "../../kernel", default-features = false }
 api = { path = "../../api" }
 hal = { path = "../../hal" }
 
-# The two layers this example composes:
+# A UART is a stream, not a Bus, so there is no Layer-2 wrapper: the driver
+# exposes `ByteStream` directly (see hal::stream). This composes Layer 1 with
+# the stream API the app drives it through.
 #
-#   esp32-uart   Layer 1   the controller's registers
-#   uart-bus     Layer 2   the transfer-list Bus (this is what it demonstrates)
+#   esp32-uart   Layer 1   the controller's registers, and its ByteStream
 soc-esp32 = { path = "../../soc/esp32" }
 esp32-uart = { path = "../../drivers/physical/esp32/uart" }
-uart-bus = { path = "../../drivers/bus/uart-bus" }
 
 [build-dependencies]
 build = { path = "../../tools/build" }

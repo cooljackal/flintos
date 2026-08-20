@@ -4,7 +4,7 @@
 //!
 //! Called from FlintMain() before the scheduler starts.
 
-use hal::bus::{BusKind, PhysicalBus};
+use hal::bus::BusKind;
 use crate::board::active;
 
 /// Global UART console driver (used by log/panic).

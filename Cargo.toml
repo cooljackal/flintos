@@ -81,7 +81,6 @@ members = [
     "drivers/physical/esp32/flash",
     "drivers/bus/spi-bus",
     "drivers/bus/i2c-bus",
-    "drivers/bus/uart-bus",
     "drivers/logical/bme280",
     "drivers/logical/bmi270",
     "drivers/logical/mpu6886",

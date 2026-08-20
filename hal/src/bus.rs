@@ -228,7 +228,10 @@ impl<'a> Op<'a> {
 
 // ── Layer 2: Bus abstraction trait ─────────────────────────────────────────
 
-/// Implemented by bus abstractions (`spi_bus`, `i2c_bus`, `uart_bus`).
+/// Implemented by bus abstractions (`spi_bus`, `i2c_bus`).
+///
+/// UART is deliberately absent: it is a byte stream, not an addressed bus —
+/// see [`crate::stream`].
 ///
 /// These sit above the physical driver and provide a protocol-aware
 /// interface.  They are linked directly into the calling task — no IPC.

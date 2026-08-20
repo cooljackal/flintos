@@ -2,10 +2,11 @@
 
 #![no_std]
 
-use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, PhysicalBus, UartDataBits, UartParity, UartStopBits};
+use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, UartDataBits, UartParity, UartStopBits};
 use hal::pinmux::{PinConfig, PinMux, Signal};
+use hal::stream::{ByteStream, StreamErrors};
 use soc_esp32::addr;
-use soc_esp32::{dport, poll, Esp32PinMux, APB_HZ};
+use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
 /// ESP32 UART physical driver.
 /// Registers at `base_addr` (0x3FF40000 for UART0).
@@ -19,9 +20,6 @@ pub struct Esp32Uart {
 // base: UART0 0x3FF40000, UART1 0x3FF50000, UART2 0x3FF6E000.
 
 const UART_FIFO: u32 = 0x00;
-// Kept for completeness: a partial register map is how the previous revision
-// ended up writing the baud divisor into UART_INT_CLR.
-#[allow(dead_code)]
 const UART_INT_RAW: u32 = 0x04;
 #[allow(dead_code)]
 const UART_INT_ST: u32 = 0x08;
@@ -41,6 +39,15 @@ const UART_TXFIFO_CNT_MASK: u32 = 0xFF << UART_TXFIFO_CNT_SHIFT;
 
 /// The hardware TX FIFO is 128 bytes deep.
 const UART_TXFIFO_DEPTH: u32 = 128;
+
+// ── UART_INT_RAW error bits ──────────────────────────────────────────────────
+//
+// Bit positions confirmed against esp-idf `uart_reg.h`
+// (`UART_{RXFIFO_OVF,FRM_ERR,PARITY_ERR}_INT_RAW`).
+
+const INT_RXFIFO_OVF: u32 = 1 << 4; // receive FIFO overflowed; bytes lost
+const INT_FRM_ERR: u32 = 1 << 3; // a stop bit was wrong (baud mismatch)
+const INT_PARITY_ERR: u32 = 1 << 2; // a byte failed its parity check
 
 // ── UART_CONF0_REG fields ────────────────────────────────────────────────────
 //
@@ -211,8 +218,15 @@ impl Esp32Uart {
     }
 }
 
-impl PhysicalBus for Esp32Uart {
-    fn init(&mut self, config: &BusConfig) -> BusResult<()> {
+impl Esp32Uart {
+    /// Bring the port up from a [`BusConfig::Uart`]: clock it, route the pads,
+    /// and set the framing and baud rate.
+    ///
+    /// A UART is not a [`Bus`](hal::bus::Bus) — it does not do addressed
+    /// transactions — so this is an inherent method, not a `PhysicalBus` impl.
+    /// `BusConfig` is reused only as the manifest's configuration record; the
+    /// port's actual traffic goes through its [`ByteStream`] impl.
+    pub fn init(&mut self, config: &BusConfig) -> BusResult<()> {
         let BusConfig::Uart { baud, data_bits, parity, stop_bits, tx, rx, .. } = config else {
             return Err(BusError::InvalidConfig);
         };
@@ -286,54 +300,67 @@ impl PhysicalBus for Esp32Uart {
         Ok(())
     }
 
-    /// Full-duplex byte exchange.
-    ///
-    /// Write and read are separate phases per byte: `putc` only queues the byte
-    /// in the TX FIFO, so the earlier `putc`-then-`getc` pairing read RX before
-    /// the byte had shifted out and round-tripped — in a TX→RX loopback every
-    /// `getc` saw an empty FIFO and returned zero, failing a working part.
-    ///
-    /// Now each byte is sent, then RX is polled (bounded) until it arrives. This
-    /// keeps at most one byte in flight, so it never overruns the RX FIFO for an
-    /// arbitrarily long transfer, and needs no per-byte sleep. A byte that never
-    /// returns (nothing wired to RX) times out rather than hanging.
-    fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-        let len = tx.len().min(rx.len());
-        for i in 0..len {
-            self.putc(tx[i]);
-            let mut byte = 0u8;
-            poll::until(
-                || match self.getc() {
-                    Some(b) => {
-                        byte = b;
-                        true
-                    }
-                    None => false,
-                },
-                poll::DEFAULT_SPINS,
-            )
-            .map_err(|_| BusError::Timeout)?;
-            rx[i] = byte;
-        }
-        Ok(())
-    }
-
     /// Re-program the baud rate on a live port. `BusSpeed` is read as the
     /// baud in Hz. The FIFO is drained first, so the last character at the old
     /// rate is not re-framed mid-byte.
-    fn set_speed(&self, speed: BusSpeed) -> BusResult<()> {
+    pub fn set_speed(&self, speed: BusSpeed) -> BusResult<()> {
         self.flush();
         self.set_baud(speed.hz())
     }
+}
 
-    /// No-op.
+impl ByteStream for Esp32Uart {
+    /// Queue as many of `data` as the TX FIFO has room for, and return the
+    /// count. Never blocks: when the FIFO is full it stops and the caller
+    /// retries with the remainder.
+    fn write(&self, data: &[u8]) -> usize {
+        let mut written = 0;
+        for &b in data {
+            if self.tx_fifo_count() >= UART_TXFIFO_DEPTH {
+                break;
+            }
+            unsafe { self.reg(UART_FIFO).write_volatile(b as u32) };
+            written += 1;
+        }
+        written
+    }
+
+    /// Drain what has arrived into `buf`, up to its length, and return the
+    /// count. Never blocks: an empty RX FIFO returns 0.
+    fn read(&self, buf: &mut [u8]) -> usize {
+        let mut read = 0;
+        for slot in buf.iter_mut() {
+            match self.getc() {
+                Some(b) => {
+                    *slot = b;
+                    read += 1;
+                }
+                None => break,
+            }
+        }
+        read
+    }
+
+    /// Report the receiver's latched error bits and clear them.
     ///
-    /// The classic ESP32 UART has no enable bit -- the peripheral is live
-    /// whenever it is clocked. Disabling it means gating `DPORT_PERIP_CLK_EN`,
-    /// which would also cut the console this driver serves, so it is not done
-    /// here. An earlier revision toggled CONF0 bit 0, which is the parity
-    /// polarity bit, so "disabling" the port actually corrupted its framing.
-    fn set_enabled(&mut self, _enabled: bool) {}
+    /// The bits are level-latched in `UART_INT_RAW` and stay set until written
+    /// to `UART_INT_CLR`, so a caller that polls this gets every error since the
+    /// last poll, then a clean slate.
+    fn errors(&self) -> StreamErrors {
+        let raw = unsafe { self.reg(UART_INT_RAW).read_volatile() };
+        let errs = StreamErrors {
+            overrun: raw & INT_RXFIFO_OVF != 0,
+            parity: raw & INT_PARITY_ERR != 0,
+            framing: raw & INT_FRM_ERR != 0,
+        };
+        if errs.any() {
+            unsafe {
+                self.reg(UART_INT_CLR)
+                    .write_volatile(INT_RXFIFO_OVF | INT_FRM_ERR | INT_PARITY_ERR);
+            }
+        }
+        errs
+    }
 }
 
 #[cfg(test)]

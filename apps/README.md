@@ -20,7 +20,7 @@ that cannot go stale. This table adds the board each one needs.
 | [`pwm`](pwm/) | Drives LEDC and measures its own duty cycle by reading the pin back. | Atom Lite or Matrix |
 | [`imu`](imu/) | Reads the onboard IMU — the first Layer 1-2-3 assembly. The I²C Layer-2 porting template. | Atom Matrix |
 | [`spitxrx`](spitxrx/) | SPI looped MOSI→MISO on one pad, driven through the Layer-2 `Bus`. The SPI porting template. | DevKitC |
-| [`uartecho`](uartecho/) | UART2 internal TX→RX loopback, echoed through the Layer-2 `Bus`. The UART porting template. | DevKitC |
+| [`uartecho`](uartecho/) | UART2 internal TX→RX loopback, echoed through the UART's `ByteStream` (a UART is a stream, not a `Bus`). The UART template. | DevKitC |
 
 The last three refuse to build for a board whose manifest does not declare the
 hardware they drive, and say which board to use instead.
