@@ -21,6 +21,17 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Added
 
+- **DAC, ADC2, CAN (TWAI) and I2S drivers, each with an on-chip loopback
+  self-test.** Every one proves itself with no external hardware: the DAC
+  drives GPIO25/26 and ADC2 reads it back on the same pad, ADC2 refuses a
+  read while the radio owns SAR2, TWAI transmits and self-receives a frame in
+  self-test mode, and I2S DMAs a buffer through its internal `sig_loopback`.
+  Registers are transcribed from esp-idf v4.4 and host-tested; the loopbacks
+  are written but have **not yet run on silicon** (🧪 in the README, with a
+  `†` footnote), so no absolute accuracy, real bus, or second node is
+  claimed. `make test-target` on a board is what promotes them to ✅.
+  (#35, #75, #27, #26)
+
 - **The ESP32-DevKitC / WROOM-32 is verified hardware**, and is now the
   reference board for on-target work: 30 on-target tests pass (1 skipped),
   `flashprobe` completes a flash round trip with the second core running, and

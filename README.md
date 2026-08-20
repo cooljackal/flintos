@@ -41,10 +41,11 @@ starts one.
 
 ✅ verified on hardware  ·  🧪 written and host-tested, not yet on silicon  ·  🚧 partial  ·  ⛔ not started  ·  — not applicable
 
-ADC2 is listed separately and deliberately unimplemented: it shares its SAR
-with the Wi-Fi radio and is unusable whenever the radio is up. An API handing
-out ADC2 channels invites a bug that appears the day someone turns on
-networking and not before.
+ADC2 is a separate crate from ADC1 because it shares its SAR with the Wi-Fi
+radio and is unusable whenever the radio is up. Rather than hand out channels
+that would return garbage the day someone turns on networking, its `read` takes
+the radio's state as an argument and refuses while it is running — the caller
+owns that knowledge, so the driver never depends on the radio.
 
 Wi-Fi is 🚧 because **a station scans, associates and completes a WPA2-PSK
 handshake, but there is no IP layer yet**. Measured on a WROOM-32: the vendor
@@ -105,18 +106,27 @@ The chip's own blocks, in the order most projects reach for them.
 | PWM / LEDC | ✅ | ⛔ |
 | Timers (TIMG) | ✅ | ⛔ |
 | ADC1 | ✅ | ⛔ |
-| ADC2 | ⛔ | ⛔ |
-| DAC, touch | ⛔ | ⛔ |
+| ADC2 | 🧪 † | ⛔ |
+| DAC | 🧪 † | ⛔ |
+| Touch sensor | ⛔ | ⛔ |
 | RMT pulse generator | ✅ | — |
 | Hardware RNG | ✅ | ⛔ |
 | Flash storage (key/value) | ✅ | ⛔ |
-| CAN (TWAI) | ⛔ | ⛔ |
-| I2S | ⛔ | ⛔ |
+| CAN (TWAI) | 🧪 † | ⛔ |
+| I2S | 🧪 † | ⛔ |
 | SD / SDIO | ⛔ | ⛔ |
 | Ethernet MAC | ⛔ | ⛔ |
 | Wi-Fi | 🚧 | — |
 | Bluetooth / BLE | 🚧 | — |
 | USB | — | ⛔ |
+
+† These four are 🧪 in the strict sense: the driver and an **on-chip loopback
+self-test** are written and their register maps are host-tested, but the
+loopback has not yet run on silicon. Each proves itself without external
+hardware — DAC drives its shared pad and ADC2 reads it back, TWAI transmits and
+self-receives a frame, I2S DMAs a buffer through its internal loopback — so
+running `make test-target` on a board is what flips them to ✅. No absolute
+accuracy, no real bus, no second node is claimed.
 
 ### Device drivers
 
