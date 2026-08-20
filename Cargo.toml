@@ -57,6 +57,8 @@ members = [
     "apps/pwm",
     "apps/smp",
     "apps/spidma",
+    "apps/spitxrx",
+    "apps/uartecho",
     "apps/flashprobe",
     "apps/wificonnect",
     "apps/radioprobe",

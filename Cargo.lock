@@ -360,6 +360,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "spitxrx"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "esp32-spi",
+ "hal",
+ "kernel",
+ "soc-esp32",
+ "spi-bus",
+]
+
+[[package]]
 name = "ssd1306"
 version = "0.1.0"
 dependencies = [
@@ -371,6 +384,19 @@ name = "uart-bus"
 version = "0.1.0"
 dependencies = [
  "api",
+]
+
+[[package]]
+name = "uartecho"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "esp32-uart",
+ "hal",
+ "kernel",
+ "soc-esp32",
+ "uart-bus",
 ]
 
 [[package]]
