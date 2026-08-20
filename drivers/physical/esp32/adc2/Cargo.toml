@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-adc2"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "ADC2: ten channels of analog input, gated on the Wi-Fi radio"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

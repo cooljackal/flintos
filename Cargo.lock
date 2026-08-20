@@ -80,6 +80,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-adc2"
+version = "0.1.0"
+
+[[package]]
+name = "esp32-dac"
+version = "0.1.0"
+
+[[package]]
 name = "esp32-flash"
 version = "0.1.0"
 dependencies = [
@@ -215,6 +223,8 @@ dependencies = [
  "arch-xtensa",
  "board",
  "esp32-adc",
+ "esp32-adc2",
+ "esp32-dac",
  "esp32-flash",
  "esp32-rng",
  "esp32-timg",

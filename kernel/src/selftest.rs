@@ -45,6 +45,9 @@ mod timg;
 #[path = "selftest_adc.rs"]
 mod adc;
 
+#[path = "selftest_dac_adc2.rs"]
+mod dac_adc2;
+
 #[path = "selftest_heap.rs"]
 mod heap;
 
@@ -109,6 +112,12 @@ pub fn run() {
         ),
     }
     check("every_adc1_channel_converts", adc::every_adc1_channel_converts(), &mut pass, &mut fail);
+
+    // DAC↔ADC2 shared-pad loopback: GPIO 25/26 are both DAC and ADC2 channels,
+    // so the DAC's output is read straight back on the same pin. Tests both
+    // drivers and the ADC2 radio interlock.
+    check("dac_drives_and_adc2_reads_it_back", dac_adc2::dac_drives_and_adc2_reads_it_back(), &mut pass, &mut fail);
+    check("adc2_refuses_a_read_while_the_radio_is_up", dac_adc2::adc2_refuses_a_read_while_the_radio_is_up(), &mut pass, &mut fail);
 
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
 

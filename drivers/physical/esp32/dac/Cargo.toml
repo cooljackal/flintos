@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-dac"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "DAC: two 8-bit analog outputs on GPIO 25 and 26"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
