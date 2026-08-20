@@ -87,6 +87,8 @@ impl ClockBit {
     pub const RMT: Self = Self(1 << 9);
     /// `DPORT_LEDC_CLK_EN`.
     pub const LEDC: Self = Self(1 << 11);
+    /// `DPORT_TWAI_CLK_EN` (a.k.a. `DPORT_CAN_CLK_EN`).
+    pub const TWAI: Self = Self(1 << 19);
 
     pub const fn mask(self) -> u32 {
         self.0

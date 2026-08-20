@@ -123,6 +123,13 @@ pub fn signal_index(signal: Signal) -> Option<u32> {
         // `LEDC_HS_SIG_OUT0_IDX`. The low-speed channels start at 79.
         Signal::LedcHs(n) if n < 8 => 71 + n as u32,
 
+        // TWAI is the exception to the "input and output indices coincide"
+        // note above: `TWAI_TX_IDX` is 123 and `TWAI_RX_IDX` is 94. The two are
+        // separate `Signal` variants, each used only in its own direction, so
+        // the mismatch never has to be reconciled in one value.
+        Signal::TwaiTx => 123,
+        Signal::TwaiRx => 94,
+
         _ => return None,
     })
 }

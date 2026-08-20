@@ -56,6 +56,10 @@ pub enum Signal {
     RmtOut(u8),
     /// LEDC high-speed PWM channel n (0..8).
     LedcHs(u8),
+    /// TWAI (CAN) transmit, output. One controller, so no instance number.
+    TwaiTx,
+    /// TWAI (CAN) receive, input.
+    TwaiRx,
 }
 
 impl Signal {
@@ -74,6 +78,8 @@ impl Signal {
             | Signal::SpiCs(n)
             | Signal::RmtOut(n)
             | Signal::LedcHs(n) => *n,
+            // Single-instance controllers.
+            Signal::TwaiTx | Signal::TwaiRx => 0,
         }
     }
 
@@ -90,8 +96,11 @@ impl Signal {
             | Signal::SpiSck(_)
             | Signal::SpiCs(_)
             | Signal::RmtOut(_)
-            | Signal::LedcHs(_) => SignalDirection::Output,
-            Signal::UartRx(_) | Signal::UartCts(_) | Signal::SpiMiso(_) => SignalDirection::Input,
+            | Signal::LedcHs(_)
+            | Signal::TwaiTx => SignalDirection::Output,
+            Signal::UartRx(_) | Signal::UartCts(_) | Signal::SpiMiso(_) | Signal::TwaiRx => {
+                SignalDirection::Input
+            }
             Signal::I2cSda(_) | Signal::I2cScl(_) => SignalDirection::Bidirectional,
         }
     }

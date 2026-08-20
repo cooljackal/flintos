@@ -48,6 +48,9 @@ mod adc;
 #[path = "selftest_dac_adc2.rs"]
 mod dac_adc2;
 
+#[path = "selftest_twai.rs"]
+mod twai;
+
 #[path = "selftest_heap.rs"]
 mod heap;
 
@@ -118,6 +121,21 @@ pub fn run() {
     // drivers and the ADC2 radio interlock.
     check("dac_drives_and_adc2_reads_it_back", dac_adc2::dac_drives_and_adc2_reads_it_back(), &mut pass, &mut fail);
     check("adc2_refuses_a_read_while_the_radio_is_up", dac_adc2::adc2_refuses_a_read_while_the_radio_is_up(), &mut pass, &mut fail);
+
+    // TWAI (CAN) self-test loopback: transmit a frame and self-receive it on
+    // one pad. Needs a free GPIO the board declares.
+    match crate::board::active::LOOPBACK_SCRATCH_GPIO {
+        Some(pin) => check(
+            "twai_self_reception_round_trips",
+            twai::twai_self_reception_round_trips(pin),
+            &mut pass,
+            &mut fail,
+        ),
+        None => skip(
+            "twai_self_reception_round_trips",
+            "this board declares no free loopback GPIO",
+        ),
+    }
 
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
 

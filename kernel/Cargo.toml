@@ -71,6 +71,8 @@ esp32-adc = { path = "../drivers/physical/esp32/adc" }
 # The DAC↔ADC2 shared-pad loopback self-test drives both.
 esp32-dac = { path = "../drivers/physical/esp32/dac" }
 esp32-adc2 = { path = "../drivers/physical/esp32/adc2" }
+# The TWAI self-test loopback.
+esp32-twai = { path = "../drivers/physical/esp32/twai" }
 
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs

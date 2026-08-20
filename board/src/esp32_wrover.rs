@@ -39,6 +39,11 @@ pub const HAS_BT: bool = true;
 /// GPIO34-39 are input-only with no internal pull.
 pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = None;
 
+/// A GPIO free for on-chip loopback self-tests (TWAI, I2S). `None` skips them.
+/// Left unset: this manifest has never been flashed, so no pin is confirmed
+/// free on real hardware.
+pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = None;
+
 
 /// Maximum radio transmit power, in dBm.
 ///

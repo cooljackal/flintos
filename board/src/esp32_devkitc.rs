@@ -46,6 +46,16 @@ pub const HAS_BT: bool = true;
 /// to 3V3 and change this to `Some(39)` to run the test here.
 pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = None;
 
+/// A GPIO that is electrically free, for on-chip loopback self-tests (TWAI,
+/// I2S) that route a peripheral's output and input to the same pad through the
+/// matrix. Nothing is connected — the loopback is internal — so the pin only
+/// has to be one no other peripheral or the board itself drives.
+///
+/// A board that declares `None` skips those tests. GPIO21 is unbonded to
+/// anything on a bare DevKitC (the I2C convention pins carry nothing by
+/// default), clear of the strapping and flash pins.
+pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = Some(21);
+
 
 /// Maximum radio transmit power, in dBm.
 ///

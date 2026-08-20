@@ -41,6 +41,11 @@ use soc_esp32::addr;
 /// GPIO39 is ADC1 channel 3.
 pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = Some(39);
 
+/// A GPIO free for on-chip loopback self-tests (TWAI, I2S). `None` skips them.
+/// The Atom modules bond almost every pin (LED, IR, button, Grove, IMU), so no
+/// pin is confidently free for a scratch loopback here.
+pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = None;
+
 
 /// Maximum radio transmit power, in dBm.
 ///

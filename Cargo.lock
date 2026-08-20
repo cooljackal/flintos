@@ -147,6 +147,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-twai"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-esp32",
+]
+
+[[package]]
 name = "esp32-uart"
 version = "0.1.0"
 dependencies = [
@@ -228,6 +236,7 @@ dependencies = [
  "esp32-flash",
  "esp32-rng",
  "esp32-timg",
+ "esp32-twai",
  "esp32-uart",
  "esp32-wdt",
  "hal",

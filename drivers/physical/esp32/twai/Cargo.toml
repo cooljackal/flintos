@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-twai"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "TWAI (CAN 2.0) controller, with a self-test loopback"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hal = { path = "../../../../hal" }
+soc-esp32 = { path = "../../../../soc/esp32" }
