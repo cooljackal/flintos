@@ -74,6 +74,9 @@ mod tests {
     use super::*;
     use api::bus::{BusConfig, BusHandle};
     use core::sync::atomic::{AtomicU32, Ordering};
+    use std::boxed::Box;
+    use std::sync::Mutex;
+    use std::vec::Vec;
 
     struct MockUart {
         last_speed_hz: AtomicU32,
@@ -115,6 +118,42 @@ mod tests {
         let bus = UartBus::new(phys);
         assert!(bus.set_speed(BusSpeed::KHz(9600 / 1000)).is_ok());
         assert!(bus.set_speed(BusSpeed::MHz(1)).is_ok());
+    }
+
+    /// Records the bytes the driver actually clocks out — `min(tx, rx)` bytes,
+    /// like the real UART. A plain echo mock cannot see a short-changed write.
+    struct SendRecorder {
+        sent: Mutex<Vec<u8>>,
+    }
+
+    impl PhysicalBus for SendRecorder {
+        fn init(&mut self, _: &BusConfig) -> BusResult<()> {
+            Ok(())
+        }
+        fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+            let len = tx.len().min(rx.len());
+            self.sent.lock().unwrap().extend_from_slice(&tx[..len]);
+            rx[..len].copy_from_slice(&tx[..len]);
+            Ok(())
+        }
+        fn set_enabled(&mut self, _: bool) {}
+    }
+
+    fn recording() -> (UartBus, &'static SendRecorder) {
+        let rec: &'static SendRecorder =
+            Box::leak(Box::new(SendRecorder { sent: Mutex::new(Vec::new()) }));
+        (UartBus::new(rec), rec)
+    }
+
+    #[test]
+    fn a_write_only_op_sends_every_byte() {
+        // Regression guard (#79): a write-only Op used to hand the physical
+        // driver an empty rx, and the driver clocks only min(tx, rx) = 0 bytes,
+        // so the write silently sent nothing. The wrapper must give a write a
+        // matching-length scratch rx.
+        let (bus, rec) = recording();
+        bus.transfer(&mut [Op::write(b"hello")]).unwrap();
+        assert_eq!(&rec.sent.lock().unwrap()[..], b"hello");
     }
 
     #[test]
