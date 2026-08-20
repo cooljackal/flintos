@@ -257,6 +257,7 @@ dependencies = [
  "kvstore",
  "soc-esp32",
  "spi-bus",
+ "uart-bus",
 ]
 
 [[package]]

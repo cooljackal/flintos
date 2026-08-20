@@ -56,17 +56,18 @@ pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = None;
 /// default), clear of the strapping and flash pins.
 pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = Some(21);
 
-/// Two more electrically-free pads the SPI-bus loopback needs, `(sck, miso)`.
+/// Two more electrically-free pads for loopback self-tests that need more than
+/// the single [`LOOPBACK_SCRATCH_GPIO`], as `(a, b)`.
 ///
-/// SPI `init` insists on three distinct pins, so the folded MOSI/MISO loopback
-/// on [`LOOPBACK_SCRATCH_GPIO`] still needs somewhere for the clock to go and a
-/// placeholder MISO pad to get through `init` before MISO is folded onto the
-/// scratch pad. Neither carries an external wire: SCK is only ever driven (and
-/// nothing reads it), the placeholder is only ever read. GPIO23 and GPIO19 are
+/// A bus's `init` insists on distinct pins, so a folded single-pad loopback
+/// still needs spare pads to get through `init` before the second signal is
+/// folded onto the scratch pad: SPI uses both (a clock pad and a placeholder
+/// MISO), UART uses one (a placeholder RX). None carries an external wire —
+/// each is only ever driven-and-ignored or only read. GPIO23 and GPIO19 are
 /// free on a bare DevKitC — the pair `apps/spidma` has always looped on.
 ///
-/// A board that declares `None` skips the SPI-bus loopback test.
-pub const SPI_LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = Some((23, 19));
+/// A board that declares `None` skips those loopback tests.
+pub const LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = Some((23, 19));
 
 
 /// Maximum radio transmit power, in dBm.

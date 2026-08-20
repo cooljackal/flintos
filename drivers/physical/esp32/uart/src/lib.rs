@@ -54,6 +54,10 @@ const CONF0_BIT_NUM_SHIFT: u32 = 2; // [3:2]  0=5, 1=6, 2=7, 3=8 data bits
 const CONF0_BIT_NUM_MASK: u32 = 0x3 << CONF0_BIT_NUM_SHIFT;
 const CONF0_STOP_BIT_NUM_SHIFT: u32 = 4; // [5:4]  1=1, 2=1.5, 3=2 stop bits
 const CONF0_STOP_BIT_NUM_MASK: u32 = 0x3 << CONF0_STOP_BIT_NUM_SHIFT;
+/// Routes the transmitter's output straight to the receiver on-chip, for a
+/// self-test with no wire and no pad. Confirmed against esp-idf
+/// `uart_reg.h` (`UART_LOOPBACK`, bitpos 14) / `uart_ll.h` (`conf0.loopback`).
+const CONF0_LOOPBACK: u32 = 1 << 14;
 const CONF0_RXFIFO_RST: u32 = 1 << 17;
 const CONF0_TXFIFO_RST: u32 = 1 << 18;
 /// Selects APB_CLK (rather than REF_TICK) as the baud-rate reference.
@@ -154,6 +158,25 @@ impl Esp32Uart {
     pub fn flush(&self) {
         while self.tx_fifo_count() > 0 {
             core::hint::spin_loop();
+        }
+    }
+
+    /// Enable or disable the internal TX→RX loopback (CONF0 bit 14).
+    ///
+    /// A pad-matrix loopback of an async UART mis-frames the first byte after an
+    /// idle line — the receiver catches a false start off an edge the analog pad
+    /// produces. Internal loopback routes the transmitter to the receiver as a
+    /// clean digital signal, so a self-test round-trips byte-for-byte.
+    pub fn set_loopback(&self, on: bool) {
+        unsafe {
+            let conf0 = self.reg(UART_CONF0);
+            let mut val = conf0.read_volatile();
+            if on {
+                val |= CONF0_LOOPBACK;
+            } else {
+                val &= !CONF0_LOOPBACK;
+            }
+            conf0.write_volatile(val);
         }
     }
 

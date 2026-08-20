@@ -37,7 +37,15 @@ impl Bus for SpiBus {
             }
             match (op.tx, op.rx.as_deref_mut()) {
                 (Some(tx), Some(rx)) => self.phys.raw_transfer(tx, rx)?,
-                (Some(tx), None) => self.phys.raw_transfer(tx, &mut [])?,
+                (Some(tx), None) => {
+                    // A write still clocks a full duplex frame; the reply is
+                    // discarded. The physical driver sends only min(tx, rx)
+                    // bytes, so a matching-length scratch rx is what makes the
+                    // whole of tx go out.
+                    let mut scratch = [0u8; MAX_TRANSFER];
+                    let n = tx.len().min(MAX_TRANSFER);
+                    self.phys.raw_transfer(&tx[..n], &mut scratch[..n])?;
+                }
                 (None, Some(rx)) => {
                     // A read still has to clock: shift zeros out to shift the
                     // reply in, one buffer-full at a time.

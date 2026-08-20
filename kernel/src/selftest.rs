@@ -57,6 +57,9 @@ mod i2s;
 #[path = "selftest_spi.rs"]
 mod spi;
 
+#[path = "selftest_uart.rs"]
+mod uart;
+
 #[path = "selftest_heap.rs"]
 mod heap;
 
@@ -164,7 +167,7 @@ pub fn run() {
     // the board declares.
     match (
         crate::board::active::LOOPBACK_SCRATCH_GPIO,
-        crate::board::active::SPI_LOOPBACK_AUX_GPIOS,
+        crate::board::active::LOOPBACK_AUX_GPIOS,
     ) {
         (Some(scratch), Some((sck, miso))) => check(
             "spi_bus_loopback_round_trips",
@@ -175,6 +178,25 @@ pub fn run() {
         _ => skip(
             "spi_bus_loopback_round_trips",
             "this board declares no free SPI loopback GPIOs",
+        ),
+    }
+
+    // UART-bus (Layer 2) loopback: fold UART2's TX onto RX over the scratch pad
+    // and require a byte-exact round trip through the `UartBus` wrapper. Needs
+    // the scratch pad plus one spare pad (placeholder RX) the board declares.
+    match (
+        crate::board::active::LOOPBACK_SCRATCH_GPIO,
+        crate::board::active::LOOPBACK_AUX_GPIOS,
+    ) {
+        (Some(scratch), Some((_, rx_placeholder))) => check(
+            "uart_bus_loopback_round_trips",
+            uart::uart_bus_loopback_round_trips(scratch, rx_placeholder),
+            &mut pass,
+            &mut fail,
+        ),
+        _ => skip(
+            "uart_bus_loopback_round_trips",
+            "this board declares no free UART loopback GPIOs",
         ),
     }
 

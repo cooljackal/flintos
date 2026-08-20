@@ -34,7 +34,14 @@ impl Bus for UartBus {
             }
             match (op.tx, op.rx.as_deref_mut()) {
                 (Some(tx), Some(rx)) => self.phys.raw_transfer(tx, rx)?,
-                (Some(tx), None) => self.phys.raw_transfer(tx, &mut [])?,
+                (Some(tx), None) => {
+                    // The driver sends only min(tx, rx) bytes and drains the
+                    // echo per byte; a matching-length scratch rx is what makes
+                    // the whole write go out. The received bytes are discarded.
+                    let mut scratch = [0u8; MAX_TRANSFER];
+                    let n = tx.len().min(MAX_TRANSFER);
+                    self.phys.raw_transfer(&tx[..n], &mut scratch[..n])?;
+                }
                 (None, Some(rx)) => {
                     // Clock out zeros to drive a same-length receive.
                     let scratch = [0u8; MAX_TRANSFER];
