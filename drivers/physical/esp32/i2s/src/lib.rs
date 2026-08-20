@@ -17,6 +17,15 @@
 //! bits per sample, two channels; the exact sample rate is immaterial when the
 //! block only talks to itself.
 //!
+//! # One pad, for the data line
+//!
+//! `sig_loopback` shares the word and bit clocks between transmitter and
+//! receiver internally, but **not the serial data** — verified on silicon,
+//! where the receiver otherwise clocks in nothing but zeros. So the data output
+//! and data input are routed to one pad through the GPIO matrix: the
+//! transmitter drives it, the receiver reads it, no external wire. That pad is
+//! the only pin this needs.
+//!
 //! Buffers and descriptors must live in DMA-reachable RAM and be word-aligned —
 //! [`soc_esp32::dma::build_chain`] checks both. This crate reuses that tested
 //! descriptor machinery rather than re-deriving the `lldesc` format.
@@ -40,8 +49,10 @@
 
 #![no_std]
 
+use hal::bus::BusResult;
+use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::dma::{build_chain, link_addr, received_len, Descriptor, Direction};
-use soc_esp32::dport;
+use soc_esp32::{dport, Esp32PinMux};
 
 const I2S0_BASE: u32 = 0x3FF4_F000;
 
@@ -54,6 +65,7 @@ const CONF_CHAN: u32 = I2S0_BASE + 0x2C;
 const OUT_LINK: u32 = I2S0_BASE + 0x30;
 const IN_LINK: u32 = I2S0_BASE + 0x34;
 const LC_CONF: u32 = I2S0_BASE + 0x60;
+const CONF2: u32 = I2S0_BASE + 0xA8;
 const CLKM_CONF: u32 = I2S0_BASE + 0xAC;
 const SAMPLE_RATE_CONF: u32 = I2S0_BASE + 0xB0;
 
@@ -74,6 +86,11 @@ const INT_IN_SUC_EOF: u32 = 1 << 9;
 
 // FIFO_CONF.
 const FIFO_DSCR_EN: u32 = 1 << 12;
+// The FIFO mode fields are only honoured with their force-enable bits set;
+// without these the hardware picks a mode of its own and 16-bit data does not
+// serialise the way the sample config asks for.
+const FIFO_TX_MOD_FORCE_EN: u32 = 1 << 19;
+const FIFO_RX_MOD_FORCE_EN: u32 = 1 << 20;
 const FIFO_TX_DATA_NUM_SHIFT: u32 = 6;
 const FIFO_RX_DATA_NUM_SHIFT: u32 = 0;
 // 16-bit, two channels: TX and RX FIFO mode 0. The default FIFO threshold of
@@ -89,9 +106,12 @@ const LC_AHBM_RST: u32 = 1 << 3;
 // OUT_LINK / IN_LINK.
 const LINK_START: u32 = 1 << 29;
 
-// CLKM_CONF: no APLL (PLL_D2 = 160 MHz source), integer divide by 8.
+// CLKM_CONF: enable the clock module, no APLL (PLL_D2 = 160 MHz source),
+// integer divide by 8. `CLK_EN` (bit 20) runs the clock generator at all —
+// without it nothing serialises and a loopback DMA never completes.
+const CLKM_CLK_EN: u32 = 1 << 20;
 const CLKM_DIV_A_SHIFT: u32 = 14;
-const CLKM_CONF_INT_DIV8: u32 = 8 | (1 << CLKM_DIV_A_SHIFT); // div_num=8, div_a=1, div_b=0
+const CLKM_CONF_INT_DIV8: u32 = CLKM_CLK_EN | 8 | (1 << CLKM_DIV_A_SHIFT); // clk_en, div_num=8, div_a=1, div_b=0
 
 // SAMPLE_RATE_CONF: bck divide by 8 on both, 16 bits per sample on both.
 const RX_BCK_DIV_SHIFT: u32 = 6;
@@ -120,12 +140,24 @@ pub struct I2sLoopback {
 
 impl I2sLoopback {
     /// Bring I2S0 up: clocked, reset, master TX / slave RX, 16-bit, with the
-    /// internal signal loopback engaged.
+    /// clock shared internally and the serial data looped over `data_pin`.
+    ///
+    /// `data_pin` must be a GPIO nothing else drives — the loopback is on that
+    /// one pad.
     ///
     /// # Safety
-    /// Takes exclusive ownership of the I2S0 registers and its DMA.
-    pub unsafe fn new() -> Self {
+    /// Takes exclusive ownership of the I2S0 registers, its DMA, and the pad.
+    pub unsafe fn new(data_pin: u8) -> BusResult<Self> {
         dport::enable(dport::ClockBit::I2S0);
+
+        // Loop the serial data through one pad: TX drives it, RX reads it. The
+        // clocks are shared internally by sig_loopback below. TX first, then RX,
+        // so the pad ends input-enabled.
+        let mux = Esp32PinMux::new();
+        mux.can_route(Signal::I2sTxData, data_pin)?;
+        mux.can_route(Signal::I2sRxData, data_pin)?;
+        mux.route(Signal::I2sTxData, data_pin, PinConfig::PUSH_PULL)?;
+        mux.route(Signal::I2sRxData, data_pin, PinConfig::PUSH_PULL)?;
 
         // Reset the serialiser, deserialiser, both FIFOs, and the DMA.
         pulse(CONF, CONF_TX_RESET | CONF_RX_RESET | CONF_TX_FIFO_RESET | CONF_RX_FIFO_RESET);
@@ -142,17 +174,23 @@ impl I2sLoopback {
         write(CONF_CHAN, 0);
 
         write(CLKM_CONF, CLKM_CONF_INT_DIV8);
+        // esp-idf's `i2s_ll_enable_clock` clears CONF2 when it starts the clock;
+        // reset leaves it non-zero and the modes it selects fight this config.
+        write(CONF2, 0);
         write(SAMPLE_RATE_CONF, SAMPLE_RATE_16BIT_BCK8);
 
-        // DMA on, 16-bit dual-channel FIFO (mode 0) on both, default threshold.
+        // DMA on, 16-bit dual-channel FIFO (mode 0) on both — forced, so the
+        // mode fields are honoured — default threshold.
         write(
             FIFO_CONF,
             FIFO_DSCR_EN
+                | FIFO_TX_MOD_FORCE_EN
+                | FIFO_RX_MOD_FORCE_EN
                 | (FIFO_DATA_NUM << FIFO_TX_DATA_NUM_SHIFT)
                 | (FIFO_DATA_NUM << FIFO_RX_DATA_NUM_SHIFT),
         );
 
-        Self { _private: () }
+        Ok(Self { _private: () })
     }
 
     /// Transmit `tx` and receive it back through the internal loopback into
@@ -248,6 +286,7 @@ mod tests {
         assert_eq!(OUT_LINK, 0x3FF4_F030);
         assert_eq!(IN_LINK, 0x3FF4_F034);
         assert_eq!(LC_CONF, 0x3FF4_F060);
+        assert_eq!(CONF2, 0x3FF4_F0A8);
         assert_eq!(CLKM_CONF, 0x3FF4_F0AC);
         assert_eq!(SAMPLE_RATE_CONF, 0x3FF4_F0B0);
     }
@@ -273,6 +312,10 @@ mod tests {
 
     #[test]
     fn the_clock_and_sample_fields_encode_16bit_by_8() {
+        // The clock module must be enabled or nothing serialises and the
+        // loopback DMA never completes — this was the first-silicon bug.
+        assert_eq!(CLKM_CLK_EN, 1 << 20);
+        assert_eq!(CLKM_CONF_INT_DIV8 & CLKM_CLK_EN, CLKM_CLK_EN);
         // div_num 8 in [7:0], div_a 1 in [19:14], div_b 0.
         assert_eq!(CLKM_CONF_INT_DIV8 & 0xFF, 8);
         assert_eq!((CLKM_CONF_INT_DIV8 >> 14) & 0x3F, 1);
@@ -287,6 +330,8 @@ mod tests {
     #[test]
     fn dma_is_enabled_and_the_link_start_bit_is_twenty_nine() {
         assert_eq!(FIFO_DSCR_EN, 1 << 12);
+        assert_eq!(FIFO_TX_MOD_FORCE_EN, 1 << 19);
+        assert_eq!(FIFO_RX_MOD_FORCE_EN, 1 << 20);
         assert_eq!(LINK_START, 1 << 29);
         // The 20-bit address field must not reach the start bit.
         assert_eq!(0x000F_FFFFu32 & LINK_START, 0);

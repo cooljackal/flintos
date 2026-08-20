@@ -130,6 +130,11 @@ pub fn signal_index(signal: Signal) -> Option<u32> {
         Signal::TwaiTx => 123,
         Signal::TwaiRx => 94,
 
+        // I2S0 serial data: `I2S0O_DATA_OUT23_IDX` and `I2S0I_DATA_IN15_IDX`,
+        // the lines esp-idf uses for the standard (non-parallel) stream.
+        Signal::I2sTxData => 163,
+        Signal::I2sRxData => 155,
+
         _ => return None,
     })
 }

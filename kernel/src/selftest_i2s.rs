@@ -7,7 +7,8 @@
 //! (`sig_loopback`), and DMA'd into a second buffer. A byte-for-byte match
 //! proves the serialiser, deserialiser, both FIFOs and both DMA engines.
 //!
-//! No pin is involved — the loopback is internal — so this runs on any board.
+//! `sig_loopback` shares the clocks internally, but the serial data has to loop
+//! over one pad, so this needs a free GPIO — `board::active::LOOPBACK_SCRATCH_GPIO`.
 //!
 //! Buffers and descriptors are static and word-aligned, which on the ESP32 puts
 //! them in DMA-reachable DRAM.
@@ -28,7 +29,7 @@ static mut RX_DESC: [soc_esp32::dma::Descriptor; 1] = [soc_esp32::dma::Descripto
 
 /// Transmit a pattern and require it back byte-for-byte through the loopback.
 #[cfg(target_os = "none")]
-pub(crate) fn i2s_dma_loopback_round_trips() -> Check {
+pub(crate) fn i2s_dma_loopback_round_trips(data_pin: u8) -> Check {
     use core::ptr::addr_of_mut;
     use esp32_i2s::I2sLoopback;
     use soc_esp32::dma::Descriptor;
@@ -48,7 +49,7 @@ pub(crate) fn i2s_dma_loopback_round_trips() -> Check {
     }
     rx.fill(0);
 
-    let i2s = unsafe { I2sLoopback::new() };
+    let i2s = unsafe { I2sLoopback::new(data_pin) }.map_err(|_| "the I2S data pin would not route")?;
     let got = unsafe { i2s.loopback(tx, rx, tx_desc, rx_desc) }
         .map_err(|_| "the I2S loopback DMA never completed")?;
 
@@ -72,6 +73,6 @@ pub(crate) fn i2s_dma_loopback_round_trips() -> Check {
 
 // Host stand-in: there is no I2S peripheral or DMA to drive.
 #[cfg(not(target_os = "none"))]
-pub(crate) fn i2s_dma_loopback_round_trips() -> Check {
+pub(crate) fn i2s_dma_loopback_round_trips(_data_pin: u8) -> Check {
     Ok(())
 }

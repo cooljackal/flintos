@@ -106,27 +106,27 @@ The chip's own blocks, in the order most projects reach for them.
 | PWM / LEDC | ✅ | ⛔ |
 | Timers (TIMG) | ✅ | ⛔ |
 | ADC1 | ✅ | ⛔ |
-| ADC2 | 🧪 † | ⛔ |
-| DAC | 🧪 † | ⛔ |
+| ADC2 | ✅ † | ⛔ |
+| DAC | ✅ † | ⛔ |
 | Touch sensor | ⛔ | ⛔ |
 | RMT pulse generator | ✅ | — |
 | Hardware RNG | ✅ | ⛔ |
 | Flash storage (key/value) | ✅ | ⛔ |
-| CAN (TWAI) | 🧪 † | ⛔ |
-| I2S | 🧪 † | ⛔ |
+| CAN (TWAI) | ✅ † | ⛔ |
+| I2S | ✅ † | ⛔ |
 | SD / SDIO | ⛔ | ⛔ |
 | Ethernet MAC | ⛔ | ⛔ |
 | Wi-Fi | 🚧 | — |
 | Bluetooth / BLE | 🚧 | — |
 | USB | — | ⛔ |
 
-† These four are 🧪 in the strict sense: the driver and an **on-chip loopback
-self-test** are written and their register maps are host-tested, but the
-loopback has not yet run on silicon. Each proves itself without external
-hardware — DAC drives its shared pad and ADC2 reads it back, TWAI transmits and
-self-receives a frame, I2S DMAs a buffer through its internal loopback — so
-running `make test-target` on a board is what flips them to ✅. No absolute
-accuracy, no real bus, no second node is claimed.
+† Verified on a DevKitC by an **on-chip loopback self-test** (`make test-target`,
+36/36 on-target tests pass), each proving itself with no external hardware: DAC
+drives its shared pad and ADC2 reads it back, ADC2 refuses a read while the
+radio owns the SAR, TWAI transmits and self-receives a frame, and I2S DMAs a
+buffer through a one-pad loopback. What is *not* claimed: absolute analog
+accuracy, a real CAN bus, or a second node — those need a bench meter, a
+transceiver, and a peer.
 
 ### Device drivers
 

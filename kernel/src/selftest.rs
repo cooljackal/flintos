@@ -140,8 +140,20 @@ pub fn run() {
         ),
     }
 
-    // I2S DMA loopback: internal (sig_loopback), so no pin and no board gate.
-    check("i2s_dma_loopback_round_trips", i2s::i2s_dma_loopback_round_trips(), &mut pass, &mut fail);
+    // I2S DMA loopback: clocks are shared internally, but the serial data loops
+    // over one pad, so it needs the same free GPIO.
+    match crate::board::active::LOOPBACK_SCRATCH_GPIO {
+        Some(pin) => check(
+            "i2s_dma_loopback_round_trips",
+            i2s::i2s_dma_loopback_round_trips(pin),
+            &mut pass,
+            &mut fail,
+        ),
+        None => skip(
+            "i2s_dma_loopback_round_trips",
+            "this board declares no free loopback GPIO",
+        ),
+    }
 
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
 

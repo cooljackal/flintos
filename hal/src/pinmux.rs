@@ -60,6 +60,10 @@ pub enum Signal {
     TwaiTx,
     /// TWAI (CAN) receive, input.
     TwaiRx,
+    /// I2S0 serial data out, output.
+    I2sTxData,
+    /// I2S0 serial data in, input.
+    I2sRxData,
 }
 
 impl Signal {
@@ -79,7 +83,7 @@ impl Signal {
             | Signal::RmtOut(n)
             | Signal::LedcHs(n) => *n,
             // Single-instance controllers.
-            Signal::TwaiTx | Signal::TwaiRx => 0,
+            Signal::TwaiTx | Signal::TwaiRx | Signal::I2sTxData | Signal::I2sRxData => 0,
         }
     }
 
@@ -97,10 +101,13 @@ impl Signal {
             | Signal::SpiCs(_)
             | Signal::RmtOut(_)
             | Signal::LedcHs(_)
-            | Signal::TwaiTx => SignalDirection::Output,
-            Signal::UartRx(_) | Signal::UartCts(_) | Signal::SpiMiso(_) | Signal::TwaiRx => {
-                SignalDirection::Input
-            }
+            | Signal::TwaiTx
+            | Signal::I2sTxData => SignalDirection::Output,
+            Signal::UartRx(_)
+            | Signal::UartCts(_)
+            | Signal::SpiMiso(_)
+            | Signal::TwaiRx
+            | Signal::I2sRxData => SignalDirection::Input,
             Signal::I2cSda(_) | Signal::I2cScl(_) => SignalDirection::Bidirectional,
         }
     }
