@@ -75,6 +75,7 @@ members = [
     "drivers/physical/esp32/adc2",
     "drivers/physical/esp32/dac",
     "drivers/physical/esp32/twai",
+    "drivers/physical/esp32/i2s",
     "drivers/physical/esp32/flash",
     "drivers/bus/spi-bus",
     "drivers/bus/i2c-bus",

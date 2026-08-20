@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-i2s"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "I2S0, driven as a DMA loopback"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+soc-esp32 = { path = "../../../../soc/esp32" }

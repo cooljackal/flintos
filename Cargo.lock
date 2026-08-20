@@ -111,6 +111,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-i2s"
+version = "0.1.0"
+dependencies = [
+ "soc-esp32",
+]
+
+[[package]]
 name = "esp32-ledc"
 version = "0.1.0"
 dependencies = [
@@ -234,6 +241,7 @@ dependencies = [
  "esp32-adc2",
  "esp32-dac",
  "esp32-flash",
+ "esp32-i2s",
  "esp32-rng",
  "esp32-timg",
  "esp32-twai",

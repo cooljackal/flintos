@@ -51,6 +51,9 @@ mod dac_adc2;
 #[path = "selftest_twai.rs"]
 mod twai;
 
+#[path = "selftest_i2s.rs"]
+mod i2s;
+
 #[path = "selftest_heap.rs"]
 mod heap;
 
@@ -136,6 +139,9 @@ pub fn run() {
             "this board declares no free loopback GPIO",
         ),
     }
+
+    // I2S DMA loopback: internal (sig_loopback), so no pin and no board gate.
+    check("i2s_dma_loopback_round_trips", i2s::i2s_dma_loopback_round_trips(), &mut pass, &mut fail);
 
     check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
 

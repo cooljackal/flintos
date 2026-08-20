@@ -73,6 +73,8 @@ esp32-dac = { path = "../drivers/physical/esp32/dac" }
 esp32-adc2 = { path = "../drivers/physical/esp32/adc2" }
 # The TWAI self-test loopback.
 esp32-twai = { path = "../drivers/physical/esp32/twai" }
+# The I2S DMA loopback.
+esp32-i2s = { path = "../drivers/physical/esp32/i2s" }
 
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs
