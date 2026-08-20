@@ -5,7 +5,7 @@
 use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus, UartDataBits, UartParity, UartStopBits};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
-use soc_esp32::{dport, Esp32PinMux, APB_HZ};
+use soc_esp32::{dport, poll, Esp32PinMux, APB_HZ};
 
 /// ESP32 UART physical driver.
 /// Registers at `base_addr` (0x3FF40000 for UART0).
@@ -263,11 +263,34 @@ impl PhysicalBus for Esp32Uart {
         Ok(())
     }
 
+    /// Full-duplex byte exchange.
+    ///
+    /// Write and read are separate phases per byte: `putc` only queues the byte
+    /// in the TX FIFO, so the earlier `putc`-then-`getc` pairing read RX before
+    /// the byte had shifted out and round-tripped — in a TX→RX loopback every
+    /// `getc` saw an empty FIFO and returned zero, failing a working part.
+    ///
+    /// Now each byte is sent, then RX is polled (bounded) until it arrives. This
+    /// keeps at most one byte in flight, so it never overruns the RX FIFO for an
+    /// arbitrarily long transfer, and needs no per-byte sleep. A byte that never
+    /// returns (nothing wired to RX) times out rather than hanging.
     fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
         let len = tx.len().min(rx.len());
         for i in 0..len {
             self.putc(tx[i]);
-            rx[i] = self.getc().unwrap_or(0);
+            let mut byte = 0u8;
+            poll::until(
+                || match self.getc() {
+                    Some(b) => {
+                        byte = b;
+                        true
+                    }
+                    None => false,
+                },
+                poll::DEFAULT_SPINS,
+            )
+            .map_err(|_| BusError::Timeout)?;
+            rx[i] = byte;
         }
         Ok(())
     }
