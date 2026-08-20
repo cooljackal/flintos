@@ -46,6 +46,10 @@ pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = Some(39);
 /// pin is confidently free for a scratch loopback here.
 pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = None;
 
+/// `(sck, miso)` aux pads for the SPI-bus loopback. `None` skips it — see the
+/// DevKitC manifest for what these are for.
+pub const SPI_LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = None;
+
 
 /// Maximum radio transmit power, in dBm.
 ///

@@ -54,6 +54,9 @@ mod twai;
 #[path = "selftest_i2s.rs"]
 mod i2s;
 
+#[path = "selftest_spi.rs"]
+mod spi;
+
 #[path = "selftest_heap.rs"]
 mod heap;
 
@@ -152,6 +155,26 @@ pub fn run() {
         None => skip(
             "i2s_dma_loopback_round_trips",
             "this board declares no free loopback GPIO",
+        ),
+    }
+
+    // SPI-bus (Layer 2) FIFO loopback: fold SPI2's MOSI onto MISO over the
+    // scratch pad and require a byte-exact round trip through the `SpiBus`
+    // wrapper. Needs the scratch pad plus two aux pads (clock, placeholder MISO)
+    // the board declares.
+    match (
+        crate::board::active::LOOPBACK_SCRATCH_GPIO,
+        crate::board::active::SPI_LOOPBACK_AUX_GPIOS,
+    ) {
+        (Some(scratch), Some((sck, miso))) => check(
+            "spi_bus_loopback_round_trips",
+            spi::spi_bus_loopback_round_trips(scratch, sck, miso),
+            &mut pass,
+            &mut fail,
+        ),
+        _ => skip(
+            "spi_bus_loopback_round_trips",
+            "this board declares no free SPI loopback GPIOs",
         ),
     }
 

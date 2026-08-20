@@ -75,6 +75,9 @@ esp32-adc2 = { path = "../drivers/physical/esp32/adc2" }
 esp32-twai = { path = "../drivers/physical/esp32/twai" }
 # The I2S DMA loopback.
 esp32-i2s = { path = "../drivers/physical/esp32/i2s" }
+# The SPI-bus (Layer 2) loopback self-test drives the wrapper over this driver.
+esp32-spi = { path = "../drivers/physical/esp32/spi" }
+spi-bus = { path = "../drivers/bus/spi-bus" }
 
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs
