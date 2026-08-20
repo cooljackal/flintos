@@ -496,19 +496,6 @@ pub unsafe fn init() -> i32 {
     unsafe { crate::supplicant::register() }
 }
 
-/// The table the driver was given, for a caller that wants to check it.
-///
-/// Returns `None` before [`init`] — an all-null table is not one the blob
-/// would survive, and saying so is better than handing it back.
-pub fn osi_table() -> Option<&'static WifiOsiFuncs> {
-    let t = unsafe { &*OSI_TABLE.0.get() };
-    if t.null_count() == crate::osi::FUNCTION_COUNT {
-        None
-    } else {
-        Some(t)
-    }
-}
-
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

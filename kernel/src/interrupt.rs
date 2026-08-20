@@ -58,15 +58,6 @@ impl Drop for InterruptGuard {
     }
 }
 
-/// Event delivered from a top-half to a driver task.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct InterruptEvent {
-    pub irq: u8,
-    pub timestamp: u64,
-    pub flags: u32,
-}
-
 #[derive(Clone, Copy)]
 struct Handler {
     irq: u8,

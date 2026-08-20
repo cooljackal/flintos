@@ -21,12 +21,11 @@
 use core::cell::UnsafeCell;
 
 /// A mutex with priority inheritance.
+///
+/// The priority-inheritance state lives kernel-side (`kernel::mutex`), keyed by
+/// the kernel object this handle refers to; this type is just the data cell.
 pub struct Mutex<T> {
     data: UnsafeCell<T>,
-    #[allow(dead_code)]
-    owner: core::sync::atomic::AtomicU32,
-    #[allow(dead_code)]
-    original_prio: core::sync::atomic::AtomicU8,
 }
 
 unsafe impl<T: Send> Send for Mutex<T> {}
@@ -37,8 +36,6 @@ impl<T> Mutex<T> {
     pub const fn new(value: T) -> Self {
         Self {
             data: UnsafeCell::new(value),
-            owner: core::sync::atomic::AtomicU32::new(u32::MAX),
-            original_prio: core::sync::atomic::AtomicU8::new(0),
         }
     }
 }

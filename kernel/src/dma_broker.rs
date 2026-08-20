@@ -8,13 +8,6 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-/// DMA transfer direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DmaDirection {
-    Read,
-    Write,
-}
-
 /// Identifies one transfer, from [`begin`] to [`await_transfer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DmaTransferId(u32);

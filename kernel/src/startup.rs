@@ -59,12 +59,3 @@ pub fn console_write(data: &[u8]) {
         }
     }
 }
-
-/// Write a single byte to the console UART.
-pub fn console_putc(c: u8) {
-    unsafe {
-        if let Some(ref uart) = CONSOLE_UART {
-            uart.putc(c);
-        }
-    }
-}

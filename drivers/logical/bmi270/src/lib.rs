@@ -107,13 +107,6 @@ impl Bmi270 {
         Ok(self.chip_id()? == CHIP_ID)
     }
 
-    /// `INTERNAL_STATUS`. Bits 0..3 are the message; 1 means the config blob
-    /// initialised. Zero on a part that has only been powered up, which is the
-    /// expected state here since this driver does not upload one.
-    pub fn internal_status(&self) -> BusResult<u8> {
-        self.read_reg(REG_INTERNAL_STATUS)
-    }
-
     /// Work out which of the two parts M5Stack ships is actually present.
     ///
     /// Reads the BMI270's ID register first, then the MPU6886's. A part that

@@ -296,11 +296,6 @@ pub fn set_start_delay_ms(ms: u32) {
     START_DELAY_MS.store(ms, core::sync::atomic::Ordering::Relaxed);
 }
 
-/// The injected delay, for an application that wants to report it.
-pub fn start_delay_ms() -> u32 {
-    START_DELAY_MS.load(core::sync::atomic::Ordering::Relaxed)
-}
-
 /// The trap-free half for slot `N`: what the kernel actually starts.
 fn trampoline<const N: usize>() {
     ENTERED[N].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
