@@ -58,6 +58,22 @@ pub use desc::{
     build_chain, descriptors_needed, link_addr, reachable, received_len, Descriptor, Direction,
 };
 
+/// This SoC's [`hal::dma::DmaReach`] — the ESP32's DMA-reachable window is all
+/// internal DRAM. A driver holds one of these to validate a buffer without
+/// naming the address range itself.
+pub struct DmaReach;
+
+impl hal::dma::DmaReach for DmaReach {
+    fn reachable(&self, addr: u32, len: u32) -> bool {
+        if len == 0 {
+            return true;
+        }
+        // Both ends must land inside the window; `reachable` is an inclusive
+        // lower / exclusive upper check, so the last byte is `addr + len - 1`.
+        reachable(addr) && reachable(addr + len - 1)
+    }
+}
+
 /// `DPORT_SPI_DMA_CHAN_SEL_REG`.
 const SPI_DMA_CHAN_SEL: u32 = DPORT_BASE + 0x5A8;
 
@@ -227,6 +243,24 @@ pub fn owner_of(channel: u8) -> Option<Host> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hal::dma::DmaReach as DmaReachTrait;
+
+    #[test]
+    fn dma_reach_requires_both_ends_in_the_window() {
+        let r = DmaReach;
+        // Wholly inside internal DRAM.
+        assert!(r.reachable(0x3FFB_0000, 256));
+        // Starts one byte before the window.
+        assert!(!r.reachable(0x3FFA_DFFF, 4));
+        // Ends one byte past the window (last byte == 0x4000_0000).
+        assert!(!r.reachable(0x3FFF_FFFE, 4));
+        // A range ending exactly at the last reachable byte is fine.
+        assert!(r.reachable(0x3FFF_FFF0, 16));
+        // Zero length is vacuously reachable even at a bad address.
+        assert!(r.reachable(0x4008_0000, 0));
+        // Entirely outside (IRAM).
+        assert!(!r.reachable(0x4008_0000, 64));
+    }
 
     /// The register write is the only part that needs hardware; the ownership
     /// bookkeeping is what these check, so they run the allocator directly and

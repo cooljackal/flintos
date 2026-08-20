@@ -16,6 +16,7 @@
 
 pub mod bus;
 pub mod critical_section;
+pub mod dma;
 pub mod mpu;
 pub mod pinmux;
 pub mod smp;
@@ -26,6 +27,7 @@ pub mod wifi;
 
 pub use bus::*;
 pub use critical_section::CriticalSection;
+pub use dma::DmaReach;
 pub use mpu::MpuManager;
 pub use pinmux::{PinConfig, PinDrive, PinMux, PinPull, Signal, SignalDirection};
 pub use smp::{CoreId, MultiCore, MAX_CORES};
