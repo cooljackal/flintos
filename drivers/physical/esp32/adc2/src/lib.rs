@@ -46,6 +46,8 @@
 
 #![no_std]
 
+use soc_esp32::poll;
+
 const SENS_BASE: u32 = 0x3FF4_8800;
 const SYSCON_BASE: u32 = 0x3FF6_6000;
 
@@ -95,9 +97,6 @@ const MEAS_START_FORCE: u32 = 1 << 18;
 const MEAS_START_SAR: u32 = 1 << 17;
 const MEAS_DONE_SAR: u32 = 1 << 16;
 const MEAS_DATA_MASK: u32 = 0xFFFF;
-
-/// Bound on the conversion poll, as on ADC1.
-const CONVERSION_SPINS: u32 = 100_000;
 
 /// An ADC2 channel, named by the GPIO it reads. The channel number is **not**
 /// the GPIO number and not pin order — channel 0 is GPIO 4.
@@ -272,14 +271,11 @@ impl Adc2 {
         start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT));
         start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT) | MEAS_START_SAR);
 
-        let mut spins = 0u32;
-        while start.read_volatile() & MEAS_DONE_SAR == 0 {
-            spins += 1;
-            if spins > CONVERSION_SPINS {
-                return Err(Adc2Error::Timeout);
-            }
-            core::hint::spin_loop();
-        }
+        poll::until(
+            || unsafe { start.read_volatile() & MEAS_DONE_SAR != 0 },
+            poll::DEFAULT_SPINS,
+        )
+        .map_err(|_| Adc2Error::Timeout)?;
         Ok((start.read_volatile() & MEAS_DATA_MASK) as u16)
     }
 

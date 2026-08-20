@@ -82,6 +82,9 @@ dependencies = [
 [[package]]
 name = "esp32-adc2"
 version = "0.1.0"
+dependencies = [
+ "soc-esp32",
+]
 
 [[package]]
 name = "esp32-dac"

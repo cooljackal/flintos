@@ -48,6 +48,8 @@
 
 #![no_std]
 
+use soc_esp32::poll;
+
 /// SENS peripheral base.
 const SENS_BASE: u32 = 0x3FF4_8800;
 
@@ -128,10 +130,6 @@ const MEAS_START_FORCE: u32 = 1 << 18;
 const MEAS_START_SAR: u32 = 1 << 17;
 const MEAS_DONE_SAR: u32 = 1 << 16;
 const MEAS_DATA_MASK: u32 = 0xFFFF;
-
-/// Bound on the conversion poll. A 12-bit conversion takes microseconds; this
-/// is generous enough to absorb interrupts and still fail a dead SAR.
-const CONVERSION_SPINS: u32 = 100_000;
 
 /// An ADC1 channel, named by the GPIO it reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -445,14 +443,11 @@ impl Adc1 {
             base | ((1u32 << ch.index()) << EN_PAD_SHIFT) | MEAS_START_SAR,
         );
 
-        let mut spins = 0u32;
-        while start.read_volatile() & MEAS_DONE_SAR == 0 {
-            spins += 1;
-            if spins > CONVERSION_SPINS {
-                return Err(AdcError::Timeout);
-            }
-            core::hint::spin_loop();
-        }
+        poll::until(
+            || unsafe { start.read_volatile() & MEAS_DONE_SAR != 0 },
+            poll::DEFAULT_SPINS,
+        )
+        .map_err(|_| AdcError::Timeout)?;
         Ok((start.read_volatile() & MEAS_DATA_MASK) as u16)
     }
 

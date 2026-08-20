@@ -52,7 +52,7 @@
 use hal::bus::BusResult;
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::dma::{build_chain, link_addr, received_len, Descriptor, Direction};
-use soc_esp32::{dport, Esp32PinMux};
+use soc_esp32::{dport, poll, reg, Esp32PinMux};
 
 const I2S0_BASE: u32 = 0x3FF4_F000;
 
@@ -232,14 +232,9 @@ impl I2sLoopback {
         write(OUT_LINK, link_addr(tx_head) | LINK_START);
         set(CONF, CONF_TX_START);
 
-        let mut spins = 0u32;
-        while read(INT_RAW) & INT_IN_SUC_EOF == 0 {
-            spins += 1;
-            if spins > EOF_SPINS {
-                self.stop();
-                return Err(I2sError::Timeout);
-            }
-            core::hint::spin_loop();
+        if poll::until(|| unsafe { read(INT_RAW) & INT_IN_SUC_EOF != 0 }, EOF_SPINS).is_err() {
+            self.stop();
+            return Err(I2sError::Timeout);
         }
 
         self.stop();
@@ -252,17 +247,20 @@ impl I2sLoopback {
     }
 }
 
+// Thin address-based adapters over the shared, tested `soc_esp32::reg` helpers,
+// so the read-modify-write logic lives in one place rather than being re-spelled
+// here (the typo `& bits` for `& !bits` is what `reg` exists to prevent).
 unsafe fn write(addr: u32, val: u32) {
-    (addr as *mut u32).write_volatile(val);
+    reg::write(addr as *mut u32, val);
 }
 unsafe fn read(addr: u32) -> u32 {
-    (addr as *const u32).read_volatile()
+    reg::read(addr as *mut u32)
 }
 unsafe fn set(addr: u32, bits: u32) {
-    write(addr, read(addr) | bits);
+    reg::set(addr as *mut u32, bits);
 }
 unsafe fn clear(addr: u32, bits: u32) {
-    write(addr, read(addr) & !bits);
+    reg::clear(addr as *mut u32, bits);
 }
 /// Set `bits`, then clear them: a reset strobe.
 unsafe fn pulse(addr: u32, bits: u32) {

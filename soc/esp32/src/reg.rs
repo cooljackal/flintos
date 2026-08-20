@@ -34,6 +34,24 @@ pub const fn at(base: u32, offset: u32) -> *mut u32 {
     (base + offset) as *mut u32
 }
 
+/// Read a register.
+///
+/// # Safety
+/// `r` must be a valid, aligned, memory-mapped register.
+#[inline(always)]
+pub unsafe fn read(r: *mut u32) -> u32 {
+    r.read_volatile()
+}
+
+/// Write a register.
+///
+/// # Safety
+/// As [`read`].
+#[inline(always)]
+pub unsafe fn write(r: *mut u32, val: u32) {
+    r.write_volatile(val);
+}
+
 /// Set `bits`, leaving the rest alone.
 ///
 /// # Safety

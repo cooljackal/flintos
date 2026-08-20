@@ -53,10 +53,12 @@ use esp32_timg::{lact::Lact, Group};
 #[cfg(target_os = "none")]
 const ALARM_CPU_INT: u8 = 9;
 
-/// The APB clock, in MHz. Fixed at 80 on this chip in every configuration
-/// FlintOS builds — there is no dynamic frequency scaling (#38).
+/// The APB clock, in MHz. Fixed on this chip in every configuration FlintOS
+/// builds — there is no dynamic frequency scaling (#38). Derived from the one
+/// authority (`soc_esp32::APB_HZ`) rather than restated, so the two cannot
+/// drift; a future arch takes this from its own SoC.
 #[cfg(target_os = "none")]
-const APB_MHZ: u32 = 80;
+const APB_MHZ: u32 = soc_esp32::APB_HZ / 1_000_000;
 
 /// The timer, once [`init`] has run.
 ///

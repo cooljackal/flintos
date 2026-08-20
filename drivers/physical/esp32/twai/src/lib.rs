@@ -49,7 +49,7 @@
 
 use hal::bus::BusResult;
 use hal::pinmux::{PinConfig, PinMux, Signal};
-use soc_esp32::{dport, Esp32PinMux};
+use soc_esp32::{dport, poll, reg, Esp32PinMux};
 
 const CAN_BASE: u32 = 0x3FF6_B000;
 
@@ -221,14 +221,8 @@ impl Twai {
         // Transmit and receive the same frame.
         write8(CMD, CMD_SRR);
 
-        let mut spins = 0u32;
-        while read8(STATUS) & STATUS_RBS == 0 {
-            spins += 1;
-            if spins > RX_SPINS {
-                return Err(TwaiError::Timeout);
-            }
-            core::hint::spin_loop();
-        }
+        poll::until(|| unsafe { read8(STATUS) & STATUS_RBS != 0 }, RX_SPINS)
+            .map_err(|_| TwaiError::Timeout)?;
 
         let mut rx = [0u8; 11];
         for (i, b) in rx.iter_mut().enumerate() {
@@ -241,12 +235,14 @@ impl Twai {
     }
 }
 
+// Address-based adapters over `soc_esp32::reg`. The SJA1000 registers are 8-bit
+// in the low byte of a 32-bit word, hence the mask.
 unsafe fn write8(addr: u32, val: u32) {
-    (addr as *mut u32).write_volatile(val & 0xFF);
+    reg::write(addr as *mut u32, val & 0xFF);
 }
 
 unsafe fn read8(addr: u32) -> u32 {
-    (addr as *const u32).read_volatile() & 0xFF
+    reg::read(addr as *mut u32) & 0xFF
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

@@ -348,10 +348,11 @@ fn measure_cpu_hz() -> (u32, bool) {
     }
 }
 
-/// Host stand-in: there is no CCOUNT and no RTC to time it against.
+/// Host stand-in: there is no CCOUNT and no RTC to time it against. Returns the
+/// same default the on-target path falls back to, from the one source.
 #[cfg(not(target_os = "none"))]
 fn measure_cpu_hz() -> (u32, bool) {
-    (80_000_000, false)
+    (soc_esp32::rtc::DEFAULT_CPU_HZ, false)
 }
 
 fn report_clock() {
