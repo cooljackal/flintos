@@ -3,8 +3,9 @@
 # Plan: a second architecture (ARM32)
 
 FlintOS targets the ESP32 (Xtensa LX6) today. This is the plan for making a
-second architecture — ARM32, e.g. a Cortex-M — **additive** rather than a
-kernel fork. It came out of an adversarial portability audit (2026-08-20).
+second architecture — ARMv6-M on the RP2040 first — **additive** rather than a
+kernel fork. It came out of adversarial portability audits (2026-08-20 and
+2026-08-21) and is grounded by a Wio RP2040 mini board available for testing.
 
 ## Bottom line
 
@@ -21,10 +22,25 @@ The keystone, which two independent audit passes landed on separately:
 `Arch::Context` associated type before a second architecture can exist. Its own
 doc comment already says so.
 
-The rule that governs the whole effort: **do the seam refactors while there is
-still only one architecture**, validating each step against `make test-host`
-and the on-target suite. Do not start `arch-arm32` until the abstractions are
-green, or you debug the abstraction and the new port at once.
+Two feasibility gates now come before that refactor. First, prove how the
+RP2040 will implement the compare-and-swap and fetch-style atomics FlintOS uses:
+ARMv6-M has no native exclusive-load/store primitive, and masking interrupts on
+one core does not exclude the other. Second, prove the board's boot2, image
+layout, LED and console with a disposable hardware probe. Neither proof may
+grow into a competing HAL.
+
+After those gates, do the seam refactors while there is still only one
+production architecture, validating each step against the required host,
+layer, lint, Xtensa-build and on-target checks. Do not start the real
+`arch-armv6m` kernel port until the abstractions are green.
+
+The scope is deliberately split:
+
+- `arch/armv6m`: Cortex-M0+ exception frames, PRIMASK, SysTick, PendSV, WFI.
+- `soc/rp2040`: clocks, resets, NVIC integration, SIO, core launch and memory.
+- `board-wio-rp2040-mini`: exact flash, crystal, pins, LED and console wiring.
+- The ESP8285 Wi-Fi companion and multicore scheduling are later milestones,
+  not evidence that the ARM architecture works.
 
 ## Current state
 
@@ -81,8 +97,31 @@ New `hal` contracts:
 
 ## Phased plan
 
-Each phase keeps the ESP32 path building and passing `make test-host && make
-check-layers` (and, for driver-touching steps, the on-target suite).
+Each production phase keeps the ESP32 path building and runs, before commit,
+`make test-host && make lint && make check-layers && make check-all`. Changes
+that touch target behavior also run the appropriate attached-board suite.
+
+### Phase 0 — feasibility and hardware ground truth (blocking)
+1. **Identify the board path.** Record the exact PCB/module revision and
+   schematic. With BOOT held during reset, observe USB VID `2e8a` and the
+   `RPI-RP2` volume. The CP210x bridge currently visible as COM7 is not the Wio
+   until wiring or output proves it.
+2. **Pin vendor evidence.** Add the Rust `thumbv6m-none-eabi` target and pin
+   authoritative Raspberry Pi RP2040/pico-sdk boot, memory, interrupt and core
+   launch sources plus the Seeed schematic. Do not transcribe registers from
+   this tree's comments.
+3. **Prove atomic feasibility early.** Compile representative `AtomicU8`,
+   `AtomicU32` and `AtomicUsize` compare-exchange/fetch operations for
+   `thumbv6m-none-eabi`; inspect emitted symbols/code. Choose and document one
+   sound backend: RP2040 SIO hardware serialization, a pinned portable-atomic
+   implementation with a proven RP2040 backend, or exclude RP2040. It must be
+   safe both before and after core 1 starts. No context-switch work begins
+   until this decision is tested.
+4. **Run a disposable first-light probe.** Using vendor-derived boot2 and
+   startup, produce and inspect ELF/BIN/UF2, then flash through ROM UF2. Prove
+   reset-to-code, the user LED (expected GP13, including polarity), and a UART
+   marker on schematic-confirmed pins. This isolates boot/image/clock/pin
+   mistakes from FlintOS scheduler mistakes.
 
 ### Phase 1 — HAL contracts (each step independently shippable, low regression risk)
 1. **`DmaReach` trait.** Sever the one *unconditional* kernel→SoC link
@@ -121,19 +160,61 @@ check-layers` (and, for driver-touching steps, the on-target suite).
   **SoC-selection feature**, mirroring the board-selection pattern. This is what
   finally makes ARM32 additive.
 
-### Phase 4 — `arch-arm32` + `soc-arm32` skeletons
+### Phase 4 — `arch-armv6m` + `soc-rp2040` + Wio board skeletons
 Only after 1–3 are green. If the seam is right, this adds files without editing
-kernel logic — the success criterion for the whole effort. SysTick tick,
-PRIMASK/BASEPRI critical section, PendSV switch, RCC clock gate, NVIC
-controller, alternate-function pinmux, stream/channel DMA (no lldesc, no GPIO
-matrix).
+kernel logic — the success criterion for the whole effort. Start core 0 only.
+Use SysTick for the tick, PendSV at the lowest priority for switching, PSP in
+thread mode and MSP in handler mode. ARMv6-M has **PRIMASK but no BASEPRI**:
+nested critical sections must save and restore the exact prior PRIMASK state,
+and the HAL contract must not promise priority-threshold masking this CPU cannot
+provide. Build the initial exception frame in the arch crate, including the
+Thumb bit, stack alignment, EXC_RETURN behavior and task-return trampoline.
+
+### Phase 5 — single-core kernel proof on the Wio
+Bring up `hello`, not the ESP32-heavy `demo`, in this order: raw boot marker,
+tick, cooperative PendSV switch, preemptive two-task switch, sleep/WFI, heap and
+stack guards, interrupt-driven queue traffic, then fault capture. Split the
+target harness into portable and ESP32-specific assertions; a reduced test
+count must not be reported as parity.
+
+Measured acceptance on the Wio:
+
+- Repeated reset reaches the same boot marker and memory-map assertions.
+- Tick rate is checked against an independent host clock or logic analyzer.
+- Callee-saved registers, PSP, xPSR and task return survive repeated preemption.
+- Nested critical sections suppress and then restore tick delivery.
+- Yield, sleep, timeout, queue and heap tests pass under interrupt load.
+- An injected fault produces a bounded diagnostic and a known halt/reset.
+
+### Phase 6 — RP2040 SMP, then optional board peripherals
+Only after a single-core soak: implement the documented ROM FIFO launch for
+core 1, per-core vector/stack/idle state, cross-core reschedule, shared time
+ownership and the chosen atomic/lock backend. Stress that one task never runs
+on two cores and queues/scheduler locks make bounded progress under contention.
+Wi-Fi, native USB console and other peripherals follow separately.
 
 ## Sequencing at a glance
 - **First, cheap, high-leverage:** Phase 1.1 (`DmaReach`) and 1.2
   (`InterruptController`).
+- **Before both:** Phase 0 atomics and first-light are stop/go gates, not port
+  milestones that can be deferred.
 - **The gate:** Phase 2.1 (`Arch::Context`) — everything ARM32 waits on it;
   schedule early despite being the largest single item.
-- **Hard rule:** do not start Phase 4 until Phases 1–3 are green.
+- **Hard rule:** do not start Phase 4 until Phase 0 is proved and Phases 1–3 are
+  green.
+
+## Build and test acceptance
+
+- `cargo tree` for `thumbv6m-none-eabi` contains no `arch-xtensa`, `soc-esp32`
+  or `esp32-*` crates; unsupported architecture/SoC pairs fail clearly.
+- `hello` builds for both ESP32/Xtensa and Wio/RP2040; ELF inspection confirms
+  boot2, vectors, reset and PendSV symbols land in the intended regions.
+- The Makefile selects target, linker, image format, flash and monitor from an
+  explicit architecture/SoC/board tuple and never silently flashes a family.
+- `make check-all` grows to compile both production targets before ARM support
+  can be called covered.
+- Hardware claims are labeled measured. Compile-only and host-only results are
+  never presented as proof of interrupt, timing, context or multicore behavior.
 
 ## Related issues
 - **#62** CPU-clock measurement — folds into Phase 2.4 (needs the `cycle_counter`
