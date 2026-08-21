@@ -385,7 +385,7 @@ mod tests {
         // bit 28, inside the field and clear of START_FORCE at 18.
         assert_eq!(EN_PAD_SHIFT, 19);
         assert_eq!((1u32 << 9) << EN_PAD_SHIFT, 1 << 28);
-        assert_eq!(((EN_PAD_MASK << EN_PAD_SHIFT)) & MEAS_START_FORCE, 0);
+        assert_eq!((EN_PAD_MASK << EN_PAD_SHIFT) & MEAS_START_FORCE, 0);
     }
 
     #[test]
