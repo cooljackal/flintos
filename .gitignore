@@ -14,6 +14,7 @@ target/
 Thumbs.db
 
 # Build artifacts
+build/
 *.elf
 *.bin
 *.hex
