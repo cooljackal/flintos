@@ -251,6 +251,81 @@ pub unsafe fn build_chain(
     Ok(head)
 }
 
+/// Address of the `next` descriptor in a *ring* of `count` slots.
+///
+/// The one bit of arithmetic unique to a circular chain: slot `count - 1` wraps
+/// back to the head instead of terminating at zero. Kept separate so the wrap is
+/// host-testable without a DMA-reachable buffer to build over.
+const fn ring_next(head: u32, i: usize, count: usize, stride: u32) -> u32 {
+    head + (((i + 1) % count) as u32) * stride
+}
+
+/// Slot index a descriptor address falls on within a ring whose head is `head`.
+///
+/// The engine reports the descriptor whose EOF just fired in `IN_EOF_DES_ADDR`;
+/// this turns that back into a buffer index. Descriptors are [`Descriptor`]s, so
+/// the stride is `size_of::<Descriptor>()`.
+pub const fn ring_slot(head: u32, desc_addr: u32) -> usize {
+    ((desc_addr - head) / core::mem::size_of::<Descriptor>() as u32) as usize
+}
+
+/// Lay a **circular** chain of one-buffer descriptors over a backing buffer
+/// split into `count` equal `chunk`-byte buffers, writing into `descs`.
+///
+/// Unlike [`build_chain`], which builds a linear chain that terminates at
+/// end-of-frame, this builds the ring a continuous stream needs: every
+/// descriptor is marked EOF — so the engine raises `IN_SUC_EOF` at each buffer
+/// boundary — and the last descriptor's `next` points back at the first, so the
+/// engine cycles the buffers forever with no CPU intervention to keep it running.
+/// esp-idf's `i2s_alloc_dma_buffer` (`driver/i2s.c`) builds exactly this shape:
+/// `owner`/`eof` set on every descriptor and the last descriptor's `empty` (its
+/// `next` link) pointing back at `desc[0]`.
+///
+/// `chunk` must be word-aligned and at most [`Descriptor::MAX_LEN`]; `descs` must
+/// hold at least `count`. Returns the head address for the link register.
+///
+/// # Safety
+/// Same contract as [`build_chain`]: `descs` must not be in use by a running
+/// transfer, and the backing buffer must stay valid for the life of the stream.
+pub unsafe fn build_ring(
+    descs: &mut [Descriptor],
+    buf: u32,
+    count: usize,
+    chunk: u32,
+    direction: Direction,
+) -> Result<u32, DmaError> {
+    if count == 0 || descs.len() < count {
+        return Err(DmaError::NotEnoughDescriptors);
+    }
+    if chunk > Descriptor::MAX_LEN {
+        return Err(DmaError::ChunkTooLong);
+    }
+    // A chunk that is not a multiple of 4 leaves every buffer after the first
+    // misaligned, and a misaligned DMA address moves the wrong bytes silently.
+    if chunk % 4 != 0 {
+        return Err(DmaError::UnreachableAddress);
+    }
+    let head = descs.as_ptr() as u32;
+    if head % 4 != 0 || !reachable(head) {
+        return Err(DmaError::UnreachableAddress);
+    }
+
+    let stride = core::mem::size_of::<Descriptor>() as u32;
+    for (i, slot) in descs.iter_mut().enumerate().take(count) {
+        let next = ring_next(head, i, count, stride);
+        let addr = buf + i as u32 * chunk;
+        let desc = match direction {
+            Direction::Transmit => Descriptor::tx(addr, chunk, true, next)?,
+            Direction::Receive => Descriptor::rx(addr, chunk, true, next)?,
+        };
+        // Volatile for the same reason as `build_chain`: the engine clears the
+        // owner bit in flight, and a rebuilt byte-identical descriptor would
+        // otherwise be elided as a dead store.
+        core::ptr::write_volatile(slot as *mut Descriptor, desc);
+    }
+    Ok(head)
+}
+
 /// Total bytes the engine reported receiving, stopping at end-of-frame.
 ///
 /// Reads the `length` hardware wrote, not the capacity the CPU asked for. A
@@ -422,6 +497,69 @@ mod tests {
         let a = Descriptor::tx(a.buffer(), 100, false, a.next()).unwrap();
         b = Descriptor::tx(b.buffer(), 40, true, 0).unwrap();
         assert_eq!(received_len(&[a, b, stale]), 140);
+    }
+
+    #[test]
+    fn a_ring_next_pointer_wraps_the_last_slot_back_to_the_head() {
+        let stride = core::mem::size_of::<Descriptor>() as u32;
+        // Four slots: 0->1->2->3->0. Anything but the wrap is a linear chain.
+        assert_eq!(ring_next(DESCS, 0, 4, stride), DESCS + stride);
+        assert_eq!(ring_next(DESCS, 2, 4, stride), DESCS + 3 * stride);
+        assert_eq!(ring_next(DESCS, 3, 4, stride), DESCS, "the ring does not close");
+        // A one-slot ring points at itself, not off the end.
+        assert_eq!(ring_next(DESCS, 0, 1, stride), DESCS);
+    }
+
+    #[test]
+    fn a_ring_slot_recovers_the_index_from_a_descriptor_address() {
+        let stride = core::mem::size_of::<Descriptor>() as u32;
+        // The inverse of `ring_next`/the buffer layout: IN_EOF_DES_ADDR back to
+        // a buffer index.
+        assert_eq!(ring_slot(DESCS, DESCS), 0);
+        assert_eq!(ring_slot(DESCS, DESCS + stride), 1);
+        assert_eq!(ring_slot(DESCS, DESCS + 3 * stride), 3);
+    }
+
+    #[test]
+    fn a_ring_of_target_descriptors_is_circular_and_all_eof() {
+        // Drive the ring shape through the real constructors with target-shaped
+        // addresses (as the other chain tests do — `build_ring`'s reachability
+        // check rejects host addresses).
+        let stride = core::mem::size_of::<Descriptor>() as u32;
+        let count = 4usize;
+        let chunk = 64u32;
+        let mut ring = [Descriptor::zeroed(); 4];
+        for i in 0..count {
+            let next = ring_next(DESCS, i, count, stride);
+            ring[i] = Descriptor::rx(BUF + i as u32 * chunk, chunk, true, next).unwrap();
+        }
+        for (i, d) in ring.iter().enumerate() {
+            assert!(d.is_eof(), "slot {i} is not eof; the engine will not signal a boundary");
+            assert!(d.owned_by_engine());
+            assert_ne!(d.next(), 0, "a ring descriptor must never terminate");
+        }
+        assert_eq!(ring[3].next(), DESCS, "the ring does not close on itself");
+    }
+
+    #[test]
+    fn build_ring_rejects_a_misaligned_or_oversized_chunk() {
+        // These fail before any reachability check, so host addresses are fine.
+        let mut descs = [Descriptor::zeroed(); 2];
+        // Not a multiple of 4.
+        assert_eq!(
+            unsafe { build_ring(&mut descs, 0x3FFD_9000, 2, 60 + 2, Direction::Transmit) },
+            Err(DmaError::UnreachableAddress)
+        );
+        // Bigger than one descriptor can carry.
+        assert_eq!(
+            unsafe { build_ring(&mut descs, 0x3FFD_9000, 2, Descriptor::MAX_LEN + 4, Direction::Receive) },
+            Err(DmaError::ChunkTooLong)
+        );
+        // Too few descriptors for the requested buffer count.
+        assert_eq!(
+            unsafe { build_ring(&mut descs, 0x3FFD_9000, 3, 64, Direction::Receive) },
+            Err(DmaError::NotEnoughDescriptors)
+        );
     }
 
     #[test]

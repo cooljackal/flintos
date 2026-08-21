@@ -55,7 +55,8 @@ use crate::addr::DPORT_BASE;
 mod desc;
 
 pub use desc::{
-    build_chain, descriptors_needed, link_addr, reachable, received_len, Descriptor, Direction,
+    build_chain, build_ring, descriptors_needed, link_addr, reachable, received_len, ring_slot,
+    Descriptor, Direction,
 };
 
 /// This SoC's [`hal::dma::DmaReach`] — the ESP32's DMA-reachable window is all

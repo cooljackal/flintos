@@ -51,7 +51,10 @@
 
 use hal::bus::BusResult;
 use hal::pinmux::{PinConfig, PinMux, Signal};
-use soc_esp32::dma::{build_chain, link_addr, received_len, Descriptor, Direction};
+use soc_esp32::dma::{
+    build_chain, build_ring, link_addr, received_len, ring_slot, sync_for_device, Descriptor,
+    Direction,
+};
 use soc_esp32::{dport, poll, reg, Esp32PinMux};
 
 const I2S0_BASE: u32 = 0x3FF4_F000;
@@ -64,6 +67,7 @@ const RXEOF_NUM: u32 = I2S0_BASE + 0x24;
 const CONF_CHAN: u32 = I2S0_BASE + 0x2C;
 const OUT_LINK: u32 = I2S0_BASE + 0x30;
 const IN_LINK: u32 = I2S0_BASE + 0x34;
+const IN_EOF_DES_ADDR: u32 = I2S0_BASE + 0x3C;
 const LC_CONF: u32 = I2S0_BASE + 0x60;
 const CONF2: u32 = I2S0_BASE + 0xA8;
 const CLKM_CONF: u32 = I2S0_BASE + 0xAC;
@@ -104,6 +108,7 @@ const LC_AHBM_FIFO_RST: u32 = 1 << 2;
 const LC_AHBM_RST: u32 = 1 << 3;
 
 // OUT_LINK / IN_LINK.
+const LINK_STOP: u32 = 1 << 28;
 const LINK_START: u32 = 1 << 29;
 
 // CLKM_CONF: enable the clock module, no APLL (PLL_D2 = 160 MHz source),
@@ -131,6 +136,10 @@ pub enum I2sError {
     BadBuffer,
     /// The receive DMA never signalled end-of-frame.
     Timeout,
+    /// The stream's buffers do not split into `count` equal, word-aligned
+    /// pieces — the ring math needs `tx.len() == rx.len()`, both divisible by
+    /// `count`, and each buffer a multiple of four bytes.
+    BadGeometry,
 }
 
 /// I2S0, configured for an internal DMA loopback.
@@ -245,6 +254,182 @@ impl I2sLoopback {
     unsafe fn stop(&self) {
         clear(CONF, CONF_TX_START | CONF_RX_START);
     }
+
+    /// Start a **continuous** loopback stream: chain the buffers into a ring the
+    /// DMA engine cycles forever, so the CPU can refill one buffer while the
+    /// engine works the others — the underrun-free double-buffered pattern.
+    ///
+    /// `tx` and `rx` are each split into `count` equal buffers; they must be the
+    /// same length, divisible by `count`, and each resulting buffer a multiple of
+    /// four bytes. `tx_descs`/`rx_descs` must each hold at least `count`
+    /// descriptors and, like the buffers, live in DMA-reachable RAM.
+    ///
+    /// Pre-fill `tx` before calling: the engine begins reading immediately.
+    ///
+    /// # Safety
+    /// The returned [`I2sStream`] borrows the buffers and descriptors for the
+    /// life of the stream; the engine reads and writes them until [`I2sStream::stop`].
+    pub unsafe fn start_stream<'a>(
+        &self,
+        tx: &'a mut [u8],
+        rx: &'a mut [u8],
+        tx_descs: &'a mut [Descriptor],
+        rx_descs: &'a mut [Descriptor],
+        count: usize,
+    ) -> Result<I2sStream<'a>, I2sError> {
+        if count == 0 || tx.len() != rx.len() || tx.len() % count != 0 {
+            return Err(I2sError::BadGeometry);
+        }
+        let chunk = tx.len() / count;
+        if chunk == 0 || chunk % 4 != 0 {
+            return Err(I2sError::BadGeometry);
+        }
+
+        let tx_head = build_ring(tx_descs, tx.as_ptr() as u32, count, chunk as u32, Direction::Transmit)
+            .map_err(|_| I2sError::BadBuffer)?;
+        let rx_head = build_ring(rx_descs, rx.as_mut_ptr() as u32, count, chunk as u32, Direction::Receive)
+            .map_err(|_| I2sError::BadBuffer)?;
+
+        // Fresh FIFOs and DMA state, exactly as the one-shot path does.
+        pulse(CONF, CONF_TX_FIFO_RESET | CONF_RX_FIFO_RESET);
+        pulse(LC_CONF, LC_IN_RST | LC_OUT_RST);
+
+        // EOF every buffer, not every ring: the count is per-buffer words, and
+        // each descriptor carries its own eof bit, so `IN_SUC_EOF` fires at each
+        // buffer boundary — the tick the CPU services one buffer on.
+        write(RXEOF_NUM, (chunk / 4) as u32);
+        write(INT_CLR, INT_IN_SUC_EOF);
+
+        // Publish the descriptor and buffer writes before the engine is pointed
+        // at them (Xtensa write buffer; see soc::dma::sync_for_device).
+        sync_for_device();
+
+        // Arm the receiver first, then the transmitter that clocks it.
+        write(IN_LINK, link_addr(rx_head) | LINK_START);
+        set(CONF, CONF_RX_START);
+        write(OUT_LINK, link_addr(tx_head) | LINK_START);
+        set(CONF, CONF_TX_START);
+
+        Ok(I2sStream { rx, rx_descs, tx, tx_descs, count, chunk, serviced: 0 })
+    }
+
+    /// True while either direction's start bit is set. A stopped stream must
+    /// read false here; a self-test uses it to prove `stop` really stopped.
+    ///
+    /// # Safety
+    /// Reads the I2S0 CONF register.
+    pub unsafe fn is_running(&self) -> bool {
+        read(CONF) & (CONF_TX_START | CONF_RX_START) != 0
+    }
+
+    /// Clear the buffer-boundary flag, then report whether the engine sets it
+    /// again. After a clean stop it must stay clear — proof the DMA is not still
+    /// cycling buffers behind a cleared start bit.
+    ///
+    /// # Safety
+    /// Reads/writes the I2S0 interrupt registers.
+    pub unsafe fn clear_eof(&self) {
+        write(INT_CLR, INT_IN_SUC_EOF);
+    }
+
+    /// Whether a buffer-boundary EOF has been raised since [`Self::clear_eof`].
+    ///
+    /// # Safety
+    /// Reads the I2S0 INT_RAW register.
+    pub unsafe fn eof_pending(&self) -> bool {
+        read(INT_RAW) & INT_IN_SUC_EOF != 0
+    }
+}
+
+/// A running continuous DMA stream over the I2S loopback.
+///
+/// The descriptors form a ring the engine cycles endlessly; the CPU services one
+/// buffer per `IN_SUC_EOF`. Between the EOF for a buffer and the engine lapping
+/// back to it there are `count - 1` buffers of slack — the window in which the
+/// CPU consumes the received data and refills the transmit buffer.
+pub struct I2sStream<'a> {
+    rx: &'a mut [u8],
+    rx_descs: &'a mut [Descriptor],
+    tx: &'a mut [u8],
+    tx_descs: &'a mut [Descriptor],
+    count: usize,
+    chunk: usize,
+    /// How many buffer-boundaries have been serviced. Only used to prove the
+    /// stream is making progress; the engine does not need it.
+    serviced: usize,
+}
+
+impl I2sStream<'_> {
+    /// Block until the engine finishes another buffer, returning that buffer's
+    /// ring index.
+    ///
+    /// The index comes from `IN_EOF_DES_ADDR`, the descriptor whose EOF fired,
+    /// so a caller that falls a whole buffer behind sees the index jump rather
+    /// than silently reading a stale buffer — which is what an under/overrun is.
+    ///
+    /// # Safety
+    /// The engine is live against the buffers; the returned index is only safe
+    /// to touch until the engine laps back to it (`count - 1` buffers later).
+    pub unsafe fn wait(&mut self) -> Result<usize, I2sError> {
+        if poll::until(|| unsafe { read(INT_RAW) & INT_IN_SUC_EOF != 0 }, EOF_SPINS).is_err() {
+            return Err(I2sError::Timeout);
+        }
+        let eof_addr = read(IN_EOF_DES_ADDR);
+        write(INT_CLR, INT_IN_SUC_EOF);
+        self.serviced += 1;
+        Ok(ring_slot(self.rx_descs.as_ptr() as u32, eof_addr) % self.count)
+    }
+
+    /// The received bytes of buffer `idx`.
+    pub fn rx_buffer(&self, idx: usize) -> &[u8] {
+        &self.rx[idx * self.chunk..(idx + 1) * self.chunk]
+    }
+
+    /// The transmit buffer `idx`, to refill before the engine laps back to it.
+    pub fn tx_buffer_mut(&mut self, idx: usize) -> &mut [u8] {
+        &mut self.tx[idx * self.chunk..(idx + 1) * self.chunk]
+    }
+
+    /// Publish CPU writes to a refilled transmit buffer before the engine reads
+    /// it again. Call after [`Self::tx_buffer_mut`] edits, before the next
+    /// [`Self::wait`].
+    pub fn commit(&self) {
+        sync_for_device();
+    }
+
+    /// How many buffer boundaries have been serviced so far.
+    pub fn serviced(&self) -> usize {
+        self.serviced
+    }
+
+    /// Stop the stream and leave the peripheral quiescent and restartable.
+    ///
+    /// Clears the start bits, stops both DMA links, and resets the serialisers,
+    /// FIFOs and DMA — the same teardown the one-shot path relies on — then
+    /// releases the CPU's owner claim on the descriptors so a stale engine-owned
+    /// chain cannot be walked by a later transfer. Consumes the stream, which
+    /// returns the borrowed buffers and descriptors to the caller for reuse.
+    ///
+    /// # Safety
+    /// Writes the I2S0 registers. Any in-flight buffer is abandoned.
+    pub unsafe fn stop(self) {
+        // Halt the serialisers first, then the DMA links (esp-idf i2s_tx_stop /
+        // i2s_rx_stop: stop the module, then stop_link, then reset).
+        clear(CONF, CONF_TX_START | CONF_RX_START);
+        set(OUT_LINK, LINK_STOP);
+        set(IN_LINK, LINK_STOP);
+        // Drain the peripheral back to reset: serialiser/deserialiser, both
+        // FIFOs, and the DMA. Without this a restart re-arms on a half-full FIFO.
+        pulse(CONF, CONF_TX_RESET | CONF_RX_RESET | CONF_TX_FIFO_RESET | CONF_RX_FIFO_RESET);
+        pulse(LC_CONF, LC_IN_RST | LC_OUT_RST | LC_AHBM_FIFO_RST | LC_AHBM_RST);
+        write(INT_CLR, INT_IN_SUC_EOF);
+        // Hand the descriptors back to the CPU so the abandoned ring is not left
+        // engine-owned for whatever reuses these slots next.
+        for d in self.tx_descs.iter_mut().chain(self.rx_descs.iter_mut()) {
+            core::ptr::write_volatile(d as *mut Descriptor, Descriptor::zeroed());
+        }
+        sync_for_device();
+    }
 }
 
 // Thin address-based adapters over the shared, tested `soc_esp32::reg` helpers,
@@ -283,6 +468,7 @@ mod tests {
         assert_eq!(CONF_CHAN, 0x3FF4_F02C);
         assert_eq!(OUT_LINK, 0x3FF4_F030);
         assert_eq!(IN_LINK, 0x3FF4_F034);
+        assert_eq!(IN_EOF_DES_ADDR, 0x3FF4_F03C);
         assert_eq!(LC_CONF, 0x3FF4_F060);
         assert_eq!(CONF2, 0x3FF4_F0A8);
         assert_eq!(CLKM_CONF, 0x3FF4_F0AC);
@@ -331,8 +517,11 @@ mod tests {
         assert_eq!(FIFO_TX_MOD_FORCE_EN, 1 << 19);
         assert_eq!(FIFO_RX_MOD_FORCE_EN, 1 << 20);
         assert_eq!(LINK_START, 1 << 29);
-        // The 20-bit address field must not reach the start bit.
-        assert_eq!(0x000F_FFFFu32 & LINK_START, 0);
+        // Stop and start are distinct bits; the ring teardown sets stop.
+        assert_eq!(LINK_STOP, 1 << 28);
+        assert_eq!(LINK_STOP & LINK_START, 0);
+        // The 20-bit address field must not reach the start or stop bits.
+        assert_eq!(0x000F_FFFFu32 & (LINK_START | LINK_STOP), 0);
     }
 
     #[test]

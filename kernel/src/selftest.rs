@@ -161,6 +161,23 @@ pub fn run() {
         ),
     }
 
+    // I2S continuous (ring) stream: cycle a ramp through a double-buffered
+    // descriptor ring for several laps, refilling as buffers free, and require
+    // byte-continuity with no gap or repeat — the underrun-free property. Same
+    // one-pad loopback as above.
+    match crate::board::active::LOOPBACK_SCRATCH_GPIO {
+        Some(pin) => check(
+            "i2s_continuous_stream_stays_continuous",
+            i2s::i2s_continuous_stream_stays_continuous(pin),
+            &mut pass,
+            &mut fail,
+        ),
+        None => skip(
+            "i2s_continuous_stream_stays_continuous",
+            "this board declares no free loopback GPIO",
+        ),
+    }
+
     // SPI-bus (Layer 2) FIFO loopback: fold SPI2's MOSI onto MISO over the
     // scratch pad and require a byte-exact round trip through the `SpiBus`
     // wrapper. Needs the scratch pad plus two aux pads (clock, placeholder MISO)
