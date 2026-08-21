@@ -77,8 +77,8 @@ impl Descriptor {
     /// `length` starts at zero because the engine writes it. A receive
     /// descriptor that pre-sets `length` reads back as though it had already
     /// received that much.
-    pub fn rx(buf: u32, capacity: u32, next: u32) -> Result<Self, DmaError> {
-        Self::build(buf, capacity, 0, true, next)
+    pub fn rx(buf: u32, capacity: u32, eof: bool, next: u32) -> Result<Self, DmaError> {
+        Self::build(buf, capacity, 0, eof, next)
     }
 
     fn build(buf: u32, size: u32, length: u32, eof: bool, next: u32) -> Result<Self, DmaError> {
@@ -235,10 +235,17 @@ pub unsafe fn build_chain(
         // Zero terminates the chain; otherwise point at the following slot.
         let next = if last { 0 } else { head + (i as u32 + 1) * stride };
         let offset = len - remaining;
-        *slot = match direction {
+        let desc = match direction {
             Direction::Transmit => Descriptor::tx(buf + offset, chunk, last, next)?,
-            Direction::Receive => Descriptor::rx(buf + offset, chunk, next)?,
+            Direction::Receive => Descriptor::rx(buf + offset, chunk, last, next)?,
         };
+        // Volatile, not `*slot = desc`. The DMA engine reads these descriptors
+        // and, in flight, clears the owner bit the CPU set — a write the
+        // compiler cannot see. A second transfer that rebuilds a byte-identical
+        // descriptor would otherwise be elided as a dead store, leaving the
+        // owner bit cleared, and the engine would move nothing. The C lldesc
+        // fields are `volatile` for this exact reason.
+        core::ptr::write_volatile(slot as *mut Descriptor, desc);
         remaining -= chunk;
     }
     Ok(head)
@@ -290,9 +297,7 @@ mod tests {
 
     #[test]
     fn a_receive_descriptor_starts_with_no_received_bytes() {
-        // The engine writes `length`. Pre-setting it reads back as though the
-        // transfer had already delivered that much.
-        let d = Descriptor::rx(BUF, 256, 0).unwrap();
+        let d = Descriptor::rx(BUF, 256, true, 0).unwrap();
         assert_eq!(d.size(), 256, "capacity was not recorded");
         assert_eq!(d.length(), 0, "a fresh rx descriptor claims received bytes");
         assert!(d.owned_by_engine());
@@ -409,8 +414,8 @@ mod tests {
     fn received_length_sums_to_the_end_of_frame_and_no_further() {
         // Descriptors past eof belong to no transfer. Counting them inflates
         // the reported length by whatever the previous transfer left behind.
-        let a = Descriptor::rx(BUF, 100, DESCS).unwrap();
-        let mut b = Descriptor::rx(BUF + 100, 100, 0).unwrap();
+        let a = Descriptor::rx(BUF, 100, false, DESCS).unwrap();
+        let mut b = Descriptor::rx(BUF + 100, 100, true, 0).unwrap();
         let stale = Descriptor::tx(BUF + 200, 999, true, 0).unwrap();
 
         // Hardware would write these; forge them by rebuilding with a length.

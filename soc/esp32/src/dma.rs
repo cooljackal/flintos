@@ -74,6 +74,20 @@ impl hal::dma::DmaReach for DmaReach {
     }
 }
 
+/// Publish descriptor and buffer writes before a DMA link is started.
+///
+/// Xtensa's write buffer can otherwise leave the peripheral observing the
+/// previous owner bit when a descriptor is rebuilt and immediately re-armed.
+#[inline(always)]
+pub fn sync_for_device() {
+    #[cfg(target_arch = "xtensa")]
+    unsafe {
+        core::arch::asm!("memw", options(nostack, preserves_flags));
+    }
+    #[cfg(not(target_arch = "xtensa"))]
+    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+}
+
 /// `DPORT_SPI_DMA_CHAN_SEL_REG`.
 const SPI_DMA_CHAN_SEL: u32 = DPORT_BASE + 0x5A8;
 

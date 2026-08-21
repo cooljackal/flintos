@@ -2,11 +2,15 @@
 
 #![no_std]
 
+use core::ptr::addr_of_mut;
+
 use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, PhysicalBus, SpiMode};
+use hal::dma::DmaReach as _;
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
-use soc_esp32::{dport, Esp32PinMux, APB_HZ};
+use soc_esp32::dma::{self, build_chain, descriptors_needed, Channel, Descriptor, Direction, Host};
 use soc_esp32::reg;
+use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
 /// ESP32 SPI2 (HSPI) / SPI3 (VSPI) physical driver (polled mode).
 ///
@@ -21,6 +25,62 @@ pub use dma_impl::{SPI_IN_SUC_EOF, SPI_OUT_EOF};
 
 pub struct Esp32Spi {
     base: u32,
+    /// CPHA for the configured mode: the clock-out edge (`SPI_USER.ck_out_edge`,
+    /// bit 7) that every per-transfer USER write must carry.
+    cpha: bool,
+}
+
+// ── DMA under the Bus ────────────────────────────────────────────────────────
+//
+// A transfer past the FIFO cap runs over a DMA descriptor chain instead,
+// decided in `raw_transfer` and invisible to the caller. The channel, the
+// descriptor scratch, and the enable flag cannot live in `Esp32Spi` — it is a
+// lightweight handle, reconstructed freely (see the ISR in `apps/spidma`) — so
+// they live here, one slot per general-purpose host (SPI2, SPI3), claimed once
+// at `init` and held for the driver's life. The descriptor scratch is a static,
+// which puts it in internal DRAM and therefore in DMA-reachable memory.
+
+/// Largest DMA transfer the descriptor scratch covers: [`MAX_DESCS`]
+/// descriptors of up to 4092 bytes each (~64 KiB). A bulk op past this is
+/// rejected rather than silently truncated.
+const MAX_DESCS: usize = 16;
+
+struct DmaSlot {
+    channel: Option<Channel>,
+    enabled: bool,
+    /// Which descriptor bank the next transfer uses. Consecutive transfers
+    /// alternate banks so each re-arm hands the engine a *fresh* descriptor
+    /// address: the ESP32 DMA caches the descriptor at a given link address and
+    /// a tight polled loop re-arming the same address back-to-back does not see
+    /// it re-fetched, so the second transfer clocks out zeros. esp-idf reuses
+    /// one bank but its ISR-driven transfers leave a gap that hides this.
+    next_bank: usize,
+    tx_descs: [[Descriptor; MAX_DESCS]; 2],
+    rx_descs: [[Descriptor; MAX_DESCS]; 2],
+}
+
+impl DmaSlot {
+    const fn new() -> Self {
+        Self {
+            channel: None,
+            enabled: true,
+            next_bank: 0,
+            tx_descs: [[Descriptor::zeroed(); MAX_DESCS]; 2],
+            rx_descs: [[Descriptor::zeroed(); MAX_DESCS]; 2],
+        }
+    }
+}
+
+/// Slot 0 is SPI2, slot 1 is SPI3. SPI1 drives the boot flash and gets none.
+static mut SPI_DMA: [DmaSlot; 2] = [DmaSlot::new(), DmaSlot::new()];
+
+/// The DMA slot for a general-purpose SPI instance, if it has one.
+fn dma_slot(instance: u8) -> Option<usize> {
+    match instance {
+        2 => Some(0),
+        3 => Some(1),
+        _ => None,
+    }
 }
 
 // ── Register map ─────────────────────────────────────────────────────────────
@@ -52,7 +112,7 @@ pub(crate) const SPI_MOSI_DLEN: u32 = 0x28;
 pub(crate) const SPI_MISO_DLEN: u32 = 0x2C;
 const SPI_PIN: u32 = 0x34;
 pub(crate) const SPI_SLAVE: u32 = 0x38;
-const SPI_W0: u32 = 0x80; // Data buffer: 16 words (W0..W15), 64 bytes.
+pub(crate) const SPI_W0: u32 = 0x80; // Data buffer: 16 words (W0..W15), 64 bytes.
 
 /// SPI_CMD_REG: start a user-defined transaction. bitpos [18], confirmed
 /// against esp-idf `soc/spi_reg.h` (`SPI_USR`). A prior revision wrote/polled
@@ -63,6 +123,10 @@ pub(crate) const SPI_CMD_USR: u32 = 1 << 18;
 /// SPI_USER_REG bits (bitpos confirmed against esp-idf `soc/spi_reg.h`).
 pub(crate) const SPI_USR_MISO: u32 = 1 << 28;
 pub(crate) const SPI_USR_MOSI: u32 = 1 << 27;
+
+/// `SPI_CK_OUT_EDGE`, bit 7: the clock output edge that encodes CPHA in master
+/// mode (paired with `SPI_PIN.ck_idle_edge` for CPOL).
+pub(crate) const SPI_CK_OUT_EDGE: u32 = 1 << 7;
 
 /// `SPI_DOUTDIN`, bitpos [0]: "Set the bit to enable full duplex
 /// communication." Without it the MOSI and MISO phases run one after the
@@ -151,7 +215,7 @@ impl Esp32Spi {
     /// `read_volatile`/`write_volatile` at `base_addr + offset` with no
     /// further validation of the address itself.
     pub unsafe fn new(base_addr: u32) -> Self {
-        Self { base: base_addr }
+        Self { base: base_addr, cpha: false }
     }
 
     pub(crate) fn reg(&self, offset: u32) -> *mut u32 {
@@ -208,8 +272,9 @@ impl Esp32Spi {
             // Configure the transfer: full duplex, MOSI + MISO phases, byte
             // order left at its little-endian reset default (bits 10/11 unset)
             // to match `pack_word`/`unpack_word`.
+            let ck_out = if self.cpha { SPI_CK_OUT_EDGE } else { 0 };
             self.reg(SPI_USER)
-                .write_volatile(SPI_DOUTDIN | SPI_USR_MOSI | SPI_USR_MISO);
+                .write_volatile(SPI_DOUTDIN | SPI_USR_MOSI | SPI_USR_MISO | ck_out);
 
             // Start the transfer (SPI_USR, bit 18 -- not bit 0).
             self.reg(SPI_CMD).write_volatile(SPI_CMD_USR);
@@ -236,6 +301,35 @@ impl Esp32Spi {
 
         Ok(())
     }
+
+    /// Enable or disable the DMA path for transfers past the FIFO cap. On by
+    /// default, per host.
+    ///
+    /// Disabled, a bulk transfer runs through the FIFO in cap-sized chunks
+    /// instead — slower, but it needs no DMA-reachable buffer, so it is the
+    /// escape hatch when a caller's buffer cannot be in DMA memory, or when the
+    /// DMA channel is wanted for something else.
+    pub fn set_dma(&self, enabled: bool) {
+        if let Some(s) = addr::spi_instance(self.base).and_then(dma_slot) {
+            // SAFETY: a bool store into this host's slot; a bus is single-owner.
+            unsafe {
+                (*addr_of_mut!(SPI_DMA))[s].enabled = enabled;
+            }
+        }
+    }
+
+    /// Move a transfer larger than the FIFO cap through the FIFO in cap-sized
+    /// chunks. Correct for any length; used when DMA is disabled or has no
+    /// channel. Each chunk is a full-duplex FIFO transfer.
+    fn fifo_chunked(&self, tx: &[u8], rx: &mut [u8], len: usize) -> BusResult<()> {
+        let mut off = 0;
+        while off < len {
+            let end = (off + SPI_MAX_BYTES).min(len);
+            self.transfer(&tx[off..end], &mut rx[off..end])?;
+            off = end;
+        }
+        Ok(())
+    }
 }
 
 impl PhysicalBus for Esp32Spi {
@@ -255,22 +349,67 @@ impl PhysicalBus for Esp32Spi {
                 self.apply_clock(max_speed.hz());
 
                 unsafe {
-                    // SPI mode (CPOL, CPHA).
+                    // SPI mode (CPOL, CPHA). CPOL is the clock idle level:
+                    // SPI_PIN.ck_idle_edge (bit 29). CPHA is the output edge:
+                    // SPI_USER.ck_out_edge (bit 7), set per transfer alongside
+                    // the rest of USER. (An earlier revision wrote CPOL/CPHA to
+                    // SPI_PIN bits 2/1, which are really cs2_dis/cs1_dis -- that
+                    // left the clock config untouched *and* toggled chip-select
+                    // enables, whose setup/hold made the first DMA byte marginal.)
                     let (cpol, cpha) = match mode {
                         SpiMode::Mode0 => (0, 0),
                         SpiMode::Mode1 => (0, 1),
                         SpiMode::Mode2 => (1, 0),
                         SpiMode::Mode3 => (1, 1),
                     };
+                    self.cpha = cpha != 0;
 
+                    // Disable all three hardware chip-selects (cs0/1/2_dis,
+                    // bits [2:0]) and set the clock idle level. This bus does not
+                    // drive a peripheral CS; leaving one enabled asserts it around
+                    // every transfer with a setup/hold that corrupts the first
+                    // byte. esp-idf disables them the same way (PIN = 0x…1f).
                     let mut pin = self.reg(SPI_PIN).read_volatile();
-                    if cpol != 0 { pin |= 1 << 2; } else { pin &= !(1 << 2); }
-                    if cpha != 0 { pin |= 1 << 1; } else { pin &= !(1 << 1); }
+                    pin |= 0b111; // cs0_dis | cs1_dis | cs2_dis
+                    if cpol != 0 { pin |= 1 << 29; } else { pin &= !(1 << 29); }
                     self.reg(SPI_PIN).write_volatile(pin);
+
+                    // Timing register, set to esp-idf's computed value for a
+                    // GPIO-matrix master at these clocks (SPI_CTRL2 = 0x0002_001f):
+                    //   MISO_DELAY_MODE = 2 ([17:16]) — the MISO signal routes
+                    //     through the GPIO matrix (~2 cycles of input delay); this
+                    //     moves the sample to the matching edge. Without it the
+                    //     sampling point is marginal.
+                    //   SETUP_TIME = 15 ([3:0]) — with CS_HOLD set in USER, this
+                    //     is the CS-assert-to-first-clock gap. 16 cycles lets the
+                    //     TX DMA/FIFO prime the first byte before the clock starts;
+                    //     the reset default of 1 is too short, and the first byte
+                    //     of every transfer then clocks out (and reads back) zero.
+                    //   HOLD_TIME = 1 ([7:4]) — reset default, left as esp-idf has.
+                    let mut ctrl2 = self.reg(SPI_CTRL2).read_volatile();
+                    ctrl2 &= !((0b11 << 16) | 0xF);
+                    ctrl2 |= (0b10 << 16) | 0xF;
+                    self.reg(SPI_CTRL2).write_volatile(ctrl2);
 
                     // Enable master mode, disable slave.
                     let slave = self.reg(SPI_SLAVE);
                     reg::clear(slave, 1);
+                }
+
+                // Claim a DMA channel for this host, held for the driver's life,
+                // so a transfer past the FIFO cap can run over DMA with no
+                // arrangement by the caller. A host with no channel free keeps
+                // to the FIFO path (chunked past the cap).
+                if let Some(s) = dma_slot(instance) {
+                    let host = if instance == 2 { Host::Spi2 } else { Host::Spi3 };
+                    // SAFETY: init runs once per host before any transfer; this
+                    // slot belongs to this host alone.
+                    unsafe {
+                        let slot = &mut (*addr_of_mut!(SPI_DMA))[s];
+                        if slot.channel.is_none() {
+                            slot.channel = dma::claim(host).ok();
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -279,7 +418,78 @@ impl PhysicalBus for Esp32Spi {
     }
 
     fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-        self.transfer(tx, rx)
+        let len = tx.len().min(rx.len());
+
+        let instance = addr::spi_instance(self.base).ok_or(BusError::InvalidConfig)?;
+        let Some(s) = dma_slot(instance) else {
+            // No DMA slot for this host (SPI1): FIFO only.
+            return self.fifo_chunked(tx, rx, len);
+        };
+
+        // SAFETY: a bus is single-owner, and a transfer on one host is
+        // synchronous, so nothing else touches this slot while this runs.
+        let slot = unsafe { &mut (*addr_of_mut!(SPI_DMA))[s] };
+
+        let reach = dma::DmaReach;
+        let reachable = reach.reachable(tx.as_ptr() as u32, len as u32)
+            && reach.reachable(rx.as_ptr() as u32, len as u32);
+        let ndesc = descriptors_needed(len as u32) as usize;
+
+        // Use DMA for *every* size when it is enabled, a channel is owned, the
+        // buffers are DMA-reachable, and the chain fits. Routing small transfers
+        // through the FIFO and large ones through DMA would mean a FIFO->DMA
+        // transition, which the classic ESP32 SPI does not re-arm cleanly (the
+        // DMA receive lands short by the FIFO transfer's byte count). esp-idf
+        // avoids it the same way — DMA for all traffic once it is enabled.
+        let use_dma =
+            len > 0 && slot.enabled && slot.channel.is_some() && reachable && ndesc <= MAX_DESCS;
+
+        if !use_dma {
+            // A bulk transfer the caller wants over DMA but cannot be — an
+            // unreachable buffer or one too large for the descriptor scratch —
+            // is an error, not a silent slow bounce. Everything else takes the
+            // FIFO path (cap-sized, or chunked past the cap when DMA is off).
+            if slot.enabled && slot.channel.is_some() && len > SPI_MAX_BYTES {
+                return Err(if ndesc > MAX_DESCS {
+                    BusError::InvalidConfig
+                } else {
+                    BusError::DmaError
+                });
+            }
+            return self.fifo_chunked(tx, rx, len);
+        }
+
+        // SAFETY: descriptors sit in this slot's DMA-reachable scratch; the
+        // chains and the caller's buffers stay put across the transfer.
+        let bank = slot.next_bank;
+        slot.next_bank ^= 1;
+        unsafe {
+            let tx_head = build_chain(
+                &mut slot.tx_descs[bank][..ndesc],
+                tx.as_ptr() as u32,
+                len as u32,
+                Direction::Transmit,
+            )
+            .map_err(|_| BusError::DmaError)?;
+            let rx_head = build_chain(
+                &mut slot.rx_descs[bank][..ndesc],
+                rx.as_mut_ptr() as u32,
+                len as u32,
+                Direction::Receive,
+            )
+            .map_err(|_| BusError::DmaError)?;
+
+            // Descriptor owner/length writes and caller buffer writes must be
+            // visible before the link register hands the chain to DMA.
+            dma::sync_for_device();
+            self.start_dma(tx_head, rx_head, len)?;
+
+            // The peripheral transaction is complete only at TRANS_DONE;
+            // descriptor length can reach `len` before the SPI receive state
+            // has retired. `transfer_dma` uses that hardware completion bit.
+            self.wait_dma_done()?;
+            Ok(())
+        }
     }
 
     /// Re-clock a live controller: only SPI_CLOCK changes, so a transfer in
