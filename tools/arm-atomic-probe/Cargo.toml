@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "arm-atomic-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+critical-section = { version = "=1.2.0", features = ["restore-state-u32"] }
+portable-atomic = { version = "=1.15.0", features = ["critical-section", "require-cas"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
