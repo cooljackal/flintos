@@ -96,14 +96,21 @@ judge() {
     # shellcheck disable=SC2064
     trap "rm -f '$log'" RETURN
 
-    if ! grep -qF "$MARK_BEGIN" "$log"; then
+    # Every grep below passes -a (treat the file as text). The capture almost
+    # always contains one non-text byte -- the espflash reset garbles a handful
+    # of bytes on the console before the ROM banner ("x\x1a...booting"). One such
+    # byte flips grep into binary mode, where it prints "Binary file matches"
+    # instead of the matching line: `end_line` comes back empty and every count
+    # reads zero, so a clean 48/48 run is reported as "never finished". -a keeps
+    # grep extracting the ASCII marker lines regardless of that boot noise.
+    if ! grep -qaF "$MARK_BEGIN" "$log"; then
         echo "FAIL: the board never reached the self-test."
         echo "      No '$MARK_BEGIN' in the output — it may not have booted, or"
         echo "      the image may have been built without the self-test feature."
         return 1
     fi
 
-    end_line=$(grep -F "$MARK_END" "$log" | tail -1)
+    end_line=$(grep -aF "$MARK_END" "$log" | tail -1)
     if [ -z "$end_line" ]; then
         echo "FAIL: the self-test began but never finished."
         echo "      No '$MARK_END' — a test hung, the board reset, or it panicked"
@@ -114,8 +121,8 @@ judge() {
 
     # Count what actually arrived, rather than trusting the summary. A dropped
     # line changes the count, and a run that silently lost a test is not a pass.
-    passed=$(grep -cE "^.*${MARK_TEST//\[/\\[}.* PASS$" "$log" || true)
-    failed=$(grep -cE "^.*${MARK_TEST//\[/\\[}.* FAIL " "$log" || true)
+    passed=$(grep -caE "^.*${MARK_TEST//\[/\\[}.* PASS$" "$log" || true)
+    failed=$(grep -caE "^.*${MARK_TEST//\[/\\[}.* FAIL " "$log" || true)
 
     # Bash's own regex, not `sed`.
     #
@@ -156,7 +163,7 @@ judge() {
 
     if [ "$reported_fail" -ne 0 ]; then
         echo "FAIL: $reported_fail of $((reported_pass + reported_fail)) on-target tests failed:"
-        grep -F "$MARK_TEST" "$log" | grep -F " FAIL " | sed 's/^/      /'
+        grep -aF "$MARK_TEST" "$log" | grep -aF " FAIL " | sed 's/^/      /'
         return 1
     fi
 
@@ -320,7 +327,7 @@ ESPFLASH_PID=$!
 
 deadline=$((SECONDS + TIMEOUT_SECS))
 while kill -0 "$ESPFLASH_PID" 2>/dev/null; do
-    if grep -qE "$MARK_SUMMARY" "$LOG" 2>/dev/null; then
+    if grep -qaE "$MARK_SUMMARY" "$LOG" 2>/dev/null; then
         # Let the tail of the output land before killing the monitor.
         sleep "$SETTLE_SECS"
         break
