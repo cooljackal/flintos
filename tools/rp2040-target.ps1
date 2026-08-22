@@ -3,7 +3,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('discover', 'probe', 'observe-reconnect')]
+    [ValidateSet('discover', 'probe', 'observe-reconnect', 'reset-reconnect', 'bootsel-flash-reconnect', 'judge-log')]
     [string]$Action = 'discover',
     [Alias('Vid')]
     [string]$VendorId = '2E8A',
@@ -14,17 +14,38 @@ param(
     [int]$TimeoutSeconds = 10,
     [ValidateRange(10, 5000)]
     [int]$PollMilliseconds = 100,
-    [string]$Fixture
+    [string]$Fixture,
+    [string]$PicotoolPath = 'picotool',
+    [string]$LogPath,
+    [string]$Uf2Path
 )
 
 $ErrorActionPreference = 'Stop'
 
+if ($Action -eq 'judge-log') {
+    if (-not $LogPath) { throw '-LogPath is required for judge-log' }
+    $lines = @(Get-Content -LiteralPath $LogPath | ForEach-Object { $_.TrimEnd("`r") })
+    if (-not ($lines -contains '[FLINT] SELFTEST BEGIN')) { throw 'self-test begin marker is missing' }
+    $summaries = @($lines | Where-Object { $_ -match '^\[FLINT\] SELFTEST END pass=([0-9]+) fail=([0-9]+)$' })
+    if ($summaries.Count -ne 1) { throw 'exactly one complete self-test summary is required' }
+    [void]($summaries[0] -match 'pass=([0-9]+) fail=([0-9]+)$')
+    $reportedPass = [int]$Matches[1]
+    $reportedFail = [int]$Matches[2]
+    $passed = @($lines | Where-Object { $_ -match '^\[FLINT\] TEST .+ PASS$' }).Count
+    $failed = @($lines | Where-Object { $_ -match '^\[FLINT\] TEST .+ FAIL(?: .*)?$' }).Count
+    if ($passed -ne $reportedPass -or $failed -ne $reportedFail) { throw 'test lines do not agree with summary counts' }
+    if ($reportedFail -ne 0 -or $reportedPass -eq 0) { throw "self-test did not pass: pass=$reportedPass fail=$reportedFail" }
+    [pscustomobject]@{ state='passed'; passed=$reportedPass; failed=$reportedFail } | ConvertTo-Json -Compress
+    exit 0
+}
+
 function ConvertTo-Device {
-    param([object]$Item)
+    param([object]$Item, [string]$ParentInstanceId)
     $port = if ($Item.port) { [string]$Item.port } elseif ($Item.Name -match '\((COM[0-9]+)\)') { $Matches[1] } else { $null }
     $id = if ($Item.instance_id) { [string]$Item.instance_id } else { [string]$Item.PNPDeviceID }
     $deviceSerial = if ($Item.serial) { [string]$Item.serial } else {
-        $parts = $id -split '\\'
+        $identityId = if ($ParentInstanceId) { $ParentInstanceId } else { $id }
+        $parts = $identityId -split '\\'
         if ($parts.Count -ge 3) { $parts[-1] } else { '' }
     }
     [pscustomobject]@{ port = $port; instance_id = $id; serial = $deviceSerial }
@@ -33,7 +54,30 @@ function ConvertTo-Device {
 function Get-LiveDevices {
     Get-CimInstance Win32_PnPEntity | Where-Object {
         $_.PNPDeviceID -match "^USB\\VID_$VendorId&PID_$ProductId" -and $_.Name -match '\(COM[0-9]+\)'
-    } | ForEach-Object { ConvertTo-Device $_ }
+    } | ForEach-Object {
+        $parent = (Get-PnpDeviceProperty -InstanceId $_.PNPDeviceID -KeyName 'DEVPKEY_Device_Parent').Data
+        ConvertTo-Device $_ -ParentInstanceId $parent
+    }
+}
+
+function Get-BootselDevices {
+    Get-CimInstance Win32_PnPEntity | Where-Object {
+        $_.PNPDeviceID -match '^USB\\VID_2E8A&PID_0003'
+    }
+}
+
+function Invoke-BaudReset {
+    param([string]$Port)
+    $serialPort = [System.IO.Ports.SerialPort]::new($Port, 1200)
+    try {
+        $serialPort.Open()
+    } catch {
+        # The SDK resets while Windows is completing Open(). The resulting
+        # device-removal exception is neither success nor failure; enumeration
+        # below is the authority.
+    } finally {
+        $serialPort.Dispose()
+    }
 }
 
 $fixtureData = if ($Fixture) { Get-Content -Raw -LiteralPath $Fixture | ConvertFrom-Json } else { $null }
@@ -77,6 +121,34 @@ function Write-Device {
     } | ConvertTo-Json -Compress
 }
 
+function Invoke-PicotoolReset {
+    # Pico SDK's USB reset interface is what makes `picotool reboot -f`
+    # supported. It is firmware-dependent; failure is evidence that the
+    # running image did not expose a compatible reset interface.
+    $arguments = @(
+        'reboot', '-f', '-a',
+        '--vid', "0x$($VendorId.ToLowerInvariant())",
+        '--pid', "0x$($ProductId.ToLowerInvariant())"
+    )
+    $start = [System.Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $PicotoolPath
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    foreach ($argument in $arguments) { [void]$start.ArgumentList.Add($argument) }
+    try { $process = [System.Diagnostics.Process]::Start($start) }
+    catch { throw "could not start picotool at '$PicotoolPath': $($_.Exception.Message)" }
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        $process.Kill($true)
+        throw "picotool reset exceeded the $TimeoutSeconds second bound"
+    }
+    $stdout = $process.StandardOutput.ReadToEnd().Trim()
+    $stderr = $process.StandardError.ReadToEnd().Trim()
+    if ($process.ExitCode -ne 0) {
+        throw "picotool reset failed with exit $($process.ExitCode): $stderr $stdout"
+    }
+}
+
 $initial = Select-Device (Get-Snapshot)
 if ($Action -eq 'discover') {
     Write-Device $initial 'connected'
@@ -94,6 +166,55 @@ if ($Action -eq 'probe') {
     try { $port.Open() } finally { $port.Dispose() }
     Write-Device $initial 'transport-opened'
     exit 0
+}
+
+
+if ($Action -eq 'reset-reconnect' -and -not $Fixture) {
+    Invoke-PicotoolReset
+}
+
+if ($Action -eq 'bootsel-flash-reconnect' -and $Fixture) {
+    $missing = Select-Device (Get-Snapshot) -AllowMissing
+    if ($missing) { throw 'fixture did not model the CDC disconnect' }
+    if (-not $fixtureData.bootsel -or -not $fixtureData.volume) { throw 'fixture did not model BOOTSEL and RPI-RP2 enumeration' }
+    $returned = Select-Device (Get-Snapshot) -AllowMissing
+    if (-not $returned) { throw 'fixture did not model application reconnect' }
+    if ($returned.serial -ne $initial.serial) { throw 'fixture application identity changed' }
+    Write-Device $returned 'reflashed-reconnected'
+    exit 0
+}
+
+if ($Action -eq 'bootsel-flash-reconnect' -and -not $Fixture) {
+    if (-not $Uf2Path) { throw '-Uf2Path is required for bootsel-flash-reconnect' }
+    $resolvedUf2 = (Resolve-Path -LiteralPath $Uf2Path).Path
+    Invoke-BaudReset $initial.port
+    $bootDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $sawDisconnect = $false
+    $bootDevice = $null
+    while ([DateTime]::UtcNow -lt $bootDeadline) {
+        if (-not (Select-Device (Get-Snapshot) -AllowMissing)) { $sawDisconnect = $true }
+        $bootDevice = @(Get-BootselDevices) | Select-Object -First 1
+        if ($sawDisconnect -and $bootDevice) { break }
+        Start-Sleep -Milliseconds $PollMilliseconds
+    }
+    if (-not $sawDisconnect) { throw 'the original CDC device never disappeared after the 1200-baud reset' }
+    if (-not $bootDevice) { throw 'BOOTSEL USB VID=2E8A PID=0003 did not appear within the bound' }
+    $volume = Get-Volume | Where-Object { $_.FileSystemLabel -eq 'RPI-RP2' -and $_.DriveLetter } | Select-Object -First 1
+    if (-not $volume) { throw 'BOOTSEL enumerated, but no RPI-RP2 volume with a drive letter appeared' }
+    Copy-Item -LiteralPath $resolvedUf2 -Destination "$($volume.DriveLetter):\"
+    $returnDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $returnDeadline) {
+        $current = Select-Device (Get-Snapshot) -AllowMissing
+        if ($current) {
+            if ($current.serial -ne $initial.serial) {
+                throw "application returned with different identity: expected '$($initial.serial)', got '$($current.serial)'"
+            }
+            Write-Device $current 'reflashed-reconnected'
+            exit 0
+        }
+        Start-Sleep -Milliseconds $PollMilliseconds
+    }
+    throw "the application CDC device did not return within $TimeoutSeconds seconds after UF2 copy"
 }
 
 $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
