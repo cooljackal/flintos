@@ -1,6 +1,7 @@
-# Writing an Application
+# Tutorial: Hello World
 
-The kernel is a library. The thing you flash is an application in `apps/`.
+The kernel is a library. The thing you flash is an application in `apps/`. This
+walks through the smallest one, `apps/hello` — one task that logs a tick.
 
 Copy `apps/hello/`, rename it, add it to `members` in the workspace
 `Cargo.toml`. That's the setup — `make flash APP=<name>` works from there.
@@ -59,6 +60,7 @@ default = ["debug-level-1"]          # no default board, deliberately
 board-esp32-wrover = ["kernel/board-esp32-wrover"]
 board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
 board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
+board-wio-rp2040-mini = ["kernel/board-wio-rp2040-mini"]
 debug-level-0 = ["kernel/debug-level-0"]
 debug-level-1 = ["kernel/debug-level-1"]
 debug-level-2 = ["kernel/debug-level-2"]

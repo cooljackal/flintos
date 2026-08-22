@@ -1,4 +1,4 @@
-# Getting Started
+# Quickstart
 
 ## 1. Toolchain
 
@@ -17,7 +17,7 @@ Windows PowerShell: `. $env:USERPROFILE\export-esp.ps1`
 ```bash
 git clone https://github.com/cooljackal/flintos
 cd flintos
-make flash
+make flash BOARD=board-esp32-devkitc
 ```
 
 Builds `apps/demo`, flashes over USB serial, opens a monitor.
@@ -25,12 +25,12 @@ Builds `apps/demo`, flashes over USB serial, opens a monitor.
 ## 3. Pick something else
 
 ```bash
-make apps                                  # what's available
-make flash APP=hello                       # one task instead of three
-make flash APP=demo BOARD=board-m5-atom-lite   # different board
+make apps                                             # what's available
+make flash APP=hello BOARD=board-esp32-devkitc        # one task instead of three
+make flash APP=demo  BOARD=board-m5-atom-lite         # different board
 ```
 
-Defaults: `APP=demo`, `DEBUG=debug-level-1`.
+Defaults: `APP=demo`, `DEBUG=debug-level-1`. `BOARD` has none — see below.
 
 > **`BOARD` has no default and must be given.** A board manifest is the pin
 > map, the bus map and the IRQ numbers; defaulting it means flashing a board
@@ -80,4 +80,4 @@ Per region, not per section — IRAM or DRAM runs out long before flash.
 
 ## Next
 
-[Writing an Application](Writing-an-Application).
+[Supported Boards](Supported-Boards) · [Tutorial: Hello World](Tutorial-Hello-World).
