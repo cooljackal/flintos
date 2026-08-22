@@ -214,3 +214,21 @@ cleanups — flagged ⚠.
 | 22 | duplication | `radio/esp32/adapter.rs:1558` | `log_c_str` and `c_str_bounded` are two near-identical bounded C-string readers (also `nvs::c_str`, `tasks::store_name`) | One shared bounded-C-string helper |
 | 23 | magic-number | `radio/esp32/phy_init.rs:114` | Six `limit(...)` calls hardcode floor `40` and ceilings `78/72/66/60/56/52`, duplicating `TX_POWER_FLOOR`/`TX_POWER_CEILINGS` defined just above | Reference the named constants |
 | 24 | duplication | `lib/crypto/sha1.rs:53` | `Sha1::update`/`finish` duplicate ~50 lines of block-buffering/padding from `Sha256`; only the compress fn + digest length differ | Shared buffer/padding helper or trait |
+
+## Remediation
+
+Fixed 1–23 across five commits (one per area), verified with `make test-host`,
+`make lint`, `make check-layers` and `make check-all`. Two were handled with a
+deliberate deviation from the literal suggestion:
+
+- **#6** — a sibling `esp32-adc-core` crate would break the Layer-1 dependency
+  rule, so the shared `Attenuation` and `FULL_SCALE` moved to `soc_esp32::sar`
+  instead. The SAR power-up and read sequences were **not** merged: ADC1, ADC2
+  and the radio-shared SAR differ in load-bearing ways and carry hardware-only
+  bugs, so that merge waits for on-target verification.
+- **#24** — declined. SHA-1 and SHA-256 are kept self-contained and auditable
+  against their FIPS specs; a shared generic hashing framework would add
+  abstraction to security-critical code for a low-severity gain.
+
+The GPIO (#1) and other register-sequence changes are compile-verified only;
+`make test-target` on a DevKitC should run before they are relied on.
