@@ -75,6 +75,11 @@ esp32-adc2 = { path = "../drivers/physical/esp32/adc2" }
 esp32-twai = { path = "../drivers/physical/esp32/twai" }
 # The I2S DMA loopback.
 esp32-i2s = { path = "../drivers/physical/esp32/i2s" }
+# The PCNT self-test: counts software-toggled edges routed back through the
+# matrix. `esp32-gpio` drives the pulse pad in software; the two only appear in
+# the on-target self-test, not the kernel proper.
+esp32-pcnt = { path = "../drivers/physical/esp32/pcnt" }
+esp32-gpio = { path = "../drivers/physical/esp32/gpio" }
 # The SPI-bus (Layer 2) loopback self-test drives the wrapper over this driver.
 esp32-spi = { path = "../drivers/physical/esp32/spi" }
 spi-bus = { path = "../drivers/bus/spi-bus" }

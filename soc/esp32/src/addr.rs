@@ -27,6 +27,8 @@ pub const I2C0_BASE: u32 = 0x3FF5_3000;
 pub const I2C1_BASE: u32 = 0x3FF6_7000;
 
 pub const RMT_BASE: u32 = 0x3FF5_6000;
+/// `DR_REG_PCNT_BASE`. Pulse counter: eight units with glitch filtering.
+pub const PCNT_BASE: u32 = 0x3FF5_7000;
 /// `DR_REG_LEDC_BASE`. PWM: eight high-speed channels over four timers.
 pub const LEDC_BASE: u32 = 0x3FF5_9000;
 

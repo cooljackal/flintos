@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-pcnt"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "PCNT (pulse counter) driver — encoders, flow meters, tachometers"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hal = { path = "../../../../hal" }
+soc-esp32 = { path = "../../../../soc/esp32" }

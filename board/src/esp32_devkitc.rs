@@ -69,24 +69,33 @@ pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = Some(21);
 /// A board that declares `None` skips those loopback tests.
 pub const LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = Some((23, 19));
 
-/// Three electrically-free pads for the on-chip SPI master↔slave loopback, as
-/// `[sck, mosi, miso]`, or `None`.
+/// Four electrically-free pads for the on-chip SPI master↔slave loopback, as
+/// `[sck, mosi, miso, cs]`, or `None`.
 ///
 /// The self-test drives SPI2 as master and SPI3 as slave and joins their
 /// signals through the GPIO matrix with no external wire: master SCK-out →
 /// slave SCK-in on the first pad, master MOSI-out → slave MOSI-in on the second,
-/// slave MISO-out → master MISO-in on the third. It is a *3-wire* loopback — the
-/// slave's CS input is tied to a constant low in the matrix (always selected),
-/// because the master driver drives no CS line, so no fourth pad is needed.
+/// slave MISO-out → master MISO-in on the third, and a master-driven CS →
+/// slave CS-in on the fourth. The real CS edge frames each transaction — the
+/// slave commits its received data when CS deasserts.
 ///
 /// Separate from [`LOOPBACK_SCRATCH_GPIO`]/[`LOOPBACK_AUX_GPIOS`] so the
 /// single-pad folded loopbacks and this two-controller one cannot fight over
-/// what a pad means. The pads happen to be the same three free GPIOs
-/// (21/23/19) — nothing is wired to them and the tests never run at once — but
-/// naming them here keeps that a deliberate choice rather than a coincidence.
+/// what a pad means. The pads are the free GPIOs 21/23/19 plus a PSRAM-free 16 —
+/// nothing is wired to them and the tests never run at once.
 ///
 /// A board that declares `None` skips the test.
 pub const SPI_SLAVE_LOOPBACK_GPIOS: Option<[u8; 4]> = Some([21, 23, 19, 16]);
+
+/// A single electrically-free pad for the PCNT self-test. The test drives it in
+/// software and routes it straight back to a PCNT unit's signal input through
+/// the matrix, so — like the other loopback pads — nothing external is
+/// connected and the pin only has to be one no other peripheral drives. GPIO22
+/// is free on a bare DevKitC (the I2C convention's SCL pin, carrying nothing by
+/// default) and clear of the strapping and flash pins.
+///
+/// A board that declares `None` skips the PCNT self-test.
+pub const PCNT_LOOPBACK_GPIO: Option<u8> = Some(22);
 
 
 /// Maximum radio transmit power, in dBm.

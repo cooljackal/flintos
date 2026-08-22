@@ -52,6 +52,9 @@ pub const LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = None;
 /// `None`. See the DevKitC manifest for what this test does. Left unset: this
 /// manifest has never been flashed, so no pin is confirmed free.
 pub const SPI_SLAVE_LOOPBACK_GPIOS: Option<[u8; 4]> = None;
+/// A free pad for the PCNT self-test. `None` skips it — no pin is confirmed
+/// free on real hardware for this unflashed manifest.
+pub const PCNT_LOOPBACK_GPIO: Option<u8> = None;
 
 
 /// Maximum radio transmit power, in dBm.

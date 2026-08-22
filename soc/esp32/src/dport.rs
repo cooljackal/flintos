@@ -99,6 +99,8 @@ impl ClockBit {
     pub const TWAI: Self = Self(1 << 19);
     /// `DPORT_I2S0_CLK_EN`.
     pub const I2S0: Self = Self(1 << 4);
+    /// `DPORT_PCNT_CLK_EN`.
+    pub const PCNT: Self = Self(1 << 10);
 
     pub const fn mask(self) -> u32 {
         self.0

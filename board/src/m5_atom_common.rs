@@ -54,6 +54,9 @@ pub const LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = None;
 /// `None`. See the DevKitC manifest for what this test does. Unset: the Atom
 /// modules bond almost every pin, so no trio is confidently free here.
 pub const SPI_SLAVE_LOOPBACK_GPIOS: Option<[u8; 4]> = None;
+/// A free pad for the PCNT self-test. `None` skips it — the Atom modules bond
+/// almost every pin, so none is confidently free here.
+pub const PCNT_LOOPBACK_GPIO: Option<u8> = None;
 
 
 /// Maximum radio transmit power, in dBm.

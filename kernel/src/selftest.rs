@@ -63,6 +63,9 @@ mod spi;
 #[path = "selftest_spi_slave.rs"]
 mod spi_slave;
 
+#[path = "selftest_pcnt.rs"]
+mod pcnt;
+
 #[path = "selftest_uart.rs"]
 mod uart;
 
@@ -247,6 +250,22 @@ pub fn run() {
         _ => skip(
             "uart_bytestream_loopback_round_trips",
             "this board declares no free UART loopback GPIOs",
+        ),
+    }
+
+    // PCNT: drive a pad in software, route it into a pulse-counter unit, and
+    // check up/down counting with direction and that the glitch filter takes
+    // effect. Needs a free pad the board declares.
+    match crate::board::active::PCNT_LOOPBACK_GPIO {
+        Some(pin) => check(
+            "pcnt_counts_edges_with_direction_and_filter",
+            pcnt::pcnt_counts_edges_with_direction_and_filter(pin),
+            &mut pass,
+            &mut fail,
+        ),
+        None => skip(
+            "pcnt_counts_edges_with_direction_and_filter",
+            "this board declares no free PCNT loopback GPIO",
         ),
     }
 
