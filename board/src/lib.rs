@@ -53,6 +53,9 @@ pub mod m5_atom_lite;
 #[cfg(feature = "board-m5-atom-matrix")]
 pub mod m5_atom_matrix;
 
+#[cfg(feature = "board-wio-rp2040-mini")]
+pub mod wio_rp2040_mini;
+
 /// Pin map shared by both Atom variants. Not selectable on its own: it declares
 /// no LED count, because that is the only thing the two disagree about.
 #[cfg(any(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix"))]
@@ -68,6 +71,7 @@ mod m5_atom_common;
         feature = "board-esp32-devkitc",
         feature = "board-m5-atom-lite",
         feature = "board-m5-atom-matrix",
+        feature = "board-wio-rp2040-mini",
     )),
     not(feature = "board-m5-atom")
 ))]
@@ -84,7 +88,8 @@ compile_error!(
      	board-esp32-devkitc     ESP32-DevKitC / WROOM-32   (verified on hardware)
      	board-m5-atom-matrix    M5Stack Atom Matrix        (verified on hardware)
      	board-m5-atom-lite      M5Stack Atom Lite          (verified on hardware)
-     	board-esp32-wrover      ESP32-WROVER               (never flashed)"
+     	board-esp32-wrover      ESP32-WROVER               (never flashed)
+     	board-wio-rp2040-mini   Seeed Wio RP2040 Mini      (connected; first light pending)"
 );
 
 #[cfg(any(
@@ -94,6 +99,10 @@ compile_error!(
     all(feature = "board-esp32-devkitc", feature = "board-m5-atom-lite"),
     all(feature = "board-esp32-devkitc", feature = "board-m5-atom-matrix"),
     all(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix"),
+    all(feature = "board-wio-rp2040-mini", feature = "board-esp32-wrover"),
+    all(feature = "board-wio-rp2040-mini", feature = "board-esp32-devkitc"),
+    all(feature = "board-wio-rp2040-mini", feature = "board-m5-atom-lite"),
+    all(feature = "board-wio-rp2040-mini", feature = "board-m5-atom-matrix"),
 ))]
 compile_error!(
     "board: more than one `board-*` feature is enabled. A build with two      board manifests merged in is not a real board — it silently produces the      wrong pin/IRQ/bus map. Build with `--no-default-features --features <one-board>`."
@@ -119,6 +128,7 @@ compile_error!(
     not(feature = "board-esp32-devkitc"),
     not(feature = "board-m5-atom-lite"),
     not(feature = "board-m5-atom-matrix"),
+    not(feature = "board-wio-rp2040-mini"),
 ))]
 pub use esp32_wrover as active;
 
@@ -127,6 +137,7 @@ pub use esp32_wrover as active;
     not(feature = "board-esp32-wrover"),
     not(feature = "board-m5-atom-lite"),
     not(feature = "board-m5-atom-matrix"),
+    not(feature = "board-wio-rp2040-mini"),
 ))]
 pub use esp32_devkitc as active;
 
@@ -135,6 +146,7 @@ pub use esp32_devkitc as active;
     not(feature = "board-esp32-wrover"),
     not(feature = "board-esp32-devkitc"),
     not(feature = "board-m5-atom-matrix"),
+    not(feature = "board-wio-rp2040-mini"),
 ))]
 pub use m5_atom_lite as active;
 
@@ -143,8 +155,18 @@ pub use m5_atom_lite as active;
     not(feature = "board-esp32-wrover"),
     not(feature = "board-esp32-devkitc"),
     not(feature = "board-m5-atom-lite"),
+    not(feature = "board-wio-rp2040-mini"),
 ))]
 pub use m5_atom_matrix as active;
+
+#[cfg(all(
+    feature = "board-wio-rp2040-mini",
+    not(feature = "board-esp32-wrover"),
+    not(feature = "board-esp32-devkitc"),
+    not(feature = "board-m5-atom-lite"),
+    not(feature = "board-m5-atom-matrix"),
+))]
+pub use wio_rp2040_mini as active;
 
 // ── Manifest invariant tests ────────────────────────────────────────────────
 //
@@ -162,15 +184,26 @@ mod tests {
     use crate::active::*;
     use hal::bus::BusConfig;
 
-    // ESP32 peripheral registers live in the DPORT-mapped bus window
+    // These are family facts, not generic manifest invariants. ESP32
+    // peripheral registers live in the DPORT-mapped bus window
     // 0x3FF4_0000..0x3FF8_0000. Widened slightly on both sides so this
     // doesn't need updating for every new base address, while still
     // catching a base address copy-pasted from an unrelated address space.
+    #[cfg(not(feature = "board-wio-rp2040-mini"))]
     const PERIPH_BASE_LOW: u32 = 0x3FF0_0000;
+    #[cfg(not(feature = "board-wio-rp2040-mini"))]
     const PERIPH_BASE_HIGH: u32 = 0x3FF8_FFFF;
 
+    #[cfg(feature = "board-wio-rp2040-mini")]
+    const PERIPH_BASE_LOW: u32 = 0x4000_0000;
+    #[cfg(feature = "board-wio-rp2040-mini")]
+    const PERIPH_BASE_HIGH: u32 = 0x4007_FFFF;
+
     // ESP32 (and ESP32-PICO-D4) expose GPIO0..=39.
+    #[cfg(not(feature = "board-wio-rp2040-mini"))]
     const MAX_GPIO: u8 = 39;
+    #[cfg(feature = "board-wio-rp2040-mini")]
+    const MAX_GPIO: u8 = 29;
 
     #[test]
     fn board_name_non_empty() {
@@ -182,7 +215,7 @@ mod tests {
         for bus in TARGET_BUSES {
             assert!(
                 bus.base_addr >= PERIPH_BASE_LOW && bus.base_addr <= PERIPH_BASE_HIGH,
-                "bus '{}' has base_addr {:#010x} outside the ESP32 peripheral bus window",
+                "bus '{}' has base_addr {:#010x} outside the selected SoC peripheral window",
                 bus.name,
                 bus.base_addr,
             );
@@ -194,7 +227,7 @@ mod tests {
         for p in TARGET_PERIPHERALS {
             assert!(
                 p.base_addr >= PERIPH_BASE_LOW && p.base_addr <= PERIPH_BASE_HIGH,
-                "peripheral '{}' has base_addr {:#010x} outside the ESP32 peripheral bus window",
+                "peripheral '{}' has base_addr {:#010x} outside the selected SoC peripheral window",
                 p.name,
                 p.base_addr,
             );
@@ -205,8 +238,8 @@ mod tests {
     fn uart_pins_are_valid_gpios() {
         for bus in TARGET_BUSES {
             if let BusConfig::Uart { tx, rx, .. } = bus.config {
-                assert!(tx <= MAX_GPIO, "bus '{}' uart tx pin {} is not a valid ESP32 GPIO", bus.name, tx);
-                assert!(rx <= MAX_GPIO, "bus '{}' uart rx pin {} is not a valid ESP32 GPIO", bus.name, rx);
+                assert!(tx <= MAX_GPIO, "bus '{}' uart tx pin {} is not a valid GPIO", bus.name, tx);
+                assert!(rx <= MAX_GPIO, "bus '{}' uart rx pin {} is not a valid GPIO", bus.name, rx);
             }
         }
     }
@@ -219,7 +252,7 @@ mod tests {
                     for (label, pin) in [("mosi", mosi), ("miso", miso), ("sck", sck)] {
                         assert!(
                             pin <= MAX_GPIO,
-                            "bus '{}' spi {} pin {} is not a valid ESP32 GPIO",
+                            "bus '{}' spi {} pin {} is not a valid GPIO",
                             bus.name,
                             label,
                             pin
@@ -230,7 +263,7 @@ mod tests {
                     for (label, pin) in [("sda", sda), ("scl", scl)] {
                         assert!(
                             pin <= MAX_GPIO,
-                            "bus '{}' i2c {} pin {} is not a valid ESP32 GPIO",
+                            "bus '{}' i2c {} pin {} is not a valid GPIO",
                             bus.name,
                             label,
                             pin
@@ -297,7 +330,7 @@ mod tests {
     fn device_cs_pin_is_valid_gpio_when_present() {
         for device in TARGET_DEVICES {
             if let Some(cs) = device.cs_pin {
-                assert!(cs <= MAX_GPIO, "device '{}' cs_pin {} is not a valid ESP32 GPIO", device.name, cs);
+                assert!(cs <= MAX_GPIO, "device '{}' cs_pin {} is not a valid GPIO", device.name, cs);
             }
         }
     }

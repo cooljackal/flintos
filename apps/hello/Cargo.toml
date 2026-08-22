@@ -39,6 +39,7 @@ board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
 board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
 board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
 board-m5-atom = ["kernel/board-m5-atom"]
+board-wio-rp2040-mini = ["kernel/board-wio-rp2040-mini"]
 
 debug-level-0 = ["kernel/debug-level-0"]
 debug-level-1 = ["kernel/debug-level-1"]

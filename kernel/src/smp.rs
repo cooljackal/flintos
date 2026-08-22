@@ -39,7 +39,7 @@
 //! far less than a failure does.
 
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicU8, Ordering};
+use portable_atomic::{AtomicU8, Ordering};
 
 use hal::smp::{CoreId, MultiCore};
 
@@ -152,7 +152,6 @@ impl<T> Spinlock<T> {
             c => Some(c),
         }
     }
-
 }
 
 /// Releases a [`Spinlock`] however the closure leaves — returning, or
@@ -328,7 +327,11 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
-        assert_eq!(shared.overlaps.load(Ordering::SeqCst), 0, "two threads were inside");
+        assert_eq!(
+            shared.overlaps.load(Ordering::SeqCst),
+            0,
+            "two threads were inside"
+        );
     }
 
     #[test]
@@ -360,8 +363,11 @@ mod tests {
         trying.join().unwrap();
 
         let got = lock.with(|v| *v);
-        assert_eq!(got, EACH + taken.load(Ordering::Relaxed), "an increment was lost");
+        assert_eq!(
+            got,
+            EACH + taken.load(Ordering::Relaxed),
+            "an increment was lost"
+        );
         assert_eq!(lock.holder(), None, "left locked");
     }
-
 }

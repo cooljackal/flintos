@@ -18,7 +18,7 @@
 //! assert!(ERRORS.read() >= 1);
 //! ```
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use portable_atomic::{AtomicU32, Ordering};
 
 /// A named counter metric.
 pub struct Counter {

@@ -20,9 +20,10 @@
 //! the "FLINT PANIC" banner was printed by a system that then carried on as
 //! though it had not.
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use portable_atomic::{AtomicBool, Ordering};
 
-use crate::arch::registers;
+use crate::arch::SelectedArch;
+use hal::arch::Architecture;
 
 use crate::scheduler::TaskState;
 
@@ -107,7 +108,7 @@ pub fn handle_at(
     // The returned PS is the one the panic happened under, which is worth
     // recording: its INTLEVEL distinguishes a panic in a task from one inside
     // an interrupt handler.
-    let ps = unsafe { registers::set_intlevel_15() };
+    let ps = SelectedArch::mask_interrupts();
 
     // A nested panic gets the console line but not the snapshot: first wins.
     let first = !PANICKING.swap(true, Ordering::Relaxed);
@@ -121,7 +122,9 @@ pub fn handle_at(
         (
             current,
             sched.ticks(),
-            sched.tasks[current as usize].as_ref().map_or("", |t| t.name),
+            sched.tasks[current as usize]
+                .as_ref()
+                .map_or("", |t| t.name),
         )
     })
     .unwrap_or((u32::MAX, 0, "<scheduler locked>"));
@@ -142,7 +145,10 @@ pub fn handle_at(
 
     let mut msg = [0u8; CAUSE_LEN];
     let msg_len = {
-        let mut w = crate::debug::log::BufWriter { buf: &mut msg, pos: 0 };
+        let mut w = crate::debug::log::BufWriter {
+            buf: &mut msg,
+            pos: 0,
+        };
         let _ = write!(w, "{}", args);
         w.pos
     };
@@ -182,7 +188,10 @@ pub fn handle_at(
         core::str::from_utf8(&msg[..msg_len]).unwrap_or("?")
     );
     if !first {
-        let _ = write!(console, "  (nested panic; the snapshot holds the first)\r\n");
+        let _ = write!(
+            console,
+            "  (nested panic; the snapshot holds the first)\r\n"
+        );
     }
     let _ = write!(console, "  System halted. Reset to continue.\r\n");
     let _ = write!(console, "╚════════════════════════════════════╝\r\n");
@@ -236,7 +245,12 @@ pub fn report_previous() {
         snap.task_id
     );
     if snap.line != 0 {
-        let _ = write!(console, "  Where:  {}:{}\r\n", as_str(&snap.file), snap.line);
+        let _ = write!(
+            console,
+            "  Where:  {}:{}\r\n",
+            as_str(&snap.file),
+            snap.line
+        );
     }
     let _ = write!(console, "  Cause:  {}\r\n", as_str(&snap.cause));
     let _ = write!(console, "  PS:     {:#010x}\r\n", snap.ps);

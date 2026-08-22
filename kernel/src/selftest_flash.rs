@@ -37,7 +37,7 @@
 //! "the IRAM-safe alarm stopped being serviced during the erase". So the
 //! test is measuring the mask and not the weather.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use portable_atomic::{AtomicU32, Ordering};
 
 use hal::tick::TickSource;
 

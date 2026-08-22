@@ -114,6 +114,27 @@ mod arm_api_smoke {
 /// `flint_app!` can check it without the application naming `api` itself.
 pub use api::ABI;
 
+/// Declare the function this image runs after architecture reset setup.
+#[macro_export]
+macro_rules! flint_app {
+    ($main:path, abi = $abi:literal) => {
+        const _: () = {
+            if $abi != $crate::ABI {
+                ::core::panic!("FlintOS application ABI does not match the kernel");
+            }
+        };
+
+        #[no_mangle]
+        pub extern "C" fn flint_app_main() {
+            let entry: fn() = $main;
+            entry();
+        }
+    };
+    ($main:path) => {
+        ::core::compile_error!("flint_app! requires `abi = <version>`");
+    };
+}
+
 // ── Panic handler ───────────────────────────────────────────────────────────
 //
 // Lives here rather than in each application: there must be exactly one in the
@@ -129,4 +150,12 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     // snapshot so the *next* boot can report them too.
     let msg = format_args!("{}", info.message());
     crate::debug::panic::handle_at(&msg, info.location())
+}
+
+#[cfg(all(target_os = "none", feature = "arch-armv6m", not(test)))]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {
+        <crate::arch::SelectedArch as hal::arch::Architecture>::wait_masked();
+    }
 }

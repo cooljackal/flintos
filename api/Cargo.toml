@@ -11,6 +11,7 @@ rust-version.workspace = true
 
 [dependencies]
 hal = { path = "../hal" }
+portable-atomic = { version = "=1.15.0", features = ["critical-section", "require-cas"] }
 
 [features]
 default = []

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "arch-armv6m"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "ARMv6-M architecture support for FlintOS"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hal = { path = "../../hal" }

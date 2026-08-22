@@ -55,7 +55,7 @@ const IDLE_WDT: wdt::Mwdt = wdt::Mwdt::Group1;
 /// Atomic rather than a `static mut` read through `read_volatile`: the tick
 /// feeds the watchdog from both cores, and `is_armed` is a cross-core read of
 /// a flag `arm` writes on one. A volatile read is not a synchronising one.
-static ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static ARMED: portable_atomic::AtomicBool = portable_atomic::AtomicBool::new(false);
 
 /// Arm both watchdogs.
 ///
@@ -70,7 +70,7 @@ static ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::n
 pub unsafe fn arm() {
     wdt::rwdt_arm(KERNEL_TIMEOUT_MS);
     wdt::mwdt_arm(IDLE_WDT, IDLE_TIMEOUT_MS);
-    ARMED.store(true, core::sync::atomic::Ordering::Release);
+    ARMED.store(true, portable_atomic::Ordering::Release);
 }
 
 /// Disarm both. Intended for debugging sessions.
@@ -78,14 +78,14 @@ pub unsafe fn arm() {
 /// # Safety
 /// After this nothing recovers a hung system short of a power cycle.
 pub unsafe fn disarm() {
-    ARMED.store(false, core::sync::atomic::Ordering::Release);
+    ARMED.store(false, portable_atomic::Ordering::Release);
     wdt::rwdt_disable();
     wdt::mwdt_disable(IDLE_WDT);
 }
 
 /// Whether [`arm`] has been called.
 pub fn is_armed() -> bool {
-    ARMED.load(core::sync::atomic::Ordering::Acquire)
+    ARMED.load(portable_atomic::Ordering::Acquire)
 }
 
 /// Feed the kernel watchdog. Called from the timer interrupt.

@@ -13,9 +13,9 @@
 
 use crate::arch::Context as TaskContext;
 use crate::arch::{SelectedArch, Tick};
-use core::sync::atomic::{AtomicBool, Ordering};
 use hal::arch::{Architecture, TrapCause};
 use hal::tick::TickSource;
+use portable_atomic::{AtomicBool, Ordering};
 
 use crate::scheduler::{self, TaskState};
 use crate::{debug, interrupt, timer};

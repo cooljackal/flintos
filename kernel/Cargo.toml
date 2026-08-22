@@ -12,6 +12,8 @@ rust-version.workspace = true
 [dependencies]
 hal = { path = "../hal" }
 api = { path = "../api" }
+critical-section = { version = "=1.2.0", features = ["restore-state-u32"] }
+portable-atomic = { version = "=1.15.0", features = ["critical-section", "require-cas"] }
 board = { path = "../board", default-features = false, optional = true }
 
 # The key/value format. Portable and host-testable, unlike the flash under it,
@@ -48,6 +50,7 @@ esp32-rng = { path = "../drivers/physical/esp32/rng", optional = true }
 # on hardware. Making the dependency optional keeps that chip-specific window
 # out of another SoC's graph without reintroducing a hand-written copy.
 soc-esp32 = { path = "../soc/esp32", optional = true }
+soc-rp2040 = { path = "../soc/rp2040", optional = true }
 
 # Xtensa support is target-only, and that is what lets this crate be built —
 # and therefore tested — on a host at all.
@@ -60,6 +63,7 @@ soc-esp32 = { path = "../soc/esp32", optional = true }
 # stand-ins in `arch::host` take its place.
 [target.'cfg(target_os = "none")'.dependencies]
 arch-xtensa = { path = "../arch/xtensa", optional = true }
+arch-armv6m = { path = "../arch/armv6m", optional = true }
 # Target-only: it calls ROM routines at fixed addresses and runs with the
 # instruction cache off, neither of which means anything on a host.
 esp32-flash = { path = "../drivers/physical/esp32/flash", optional = true }
@@ -111,7 +115,7 @@ crypto = { path = "../lib/crypto", optional = true }
 # costs a debugging session against the wrong pin map.
 default = ["arch-xtensa", "soc-esp32"]
 arch-xtensa = ["dep:arch-xtensa"]
-arch-armv6m = []
+arch-armv6m = ["dep:arch-armv6m"]
 soc-esp32 = [
     "dep:board",
     "dep:soc-esp32",
@@ -134,11 +138,12 @@ soc-esp32 = [
     "dep:esp32-crypto",
     "dep:crypto",
 ]
-soc-rp2040 = []
+soc-rp2040 = ["dep:board", "dep:soc-rp2040"]
 board-esp32-wrover = ["arch-xtensa", "soc-esp32", "board/board-esp32-wrover"]
 board-esp32-devkitc = ["arch-xtensa", "soc-esp32", "board/board-esp32-devkitc"]
 board-m5-atom-lite = ["arch-xtensa", "soc-esp32", "board/board-m5-atom-lite"]
 board-m5-atom-matrix = ["arch-xtensa", "soc-esp32", "board/board-m5-atom-matrix"]
+board-wio-rp2040-mini = ["arch-armv6m", "soc-rp2040", "board/board-wio-rp2040-mini"]
 # Retired; forwards so `board` can print which of the two to use.
 board-m5-atom = ["board/board-m5-atom"]
 

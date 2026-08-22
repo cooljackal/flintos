@@ -18,9 +18,9 @@
 //! interrupts already masked. Both exclude each other.
 
 use crate::arch::{Context, Tick};
-use core::sync::atomic::{AtomicBool, Ordering};
 use hal::arch::Architecture;
 use hal::tick::TickSource;
+use portable_atomic::{AtomicBool, Ordering};
 
 pub const MAX_TASKS: usize = 32;
 
@@ -649,7 +649,7 @@ mod affinity_tests {
 
         set_pending_switch();
         // Draining the other core's flag must not take ours.
-        assert!(!PENDING_SWITCH[other.index()].swap(false, core::sync::atomic::Ordering::Relaxed));
+        assert!(!PENDING_SWITCH[other.index()].swap(false, portable_atomic::Ordering::Relaxed));
         assert!(take_pending_switch(), "our own request went missing");
         assert!(!take_pending_switch(), "consumed twice");
     }

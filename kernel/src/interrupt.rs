@@ -12,7 +12,7 @@
 //! Handler-table access is guarded by a critical section.
 
 use crate::arch::cs_with;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 
 #[path = "interrupt_controller.rs"]
 mod controller;

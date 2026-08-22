@@ -7,6 +7,14 @@ name = "api"
 version = "0.1.0"
 dependencies = [
  "hal",
+ "portable-atomic",
+]
+
+[[package]]
+name = "arch-armv6m"
+version = "0.1.0"
+dependencies = [
+ "hal",
 ]
 
 [[package]]
@@ -52,11 +60,18 @@ dependencies = [
  "hal",
  "led-matrix",
  "soc-esp32",
+ "soc-rp2040",
 ]
 
 [[package]]
 name = "build"
 version = "0.1.0"
+
+[[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "crypto"
@@ -266,8 +281,10 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "api",
+ "arch-armv6m",
  "arch-xtensa",
  "board",
+ "critical-section",
  "crypto",
  "esp32-adc",
  "esp32-adc2",
@@ -288,7 +305,9 @@ dependencies = [
  "hal",
  "heap",
  "kvstore",
+ "portable-atomic",
  "soc-esp32",
+ "soc-rp2040",
  "spi-bus",
 ]
 
@@ -309,6 +328,15 @@ name = "mpu6886"
 version = "0.1.0"
 dependencies = [
  "api",
+]
+
+[[package]]
+name = "portable-atomic"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+dependencies = [
+ "critical-section",
 ]
 
 [[package]]
@@ -367,6 +395,13 @@ dependencies = [
 
 [[package]]
 name = "soc-esp32"
+version = "0.1.0"
+dependencies = [
+ "hal",
+]
+
+[[package]]
+name = "soc-rp2040"
 version = "0.1.0"
 dependencies = [
  "hal",

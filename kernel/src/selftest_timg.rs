@@ -13,7 +13,7 @@
 //! to block, which is why the alarm test polls a flag the ISR sets rather than
 //! waiting on a queue.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use portable_atomic::{AtomicU32, Ordering};
 
 use hal::tick::TickSource;
 

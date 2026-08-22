@@ -25,6 +25,7 @@ use map::DramMap;
 
 /// Relative path of the linker script from the workspace root.
 const LD_SCRIPT: &str = "arch/xtensa/flint32.ld";
+const ARM_LD_SCRIPT: &str = "arch/armv6m/rp2040.ld";
 
 /// The ROM address table the linker script includes. Named here so a change to
 /// it rebuilds, which it would not otherwise -- the generated script is what
@@ -48,8 +49,17 @@ const GENERATED: &str = "target/flint32.generated.ld";
 /// Call this from an application's `build.rs`. Does nothing on host targets, so
 /// `cargo test` and `cargo check` against the host toolchain still work.
 pub fn link() {
-    if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("xtensa") {
-        return;
+    match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("arm") => {
+            let script = find_script(ARM_LD_SCRIPT).unwrap_or_else(|| {
+                panic!("build: could not find {ARM_LD_SCRIPT} below a workspace ancestor")
+            });
+            println!("cargo:rustc-link-arg=-T{}", script.display());
+            println!("cargo:rerun-if-changed={}", script.display());
+            return;
+        }
+        Ok("xtensa") => {}
+        _ => return,
     }
 
     let script = find_ld_script().unwrap_or_else(|| {
@@ -74,7 +84,10 @@ pub fn link() {
     let template = std::fs::read_to_string(&script)
         .unwrap_or_else(|e| panic!("build: cannot read {}: {e}", script.display()));
     let resolved = substitute(&template, &dram).unwrap_or_else(|e| {
-        panic!("build: cannot generate the memory map from {}: {e}", script.display())
+        panic!(
+            "build: cannot generate the memory map from {}: {e}",
+            script.display()
+        )
     });
 
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set for build scripts"))
@@ -146,10 +159,14 @@ fn workspace_root(script: &Path) -> Option<PathBuf> {
 /// sit at any depth — `apps/hello/`, `apps/vendor/thing/`, or a directory of
 /// the user's own — without its build script needing to know how deep it is.
 fn find_ld_script() -> Option<PathBuf> {
+    find_script(LD_SCRIPT)
+}
+
+fn find_script(relative: &str) -> Option<PathBuf> {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").ok()?);
     manifest
         .ancestors()
-        .map(|dir| dir.join(LD_SCRIPT))
+        .map(|dir| dir.join(relative))
         .find(|candidate| candidate.is_file())
 }
 
@@ -210,7 +227,10 @@ mod tests {
     #[test]
     fn substituting_the_bluetooth_map_moves_everything_up() {
         let out = substitute(&template(), &DramMap::new(true)).expect("substitution works");
-        assert!(out.contains("ORIGIN = 0x3FFBE000"), "dram_seg should start past the reservation");
+        assert!(
+            out.contains("ORIGIN = 0x3FFBE000"),
+            "dram_seg should start past the reservation"
+        );
         assert!(
             generated_block(&out).contains("bt_reserve"),
             "the reservation should be documented in the output"

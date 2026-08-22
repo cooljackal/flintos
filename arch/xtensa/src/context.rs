@@ -103,6 +103,10 @@ impl hal::arch::Architecture for XtensaArch {
         unsafe { core::arch::asm!("waiti 15") };
     }
 
+    fn mask_interrupts() -> u32 {
+        unsafe { crate::registers::set_intlevel_15() }
+    }
+
     fn cycle_count() -> Option<u32> {
         Some(unsafe { crate::registers::read_ccount() })
     }

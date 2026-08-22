@@ -26,18 +26,44 @@
 //! *logic*: state machines, bounds, exhaustion, arithmetic. Read a green host
 //! run as "the logic is consistent", never as "the kernel works".
 
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+struct SelectedCriticalSection;
+
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+critical_section::set_impl!(SelectedCriticalSection);
+
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+unsafe impl critical_section::Impl for SelectedCriticalSection {
+    unsafe fn acquire() -> critical_section::RawRestoreState {
+        unsafe { cs_enter() }
+    }
+
+    unsafe fn release(state: critical_section::RawRestoreState) {
+        unsafe { cs_exit(state) }
+    }
+}
+
 // ── Target: the real thing ──────────────────────────────────────────────────
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "arch-xtensa"))]
 pub use arch_xtensa::registers;
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "arch-xtensa"))]
 pub use arch_xtensa::smp::XtensaSmp as Smp;
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "arch-xtensa"))]
 pub use arch_xtensa::tick::XtensaTick as Tick;
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "arch-xtensa"))]
 pub use arch_xtensa::XtensaArch as SelectedArch;
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "arch-xtensa"))]
 pub use arch_xtensa::{cs_enter, cs_exit, cs_with};
+
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+pub use arch_armv6m::smp::Armv6mSmp as Smp;
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+pub use arch_armv6m::tick::Armv6mTick as Tick;
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+pub use arch_armv6m::Armv6mArch as SelectedArch;
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+pub use arch_armv6m::{cs_enter, cs_exit, cs_with};
 
 // ── Host: stand-ins, with the instrumentation the real ones cannot offer ────
 
@@ -104,6 +130,10 @@ pub mod host {
 
         fn wait_masked() {
             panic!("wait_masked() is target-only; a host test reached the halt path")
+        }
+
+        fn mask_interrupts() -> u32 {
+            0
         }
 
         fn cycle_count() -> Option<u32> {

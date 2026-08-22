@@ -72,6 +72,9 @@ pub trait Architecture {
     /// Park with maskable interrupts disabled; used only by terminal halts.
     fn wait_masked();
 
+    /// Mask local interrupts and return the previous architecture status.
+    fn mask_interrupts() -> u32;
+
     /// Read a wrapping free-running cycle count, when the target has one.
     fn cycle_count() -> Option<u32>;
 

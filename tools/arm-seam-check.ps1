@@ -15,7 +15,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 if ($MetadataFixture) {
     $metadata = Get-Content -Raw -LiteralPath $MetadataFixture | ConvertFrom-Json
 } else {
-    $raw = & cargo metadata --format-version 1 --filter-platform $Target --no-default-features --features 'arch-armv6m,soc-rp2040' --manifest-path (Join-Path $repo 'kernel/Cargo.toml') 2>&1
+    $raw = & cargo metadata --format-version 1 --filter-platform $Target --no-default-features --features 'kernel/arch-armv6m,kernel/soc-rp2040' --manifest-path (Join-Path $repo 'Cargo.toml') 2>&1
     if ($LASTEXITCODE -ne 0) { throw "cargo metadata failed: $raw" }
     $metadata = $raw | ConvertFrom-Json
 }

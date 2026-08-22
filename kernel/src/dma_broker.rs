@@ -6,7 +6,7 @@
 //! for physical driver tasks.  Drivers never touch DMA engine registers
 //! — the broker validates and programs them.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use portable_atomic::{AtomicU32, Ordering};
 
 /// Identifies one transfer, from [`begin`] to [`await_transfer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,7 +180,9 @@ pub fn begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError> {
     if handle.owner_task != current {
         return Err(DmaError::NotOwner);
     }
-    Ok(DmaTransferId(NEXT_TRANSFER_ID.fetch_add(1, Ordering::SeqCst)))
+    Ok(DmaTransferId(
+        NEXT_TRANSFER_ID.fetch_add(1, Ordering::SeqCst),
+    ))
 }
 
 /// Signal that `id` has finished. **Call from a driver's top-half.**
@@ -303,7 +305,10 @@ mod tests {
         while let Ok(h) = alloc(chunk) {
             assert!(h.addr() >= last_end, "handed out overlapping memory");
             last_end = h.addr() + h.size();
-            assert!(last_end <= pool_start() + pool_size(), "past the end of the pool");
+            assert!(
+                last_end <= pool_start() + pool_size(),
+                "past the end of the pool"
+            );
         }
         // And it stays refused rather than wrapping round.
         assert_eq!(alloc(chunk).unwrap_err(), DmaError::PoolExhausted);
@@ -337,4 +342,3 @@ mod tests {
         assert_ne!(a, b, "two transfers were given the same id");
     }
 }
-

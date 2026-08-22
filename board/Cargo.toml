@@ -3,7 +3,7 @@ name = "board"
 publish = false
 version.workspace = true
 edition.workspace = true
-description = "FlintOS board manifests — ESP32-WROVER, ESP32-DevKitC/WROOM-32, M5Stack ATOM (ESP32-PICO-D4)"
+description = "FlintOS board manifests — ESP32 and Wio RP2040 Mini targets"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -11,7 +11,8 @@ rust-version.workspace = true
 
 [dependencies]
 hal = { path = "../hal" }
-soc-esp32 = { path = "../soc/esp32" }
+soc-esp32 = { path = "../soc/esp32", optional = true }
+soc-rp2040 = { path = "../soc/rp2040", optional = true }
 
 # Panel geometry, so a board with an LED panel can declare its shape the same
 # way it declares a pin. `led-matrix` is a portable library, not a driver: it
@@ -31,10 +32,11 @@ led-matrix = { path = "../lib/led-matrix" }
 # Selecting a board is one word on the command line; getting it silently wrong
 # costs a debugging session against the wrong pin map.
 default = []
-board-esp32-wrover = []
-board-esp32-devkitc = []
-board-m5-atom-lite = []
-board-m5-atom-matrix = []
+board-esp32-wrover = ["dep:soc-esp32"]
+board-esp32-devkitc = ["dep:soc-esp32"]
+board-m5-atom-lite = ["dep:soc-esp32"]
+board-m5-atom-matrix = ["dep:soc-esp32"]
+board-wio-rp2040-mini = ["dep:soc-rp2040"]
 
 # Retired. Accepted only so `src/lib.rs` can explain which of the two Atoms to
 # choose instead of leaving cargo to say "does not contain this feature".

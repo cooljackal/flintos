@@ -16,7 +16,7 @@
 //! interrupt context, preempting whatever the task was doing. That is the same
 //! path a driver's top half takes, not a simulation of it.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use portable_atomic::{AtomicU32, Ordering};
 
 use api::queue::Queue;
 use hal::tick::TickSource;
@@ -218,8 +218,7 @@ pub fn ready_mask_agrees_with_task_states() -> Check {
         let bad = scheduler::with(|sched| {
             for prio in 0..scheduler::NUM_PRIORITIES as u8 {
                 let runnable = sched.tasks.iter().flatten().any(|t| {
-                    t.priority == prio
-                        && matches!(t.state, TaskState::Ready | TaskState::Running)
+                    t.priority == prio && matches!(t.state, TaskState::Ready | TaskState::Running)
                 });
                 let bit = sched.ready_mask & (1u64 << prio) != 0;
                 if bit != runnable {
@@ -358,4 +357,3 @@ pub fn mutex_cycle_under_ticks_leaves_no_residue() -> Check {
     }
     Ok(())
 }
-

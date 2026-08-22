@@ -22,6 +22,7 @@
 # would hide the override rather than honour it.
 HOST_TARGET     ?= $(shell rustc --print host-tuple)
 XTENSA_TARGET   := xtensa-esp32-none-elf
+ARM_TARGET      := thumbv6m-none-eabi
 ESP_TOOLCHAIN   := esp
 CARGO           := cargo +$(ESP_TOOLCHAIN)
 
@@ -233,9 +234,17 @@ EXTRA_FEATURES ?=
 
 COMMA          := ,
 APP_FEATURES   := $(BOARD),$(DEBUG)$(if $(EXTRA_FEATURES),$(COMMA)$(EXTRA_FEATURES))
+ifeq ($(BOARD),board-wio-rp2040-mini)
+CARGO          := cargo
+APP_FLAGS      := --target $(ARM_TARGET) -p $(APP) --no-default-features --features $(APP_FEATURES)
+APP_BIN        := target/$(ARM_TARGET)/debug/$(APP)
+APP_UF2        := target/$(ARM_TARGET)/debug/$(APP).uf2
+APP_RAW_BIN    := target/$(ARM_TARGET)/debug/$(APP).bin
+else
 APP_FLAGS      := --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
                   -p $(APP) --no-default-features --features $(APP_FEATURES)
 APP_BIN        := target/$(XTENSA_TARGET)/debug/$(APP)
+endif
 
 # ── Environment Setup ──────────────────────────────────────────────────────────
 
@@ -303,6 +312,7 @@ No board selected, and there is no default.
   make <target> BOARD=<board>
 
     board-esp32-devkitc     ESP32-DevKitC / WROOM-32   verified on hardware
+    board-wio-rp2040-mini   Seeed Wio RP2040 Mini      bring-up in progress
     board-m5-atom-matrix    M5Stack Atom Matrix        verified on hardware
     board-m5-atom-lite      M5Stack Atom Lite          verified on hardware
     board-esp32-wrover      ESP32-WROVER               never flashed
@@ -317,7 +327,13 @@ ifneq ($(filter $(BOARD_GOALS),$(MAKECMDGOALS)),)
 endif
 build: ## Build the selected app (APP=demo BOARD=board-esp32-devkitc DEBUG=debug-level-1)
 	$(CARGO) build $(APP_FLAGS)
+ifeq ($(BOARD),board-wio-rp2040-mini)
+	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action convert \
+		-Architecture armv6m -Soc rp2040 -Board wio-rp2040-mini \
+		-Elf $(APP_BIN) -Bin $(APP_RAW_BIN) -Uf2 $(APP_UF2)
+else
 	@$(MAKE) --no-print-directory size
+endif
 
 .PHONY: build-release
 build-release: ## Build release (smallest binary)
@@ -334,9 +350,14 @@ build-trace: ## Build with kernel event tracing
 
 .PHONY: flash
 flash: build ## Build + flash + monitor via espflash (USB serial)
+ifeq ($(BOARD),board-wio-rp2040-mini)
+	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action flash \
+		-Architecture armv6m -Soc rp2040 -Board wio-rp2040-mini -Uf2 $(APP_UF2)
+else
 	espflash flash $(APP_BIN) \
 		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
 		--baud $(FLASH_BAUD) --monitor --monitor-baud $(MONITOR_BAUD)
+endif
 
 .PHONY: flash-dev
 flash-dev: flash ## Alias for `flash` (logging is on by default)

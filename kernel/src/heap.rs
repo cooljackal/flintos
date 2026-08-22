@@ -50,7 +50,7 @@
 //! every crate in the tree and quietly end the no-allocation property. Callers
 //! name this module.
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use portable_atomic::{AtomicBool, Ordering};
 
 use heap::Heap;
 
@@ -146,7 +146,10 @@ pub unsafe fn init(free_from: u32) -> usize {
         // memory that is not ours — and the allocator must not coalesce across
         // the gap either, which is why `add_region` is called twice rather
         // than once with a hole punched out of it.
-        for (start, end) in [(ROM_PRO_DATA.1, ROM_APP_DATA.0), (ROM_APP_DATA.1, SRAM1_END)] {
+        for (start, end) in [
+            (ROM_PRO_DATA.1, ROM_APP_DATA.0),
+            (ROM_APP_DATA.1, SRAM1_END),
+        ] {
             debug_assert!(start >= SRAM1_START && end <= SRAM1_END && start < end);
             taken += unsafe { pool.add_region(start as *mut u8, (end - start) as usize) };
         }

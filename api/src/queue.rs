@@ -32,7 +32,7 @@
 
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use portable_atomic::{AtomicU8, AtomicUsize, Ordering};
 
 /// Per-slot state machine (item 4). `Free` and `Ready` are the only states a
 /// slot may be in when nobody holds it mid-transfer; `Writing`/`Reading` mark

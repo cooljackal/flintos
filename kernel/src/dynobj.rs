@@ -35,12 +35,10 @@
 //! allocation happens at create and free at delete, and both are documented as
 //! unsuitable for a hot path.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use portable_atomic::{AtomicU32, Ordering};
 
 use crate::heap::{self, Caps};
-use crate::queue::{
-    retry_deadline, retry_remaining, wake_one_receiver,
-};
+use crate::queue::{retry_deadline, retry_remaining, wake_one_receiver};
 
 /// Wait forever. Matches the convention the static queues already use.
 pub const FOREVER: u32 = u32::MAX;
@@ -81,7 +79,14 @@ impl DynQueue {
         if buf.is_null() {
             return None;
         }
-        Some(Self { buf, capacity, item_size, head: 0, tail: 0, len: 0 })
+        Some(Self {
+            buf,
+            capacity,
+            item_size,
+            head: 0,
+            tail: 0,
+            len: 0,
+        })
     }
 
     /// Items currently queued.
@@ -160,7 +165,11 @@ impl DynQueue {
         if self.is_full() {
             return false;
         }
-        self.head = if self.head == 0 { self.capacity - 1 } else { self.head - 1 };
+        self.head = if self.head == 0 {
+            self.capacity - 1
+        } else {
+            self.head - 1
+        };
         let slot = unsafe { self.buf.add(self.head * self.item_size) };
         unsafe { core::ptr::copy_nonoverlapping(item, slot, self.item_size) };
         self.len += 1;
@@ -280,7 +289,10 @@ impl Semaphore {
         if max == 0 || initial > max {
             return None;
         }
-        Some(Self { count: initial, max })
+        Some(Self {
+            count: initial,
+            max,
+        })
     }
 
     /// A binary semaphore, created empty — the blob's usual "signal me" case.
@@ -387,7 +399,10 @@ const NO_OWNER: u32 = u32::MAX;
 
 impl RecursiveMutex {
     pub const fn new() -> Self {
-        Self { owner: NO_OWNER, depth: 0 }
+        Self {
+            owner: NO_OWNER,
+            depth: 0,
+        }
     }
 
     pub fn is_held(&self) -> bool {
@@ -479,7 +494,9 @@ pub const EVENT_BITS_MASK: u32 = 0x00FF_FFFF;
 
 impl EventGroup {
     pub const fn new() -> Self {
-        Self { bits: AtomicU32::new(0) }
+        Self {
+            bits: AtomicU32::new(0),
+        }
     }
 
     pub fn get(&self) -> u32 {
@@ -516,7 +533,8 @@ impl EventGroup {
 
     /// Clear bits. Returns the value before clearing.
     pub fn clear(&self, bits: u32) -> u32 {
-        self.bits.fetch_and(!(bits & EVENT_BITS_MASK), Ordering::AcqRel)
+        self.bits
+            .fetch_and(!(bits & EVENT_BITS_MASK), Ordering::AcqRel)
     }
 
     /// Whether `bits` are satisfied by `current`, under `wait_for_all`.
@@ -610,7 +628,10 @@ mod tests {
         let mut s = Semaphore::create(1, 0).unwrap();
         assert!(s.give());
         assert_eq!(s.count(), 1);
-        assert!(s.take(FOREVER), "a permit already given must be taken, not waited on");
+        assert!(
+            s.take(FOREVER),
+            "a permit already given must be taken, not waited on"
+        );
         assert_eq!(s.count(), 0);
     }
 
@@ -656,7 +677,11 @@ mod tests {
             assert_eq!(q.len(), 1);
             let mut out = [0u8; 16];
             assert!(unsafe { q.try_recv(out.as_mut_ptr()) });
-            assert_eq!(&out[..item_size], &src[..item_size], "item_size {item_size}");
+            assert_eq!(
+                &out[..item_size],
+                &src[..item_size],
+                "item_size {item_size}"
+            );
             assert!(q.is_empty());
             q.delete();
         }
@@ -720,7 +745,10 @@ mod tests {
                 assert_eq!(got, round * 10 + i, "order broken on round {round}");
             }
             assert!(q.is_empty());
-            assert!(!unsafe { q.try_recv(&mut 0u8) }, "an empty queue must refuse");
+            assert!(
+                !unsafe { q.try_recv(&mut 0u8) },
+                "an empty queue must refuse"
+            );
         }
         q.delete();
     }
@@ -784,12 +812,18 @@ mod tests {
     fn a_semaphore_counts_up_to_its_maximum() {
         let mut s = Semaphore::create(3, 0).expect("create");
         assert_eq!(s.count(), 0);
-        assert!(!s.try_take(), "an empty semaphore must not hand out a permit");
+        assert!(
+            !s.try_take(),
+            "an empty semaphore must not hand out a permit"
+        );
         for expect in 1..=3 {
             assert!(s.give());
             assert_eq!(s.count(), expect);
         }
-        assert!(!s.give(), "giving past the maximum must be refused, not saturate");
+        assert!(
+            !s.give(),
+            "giving past the maximum must be refused, not saturate"
+        );
         assert_eq!(s.count(), 3);
         for _ in 0..3 {
             assert!(s.try_take());
@@ -809,9 +843,15 @@ mod tests {
 
     #[test]
     fn a_semaphore_with_impossible_bounds_is_refused() {
-        assert!(Semaphore::create(0, 0).is_none(), "a maximum of zero is meaningless");
+        assert!(
+            Semaphore::create(0, 0).is_none(),
+            "a maximum of zero is meaningless"
+        );
         assert!(Semaphore::create(2, 3).is_none(), "initial above maximum");
-        assert!(Semaphore::create(2, 2).is_some(), "initial equal to maximum is fine");
+        assert!(
+            Semaphore::create(2, 2).is_some(),
+            "initial equal to maximum is fine"
+        );
     }
 
     #[test]
@@ -837,7 +877,10 @@ mod tests {
     fn a_recursive_mutex_still_excludes_other_tasks() {
         let mut m = RecursiveMutex::new();
         assert!(m.try_lock(1));
-        assert!(!m.try_lock(2), "recursion is for the owner, not for everyone");
+        assert!(
+            !m.try_lock(2),
+            "recursion is for the owner, not for everyone"
+        );
         assert!(m.unlock(1));
         assert!(m.try_lock(2), "free once the owner is done");
     }
@@ -877,10 +920,22 @@ mod tests {
 
     #[test]
     fn waiting_for_any_and_all_differ_where_it_matters() {
-        assert!(EventGroup::satisfied(0b0001, 0b0011, false), "any: one bit is enough");
-        assert!(!EventGroup::satisfied(0b0001, 0b0011, true), "all: one bit is not");
-        assert!(EventGroup::satisfied(0b0011, 0b0011, true), "all: both present");
-        assert!(!EventGroup::satisfied(0b0000, 0b0011, false), "any: none present");
+        assert!(
+            EventGroup::satisfied(0b0001, 0b0011, false),
+            "any: one bit is enough"
+        );
+        assert!(
+            !EventGroup::satisfied(0b0001, 0b0011, true),
+            "all: one bit is not"
+        );
+        assert!(
+            EventGroup::satisfied(0b0011, 0b0011, true),
+            "all: both present"
+        );
+        assert!(
+            !EventGroup::satisfied(0b0000, 0b0011, false),
+            "any: none present"
+        );
         // Unrelated bits set must not satisfy a wait.
         assert!(!EventGroup::satisfied(0b1100, 0b0011, false));
     }
@@ -906,7 +961,11 @@ mod tests {
     fn waiting_for_no_bits_is_refused() {
         let g = EventGroup::new();
         assert_eq!(g.wait(0, false, false, 0), None);
-        assert_eq!(g.wait(0xFF00_0000, false, false, 0), None, "reserved bits alone are nothing");
+        assert_eq!(
+            g.wait(0xFF00_0000, false, false, 0),
+            None,
+            "reserved bits alone are nothing"
+        );
     }
 }
 
@@ -928,7 +987,9 @@ pub struct SpinlockHandle {
 
 impl SpinlockHandle {
     pub const fn new() -> Self {
-        Self { inner: crate::smp::Spinlock::new(()) }
+        Self {
+            inner: crate::smp::Spinlock::new(()),
+        }
     }
 
     /// Run `f` holding the lock, with interrupts masked on this core.
@@ -982,7 +1043,10 @@ mod lifecycle_tests {
         // Const, so it belongs at compile time: a runtime assert on two
         // constants proves nothing the compiler has not already settled.
         const _: () = assert!(HIGHEST_PRIORITY < LOWEST_PRIORITY);
-        assert_eq!(hal::types::Priority::Background(15).numeric(), LOWEST_PRIORITY);
+        assert_eq!(
+            hal::types::Priority::Background(15).numeric(),
+            LOWEST_PRIORITY
+        );
     }
 
     #[test]
@@ -1014,7 +1078,13 @@ pub fn spawn_task(
     priority: hal::types::Priority,
     stack_size: usize,
 ) -> Option<u32> {
-    spawn_task_on(name, entry, priority, stack_size, crate::scheduler::Affinity::Any)
+    spawn_task_on(
+        name,
+        entry,
+        priority,
+        stack_size,
+        crate::scheduler::Affinity::Any,
+    )
 }
 
 /// Create a heap-stacked task pinned to a core.
@@ -1182,7 +1252,10 @@ mod task_tests {
 
     #[test]
     fn deleting_something_that_was_never_a_task_is_refused() {
-        assert_eq!(delete_task(crate::scheduler::MAX_TASKS as u32 + 1), Err(DeleteError::NoSuchTask));
+        assert_eq!(
+            delete_task(crate::scheduler::MAX_TASKS as u32 + 1),
+            Err(DeleteError::NoSuchTask)
+        );
     }
 
     #[test]
@@ -1258,7 +1331,11 @@ mod task_tests {
         // is the same trap the spawn path refuses.
         heap_ready();
         let id = deleting_tcb(false, 0x1000);
-        assert_eq!(reap_deleted(), 1, "the reaper should have taken exactly one");
+        assert_eq!(
+            reap_deleted(),
+            1,
+            "the reaper should have taken exactly one"
+        );
         assert!(
             crate::scheduler::with(|s| s.tasks[id as usize].is_none()),
             "the slot must be free for reuse"
@@ -1306,7 +1383,10 @@ mod task_tests {
                 sched.set_current(previous);
             }
         });
-        assert_eq!(reaped, 0, "nothing else was deleting, so nothing should be reaped");
+        assert_eq!(
+            reaped, 0,
+            "nothing else was deleting, so nothing should be reaped"
+        );
         assert!(survived, "must not reap a task a core is still current on");
     }
 
@@ -1362,7 +1442,10 @@ mod task_tests {
         let id = 7;
         assert!(!crate::queue::is_waiting_anywhere(id));
         crate::queue::forget_task(id);
-        assert!(!crate::queue::is_waiting_anywhere(id), "purging must be idempotent");
+        assert!(
+            !crate::queue::is_waiting_anywhere(id),
+            "purging must be idempotent"
+        );
     }
 }
 
@@ -1439,13 +1522,19 @@ pub fn reap_deleted() -> usize {
                 if sched.is_current_anywhere(i as u32) {
                     continue;
                 }
-                let stack = if tcb.heap_stack { Some(tcb.stack_base) } else { None };
+                let stack = if tcb.heap_stack {
+                    Some(tcb.stack_base)
+                } else {
+                    None
+                };
                 sched.tasks[i] = None;
                 return Some((i as u32, stack));
             }
             None
         });
-        let Some((id, stack)) = victim else { return reaped };
+        let Some((id, stack)) = victim else {
+            return reaped;
+        };
         crate::queue::forget_task(id);
         if let Some(base) = stack {
             unsafe { heap::free(base as *mut u8, Caps::Internal) };
