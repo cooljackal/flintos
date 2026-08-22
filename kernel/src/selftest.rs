@@ -230,18 +230,14 @@ pub fn run() {
 
     // Needs a pin the *board* holds high; the chip cannot supply one. See
     // `board::active::ADC_EXTERNAL_HIGH_GPIO`.
-    match crate::board::active::ADC_EXTERNAL_HIGH_GPIO {
-        Some(gpio) => check(
-            "adc1_follows_the_pin_it_is_pointed_at",
-            adc::adc1_follows_the_pin_it_is_pointed_at(gpio),
-            &mut pass,
-            &mut fail,
-        ),
-        None => skip(
-            "adc1_follows_the_pin_it_is_pointed_at",
-            "this board declares no externally-held-high ADC1 pin",
-        ),
-    }
+    check_or_skip(
+        "adc1_follows_the_pin_it_is_pointed_at",
+        crate::board::active::ADC_EXTERNAL_HIGH_GPIO,
+        "this board declares no externally-held-high ADC1 pin",
+        adc::adc1_follows_the_pin_it_is_pointed_at,
+        &mut pass,
+        &mut fail,
+    );
     check(
         "every_adc1_channel_converts",
         adc::every_adc1_channel_converts(),
@@ -267,153 +263,113 @@ pub fn run() {
 
     // TWAI (CAN) self-test loopback: transmit a frame and self-receive it on
     // one pad. Needs a free GPIO the board declares.
-    match crate::board::active::LOOPBACK_SCRATCH_GPIO {
-        Some(pin) => check(
-            "twai_self_reception_round_trips",
-            twai::twai_self_reception_round_trips(pin),
-            &mut pass,
-            &mut fail,
-        ),
-        None => skip(
-            "twai_self_reception_round_trips",
-            "this board declares no free loopback GPIO",
-        ),
-    }
+    check_or_skip(
+        "twai_self_reception_round_trips",
+        crate::board::active::LOOPBACK_SCRATCH_GPIO,
+        "this board declares no free loopback GPIO",
+        twai::twai_self_reception_round_trips,
+        &mut pass,
+        &mut fail,
+    );
 
     // I2S DMA loopback: clocks are shared internally, but the serial data loops
     // over one pad, so it needs the same free GPIO.
-    match crate::board::active::LOOPBACK_SCRATCH_GPIO {
-        Some(pin) => check(
-            "i2s_dma_loopback_round_trips",
-            i2s::i2s_dma_loopback_round_trips(pin),
-            &mut pass,
-            &mut fail,
-        ),
-        None => skip(
-            "i2s_dma_loopback_round_trips",
-            "this board declares no free loopback GPIO",
-        ),
-    }
+    check_or_skip(
+        "i2s_dma_loopback_round_trips",
+        crate::board::active::LOOPBACK_SCRATCH_GPIO,
+        "this board declares no free loopback GPIO",
+        i2s::i2s_dma_loopback_round_trips,
+        &mut pass,
+        &mut fail,
+    );
 
     // I2S continuous (ring) stream: cycle a ramp through a double-buffered
     // descriptor ring for several laps, refilling as buffers free, and require
     // byte-continuity with no gap or repeat — the underrun-free property. Same
     // one-pad loopback as above.
-    match crate::board::active::LOOPBACK_SCRATCH_GPIO {
-        Some(pin) => check(
-            "i2s_continuous_stream_stays_continuous",
-            i2s::i2s_continuous_stream_stays_continuous(pin),
-            &mut pass,
-            &mut fail,
-        ),
-        None => skip(
-            "i2s_continuous_stream_stays_continuous",
-            "this board declares no free loopback GPIO",
-        ),
-    }
+    check_or_skip(
+        "i2s_continuous_stream_stays_continuous",
+        crate::board::active::LOOPBACK_SCRATCH_GPIO,
+        "this board declares no free loopback GPIO",
+        i2s::i2s_continuous_stream_stays_continuous,
+        &mut pass,
+        &mut fail,
+    );
 
     // SPI-bus (Layer 2) FIFO loopback: fold SPI2's MOSI onto MISO over the
     // scratch pad and require a byte-exact round trip through the `SpiBus`
     // wrapper. Needs the scratch pad plus two aux pads (clock, placeholder MISO)
     // the board declares.
-    match (
-        crate::board::active::LOOPBACK_SCRATCH_GPIO,
-        crate::board::active::LOOPBACK_AUX_GPIOS,
-    ) {
-        (Some(scratch), Some((sck, miso))) => check(
-            "spi_bus_loopback_round_trips",
-            spi::spi_bus_loopback_round_trips(scratch, sck, miso),
-            &mut pass,
-            &mut fail,
-        ),
-        _ => skip(
-            "spi_bus_loopback_round_trips",
-            "this board declares no free SPI loopback GPIOs",
-        ),
-    }
+    check_or_skip(
+        "spi_bus_loopback_round_trips",
+        crate::board::active::LOOPBACK_SCRATCH_GPIO.zip(crate::board::active::LOOPBACK_AUX_GPIOS),
+        "this board declares no free SPI loopback GPIOs",
+        |(scratch, (sck, miso))| spi::spi_bus_loopback_round_trips(scratch, sck, miso),
+        &mut pass,
+        &mut fail,
+    );
 
     // SPI master↔slave loopback: SPI2 as master, SPI3 as slave, joined through
     // the GPIO matrix with no external wire. Needs four free pads the board
     // declares -- SCK, MOSI, MISO and a real CS the master drives (4-wire), so
     // each transaction frames the slave with a CS edge.
-    match crate::board::active::SPI_SLAVE_LOOPBACK_GPIOS {
-        Some(pads) => check(
-            "spi_master_slave_loopback_round_trips",
-            spi_slave::spi_master_slave_loopback_round_trips(pads),
-            &mut pass,
-            &mut fail,
-        ),
-        None => skip(
-            "spi_master_slave_loopback_round_trips",
-            "this board declares no free SPI master/slave loopback GPIOs",
-        ),
-    }
+    check_or_skip(
+        "spi_master_slave_loopback_round_trips",
+        crate::board::active::SPI_SLAVE_LOOPBACK_GPIOS,
+        "this board declares no free SPI master/slave loopback GPIOs",
+        spi_slave::spi_master_slave_loopback_round_trips,
+        &mut pass,
+        &mut fail,
+    );
 
     // UART ByteStream loopback: internally loop UART2's TX→RX and require a
     // byte-exact round trip through the stream API. Needs the scratch pad plus
     // one spare pad (placeholder RX) the board declares.
-    match (
-        crate::board::active::LOOPBACK_SCRATCH_GPIO,
-        crate::board::active::LOOPBACK_AUX_GPIOS,
-    ) {
-        (Some(scratch), Some((_, rx_placeholder))) => check(
-            "uart_bytestream_loopback_round_trips",
-            uart::uart_bytestream_loopback_round_trips(scratch, rx_placeholder),
-            &mut pass,
-            &mut fail,
-        ),
-        _ => skip(
-            "uart_bytestream_loopback_round_trips",
-            "this board declares no free UART loopback GPIOs",
-        ),
-    }
+    check_or_skip(
+        "uart_bytestream_loopback_round_trips",
+        crate::board::active::LOOPBACK_SCRATCH_GPIO.zip(crate::board::active::LOOPBACK_AUX_GPIOS),
+        "this board declares no free UART loopback GPIOs",
+        |(scratch, (_, rx_placeholder))| {
+            uart::uart_bytestream_loopback_round_trips(scratch, rx_placeholder)
+        },
+        &mut pass,
+        &mut fail,
+    );
 
     // PCNT: drive a pad in software, route it into a pulse-counter unit, and
     // check up/down counting with direction and that the glitch filter takes
     // effect. Needs a free pad the board declares.
-    match crate::board::active::PCNT_LOOPBACK_GPIO {
-        Some(pin) => check(
-            "pcnt_counts_edges_with_direction_and_filter",
-            pcnt::pcnt_counts_edges_with_direction_and_filter(pin),
-            &mut pass,
-            &mut fail,
-        ),
-        None => skip(
-            "pcnt_counts_edges_with_direction_and_filter",
-            "this board declares no free PCNT loopback GPIO",
-        ),
-    }
+    check_or_skip(
+        "pcnt_counts_edges_with_direction_and_filter",
+        crate::board::active::PCNT_LOOPBACK_GPIO,
+        "this board declares no free PCNT loopback GPIO",
+        pcnt::pcnt_counts_edges_with_direction_and_filter,
+        &mut pass,
+        &mut fail,
+    );
 
     // Touch: read a free touch pad's parasitic capacitance count and require it
     // to be plausible and stable. Needs a touch-capable pad the board declares.
-    match crate::board::active::TOUCH_SELFTEST_GPIO {
-        Some(gpio) => check(
-            "touch_reads_a_stable_capacitance_count",
-            touch::touch_reads_a_stable_capacitance_count(gpio),
-            &mut pass,
-            &mut fail,
-        ),
-        None => skip(
-            "touch_reads_a_stable_capacitance_count",
-            "this board declares no free touch-capable GPIO",
-        ),
-    }
+    check_or_skip(
+        "touch_reads_a_stable_capacitance_count",
+        crate::board::active::TOUCH_SELFTEST_GPIO,
+        "this board declares no free touch-capable GPIO",
+        touch::touch_reads_a_stable_capacitance_count,
+        &mut pass,
+        &mut fail,
+    );
 
     // MCPWM: drive a complementary pair with dead time on two pads, count both
     // with PCNT, measure the dead time with the capture unit, and prove a fault
     // input shuts the outputs down. Needs three free pads the board declares.
-    match crate::board::active::MCPWM_SELFTEST_GPIOS {
-        Some(pins) => check(
-            "mcpwm_complementary_pair_deadtime_and_fault",
-            mcpwm::mcpwm_complementary_pair_deadtime_and_fault(pins),
-            &mut pass,
-            &mut fail,
-        ),
-        None => skip(
-            "mcpwm_complementary_pair_deadtime_and_fault",
-            "this board declares no free MCPWM self-test GPIOs",
-        ),
-    }
+    check_or_skip(
+        "mcpwm_complementary_pair_deadtime_and_fault",
+        crate::board::active::MCPWM_SELFTEST_GPIOS,
+        "this board declares no free MCPWM self-test GPIOs",
+        mcpwm::mcpwm_complementary_pair_deadtime_and_fault,
+        &mut pass,
+        &mut fail,
+    );
 
     check(
         "dport_modify_changes_only_its_own_bit",
@@ -548,6 +504,24 @@ fn check(name: &str, result: Check, pass: &mut u32, fail: &mut u32) {
             raw_print(reason);
             raw_print("\r\n");
         }
+    }
+}
+
+/// Run a test that needs a board-declared resource, or skip it if the board
+/// declares none. The test name is given once, so the check and skip lines can
+/// never drift apart; `gate` is the board manifest value (use `Option::zip` to
+/// combine two of them), and `test` runs only when it is present.
+fn check_or_skip<T>(
+    name: &str,
+    gate: Option<T>,
+    skip_reason: &str,
+    test: impl FnOnce(T) -> Check,
+    pass: &mut u32,
+    fail: &mut u32,
+) {
+    match gate {
+        Some(resource) => check(name, test(resource), pass, fail),
+        None => skip(name, skip_reason),
     }
 }
 

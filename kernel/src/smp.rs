@@ -213,23 +213,16 @@ pub fn joined_mask() -> u8 {
     JOINED_CORES.load(Ordering::Acquire)
 }
 
-/// How many cores currently run the scheduler.
-pub fn scheduling_cores() -> u8 {
-    joined_mask().count_ones() as u8
-}
-
 /// Whether this core is the sole writer of shared kernel time.
 pub fn is_timekeeper() -> bool {
     current_core().is_boot()
 }
 
-/// How many cores currently run the scheduler.
+/// Whether a task may be pinned to `core`.
 ///
 /// This exists so `spawn_on` can *refuse* a core that would never run the
 /// task. A pinned task that is silently never scheduled is the worst outcome
 /// available: it looks like a spawn that worked.
-///
-/// Whether a task may be pinned to `core`.
 ///
 /// Three ways to say no, and they are different failures worth separating from
 /// the allocation failures that follow: the core is beyond `MAX_CORES`, the
@@ -268,7 +261,7 @@ mod tests {
         assert!(!is_pinnable(1), "core 1 has not joined");
         mark_joined(CoreId(1));
         assert!(is_pinnable(1), "joined core 1 refused affinity");
-        assert_eq!(scheduling_cores(), 2);
+        assert_eq!(joined_mask().count_ones(), 2);
     }
 
     #[test]

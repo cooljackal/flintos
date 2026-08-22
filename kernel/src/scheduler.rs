@@ -719,16 +719,6 @@ pub fn request_switch_on(core: hal::smp::CoreId) {
     }
 }
 
-/// Notify every scheduler member that newly-ready work may change its choice.
-pub fn request_switch_all() {
-    let joined = crate::smp::joined_mask();
-    for index in 0..hal::smp::MAX_CORES {
-        if joined & (1u8 << index) != 0 {
-            request_switch_on(hal::smp::CoreId(index as u8));
-        }
-    }
-}
-
 /// Attach the calling secondary core to an already-created pinned idle task.
 ///
 /// The joined bit is deliberately the last write. Until the task is both
