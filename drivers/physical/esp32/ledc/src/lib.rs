@@ -207,8 +207,12 @@ impl Channel {
 
         // Idle low: a channel that idles high holds an LED on, or a motor
         // driver enabled, whenever the timer is paused.
+        // Idle low, spelled so it actually happens: clear CONF0_IDLE_LV on the
+        // whole composed value. An earlier `| CONF0_SIG_OUT_EN & !CONF0_IDLE_LV`
+        // bound as `| (CONF0_SIG_OUT_EN & !CONF0_IDLE_LV)` by precedence, an
+        // inert no-op that worked only because this is a full-register write.
         (ch_conf0(idx) as *mut u32).write_volatile(
-            ((timer.idx as u32) & CONF0_TIMER_SEL_MASK) | CONF0_SIG_OUT_EN & !CONF0_IDLE_LV,
+            (((timer.idx as u32) & CONF0_TIMER_SEL_MASK) | CONF0_SIG_OUT_EN) & !CONF0_IDLE_LV,
         );
         Some(ch)
     }

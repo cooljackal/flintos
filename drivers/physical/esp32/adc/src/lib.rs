@@ -187,17 +187,9 @@ impl Channel {
     }
 }
 
-/// Input attenuation. See the table in the module docs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Attenuation {
-    Db0 = 0,
-    Db2_5 = 1,
-    Db6 = 2,
-    Db11 = 3,
-}
-
-/// Full-scale count of a 12-bit conversion.
-pub const FULL_SCALE: u16 = 4095;
+/// Input attenuation and the 12-bit full-scale count, shared with ADC2 in
+/// `soc_esp32::sar`. See the table in the module docs.
+pub use soc_esp32::sar::{Attenuation, FULL_SCALE};
 
 /// Why a reading or a pad change failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

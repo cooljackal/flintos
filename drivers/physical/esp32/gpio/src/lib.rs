@@ -119,16 +119,21 @@ impl Esp32Gpio {
             (GPIO_ENABLE_W1TS, GPIO_ENABLE_W1TC)
         };
         match mode {
-            PinMode::Output | PinMode::OutputOpenDrain => unsafe {
+            PinMode::Output => unsafe {
                 self.reg(set_off).write_volatile(bit);
             },
-            PinMode::Input | PinMode::InputPullUp | PinMode::InputPullDown => unsafe {
+            PinMode::Input => unsafe {
                 self.reg(clr_off).write_volatile(bit);
             },
+            // Pull-up/-down and open-drain need the IO_MUX / GPIO_PIN pad
+            // registers this driver does not program yet. Refuse them rather
+            // than silently configuring a plain input/output the caller did not
+            // ask for -- a floating pin that reads as "handled" is the worse
+            // failure.
+            PinMode::InputPullUp | PinMode::InputPullDown | PinMode::OutputOpenDrain => {
+                return Err(BusError::InvalidConfig);
+            }
         }
-        // Pin pad configuration (pull-up/down, open drain) would go through
-        // RTC_IO or GPIO_PIN registers in a full implementation.
-        let _ = mode;
         Ok(())
     }
 

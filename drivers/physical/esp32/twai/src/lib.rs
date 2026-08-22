@@ -65,6 +65,7 @@ const CLOCK_DIVIDER: u32 = CAN_BASE + 0x7C;
 
 // MODE bits.
 const MODE_RM: u32 = 1 << 0;
+const MODE_LOM: u32 = 1 << 1;
 const MODE_STM: u32 = 1 << 2;
 const MODE_AFM: u32 = 1 << 3;
 
@@ -117,7 +118,7 @@ impl Mode {
             | match self {
                 Mode::Normal => 0,
                 Mode::SelfTest => MODE_STM,
-                Mode::ListenOnly => 1 << 1, // LOM
+                Mode::ListenOnly => MODE_LOM,
             }
     }
 }
@@ -281,7 +282,7 @@ mod tests {
     fn self_test_mode_sets_stm_and_the_single_filter_bit() {
         assert_eq!(Mode::SelfTest.mode_bits(), MODE_STM | MODE_AFM);
         assert_eq!(Mode::Normal.mode_bits(), MODE_AFM);
-        assert_eq!(Mode::ListenOnly.mode_bits(), (1 << 1) | MODE_AFM);
+        assert_eq!(Mode::ListenOnly.mode_bits(), MODE_LOM | MODE_AFM);
         assert_eq!(MODE_STM, 1 << 2);
     }
 

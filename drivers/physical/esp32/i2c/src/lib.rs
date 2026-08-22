@@ -74,8 +74,6 @@ const I2C_FILTER_EN: u32 = 1 << 3;
 /// shortest possible one, and the controller aborts before a transaction can
 /// finish.
 const I2C_TOUT_MAX: u32 = 0xF_FFFF;
-#[allow(dead_code)]
-const I2C_SDA_SAMPLE: u32 = 0x34;
 const I2C_SCL_HIGH: u32 = 0x38;
 /// First of 16 command registers (`I2C_COMD0_REG` .. `I2C_COMD15_REG`),
 /// spanning 0x58..=0x94, 4 bytes apart. A prior revision used 0x30 (really
@@ -575,7 +573,7 @@ mod tests {
         assert_eq!(I2C_INT_ENA, 0x28);
         assert_eq!(I2C_INT_STATUS, 0x2C);
         assert_eq!(I2C_SDA_HOLD, 0x30);
-        assert_eq!(I2C_SDA_SAMPLE, 0x34);
+        assert_eq!(I2C_SDA_SAMPLE_REG, 0x34);
         assert_eq!(I2C_SCL_HIGH, 0x38);
         assert_eq!(I2C_COMD_BASE, 0x58);
     }

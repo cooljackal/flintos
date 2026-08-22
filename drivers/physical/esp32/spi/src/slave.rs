@@ -38,8 +38,9 @@ use soc_esp32::addr;
 use soc_esp32::{dport, reg};
 
 use super::{
-    pack_word, unpack_word, SPI_CMD, SPI_CMD_USR, SPI_DOUTDIN, SPI_MAX_BYTES, SPI_SLAVE,
-    SPI_TIMEOUT_SPINS, SPI_USER, SPI_USR_MISO, SPI_USR_MOSI, SPI_W0,
+    pack_word, unpack_word, SPI_CK_I_EDGE, SPI_CMD, SPI_CMD_USR, SPI_DOUTDIN, SPI_MAX_BYTES,
+    SPI_SLAVE, SPI_SYNC_RESET, SPI_TIMEOUT_SPINS, SPI_TRANS_DONE, SPI_USER, SPI_USR_MISO,
+    SPI_USR_MOSI, SPI_W0,
 };
 // Register offsets the master path leaves private; a child module may read an
 // ancestor's private items, so these need no wider visibility.
@@ -56,19 +57,6 @@ const SPI_SLAVE_MODE: u32 = 1 << 30;
 /// `SPI_SLV_WR_RD_BUF_EN`, bit 29: enable the write/read buffer in slave mode.
 /// esp-idf's `spi_ll_slave_init` sets it ("not sure if needed"); kept for parity.
 const SPI_WR_RD_BUF_EN: u32 = 1 << 29;
-/// `SPI_SYNC_RESET`, bit 31: reset the SPI clock/CS/data lines. Pulsed between
-/// transactions so a slave that was left mid-shift starts each transfer clean.
-const SPI_SYNC_RESET: u32 = 1 << 31;
-/// `SPI_TRANS_DONE`, bit 4: the transaction finished. Write-zero-to-clear.
-/// `spi_ll_usr_is_done` polls exactly this bit for the slave.
-const SPI_TRANS_DONE: u32 = 1 << 4;
-
-// ── SPI_USER_REG fields the slave needs beyond the shared ones ────────────────
-
-/// `SPI_CK_I_EDGE`, `SPI_USER` bit 6: the slave's clock-input edge. It plays the
-/// role `ck_out_edge` (bit 7) plays for the master and is combined with the
-/// MISO/MOSI delay fields of `SPI_CTRL2`.
-const SPI_CK_I_EDGE: u32 = 1 << 6;
 
 // ── SPI_PIN_REG field ─────────────────────────────────────────────────────────
 

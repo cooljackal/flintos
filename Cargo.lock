@@ -210,6 +210,9 @@ dependencies = [
 [[package]]
 name = "esp32-touch"
 version = "0.1.0"
+dependencies = [
+ "soc-esp32",
+]
 
 [[package]]
 name = "esp32-twai"

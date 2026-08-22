@@ -44,6 +44,8 @@
 
 #![no_std]
 
+use soc_esp32::reg;
+
 const RTCIO_BASE: u32 = 0x3FF4_8400;
 const SENS_BASE: u32 = 0x3FF4_8800;
 
@@ -183,17 +185,19 @@ impl Channel {
     }
 }
 
+// Thin address-based adapters over the shared, tested `soc_esp32::reg` helpers,
+// so the read-modify-write logic lives in one place rather than being re-spelled
+// here (the typo `& bits` for `& !bits` is what `reg` exists to prevent).
 unsafe fn read(addr: u32) -> u32 {
-    (addr as *mut u32).read_volatile()
+    reg::read(addr as *mut u32)
 }
 
 unsafe fn write(addr: u32, val: u32) {
-    (addr as *mut u32).write_volatile(val);
+    reg::write(addr as *mut u32, val);
 }
 
 unsafe fn modify(addr: u32, mask: u32, value: u32) {
-    let a = addr as *mut u32;
-    a.write_volatile((a.read_volatile() & !mask) | value);
+    reg::modify(addr as *mut u32, mask, value);
 }
 
 /// A conversion could not be completed.

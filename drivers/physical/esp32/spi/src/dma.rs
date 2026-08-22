@@ -40,8 +40,9 @@ use soc_esp32::dma;
 use soc_esp32::reg;
 
 use super::{
-    Esp32Spi, SPI_CK_OUT_EDGE, SPI_CMD, SPI_CMD_USR, SPI_DOUTDIN, SPI_MISO_DLEN, SPI_MOSI_DLEN,
-    SPI_SLAVE, SPI_TIMEOUT_SPINS, SPI_USER, SPI_USR_MISO, SPI_USR_MOSI,
+    Esp32Spi, SPI_CK_I_EDGE, SPI_CK_OUT_EDGE, SPI_CMD, SPI_CMD_USR, SPI_DOUTDIN, SPI_MISO_DLEN,
+    SPI_MOSI_DLEN, SPI_SLAVE, SPI_SYNC_RESET, SPI_TIMEOUT_SPINS, SPI_TRANS_DONE, SPI_USER,
+    SPI_USR_MISO, SPI_USR_MOSI,
 };
 
 const SPI_DMA_CONF: u32 = 0x100;
@@ -53,8 +54,6 @@ const SPI_DMA_INT_CLR: u32 = 0x11C;
 /// `SPI_DMA_RSTATUS`: transmit-DMA/FIFO status. Bit 31 is `TX_FIFO_EMPTY`.
 const SPI_DMA_RSTATUS: u32 = 0x148;
 const SPI_DMA_TX_FIFO_EMPTY: u32 = 1 << 31;
-/// `SPI_SYNC_RESET`, `SPI_SLAVE` bit 31: reset the SPI core transfer FSM.
-const SPI_SYNC_RESET: u32 = 1 << 31;
 
 const SPI_IN_RST: u32 = 1 << 2;
 const SPI_OUT_RST: u32 = 1 << 3;
@@ -72,9 +71,9 @@ const SPI_OUT_DATA_BURST_EN: u32 = 1 << 12;
 
 // SPI_USER bits esp-idf leaves set that a full SPI_USER write must preserve: the
 // MISO input-sampling edge and the chip-select hold. Confirmed against a live
-// esp-idf run's register dump (USER = 0x18000051).
+// esp-idf run's register dump (USER = 0x18000051). SPI_CK_I_EDGE is shared, in
+// the crate root.
 const SPI_CS_HOLD: u32 = 1 << 4;
-const SPI_CK_I_EDGE: u32 = 1 << 6;
 
 const SPI_OUTLINK_STOP: u32 = 1 << 28;
 const SPI_OUTLINK_START: u32 = 1 << 29;
@@ -90,17 +89,11 @@ pub const SPI_IN_SUC_EOF: u32 = 1 << 5;
 /// `SPI_OUT_EOF_INT_RAW`: the transmit chain hit end-of-frame.
 pub const SPI_OUT_EOF: u32 = 1 << 7;
 
-/// `SPI_TRANS_DONE`, `SPI_SLAVE_REG` bit 4: the transaction finished.
-///
-/// A *second* contributor to the same interrupt line as the DMA flags, and the
-/// one that is easy to miss — `SPI_INT_EN` ([9:5]) has a reset default of
-/// `1_0000`, so this interrupt is **enabled before anyone asks for it**.
-///
-/// It is write-zero-to-clear, not write-one. Acknowledging the DMA flags alone
-/// leaves this asserted, the peripheral keeps the line high, and the top-half
-/// re-enters forever: the board goes silent partway through a transfer with no
-/// fault and no panic.
-const SPI_TRANS_DONE: u32 = 1 << 4;
+// `SPI_TRANS_DONE` is shared, in the crate root. It is a *second* contributor
+// to the same interrupt line as the DMA flags and easy to miss: `SPI_INT_EN`
+// ([9:5]) has a reset default of `1_0000`, so it is enabled before anyone asks.
+// Acknowledging the DMA flags alone leaves it asserted and the top-half
+// re-enters forever, so `poll`/`ack` must clear it too.
 
 impl Esp32Spi {
     pub(crate) unsafe fn wait_dma_done(&self) -> BusResult<()> {

@@ -122,6 +122,17 @@ const SPI_PIN: u32 = 0x34;
 pub(crate) const SPI_SLAVE: u32 = 0x38;
 pub(crate) const SPI_W0: u32 = 0x80; // Data buffer: 16 words (W0..W15), 64 bytes.
 
+/// `SPI_SYNC_RESET`, `SPI_SLAVE` bit 31: reset the SPI core transfer FSM.
+/// Pulsed between transactions so a slave left mid-shift starts each one clean.
+pub(crate) const SPI_SYNC_RESET: u32 = 1 << 31;
+/// `SPI_TRANS_DONE`, `SPI_SLAVE` bit 4: the transaction finished. It is
+/// write-zero-to-clear and enabled at reset (the `SPI_INT_EN` default), so it
+/// must be acknowledged or the completion interrupt re-enters forever.
+pub(crate) const SPI_TRANS_DONE: u32 = 1 << 4;
+/// `SPI_CK_I_EDGE`, `SPI_USER` bit 6: the slave's clock-input edge, the mirror
+/// of the master's `ck_out_edge` (bit 7).
+pub(crate) const SPI_CK_I_EDGE: u32 = 1 << 6;
+
 /// SPI_CMD_REG: start a user-defined transaction. bitpos [18], confirmed
 /// against esp-idf `soc/spi_reg.h` (`SPI_USR`). A prior revision wrote/polled
 /// bit 0, which is `SPI_DOUTDIN` (a mode bit, not the start-transaction
