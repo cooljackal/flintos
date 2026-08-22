@@ -60,13 +60,13 @@ use crate::smp::Spinlock;
 // pin them. A host build takes a static buffer instead, so they are dead
 // there — kept rather than gated, because they are facts about the chip.
 /// End of SRAM2, where SRAM1 begins. Not a DMA boundary — see the module docs.
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+#[cfg(any(all(feature = "soc-esp32", target_os = "none"), test))]
 const SRAM2_END: u32 = 0x3FFE_0000;
 
 /// SRAM1, which the ROM uses during boot and FlintOS never places anything in.
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+#[cfg(any(all(feature = "soc-esp32", target_os = "none"), test))]
 const SRAM1_START: u32 = 0x3FFE_0000;
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+#[cfg(any(all(feature = "soc-esp32", target_os = "none"), test))]
 const SRAM1_END: u32 = 0x4000_0000;
 
 /// The ROM's own data, which stays reserved after boot.
@@ -84,9 +84,9 @@ const SRAM1_END: u32 = 0x4000_0000;
 /// this follows esp-idf, which is the narrower claim and the one whose
 /// boundaries are quoted above; if a ROM routine is ever seen scribbling past
 /// them, NuttX's `memory_layout.h` is the place to compare against.
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+#[cfg(any(all(feature = "soc-esp32", target_os = "none"), test))]
 const ROM_PRO_DATA: (u32, u32) = (0x3FFE_0000, 0x3FFE_0440);
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+#[cfg(any(all(feature = "soc-esp32", target_os = "none"), test))]
 const ROM_APP_DATA: (u32, u32) = (0x3FFE_3F20, 0x3FFE_4350);
 
 /// What a caller needs from the memory, beyond its size.
@@ -115,6 +115,7 @@ static READY: AtomicBool = AtomicBool::new(false);
 /// run during early startup — and nothing else may be using these regions.
 /// `free_from` is the first free address above the static map, which the
 /// linker script provides as `_dma_pool_end`.
+#[allow(clippy::needless_return)]
 pub unsafe fn init(free_from: u32) -> usize {
     if READY.swap(true, Ordering::SeqCst) {
         return 0;
@@ -128,11 +129,11 @@ pub unsafe fn init(free_from: u32) -> usize {
         let _ = free_from;
         const TEST_HEAP: usize = 256 * 1024;
         static mut BUF: [u8; TEST_HEAP] = [0; TEST_HEAP];
-        POOL.with(|pool| unsafe { pool.add_region((&raw mut BUF) as *mut u8, TEST_HEAP) })
+        return POOL.with(|pool| unsafe { pool.add_region((&raw mut BUF) as *mut u8, TEST_HEAP) });
     }
 
-    #[cfg(target_os = "none")]
-    POOL.with(|pool| {
+    #[cfg(all(target_os = "none", feature = "soc-esp32"))]
+    return POOL.with(|pool| {
         let mut taken = 0;
 
         // Whatever SRAM2 has left above the static map.
@@ -154,7 +155,19 @@ pub unsafe fn init(free_from: u32) -> usize {
             taken += unsafe { pool.add_region(start as *mut u8, (end - start) as usize) };
         }
         taken
-    })
+    });
+
+    #[cfg(all(target_os = "none", feature = "soc-rp2040"))]
+    return POOL.with(|pool| match rp2040_heap_region(free_from) {
+        Some((start, len)) => unsafe { pool.add_region(start as *mut u8, len) },
+        None => 0,
+    });
+}
+
+#[cfg(all(feature = "soc-rp2040", any(target_os = "none", test)))]
+fn rp2040_heap_region(free_from: u32) -> Option<(u32, usize)> {
+    (free_from < soc_rp2040::SRAM_END)
+        .then_some((free_from, (soc_rp2040::SRAM_END - free_from) as usize))
 }
 
 /// [`init`], with `free_from` taken from the linker script.
@@ -355,5 +368,12 @@ mod tests {
         // past SRAM2 that subtraction would underflow, so the guard matters.
         let free_from = SRAM2_END + 0x1000;
         assert!(free_from >= SRAM2_END, "the guard's condition");
+    }
+
+    #[cfg(feature = "soc-rp2040")]
+    #[test]
+    fn rp2040_heap_uses_only_sram_after_the_static_map() {
+        assert_eq!(rp2040_heap_region(0x2004_0000), Some((0x2004_0000, 0x2000)));
+        assert_eq!(rp2040_heap_region(soc_rp2040::SRAM_END), None);
     }
 }

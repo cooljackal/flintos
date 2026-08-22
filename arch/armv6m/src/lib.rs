@@ -15,7 +15,9 @@ mod critical_section;
 pub mod smp;
 pub mod tick;
 
-pub use critical_section::{enter_raw as cs_enter, exit_raw as cs_exit, with as cs_with};
+pub use critical_section::{
+    enter_raw as cs_enter, exit_raw as cs_exit, init_boot_core, with as cs_with,
+};
 
 use hal::arch::{
     Architecture, ContextDiagnostics, FaultInfo, InterruptCause, TaskContext as TaskContextTrait,
@@ -50,22 +52,6 @@ struct InitialFrame {
 }
 
 pub struct Armv6mArch;
-
-/// Default context-selection hook used until the scheduler installs its ARM
-/// trap bridge. PendSV still proves the complete register save/restore path.
-#[cfg(target_arch = "arm")]
-#[no_mangle]
-extern "C" fn _flint_armv6m_switch(stack_pointer: u32) -> u32 {
-    stack_pointer
-}
-
-#[cfg(target_arch = "arm")]
-#[no_mangle]
-extern "C" fn _flint_armv6m_systick() {
-    use hal::tick::TickSource;
-    tick::Armv6mTick::tick();
-    Armv6mArch::request_switch();
-}
 
 fn initial_frame_address(stack_top: u32) -> u32 {
     (stack_top - core::mem::size_of::<InitialFrame>() as u32) & !7
@@ -103,6 +89,9 @@ impl Architecture for Armv6mArch {
     type Context = TaskContext;
 
     unsafe fn init_context(context: &mut TaskContext, entry: usize, stack_top: u32) {
+        unsafe extern "C" {
+            fn _flint_armv6m_task_exit() -> !;
+        }
         const THUMB_BIT: u32 = 1 << 24;
         let frame_address = initial_frame_address(stack_top);
         let frame = frame_address as *mut InitialFrame;
@@ -114,7 +103,7 @@ impl Architecture for Armv6mArch {
                 r2: 0,
                 r3: 0,
                 r12: 0,
-                lr: task_returned as *const () as usize as u32,
+                lr: _flint_armv6m_task_exit as *const () as usize as u32,
                 pc: entry as u32,
                 xpsr: THUMB_BIT,
             });
@@ -135,8 +124,10 @@ impl Architecture for Armv6mArch {
         {
             const ICSR: *mut u32 = 0xe000_ed04 as *mut u32;
             const PENDSVSET: u32 = 1 << 28;
-            unsafe { ICSR.write_volatile(PENDSVSET) };
-            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            unsafe {
+                ICSR.write_volatile(PENDSVSET);
+                core::arch::asm!("dsb", "isb", options(nostack));
+            }
         }
     }
 
@@ -206,12 +197,6 @@ impl Architecture for Armv6mArch {
     }
 }
 
-extern "C" fn task_returned() -> ! {
-    loop {
-        Armv6mArch::wait_masked();
-    }
-}
-
 /// Convert a Cortex-M fault frame into the kernel's neutral diagnostic form.
 ///
 /// # Safety
@@ -228,10 +213,36 @@ pub unsafe fn fault_info(frame: *const u32, cause: u32, address: u32) -> FaultIn
     }
 }
 
+/// Last Cortex-M hardware frame captured by `HardFault`.
+#[cfg(target_arch = "arm")]
+#[no_mangle]
+#[link_section = ".uninit.hard_fault"]
+pub static mut FLINT_ARMV6M_HARD_FAULT: FaultInfo = FaultInfo {
+    cause: 0,
+    pc: 0,
+    status: 0,
+    address: 0,
+    arg0: 0,
+    arg1: 0,
+};
+
+#[cfg(target_arch = "arm")]
+#[no_mangle]
+unsafe extern "C" fn _flint_armv6m_hard_fault(frame: *const u32, exc_return: u32) -> ! {
+    let captured = unsafe { fault_info(frame, 3, exc_return) };
+    unsafe { core::ptr::write_volatile(&raw mut FLINT_ARMV6M_HARD_FAULT, captured) };
+    unsafe extern "C" {
+        fn _flint_armv6m_fault_observed(pc: u32) -> !;
+    }
+    unsafe { _flint_armv6m_fault_observed(captured.pc) }
+}
+
 const _: () = assert!(core::mem::size_of::<TaskContext>() == 4);
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
 
     #[test]
@@ -257,5 +268,65 @@ mod tests {
         assert!(matches!(decode_exception(15), TrapCause::Interrupt(c) if c.tick));
         assert!(matches!(decode_exception(18), TrapCause::Interrupt(c) if c.external == 4));
         assert!(matches!(decode_exception(3), TrapCause::Fault(f) if f.cause == 3));
+    }
+
+    #[test]
+    fn hard_fault_frame_captures_cortex_stacked_registers() {
+        let frame = [11, 22, 0, 0, 0, 0, 0x1000_0123, 1 << 24];
+        let fault = unsafe { fault_info(frame.as_ptr(), 3, 0) };
+        assert_eq!(fault.cause, 3);
+        assert_eq!(fault.pc, 0x1000_0123);
+        assert_eq!(fault.status, 1 << 24);
+        assert_eq!((fault.arg0, fault.arg1), (11, 22));
+    }
+
+    #[test]
+    fn restores_psp_after_all_eight_software_saved_words() {
+        let startup = include_str!("startup.S");
+        assert_eq!(startup.matches("msr psp, r1").count(), 2);
+        assert!(!startup.contains("msr psp, r0"));
+        assert_eq!(
+            startup
+                .matches("adds r1, #16\n    ldmia r1!, {r4-r7}")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn first_launch_stays_masked_until_psp_and_exc_return_are_ready() {
+        let startup = include_str!("startup.S");
+        let reset = startup
+            .find("Reset:\n    cpsid i")
+            .expect("Reset masks interrupts");
+        let svc = startup.find("SVC:").expect("SVC handler");
+        let enable = startup[svc..]
+            .find("cpsie i\n    bx lr")
+            .expect("SVC enables only immediately before exception return");
+        assert!(reset < svc);
+        assert!(startup[reset..svc].contains("cpsie i\n    svc 0"));
+        assert!(startup[svc..svc + enable].contains("_flint_armv6m_start_tick"));
+        assert!(startup[svc..svc + enable].contains("msr psp, r1"));
+    }
+
+    #[test]
+    fn cortex_vectors_put_hard_fault_and_svc_in_their_architected_slots() {
+        let startup = include_str!("startup.S");
+        let table = startup
+            .split("_vector_table_start:\n")
+            .nth(1)
+            .expect("vector table")
+            .split(".section .text.Reset")
+            .next()
+            .expect("vector entries");
+        let entries: std::vec::Vec<_> = table
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix(".word "))
+            .collect();
+        assert_eq!(entries[2], "DefaultHandler");
+        assert_eq!(entries[3], "HardFault");
+        assert_eq!(entries[11], "SVC");
+        assert_eq!(entries[14], "PendSV");
+        assert_eq!(entries[15], "SysTick");
     }
 }

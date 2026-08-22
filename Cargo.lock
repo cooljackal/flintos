@@ -25,6 +25,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "arm-selftest"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "build",
+ "hal",
+ "kernel",
+ "portable-atomic",
+ "soc-rp2040",
+]
+
+[[package]]
 name = "blink"
 version = "0.1.0"
 dependencies = [

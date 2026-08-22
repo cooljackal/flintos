@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use hal::tick::TickSource;
 use core::sync::atomic::{AtomicU32, Ordering};
+use hal::tick::TickSource;
 
 #[cfg(target_arch = "arm")]
 const SYST_CSR: *mut u32 = 0xe000_e010 as *mut u32;
@@ -17,6 +17,24 @@ static PERIOD_US: AtomicU32 = AtomicU32::new(0);
 pub struct Armv6mTick;
 
 impl Armv6mTick {
+    /// Enable SysTick after the first SVC has become the active handler.
+    ///
+    /// # Safety
+    /// The reload value must already have been configured by [`TickSource::init`].
+    #[cfg(target_arch = "arm")]
+    pub unsafe fn start() {
+        unsafe { SYST_CSR.write_volatile(0b111) };
+    }
+
+    /// Stop SysTick without changing its reload value.
+    ///
+    /// # Safety
+    /// The caller must restart it promptly; scheduler time is frozen meanwhile.
+    #[cfg(target_arch = "arm")]
+    pub unsafe fn stop() {
+        unsafe { SYST_CSR.write_volatile(0) };
+    }
+
     pub fn cpu_hz() -> u32 {
         CPU_HZ.load(Ordering::Relaxed)
     }
@@ -37,7 +55,10 @@ impl TickSource for Armv6mTick {
         unsafe {
             SYST_RVR.write_volatile(_reload);
             SYST_CVR.write_volatile(0);
-            SYST_CSR.write_volatile(0b111);
+            // PRIMASK is still set during Reset. Enabling the counter here can
+            // make SysTick pending before the first task frame exists; SVC
+            // starts it only after becoming the active handler.
+            SYST_CSR.write_volatile(0);
         }
     }
 

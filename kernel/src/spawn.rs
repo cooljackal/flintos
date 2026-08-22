@@ -45,7 +45,7 @@ extern "C" {
 /// same stack.
 static mut STACK_ALLOC_OFFSET: u32 = 0;
 
-fn paint_stack(base: u32, size: u32) {
+pub(crate) fn paint_stack(base: u32, size: u32) {
     let words = (size / 4) as usize;
     let ptr = base as *mut u32;
     for i in 0..words {
@@ -68,7 +68,7 @@ pub fn stack_guard_intact(stack_base: u32, stack_size: u32) -> bool {
     unsafe { (stack_base as *const u32).read_volatile() == STACK_GUARD }
 }
 
-fn allocate_stack(size: u32) -> Option<u32> {
+pub(crate) fn allocate_stack(size: u32) -> Option<u32> {
     unsafe {
         let region_start = core::ptr::addr_of!(_task_stack_start) as u32;
         let region_end = core::ptr::addr_of!(_task_stack_end) as u32;
@@ -233,7 +233,7 @@ fn spawn_inner(
 
 /// Called when a task function returns. De-schedules the task forever.
 #[no_mangle]
-extern "C" fn flint_task_exit() -> ! {
+pub(crate) extern "C" fn flint_task_exit() -> ! {
     scheduler::with(|sched| {
         let cur = sched.current();
         let Some(tcb) = &mut sched.tasks[cur as usize] else {

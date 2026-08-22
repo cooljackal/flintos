@@ -11,7 +11,7 @@ _vector_table_start:
     .word _stack_top
     .word Reset
     .word DefaultHandler
-    .word DefaultHandler
+    .word HardFault
     .word DefaultHandler
     .word DefaultHandler
     .word DefaultHandler
@@ -19,7 +19,7 @@ _vector_table_start:
     .word 0
     .word 0
     .word 0
-    .word DefaultHandler
+    .word SVC
     .word DefaultHandler
     .word 0
     .word PendSV
@@ -32,6 +32,13 @@ _vector_table_start:
 .thumb_func
 .global Reset
 Reset:
+    cpsid i
+    ldr r0, =0xe000ed08
+    ldr r1, =_vector_table_start
+    str r1, [r0]
+    ldr r0, =0xe000ed20
+    ldr r1, =0xc0ff0000
+    str r1, [r0]
     ldr r0, =_sidata
     ldr r1, =_sdata
     ldr r2, =_edata
@@ -50,13 +57,42 @@ Reset:
     str r0, [r1]
     adds r1, #4
     b 3b
-4:  bl flint_app_main
+4:  ldr r1, =0xd0000100
+    ldr r2, =0xd0000180
+    movs r0, #0
+9:  str r0, [r1]
+    adds r1, #4
+    cmp r1, r2
+    bne 9b
+    bl _flint_armv6m_boot
+    cpsie i
+    svc 0
 5:  wfi
     b 5b
 
 .thumb_func
+.global SVC
+SVC:
+    bl _flint_armv6m_start_tick
+    bl _flint_armv6m_first_stack
+    mov r1, r0
+    adds r1, #16
+    ldmia r1!, {r4-r7}
+    mov r8, r4
+    mov r9, r5
+    mov r10, r6
+    mov r11, r7
+    ldmia r0!, {r4-r7}
+    msr psp, r1
+    ldr r0, =0xfffffffd
+    mov lr, r0
+    cpsie i
+    bx lr
+
+.thumb_func
 .global PendSV
 PendSV:
+    cpsid i
     mrs r0, psp
     subs r0, #32
     stmia r0!, {r4-r7}
@@ -66,7 +102,10 @@ PendSV:
     mov r7, r11
     stmia r0!, {r4-r7}
     subs r0, #32
+    push {r3, lr}
     bl _flint_armv6m_switch
+    pop {r2, r3}
+    mov lr, r3
     mov r1, r0
     adds r1, #16
     ldmia r1!, {r4-r7}
@@ -75,16 +114,30 @@ PendSV:
     mov r10, r6
     mov r11, r7
     ldmia r0!, {r4-r7}
-    msr psp, r0
+    msr psp, r1
+    cpsie i
     bx lr
 
 .thumb_func
 .global SysTick
 SysTick:
-    push {lr}
+    push {r0, lr}
     bl _flint_armv6m_systick
-    pop {pc}
-    bx lr
+    pop {r0, pc}
+
+.thumb_func
+.global HardFault
+HardFault:
+    mov r2, lr
+    mov r0, r2
+    movs r1, #4
+    tst r0, r1
+    beq 7f
+    mrs r0, psp
+    b 8f
+7:  mrs r0, msp
+8:  mov r1, r2
+    bl _flint_armv6m_hard_fault
 
 .thumb_func
 .global DefaultHandler

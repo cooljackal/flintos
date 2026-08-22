@@ -22,7 +22,36 @@ struct LocalState {
 #[cfg(target_arch = "arm")]
 static mut LOCAL: [LocalState; 2] = [LocalState { depth: 0 }; 2];
 
+/// Release the kernel-owned hardware lock before its first acquisition.
+///
+/// RP2040 hardware spinlocks can remain claimed across a reset. Pico SDK's
+/// runtime performs the same write for every spinlock before user code. Flint
+/// owns only lock 14, so reset just that one while core 1 is still offline.
+///
+/// # Safety
+/// Call exactly once during core-0 reset, before core 1 or any kernel critical
+/// section can use the selected hardware spinlock.
 #[cfg(target_arch = "arm")]
+pub unsafe fn init_boot_core() {
+    unsafe {
+        SIO_SPINLOCK_14.write_volatile(1);
+        asm!("dmb", options(nostack));
+    }
+}
+
+/// Host stand-in for boot-core critical-section initialization.
+///
+/// # Safety
+/// Matches the target signature; it has no machine state to initialize.
+#[cfg(not(target_arch = "arm"))]
+pub unsafe fn init_boot_core() {}
+
+#[cfg(target_arch = "arm")]
+/// Mask local interrupts and enter the RP2040-wide kernel critical section.
+///
+/// # Safety
+/// The returned PRIMASK token must be passed exactly once to the matching
+/// [`exit_raw`] call on the same core, in strict nesting order.
 pub unsafe fn enter_raw() -> u32 {
     let primask: u32;
     unsafe {
@@ -46,6 +75,11 @@ pub unsafe fn enter_raw() -> u32 {
 }
 
 #[cfg(target_arch = "arm")]
+/// Leave the matching RP2040-wide kernel critical section.
+///
+/// # Safety
+/// `primask` must be the token returned by the corresponding [`enter_raw`]
+/// invocation on this core; calls must unwind in strict nesting order.
 pub unsafe fn exit_raw(primask: u32) {
     let core = unsafe { SIO_CPUID.read_volatile() as usize };
     let state = unsafe { &mut LOCAL[core] };

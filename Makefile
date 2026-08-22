@@ -136,7 +136,7 @@ LD_SCRIPT       = $(if $(wildcard $(LD_GENERATED)),$(LD_GENERATED),$(LD_TEMPLATE
 #
 # This replaces a hand-kept list of fifteen names, which lived here and in three
 # more copies in ci.yml. Those copies had already drifted once.
-HOST_EXCLUDE   := arch-xtensa hello demo blink imu pwm smp spidma spitxrx uartecho flashprobe radioprobe wifiscan wificonnect
+HOST_EXCLUDE   := arch-xtensa hello arm-selftest demo blink imu pwm smp spidma spitxrx uartecho flashprobe radioprobe wifiscan wificonnect
 HOST_SELECT    := --workspace $(addprefix --exclude ,$(HOST_EXCLUDE))
 
 # The host suite still has to compile `board` and `kernel`, and both need a

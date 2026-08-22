@@ -63,7 +63,7 @@ pub use arch_armv6m::tick::Armv6mTick as Tick;
 #[cfg(all(target_os = "none", feature = "arch-armv6m"))]
 pub use arch_armv6m::Armv6mArch as SelectedArch;
 #[cfg(all(target_os = "none", feature = "arch-armv6m"))]
-pub use arch_armv6m::{cs_enter, cs_exit, cs_with};
+pub use arch_armv6m::{cs_enter, cs_exit, cs_with, init_boot_core};
 
 // ── Host: stand-ins, with the instrumentation the real ones cannot offer ────
 

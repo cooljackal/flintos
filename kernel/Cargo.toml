@@ -139,6 +139,7 @@ soc-esp32 = [
     "dep:crypto",
 ]
 soc-rp2040 = ["dep:board", "dep:soc-rp2040"]
+arm-expected-hardfault = []
 board-esp32-wrover = ["arch-xtensa", "soc-esp32", "board/board-esp32-wrover"]
 board-esp32-devkitc = ["arch-xtensa", "soc-esp32", "board/board-esp32-devkitc"]
 board-m5-atom-lite = ["arch-xtensa", "soc-esp32", "board/board-m5-atom-lite"]

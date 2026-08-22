@@ -37,6 +37,8 @@ compile_error!("select exactly one kernel SoC: soc-esp32 or soc-rp2040");
 compile_error!("unsupported architecture/SoC pair");
 
 pub mod arch;
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+mod armv6m;
 pub mod board;
 pub mod debug;
 pub mod dma_broker;
@@ -58,6 +60,9 @@ pub mod radio;
 // test against an invented CPU tells you about the invention. They are covered
 // on real silicon by the on-target suite instead — see `make test-target`.
 #[cfg(all(target_os = "none", feature = "soc-esp32"))]
+pub mod boot;
+#[cfg(feature = "soc-rp2040")]
+#[path = "boot_rp2040.rs"]
 pub mod boot;
 #[cfg(all(target_os = "none", feature = "soc-esp32"))]
 pub mod switch;
@@ -91,6 +96,28 @@ mod testsupport;
 pub mod timer;
 
 pub use scheduler::{Scheduler, TaskState, MAX_TASKS};
+
+#[cfg(all(target_os = "none", feature = "arch-armv6m"))]
+#[no_mangle]
+extern "C" fn _flint_armv6m_fault_observed(pc: u32) -> ! {
+    #[cfg(not(feature = "arm-expected-hardfault"))]
+    let _ = pc;
+    #[cfg(all(feature = "soc-rp2040", feature = "arm-expected-hardfault"))]
+    unsafe {
+        unsafe extern "C" {
+            static _flint_expected_fault_start: u8;
+            static _flint_expected_fault_end: u8;
+        }
+        let start = core::ptr::addr_of!(_flint_expected_fault_start) as u32;
+        let end = core::ptr::addr_of!(_flint_expected_fault_end) as u32;
+        if soc_rp2040::test_status::take_expected_fault_arm() && (start..=end).contains(&pc) {
+            soc_rp2040::test_status::pass_to_bootsel()
+        }
+        soc_rp2040::test_status::hard_fault()
+    }
+    #[cfg(all(feature = "soc-rp2040", not(feature = "arm-expected-hardfault")))]
+    soc_rp2040::test_status::hard_fault()
+}
 
 // An architecture skeleton must still compile the portable kernel surface.
 // This names representative scheduling, task, and synchronization APIs so

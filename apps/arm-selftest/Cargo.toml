@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "arm-selftest"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "RP2040 on-target kernel acceptance tests"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../kernel", default-features = false }
+api = { path = "../../api" }
+hal = { path = "../../hal" }
+portable-atomic = { version = "=1.15.0", features = ["critical-section", "require-cas"] }
+soc-rp2040 = { path = "../../soc/rp2040" }
+
+[build-dependencies]
+build = { path = "../../tools/build" }
+
+[features]
+default = []
+board-wio-rp2040-mini = ["kernel/board-wio-rp2040-mini"]
+expected-hardfault = ["kernel/arm-expected-hardfault"]
+minimal = []
+debug-level-0 = ["kernel/debug-level-0"]
+debug-level-1 = ["kernel/debug-level-1"]
+debug-level-2 = ["kernel/debug-level-2"]
+debug-level-3 = ["kernel/debug-level-3"]
