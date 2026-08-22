@@ -66,6 +66,9 @@ mod spi_slave;
 #[path = "selftest_pcnt.rs"]
 mod pcnt;
 
+#[path = "selftest_touch.rs"]
+mod touch;
+
 #[path = "selftest_uart.rs"]
 mod uart;
 
@@ -275,6 +278,21 @@ pub fn run() {
         None => skip(
             "pcnt_counts_edges_with_direction_and_filter",
             "this board declares no free PCNT loopback GPIO",
+        ),
+    }
+
+    // Touch: read a free touch pad's parasitic capacitance count and require it
+    // to be plausible and stable. Needs a touch-capable pad the board declares.
+    match crate::board::active::TOUCH_SELFTEST_GPIO {
+        Some(gpio) => check(
+            "touch_reads_a_stable_capacitance_count",
+            touch::touch_reads_a_stable_capacitance_count(gpio),
+            &mut pass,
+            &mut fail,
+        ),
+        None => skip(
+            "touch_reads_a_stable_capacitance_count",
+            "this board declares no free touch-capable GPIO",
         ),
     }
 

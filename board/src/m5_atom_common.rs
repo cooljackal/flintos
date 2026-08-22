@@ -58,6 +58,9 @@ pub const SPI_SLAVE_LOOPBACK_GPIOS: Option<[u8; 4]> = None;
 /// almost every pin, so none is confidently free here.
 pub const PCNT_LOOPBACK_GPIO: Option<u8> = None;
 
+/// No touch-sensor self-test on this board (see the DevKitC manifest).
+pub const TOUCH_SELFTEST_GPIO: Option<u8> = None;
+
 
 /// Maximum radio transmit power, in dBm.
 ///

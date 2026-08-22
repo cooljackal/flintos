@@ -97,6 +97,16 @@ pub const SPI_SLAVE_LOOPBACK_GPIOS: Option<[u8; 4]> = Some([21, 23, 19, 16]);
 /// A board that declares `None` skips the PCNT self-test.
 pub const PCNT_LOOPBACK_GPIO: Option<u8> = Some(22);
 
+/// A free touch-capable pad for the touch-sensor self-test, or `None` to skip.
+///
+/// Only ten pins can sense touch (T0–T9 = GPIO 4/0/2/15/13/12/14/27/32/33), so
+/// unlike the other loopback pads this cannot reuse the general free GPIOs. The
+/// test does not need a wire — it reads the pad's own parasitic capacitance to
+/// prove the controller measures — only a touch-capable pin no other peripheral
+/// drives. GPIO27 is T7, is not a strapping or flash pin, and carries nothing on
+/// a bare DevKitC.
+pub const TOUCH_SELFTEST_GPIO: Option<u8> = Some(27);
+
 
 /// Maximum radio transmit power, in dBm.
 ///

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-touch"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Capacitive touch sensor: ten channels sharing pads with GPIO"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
