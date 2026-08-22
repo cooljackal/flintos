@@ -7,7 +7,7 @@ pub struct Armv6mSmp;
 impl MultiCore for Armv6mSmp {
     fn current_core() -> CoreId {
         #[cfg(target_arch = "arm")]
-        return CoreId(unsafe { (0xd000_0000 as *const u32).read_volatile() as u8 });
+        return CoreId(unsafe { crate::SIO_CPUID.read_volatile() as u8 });
         #[cfg(not(target_arch = "arm"))]
         return CoreId(0);
     }

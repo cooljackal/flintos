@@ -20,6 +20,11 @@ pub use critical_section::{
     with as cs_with,
 };
 
+/// RP2040 SIO `CPUID` register: reads 0 on core 0, 1 on core 1. The single
+/// definition of the address, shared by `critical_section`, `smp` and `tick`.
+#[cfg(target_arch = "arm")]
+pub(crate) const SIO_CPUID: *const u32 = 0xd000_0000 as *const u32;
+
 use hal::arch::{
     Architecture, ContextDiagnostics, FaultInfo, InterruptCause, TaskContext as TaskContextTrait,
     TrapCause,

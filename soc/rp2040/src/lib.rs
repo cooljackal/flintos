@@ -74,11 +74,7 @@ pub struct Rp2040Dma;
 
 impl hal::dma::DmaReach for Rp2040Dma {
     fn reachable(&self, addr: u32, len: u32) -> bool {
-        if len == 0 {
-            return true;
-        }
-        addr.checked_add(len - 1)
-            .is_some_and(|last| addr >= SRAM_BASE && last < SRAM_END)
+        hal::dma::range_within(addr, len, SRAM_BASE, SRAM_END)
     }
 }
 

@@ -9,7 +9,7 @@
 use core::arch::asm;
 
 #[cfg(target_arch = "arm")]
-const SIO_CPUID: *const u32 = 0xd000_0000 as *const u32;
+use crate::SIO_CPUID;
 #[cfg(target_arch = "arm")]
 const SIO_SPINLOCK_14: *mut u32 = 0xd000_0138 as *mut u32;
 

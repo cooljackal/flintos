@@ -168,8 +168,12 @@ impl Descriptor {
 /// A buffer outside this does not fault. The transfer completes, reports
 /// success, and moves nothing — so every address goes through here before it
 /// reaches a descriptor.
+pub const DMA_LOW: u32 = 0x3FFA_E000;
+/// Upper bound of the DMA-reachable window, exclusive. See [`DMA_LOW`].
+pub const DMA_HIGH: u32 = 0x4000_0000;
+
 pub const fn reachable(addr: u32) -> bool {
-    addr >= 0x3FFA_E000 && addr < 0x4000_0000
+    addr >= DMA_LOW && addr < DMA_HIGH
 }
 
 /// The link registers hold 20 bits of descriptor address.

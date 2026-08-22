@@ -56,7 +56,7 @@ mod desc;
 
 pub use desc::{
     build_chain, build_ring, descriptors_needed, link_addr, reachable, received_len, ring_slot,
-    Descriptor, Direction,
+    Descriptor, Direction, DMA_HIGH, DMA_LOW,
 };
 
 /// This SoC's [`hal::dma::DmaReach`] — the ESP32's DMA-reachable window is all
@@ -66,13 +66,9 @@ pub struct DmaReach;
 
 impl hal::dma::DmaReach for DmaReach {
     fn reachable(&self, addr: u32, len: u32) -> bool {
-        if len == 0 {
-            return true;
-        }
-        // Both ends must land inside the window; `reachable` is an inclusive
-        // lower / exclusive upper check, so the last byte is `addr + len - 1`.
-        addr.checked_add(len - 1)
-            .is_some_and(|last| reachable(addr) && reachable(last))
+        // The window is one contiguous DRAM range, so the whole buffer is
+        // reachable iff it fits inside it.
+        hal::dma::range_within(addr, len, DMA_LOW, DMA_HIGH)
     }
 }
 

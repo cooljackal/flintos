@@ -24,10 +24,13 @@ extern "C" {
 /// 16-byte aligned because the Xtensa ABI requires it of any stack pointer,
 /// and a misaligned one faults on the first windowed call rather than at the
 /// misalignment.
-#[repr(C, align(16))]
-struct Stack([u8; 4096]);
+/// The APP CPU's stack size. See the note above on why 4 KiB.
+const APPCPU_STACK_BYTES: usize = 4096;
 
-static mut APPCPU_STACK: Stack = Stack([0; 4096]);
+#[repr(C, align(16))]
+struct Stack([u8; APPCPU_STACK_BYTES]);
+
+static mut APPCPU_STACK: Stack = Stack([0; APPCPU_STACK_BYTES]);
 
 /// The top of that stack, as a word the trampoline can load.
 ///
@@ -58,7 +61,7 @@ pub unsafe fn prepare(main: extern "C" fn() -> !) {
     let base = core::ptr::addr_of!(APPCPU_STACK) as u32;
     // Stack grows down, so start at the top. The Xtensa ABI also wants 16
     // bytes of headroom below the initial SP for a call's save area.
-    let top = (base + 4096 - 16) & !0xF;
+    let top = (base + APPCPU_STACK_BYTES as u32 - 16) & !0xF;
     _flint_appcpu_stack_top.store(top, Ordering::SeqCst);
     APPCPU_MAIN.store(main as usize as u32, Ordering::SeqCst);
 }

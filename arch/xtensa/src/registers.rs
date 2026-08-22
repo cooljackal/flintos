@@ -11,14 +11,8 @@
 // ── Processor State (PS) ─────────────────────────────────────────────────────
 
 pub const PS_WOE: u32 = 1 << 18;     // Window Overflow Enable (PS.WOE is bit 18)
-pub const PS_EXCM: u32 = 1 << 4;     // Exception mode (PS.EXCM is bit 4)
-pub const PS_INTLEVEL_SHIFT: u32 = 0;
 pub const PS_INTLEVEL_MASK: u32 = 0xF; // PS.INTLEVEL is bits 0..3
 pub const PS_UM: u32 = 1 << 5;       // User vector mode (PS.UM is bit 5)
-pub const PS_CALLINC_SHIFT: u32 = 16;
-pub const PS_CALLINC_MASK: u32 = 3 << PS_CALLINC_SHIFT;
-pub const PS_OWB_SHIFT: u32 = 8;
-pub const PS_OWB_MASK: u32 = 0xF << PS_OWB_SHIFT;
 
 // ── Internal interrupt assignments (ESP32, PRO CPU) ──────────────────────────
 
@@ -240,24 +234,6 @@ pub unsafe fn intset(mask: u32) {
 /// Raises the software interrupt the scheduler switches on. Safe to call from any context; the switch happens on the way out of the handler.
 pub unsafe fn request_switch() {
     intset(INT_SOFTWARE_MASK);
-}
-
-// ── Window state ─────────────────────────────────────────────────────────────
-
-/// # Safety
-/// Reads `WINDOWBASE`. No side effects.
-pub unsafe fn read_windowbase() -> u32 {
-    let val: u32;
-    core::arch::asm!("rsr.windowbase {0}", out(reg) val);
-    val
-}
-
-/// # Safety
-/// Reads `WINDOWSTART`. No side effects.
-pub unsafe fn read_windowstart() -> u32 {
-    let val: u32;
-    core::arch::asm!("rsr.windowstart {0}", out(reg) val);
-    val
 }
 
 // ── Interrupt level (PS.INTLEVEL) helpers ────────────────────────────────────

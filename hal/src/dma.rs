@@ -23,3 +23,19 @@ pub trait DmaReach: Send + Sync {
     /// memory and runs off the end of it is not reachable.
     fn reachable(&self, addr: u32, len: u32) -> bool;
 }
+
+/// Whether every byte of `[addr, addr + len)` lies within `[low, high)`.
+///
+/// The shared building block for [`DmaReach::reachable`] impls whose reachable
+/// memory is a single contiguous window: only `low`/`high` differ per chip.
+/// `len == 0` is vacuously within; a range whose last byte would overflow
+/// `u32` is rejected rather than wrapped.
+pub const fn range_within(addr: u32, len: u32, low: u32, high: u32) -> bool {
+    if len == 0 {
+        return true;
+    }
+    match addr.checked_add(len - 1) {
+        Some(last) => addr >= low && last < high,
+        None => false,
+    }
+}
