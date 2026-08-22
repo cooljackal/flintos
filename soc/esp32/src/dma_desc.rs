@@ -529,9 +529,9 @@ mod tests {
         let count = 4usize;
         let chunk = 64u32;
         let mut ring = [Descriptor::zeroed(); 4];
-        for i in 0..count {
+        for (i, slot) in ring.iter_mut().enumerate().take(count) {
             let next = ring_next(DESCS, i, count, stride);
-            ring[i] = Descriptor::rx(BUF + i as u32 * chunk, chunk, true, next).unwrap();
+            *slot = Descriptor::rx(BUF + i as u32 * chunk, chunk, true, next).unwrap();
         }
         for (i, d) in ring.iter().enumerate() {
             assert!(d.is_eof(), "slot {i} is not eof; the engine will not signal a boundary");

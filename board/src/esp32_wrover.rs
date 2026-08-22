@@ -48,6 +48,11 @@ pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = None;
 /// them — see the DevKitC manifest for what these are for.
 pub const LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = None;
 
+/// Three free pads `[sck, mosi, miso]` for the SPI master↔slave loopback, or
+/// `None`. See the DevKitC manifest for what this test does. Left unset: this
+/// manifest has never been flashed, so no pin is confirmed free.
+pub const SPI_SLAVE_LOOPBACK_GPIOS: Option<[u8; 4]> = None;
+
 
 /// Maximum radio transmit power, in dBm.
 ///

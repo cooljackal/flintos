@@ -57,6 +57,9 @@ mod i2s;
 #[path = "selftest_spi.rs"]
 mod spi;
 
+#[path = "selftest_spi_slave.rs"]
+mod spi_slave;
+
 #[path = "selftest_uart.rs"]
 mod uart;
 
@@ -195,6 +198,23 @@ pub fn run() {
         _ => skip(
             "spi_bus_loopback_round_trips",
             "this board declares no free SPI loopback GPIOs",
+        ),
+    }
+
+    // SPI master↔slave loopback: SPI2 as master, SPI3 as slave, joined through
+    // the GPIO matrix with no external wire. Needs four free pads the board
+    // declares -- SCK, MOSI, MISO and a real CS the master drives (4-wire), so
+    // each transaction frames the slave with a CS edge.
+    match crate::board::active::SPI_SLAVE_LOOPBACK_GPIOS {
+        Some(pads) => check(
+            "spi_master_slave_loopback_round_trips",
+            spi_slave::spi_master_slave_loopback_round_trips(pads),
+            &mut pass,
+            &mut fail,
+        ),
+        None => skip(
+            "spi_master_slave_loopback_round_trips",
+            "this board declares no free SPI master/slave loopback GPIOs",
         ),
     }
 

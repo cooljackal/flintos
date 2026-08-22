@@ -69,6 +69,25 @@ pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = Some(21);
 /// A board that declares `None` skips those loopback tests.
 pub const LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = Some((23, 19));
 
+/// Three electrically-free pads for the on-chip SPI master↔slave loopback, as
+/// `[sck, mosi, miso]`, or `None`.
+///
+/// The self-test drives SPI2 as master and SPI3 as slave and joins their
+/// signals through the GPIO matrix with no external wire: master SCK-out →
+/// slave SCK-in on the first pad, master MOSI-out → slave MOSI-in on the second,
+/// slave MISO-out → master MISO-in on the third. It is a *3-wire* loopback — the
+/// slave's CS input is tied to a constant low in the matrix (always selected),
+/// because the master driver drives no CS line, so no fourth pad is needed.
+///
+/// Separate from [`LOOPBACK_SCRATCH_GPIO`]/[`LOOPBACK_AUX_GPIOS`] so the
+/// single-pad folded loopbacks and this two-controller one cannot fight over
+/// what a pad means. The pads happen to be the same three free GPIOs
+/// (21/23/19) — nothing is wired to them and the tests never run at once — but
+/// naming them here keeps that a deliberate choice rather than a coincidence.
+///
+/// A board that declares `None` skips the test.
+pub const SPI_SLAVE_LOOPBACK_GPIOS: Option<[u8; 4]> = Some([21, 23, 19, 16]);
+
 
 /// Maximum radio transmit power, in dBm.
 ///

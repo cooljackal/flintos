@@ -21,7 +21,15 @@ use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 #[path = "dma.rs"]
 mod dma_impl;
 
+// SPI slave mode. Own file for the same reason as the DMA path: the slave's
+// register sequence and completion bit are a separate contract from the
+// master's, and interleaving them would make either harder to check against the
+// esp-idf reference it follows.
+#[path = "slave.rs"]
+mod slave_impl;
+
 pub use dma_impl::{SPI_IN_SUC_EOF, SPI_OUT_EOF};
+pub use slave_impl::Esp32SpiSlave;
 
 pub struct Esp32Spi {
     base: u32,
@@ -136,6 +144,10 @@ pub(crate) const SPI_CK_OUT_EDGE: u32 = 1 << 7;
 /// The signature of `transfer(tx, rx)` promises simultaneous exchange, which
 /// is what every SPI device expects. This bit is what makes that true.
 pub(crate) const SPI_DOUTDIN: u32 = 1 << 0;
+/// Assert CS during the prepare phase, using CTRL2.setup_time.
+const SPI_CS_SETUP: u32 = 1 << 5;
+/// Keep CS asserted during the done phase, using CTRL2.hold_time.
+const SPI_CS_HOLD: u32 = 1 << 4;
 
 /// Data buffer capacity: 16 32-bit words.
 const SPI_DATA_BUF_WORDS: usize = 16;
@@ -273,8 +285,12 @@ impl Esp32Spi {
             // order left at its little-endian reset default (bits 10/11 unset)
             // to match `pack_word`/`unpack_word`.
             let ck_out = if self.cpha { SPI_CK_OUT_EDGE } else { 0 };
+            // `enable_cs0` marks a hardware-framed master by setting these
+            // bits. Preserve them across this whole-register USER write;
+            // otherwise CTRL2's setup/hold values never take effect.
+            let cs_timing = self.reg(SPI_USER).read_volatile() & (SPI_CS_SETUP | SPI_CS_HOLD);
             self.reg(SPI_USER)
-                .write_volatile(SPI_DOUTDIN | SPI_USR_MOSI | SPI_USR_MISO | ck_out);
+                .write_volatile(SPI_DOUTDIN | SPI_USR_MOSI | SPI_USR_MISO | ck_out | cs_timing);
 
             // Start the transfer (SPI_USR, bit 18 -- not bit 0).
             self.reg(SPI_CMD).write_volatile(SPI_CMD_USR);
@@ -300,6 +316,23 @@ impl Esp32Spi {
         }
 
         Ok(())
+    }
+
+    /// Enable the hardware chip-select (CS0) output.
+    ///
+    /// `init` disables all three CS outputs by default — this bus normally drives
+    /// no peripheral CS, and a stray asserted CS corrupts the first byte. A master
+    /// talking to a *slave*, though, needs a real CS: the falling edge before the
+    /// first clock is what frames the slave's transaction. Call this after `init`,
+    /// then route `Signal::SpiCs(instance)` to a pad. The controller asserts CS0
+    /// around each transaction automatically, including the configured setup
+    /// and hold phases required for a slave to commit its received data.
+    ///
+    /// # Safety
+    /// The host must be initialised.
+    pub unsafe fn enable_cs0(&self) {
+        reg::clear(self.reg(SPI_PIN), 1); // clear cs0_dis (SPI_PIN bit 0)
+        reg::set(self.reg(SPI_USER), SPI_CS_SETUP | SPI_CS_HOLD);
     }
 
     /// Enable or disable the DMA path for transfers past the FIFO cap. On by
