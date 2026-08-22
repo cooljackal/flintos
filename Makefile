@@ -428,7 +428,7 @@ BOARD_SPECIFIC_APPS := blink imu pwm
 ATOM_BOARD          := board-m5-atom-matrix
 
 .PHONY: check-all
-check-all: ## Full check including arch (requires Xtensa toolchain)
+check-all: ## Full check including Xtensa and ARM architectures
 	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
 		--workspace --exclude build --exclude size \
 		$(addprefix --exclude ,$(BOARD_SPECIFIC_APPS)) \
@@ -439,6 +439,9 @@ check-all: ## Full check including arch (requires Xtensa toolchain)
 			-p $$a --no-default-features \
 			--features "$(ATOM_BOARD),debug-level-1" || exit 1; \
 	done
+	@echo "== arm-selftest (board-wio-rp2040-mini)"
+	cargo check --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "board-wio-rp2040-mini,debug-level-1"
 
 # Feature combinations that gate real code, and which nothing else builds.
 #
@@ -523,6 +526,16 @@ test-target: ## Flash and run the on-target self-tests (needs a board attached)
 	FLASH_BAUD="$(FLASH_BAUD)" MONITOR_BAUD="$(MONITOR_BAUD)" \
 	ESPFLASH_CHIP="$(ESPFLASH_CHIP)" FLASH_MODE="$(FLASH_MODE)" \
 	$(BASH) tools/target-test.sh
+
+ARM_PROBE_SERIAL   ?= 4150325537323116
+ARM_BOOTSEL_SERIAL ?= E0C9125B0D9B
+
+.PHONY: test-arm-target
+test-arm-target: ## Build, flash, and judge ARM tests through Debug Probe
+	$(MAKE) build APP=arm-selftest BOARD=board-wio-rp2040-mini
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL)
 
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
