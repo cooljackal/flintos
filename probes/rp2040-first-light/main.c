@@ -21,9 +21,10 @@ int main(void) {
     uart_init(uart0, PROBE_UART_BAUD);
     gpio_set_function(PROBE_UART_TX_GPIO, GPIO_FUNC_UART);
     gpio_set_function(PROBE_UART_RX_GPIO, GPIO_FUNC_UART);
-    uart_puts(uart0, marker);
-
     for (unsigned cycle = 0; cycle < 10; ++cycle) {
+        // Repeat the marker so host attachment timing cannot hide the physical
+        // UART proof. Every complete run emits exactly ten copies.
+        uart_puts(uart0, marker);
         gpio_put(WIO_USER_LED_GPIO, 1);
         sleep_ms(250);
         gpio_put(WIO_USER_LED_GPIO, 0);

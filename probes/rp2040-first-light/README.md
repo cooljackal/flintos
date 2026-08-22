@@ -3,9 +3,9 @@
 # Wio RP2040 first-light probe
 
 This disposable Pico SDK program separates RP2040 boot/image/clock and board-pin
-facts from FlintOS kernel work. It emits `FLINTOS-RP2040-FIRST-LIGHT` once at
-115200 8N1 on UART0 TX (GP0), then drives GP13 high for 250 ms and low for
-750 ms. After ten cycles it returns to ROM BOOTSEL, so `RPI-RP2` reappearing is
+facts from FlintOS kernel work. It emits `FLINTOS-RP2040-FIRST-LIGHT` at
+115200 8N1 on UART0 TX (GP0) before each cycle, then drives GP13 high for 250 ms
+and low for 750 ms. After ten cycles it returns to ROM BOOTSEL, so `RPI-RP2` reappearing is
 an automated proof that the application executed and leaves the board ready
 for the next image. It has no USB stack and does not use the ESP8285.
 
@@ -13,8 +13,10 @@ for the next image. It has no USB stack and does not use the ESP8285.
 
 - Raspberry Pi's RP2040 datasheet, section 2.8, is the source for the boot ROM,
   256-byte second stage and core-0 boot behavior.
-- Seeed's Wio RP2040 mini documentation identifies a 2 MiB flash, BOOT and RUN
-  buttons, and the user-programmable LED on GP13.
+- Seeed publishes the carrier design as `Wio_RP2040 mini v1.1`; its wiki
+  identifies a 2 MiB flash, BOOT and RUN buttons, and the user-programmable
+  active-high LED on GP13. The attached board's printed revision still has to
+  be checked before claiming it is that carrier revision.
 - GP0/GP1 are UART0 TX/RX according to the RP2040 function table. Only TX is an
   acceptance signal; RX is configured to keep the pair explicit.
 - LED polarity is intentionally not assumed. A visible 250/750 ms pattern
@@ -56,6 +58,18 @@ picotool info build/rp2040-first-light/rp2040-first-light.uf2
 The expected report identifies the `rp2040` family and the flash range starting
 at `0x10000000`. Record the UF2 SHA-256 before copying it to a board.
 
+With a Debug Probe on the documented SWD pins, the equivalent reproducible
+flash-and-run command is:
+
+```powershell
+probe-rs run --probe 2e8a:000c --protocol swd --chip RP2040 --speed 1000 `
+  build/rp2040-first-light-uf2-vs/rp2040-first-light.elf
+```
+
+The program deliberately disconnects SWD when it calls the ROM after ten
+seconds. A final `NoAcknowledge` from the runner is therefore expected only if
+`2e8a:0003` and `RPI-RP2` appear immediately afterward.
+
 ## Hardware acceptance
 
 1. Record the PCB/module revision and photograph the header labels.
@@ -81,3 +95,29 @@ wiring.
   return, the transition proves boot2 handed off and `main` ran to completion.
 - No receiver was connected to GP0, so the physical UART marker and visible LED
   polarity remain unmeasured even though their code path completed.
+
+## Measured SWD run (2026-08-22)
+
+- The official Debug Probe (`2e8a:000c`) attached to RP2040 core 0 at 1 MHz,
+  programmed the ELF above, reset it, and reported that execution started.
+- The rebuilt UF2 retained SHA-256
+  `DAA97B251B007D61ABEDC869413293B2A25A14F427944D48DAC7191220ACAC6A`.
+- Ten seconds later SWD stopped acknowledging and ROM USB `2e8a:0003` mounted
+  `RPI-RP2` as drive H:. This is a second measured reset-to-code and recovery
+  pass, now without a manual BOOT press.
+- The probe UART on COM9 received no marker. The GP0-to-probe-RX connection is
+  therefore not proven and the UART acceptance check remains open.
+- A timing-resistant build that emitted the marker ten times had UF2 SHA-256
+  `9406BE29D9E21B06FC62A2686CB3AF957DC412EF19954859AB4187B78C5601A1`.
+  Initial captures received zero bytes; a direct GP4-to-GP5 loopback isolated
+  that result to the jumper placement rather than the probe firmware.
+- After correcting the jumper, COM9 captured all ten exact markers (280 bytes)
+  with no corruption. ROM USB `2e8a:0003` and `RPI-RP2` on drive H: then
+  reappeared on schedule. This measures UART0 TX on target GP0 through the
+  Debug Probe's GP5 RX as well as the reset-to-code/recovery path.
+- A repeated run was observed at the target: the GP13 user LED produced all ten
+  programmed 250 ms on / 750 ms off flashes before the ROM recovery. This
+  measures the documented active-high LED path rather than inferring it from
+  successful program completion.
+- The target carrier's printed PCB revision was visually confirmed as v1.1,
+  matching Seeed's published `Wio_RP2040 mini v1.1` design and header labels.
