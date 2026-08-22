@@ -155,18 +155,24 @@ HOST_BOARD_FEATURES = --features board/$(HOST_BOARD),kernel/$(HOST_BOARD)
 ESPFLASH_CHIP  := esp32
 # Flashing (host -> chip) speed. Unrelated to the console baud.
 #
-# 115200 by default because it is the rate every USB-serial bridge handles.
-# espflash itself warns above this ("Setting baud rate higher than 115,200 can
-# cause issues"), and it is not an idle warning: at 921600 the connection
-# reliably completes the handshake, uploads the flash stub, and then dies with
-# "Error while connecting to device" on CP2102/CH340 bridges and through most
-# USB hubs. A bring-up default that fails on common hardware is worse than a
-# slow one -- the image is ~110 KB, so 115200 costs about ten seconds.
+# 460800 by default: it is esp-idf's own default upload rate, roughly 4x faster
+# than 115200, and completes reliably on the common bridges (verified on a
+# DevKitC over CP2102). espflash still warns above 115200 ("Setting baud rate
+# higher than 115,200 can cause issues") -- the warning is expected, not a
+# failure.
 #
-# Once flashing works on your board, raise it:
-#   make flash-dev FLASH_BAUD=460800
-# 460800 is a good middle ground; 921600 works on some FTDI/native-USB setups.
-FLASH_BAUD     ?= 115200
+# Faster and slower, both documented fallbacks:
+#   make flash FLASH_BAUD=921600   # Arduino's default; works on FTDI/native-USB
+#                                  # and this DevKitC, but has been seen to sync
+#                                  # then die with "Error while connecting to
+#                                  # device" on some CP2102/CH340 bridges + hubs
+#   make flash FLASH_BAUD=115200   # the universal fallback if a board won't sync
+#
+# espflash skips writing any bootloader/partition-table/app region whose
+# checksum already matches what is on the chip (its default; `--no-skip` is the
+# opt-out), so an unchanged rebuild reflashes only the segments that changed --
+# there is nothing to configure here for that.
+FLASH_BAUD     ?= 460800
 # Serial port. Empty lets espflash auto-detect, which is right when exactly one
 # board is attached. With more than one it prompts, so name the port:
 #   make flash PORT=COM5          (Windows)

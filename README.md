@@ -361,8 +361,9 @@ workspace `Cargo.toml`. See [`apps/README.md`](apps/README.md).
 <summary><b>If flashing fails</b></summary>
 
 **`Error while connecting to device`, right after `Using flash stub`** — the
-baud switch failed. This is the common one. Flashing defaults to 115200 for
-that reason; if you raised it, put it back:
+baud switch failed. This is the common one. Flashing defaults to 460800 (esp-idf's
+own default, ~4x faster than 115200); if a board or bridge won't sync at it, drop
+back to the universal rate:
 
 ```bash
 make flash BOARD=board-esp32-devkitc FLASH_BAUD=115200
