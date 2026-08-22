@@ -2,6 +2,7 @@
 
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
+#include "pico/bootrom.h"
 #include "pico/stdlib.h"
 
 enum {
@@ -22,10 +23,15 @@ int main(void) {
     gpio_set_function(PROBE_UART_RX_GPIO, GPIO_FUNC_UART);
     uart_puts(uart0, marker);
 
-    for (;;) {
+    for (unsigned cycle = 0; cycle < 10; ++cycle) {
         gpio_put(WIO_USER_LED_GPIO, 1);
         sleep_ms(250);
         gpio_put(WIO_USER_LED_GPIO, 0);
         sleep_ms(750);
     }
+
+    // Return to ROM USB boot after the visible proof window. This makes the
+    // disposable probe recoverable without requiring another physical BOOT
+    // button press, and RPI-RP2 reappearing proves this code actually ran.
+    reset_usb_boot(0, 0);
 }
