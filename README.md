@@ -27,17 +27,12 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` →
 preempts on real silicon — verified on an ESP32-WROOM and an ESP32-PICO — but
 it is young, most drivers are thin, and the API will change.
 
-Read the columns as "does this work on that instruction set". Only Xtensa has a
-port today, so the ARM32 column is an honest row of blanks rather than a
-roadmap. The directories and the dependency graph are in the right shape for a
-port — `arch/` depends only on `hal`, `soc/` only on `hal`, neither knows the
-other — but the seam is **not yet parameterised**, and an adversarial review
-established what that costs: there is no arch-selection axis (`cfg(target_os =
-"none")` is equally true for `thumbv7em`), `TaskContext` in `hal` is a set of
-Xtensa register-window fields, and the kernel's fatal-fault path writes a
-hard-coded ESP32 UART address. A second architecture means creating that axis
-first. Tracked, not hidden. AVR32 and MIPS columns get added when someone
-starts one.
+Read the columns as "does this work on that instruction set". ARMv6-M runs on
+the Wio RP2040 Mini: the measured suite covers boot, preemption, context
+switching, critical sections, queues, faults and both RP2040 cores. Shared
+kernel features keep their own evidence level; an ARM build alone does not
+promote an unmeasured mutex, watchdog or driver. AVR32 and MIPS columns get
+added when someone starts one.
 
 ✅ verified on hardware  ·  🧪 written and host-tested, not yet on silicon  ·  🚧 partial  ·  ⛔ not started  ·  — not applicable
 
@@ -74,23 +69,23 @@ in the wiki: [Xtensa LX6](https://github.com/cooljackal/flintos/wiki/Arch-Xtensa
 
 | Feature | Xtensa LX6 | ARM32 |
 |---|---|---|
-| Boots | ✅ | ⛔ |
-| Preemptive scheduling, 48 priorities | ✅ | ⛔ |
-| Context switch | ✅ | ⛔ |
-| Interrupts, nesting, critical sections | ✅ | ⛔ |
-| Peripheral interrupt routing | ✅ | ⛔ |
-| Tick timer, measured CPU clock | ✅ | ⛔ |
-| Mutexes with priority inheritance | ✅ | ⛔ |
-| Queues, task↔task and ISR→task | ✅ | ⛔ |
-| Task-vs-ISR race tests | ✅ | ⛔ |
+| Boots | ✅ | ✅ |
+| Preemptive scheduling, 48 priorities | ✅ | ✅ |
+| Context switch | ✅ | ✅ |
+| Interrupts, nesting, critical sections | ✅ | ✅ |
+| Peripheral interrupt routing | ✅ | ✅ |
+| Tick timer, measured CPU clock | ✅ | ✅ |
+| Mutexes with priority inheritance | ✅ | 🧪 |
+| Queues, task↔task and ISR→task | ✅ | ✅ |
+| Task-vs-ISR race tests | ✅ | 🧪 |
 | Watchdogs | ✅ | ⛔ |
 | Reset-cause reporting | ✅ | ⛔ |
-| Logging, metrics, panic capture | ✅ | ⛔ |
-| Stack high-water marks | ✅ | ⛔ |
-| Second core | ✅ | — |
-| Task pinning | ✅ | — |
+| Logging, metrics, panic capture | ✅ | 🚧 |
+| Stack high-water marks | ✅ | ✅ |
+| Second core | ✅ | ✅ |
+| Task pinning | ✅ | ✅ |
 | DMA | ✅ | ⛔ |
-| Memory isolation (MPU) | — | ⛔ |
+| Memory isolation (MPU) | — | — |
 
 ### Peripherals
 
