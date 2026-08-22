@@ -20,11 +20,14 @@
 // compiled for its own target. See build.rs.
 
 pub mod appcpu;
+pub mod context;
 pub mod critical_section;
 pub mod mpu;
 pub mod registers;
 pub mod smp;
 pub mod tick;
+
+pub use context::{TaskContext, XtensaArch};
 
 pub use critical_section::{
     enter_raw as cs_enter, exit_raw as cs_exit, with as cs_with, XtensaCriticalSection,
@@ -40,7 +43,7 @@ pub use critical_section::{
 
 /// Size of the frame the trap entry builds. This is `TaskContext` itself — the
 /// entry stores each field at its `#[repr(C)]` offset.
-pub const TRAP_FRAME_BYTES: usize = core::mem::size_of::<hal::TaskContext>();
+pub const TRAP_FRAME_BYTES: usize = core::mem::size_of::<TaskContext>();
 
 /// Bytes below a frame's stack pointer that the Xtensa windowed ABI reserves
 /// for the caller's `a0`-`a3` when a window overflows.

@@ -38,7 +38,7 @@
 //! `MALLOC_CAP_DMA|MALLOC_CAP_8BIT|MALLOC_CAP_INTERNAL|MALLOC_CAP_DEFAULT` —
 //! and NuttX puts ordinary heap regions at `0x3ffe0450` onward. The belief
 //! came from a comment in this project's own linker script and was simply
-//! wrong. The corrected window lives in [`soc_esp32::dma::reachable`].
+//! wrong. The corrected window is supplied by the selected SoC.
 //!
 //! So there is one pool and every byte of it can back a DMA descriptor.
 //! [`Caps`] survives because the blob's allocator API asks in those terms and
@@ -237,7 +237,10 @@ pub unsafe fn free(ptr: *mut u8, caps: Caps) {
 /// the comment warned about, already present. `soc-esp32` is an unconditional
 /// dependency now, so both builds ask the same function.
 pub fn is_dma_capable(ptr: *const u8) -> bool {
-    soc_esp32::dma::reachable(ptr as u32)
+    use hal::dma::DmaReach;
+    use hal::soc::SystemOnChip;
+
+    crate::board::SelectedSoc::DMA.reachable(ptr as u32, 1)
 }
 
 /// Free bytes in the pool.
@@ -296,6 +299,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "soc-esp32")]
     fn every_byte_the_pool_can_hold_is_dma_capable() {
         // The correction that collapsed two pools into one. SRAM1 was believed
         // unreachable by DMA; esp-idf's SOC_DMA_HIGH is 0x40000000, so the
@@ -314,6 +318,15 @@ mod tests {
                 "{addr:#x} should be DMA-capable"
             );
         }
+    }
+
+    #[test]
+    #[cfg(feature = "soc-rp2040")]
+    fn rp2040_dma_reach_uses_the_sram_window() {
+        assert!(is_dma_capable(0x2000_0000 as *const u8));
+        assert!(is_dma_capable(0x2004_1FFF as *const u8));
+        assert!(!is_dma_capable(0x1FFF_FFFF as *const u8));
+        assert!(!is_dma_capable(0x2004_2000 as *const u8));
     }
 
     #[test]

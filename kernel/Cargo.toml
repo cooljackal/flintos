@@ -12,7 +12,7 @@ rust-version.workspace = true
 [dependencies]
 hal = { path = "../hal" }
 api = { path = "../api" }
-board = { path = "../board", default-features = false }
+board = { path = "../board", default-features = false, optional = true }
 
 # The key/value format. Portable and host-testable, unlike the flash under it,
 # which is why the two are separate crates and this one is not target-scoped.
@@ -35,21 +35,19 @@ heap = { path = "../lib/heap" }
 # They are still checked for Xtensa, by `make check-all` walking the whole
 # workspace -- now called from the Xtensa CI job, because being pulled in here
 # is what used to give them that coverage.
-esp32-uart = { path = "../drivers/physical/esp32/uart" }
+esp32-uart = { path = "../drivers/physical/esp32/uart", optional = true }
 
 # Two more the kernel genuinely uses: `watchdog` feeds them and `rng` is
 # re-exported. Both were modules of `soc-esp32` until peripherals were
 # separated from chip infrastructure.
-esp32-wdt = { path = "../drivers/physical/esp32/wdt" }
-esp32-rng = { path = "../drivers/physical/esp32/rng" }
+esp32-wdt = { path = "../drivers/physical/esp32/wdt", optional = true }
+esp32-rng = { path = "../drivers/physical/esp32/rng", optional = true }
 
-# Unconditional, unlike the rest of the chip crates. `soc-esp32` builds on a
-# host -- its own tests run there -- and `heap::is_dma_capable` needs it on
-# both. Scoped to the target it could not be called from the host build, so
-# `heap` carried a hand-written copy of the DMA window under a comment claiming
-# there was only one definition. There are cheaper ways to be wrong than
-# maintaining two copies of an address range in two crates.
-soc-esp32 = { path = "../soc/esp32" }
+# Available on both host and target when the ESP32 SoC is selected:
+# `heap::is_dma_capable` uses the same DMA-window definition in host tests and
+# on hardware. Making the dependency optional keeps that chip-specific window
+# out of another SoC's graph without reintroducing a hand-written copy.
+soc-esp32 = { path = "../soc/esp32", optional = true }
 
 # Xtensa support is target-only, and that is what lets this crate be built —
 # and therefore tested — on a host at all.
@@ -61,40 +59,40 @@ soc-esp32 = { path = "../soc/esp32" }
 # `target_os = "none"`, Cargo simply does not build it for the host, and the
 # stand-ins in `arch::host` take its place.
 [target.'cfg(target_os = "none")'.dependencies]
-arch-xtensa = { path = "../arch/xtensa" }
+arch-xtensa = { path = "../arch/xtensa", optional = true }
 # Target-only: it calls ROM routines at fixed addresses and runs with the
 # instruction cache off, neither of which means anything on a host.
-esp32-flash = { path = "../drivers/physical/esp32/flash" }
+esp32-flash = { path = "../drivers/physical/esp32/flash", optional = true }
 # Driven by the on-target self-tests; not used by the kernel proper.
-esp32-timg = { path = "../drivers/physical/esp32/timg" }
-esp32-adc = { path = "../drivers/physical/esp32/adc" }
+esp32-timg = { path = "../drivers/physical/esp32/timg", optional = true }
+esp32-adc = { path = "../drivers/physical/esp32/adc", optional = true }
 # The DAC↔ADC2 shared-pad loopback self-test drives both.
-esp32-dac = { path = "../drivers/physical/esp32/dac" }
-esp32-adc2 = { path = "../drivers/physical/esp32/adc2" }
+esp32-dac = { path = "../drivers/physical/esp32/dac", optional = true }
+esp32-adc2 = { path = "../drivers/physical/esp32/adc2", optional = true }
 # The TWAI self-test loopback.
-esp32-twai = { path = "../drivers/physical/esp32/twai" }
+esp32-twai = { path = "../drivers/physical/esp32/twai", optional = true }
 # The I2S DMA loopback.
-esp32-i2s = { path = "../drivers/physical/esp32/i2s" }
+esp32-i2s = { path = "../drivers/physical/esp32/i2s", optional = true }
 # The PCNT self-test: counts software-toggled edges routed back through the
 # matrix. `esp32-gpio` drives the pulse pad in software; the two only appear in
 # the on-target self-test, not the kernel proper.
-esp32-pcnt = { path = "../drivers/physical/esp32/pcnt" }
-esp32-gpio = { path = "../drivers/physical/esp32/gpio" }
+esp32-pcnt = { path = "../drivers/physical/esp32/pcnt", optional = true }
+esp32-gpio = { path = "../drivers/physical/esp32/gpio", optional = true }
 # The touch-sensor self-test reads a free touch pad's capacitance count.
-esp32-touch = { path = "../drivers/physical/esp32/touch" }
+esp32-touch = { path = "../drivers/physical/esp32/touch", optional = true }
 # The MCPWM self-test drives a complementary pair and counts its edges with
 # PCNT; the two only appear together in the on-target self-test.
-esp32-mcpwm = { path = "../drivers/physical/esp32/mcpwm" }
+esp32-mcpwm = { path = "../drivers/physical/esp32/mcpwm", optional = true }
 # The SPI-bus (Layer 2) loopback self-test drives the wrapper over this driver.
-esp32-spi = { path = "../drivers/physical/esp32/spi" }
-spi-bus = { path = "../drivers/bus/spi-bus" }
+esp32-spi = { path = "../drivers/physical/esp32/spi", optional = true }
+spi-bus = { path = "../drivers/bus/spi-bus", optional = true }
 # The SHA/AES accelerator self-test drives this and cross-checks it against the
 # software `crypto` lib below.
-esp32-crypto = { path = "../drivers/physical/esp32/crypto" }
+esp32-crypto = { path = "../drivers/physical/esp32/crypto", optional = true }
 # The reference the hardware crypto is checked against (#33). Software-only and
 # host-testable, so it could be unconditional, but it is only ever named by the
 # target-scoped self-test, so it lives here beside its one user.
-crypto = { path = "../lib/crypto" }
+crypto = { path = "../lib/crypto", optional = true }
 
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs
@@ -111,11 +109,36 @@ crypto = { path = "../lib/crypto" }
 # the tree -- `make flash` with no argument built for hardware nobody had held.
 # Selecting a board is one word on the command line; getting it silently wrong
 # costs a debugging session against the wrong pin map.
-default = []
-board-esp32-wrover = ["board/board-esp32-wrover"]
-board-esp32-devkitc = ["board/board-esp32-devkitc"]
-board-m5-atom-lite = ["board/board-m5-atom-lite"]
-board-m5-atom-matrix = ["board/board-m5-atom-matrix"]
+default = ["arch-xtensa", "soc-esp32"]
+arch-xtensa = ["dep:arch-xtensa"]
+arch-armv6m = []
+soc-esp32 = [
+    "dep:board",
+    "dep:soc-esp32",
+    "dep:esp32-uart",
+    "dep:esp32-wdt",
+    "dep:esp32-rng",
+    "dep:esp32-flash",
+    "dep:esp32-timg",
+    "dep:esp32-adc",
+    "dep:esp32-dac",
+    "dep:esp32-adc2",
+    "dep:esp32-twai",
+    "dep:esp32-i2s",
+    "dep:esp32-pcnt",
+    "dep:esp32-gpio",
+    "dep:esp32-touch",
+    "dep:esp32-mcpwm",
+    "dep:esp32-spi",
+    "dep:spi-bus",
+    "dep:esp32-crypto",
+    "dep:crypto",
+]
+soc-rp2040 = []
+board-esp32-wrover = ["arch-xtensa", "soc-esp32", "board/board-esp32-wrover"]
+board-esp32-devkitc = ["arch-xtensa", "soc-esp32", "board/board-esp32-devkitc"]
+board-m5-atom-lite = ["arch-xtensa", "soc-esp32", "board/board-m5-atom-lite"]
+board-m5-atom-matrix = ["arch-xtensa", "soc-esp32", "board/board-m5-atom-matrix"]
 # Retired; forwards so `board` can print which of the two to use.
 board-m5-atom = ["board/board-m5-atom"]
 

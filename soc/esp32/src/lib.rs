@@ -78,6 +78,76 @@ pub const MAX_GPIO: u8 = 39;
 /// from this, not from the measured CPU frequency.
 pub const APB_HZ: u32 = 80_000_000;
 
+/// Classic ESP32 implementation of the kernel's selected-SoC contract.
+pub struct Esp32;
+
+impl hal::soc::SystemOnChip for Esp32 {
+    type Dma = dma::DmaReach;
+
+    const DMA: Self::Dma = dma::DmaReach;
+    const DEFAULT_CPU_HZ: u32 = rtc::DEFAULT_CPU_HZ;
+    const APB_HZ: u32 = APB_HZ;
+    const CAPABILITIES: hal::soc::SocCapabilities = hal::soc::SocCapabilities {
+        cores: 2,
+        interrupt_matrix: true,
+        cache_off_execution: true,
+        hardware_rng: true,
+    };
+
+    unsafe fn configure_cpu_clock() {
+        #[cfg(target_arch = "xtensa")]
+        unsafe {
+            cpu_clk::set_240mhz();
+        }
+    }
+
+    unsafe fn reset_cause() -> u32 {
+        #[cfg(target_arch = "xtensa")]
+        {
+            return unsafe { reset::cause() };
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            0
+        }
+    }
+
+    fn reset_cause_name(cause: u32) -> &'static str {
+        reset::name(cause)
+    }
+
+    fn measure_cpu_hz(cycle_count: fn() -> Option<u32>) -> Option<u32> {
+        #[cfg(target_arch = "xtensa")]
+        {
+            const MEASURE_RTC_TICKS: u64 = 1500;
+            const MEASURE_TIMEOUT_CYCLES: u32 = 50_000_000;
+            const RTC_POLLS: u32 = 10_000;
+
+            return (|| unsafe {
+                let rtc0 = rtc::counter(RTC_POLLS)?;
+                let c0 = cycle_count()?;
+                loop {
+                    let elapsed_rtc = rtc::counter(RTC_POLLS)?.wrapping_sub(rtc0);
+                    if elapsed_rtc >= MEASURE_RTC_TICKS {
+                        let cycles = cycle_count()?.wrapping_sub(c0) as u64;
+                        return rtc::round_to_plausible(
+                            cycles * rtc::SLOW_HZ_NOMINAL / elapsed_rtc,
+                        );
+                    }
+                    if cycle_count()?.wrapping_sub(c0) > MEASURE_TIMEOUT_CYCLES {
+                        return None;
+                    }
+                }
+            })();
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = cycle_count;
+            None
+        }
+    }
+}
+
 /// Serialises tests that share this crate's global hardware bookkeeping.
 ///
 /// The DMA channel table is one set of state for the whole process, so the
@@ -95,3 +165,33 @@ pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|p| p.into_inner())
 }
 
+#[cfg(test)]
+mod soc_contract_tests {
+    use super::*;
+    use hal::dma::DmaReach as _;
+    use hal::soc::SystemOnChip as _;
+
+    const _: () = assert!(Esp32::APB_HZ == APB_HZ);
+    const _: () = assert!(Esp32::DEFAULT_CPU_HZ == rtc::DEFAULT_CPU_HZ);
+    const _: () = assert!(Esp32::CAPABILITIES.cores == 2);
+    const _: () = assert!(Esp32::CAPABILITIES.interrupt_matrix);
+    const _: () = assert!(Esp32::CAPABILITIES.cache_off_execution);
+    const _: () = assert!(Esp32::CAPABILITIES.hardware_rng);
+
+    #[test]
+    fn selected_soc_dma_rejects_a_wrapped_range() {
+        assert!(!Esp32::DMA.reachable(u32::MAX - 1, 4));
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "xtensa"))]
+    fn host_clock_measurement_reports_unmeasured() {
+        assert_eq!(Esp32::measure_cpu_hz(|| Some(1)), None);
+    }
+
+    #[test]
+    fn reset_names_still_come_from_the_existing_decoder() {
+        assert_eq!(Esp32::reset_cause_name(1), "power-on");
+        assert_eq!(Esp32::reset_cause_name(9), "RTC watchdog (system)");
+    }
+}

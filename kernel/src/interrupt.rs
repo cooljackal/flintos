@@ -11,9 +11,12 @@
 //!
 //! Handler-table access is guarded by a critical section.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::arch::cs_with;
-use crate::arch::registers;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+#[path = "interrupt_controller.rs"]
+mod controller;
+use controller::{InterruptController, Selected as Controller};
 
 const MAX_HANDLERS: usize = 32;
 
@@ -102,7 +105,7 @@ static mut HANDLERS: [Option<Handler>; MAX_HANDLERS] = [None; MAX_HANDLERS];
 /// `opt-level = 1` across a crate boundary the call is real. A flash-resident
 /// copy of even this much is a core that stops fetching.
 #[inline(never)]
-#[cfg_attr(target_os = "none", link_section = ".iram1.intr")]
+#[cfg_attr(feature = "soc-esp32", link_section = ".iram1.intr")]
 fn handlers() -> &'static mut [Option<Handler>; MAX_HANDLERS] {
     unsafe { &mut *core::ptr::addr_of_mut!(HANDLERS) }
 }
@@ -173,7 +176,11 @@ fn register_inner(irq: u8, isr: fn(), iram_safe: bool) -> bool {
         }
         for slot in h.iter_mut() {
             if slot.is_none() {
-                *slot = Some(Handler { irq, isr, iram_safe });
+                *slot = Some(Handler {
+                    irq,
+                    isr,
+                    iram_safe,
+                });
                 return true;
             }
         }
@@ -214,11 +221,14 @@ pub fn clear_pending(irq: u8) {
     if irq >= 32 {
         crate::debug::log::write(
             api::debug::log::Level::Error,
-            &format_args!("interrupt::clear_pending: irq {} out of range (max 31)", irq),
+            &format_args!(
+                "interrupt::clear_pending: irq {} out of range (max 31)",
+                irq
+            ),
         );
         return;
     }
-    unsafe { registers::intclear(1u32 << irq) };
+    unsafe { Controller::clear_pending(1u32 << irq) };
 }
 
 // ── Bringing a peripheral's interrupt all the way to a handler ──────────────
@@ -278,34 +288,15 @@ unsafe fn connect_inner(
     handler: fn(),
     iram_safe: bool,
 ) -> Result<(), ConnectError> {
-    route(source, cpu_int)?;
+    if !unsafe { Controller::route(source, cpu_int) } {
+        return Err(ConnectError::Route);
+    }
     if !register_inner(cpu_int, handler, iram_safe) {
         return Err(ConnectError::AlreadyRegistered);
     }
-    unmask(cpu_int);
+    unsafe { Controller::unmask(cpu_int) };
     Ok(())
 }
-
-// The crossbar is the SoC's and the mask is the core's, so the two halves come
-// from different crates and neither exists on a host. Split here rather than in
-// `arch`, which has no business naming a chip.
-#[cfg(target_os = "none")]
-unsafe fn route(source: u8, cpu_int: u8) -> Result<(), ConnectError> {
-    soc_esp32::intr_map::route(source, cpu_int).map_err(|_| ConnectError::Route)
-}
-
-#[cfg(not(target_os = "none"))]
-unsafe fn route(_source: u8, _cpu_int: u8) -> Result<(), ConnectError> {
-    Ok(())
-}
-
-#[cfg(target_os = "none")]
-unsafe fn unmask(cpu_int: u8) {
-    registers::enable_interrupt(cpu_int as u32);
-}
-
-#[cfg(not(target_os = "none"))]
-unsafe fn unmask(_cpu_int: u8) {}
 
 // ── Masking for flash operations ────────────────────────────────────────────
 
@@ -356,11 +347,11 @@ pub fn cache_is_off() -> bool {
 /// inventing a stand-in keeps the host suite honest about what it covers --
 /// which for this path is nothing, and the on-target
 /// `an_erase_does_not_stop_an_iram_safe_interrupt` is why.
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "soc-esp32"))]
 #[inline(never)]
 #[link_section = ".iram1.intr"]
 pub unsafe fn dispatch_while_cache_off() {
-    let pending = unsafe { registers::read_interrupt() & registers::read_intenable() };
+    let pending = unsafe { Controller::pending_enabled() };
     for handler in handlers().iter().flatten() {
         if handler.iram_safe && handler.irq < 32 && pending & (1u32 << handler.irq) != 0 {
             (handler.isr)();
@@ -385,9 +376,9 @@ pub unsafe fn dispatch_while_cache_off() {
 /// masked until it is, and a driver whose interrupt never fires again looks
 /// like a dead peripheral rather than a missing call.
 #[inline(never)]
-#[cfg_attr(target_os = "none", link_section = ".iram1.intr")]
+#[cfg_attr(feature = "soc-esp32", link_section = ".iram1.intr")]
 pub unsafe fn mask_non_iram_safe() -> u32 {
-    let previous = unsafe { registers::read_intenable() };
+    let previous = unsafe { Controller::enabled() };
     let mut keep = 0u32;
     // Deliberately not `cs_with`: the caller is already inside a critical
     // section, and taking another would nest a lock this must not depend on
@@ -397,7 +388,7 @@ pub unsafe fn mask_non_iram_safe() -> u32 {
             keep |= 1u32 << handler.irq;
         }
     }
-    unsafe { registers::write_intenable(previous & keep) };
+    unsafe { Controller::set_enabled(previous & keep) };
     // Last, so the window opens only once the mask that makes it survivable
     // is in place.
     CACHE_OFF.store(true, Ordering::Relaxed);
@@ -409,12 +400,12 @@ pub unsafe fn mask_non_iram_safe() -> u32 {
 /// # Safety
 /// `previous` must be the value that call returned, on this core.
 #[inline(never)]
-#[cfg_attr(target_os = "none", link_section = ".iram1.intr")]
+#[cfg_attr(feature = "soc-esp32", link_section = ".iram1.intr")]
 pub unsafe fn restore_mask(previous: u32) {
     // First, so the trap handler is back on its ordinary path before the
     // interrupts that path serves are re-enabled.
     CACHE_OFF.store(false, Ordering::Relaxed);
-    unsafe { registers::write_intenable(previous) };
+    unsafe { Controller::set_enabled(previous) };
 }
 
 /// Whether `irq` has a handler that promised to be IRAM-safe. Test support.
@@ -467,19 +458,27 @@ mod tests {
         let _s = serial();
         assert!(register_iram_safe(22, dummy));
         assert!(register(23, dummy));
-        unsafe { registers::write_intenable(u32::MAX) };
+        unsafe { Controller::set_enabled(u32::MAX) };
 
         let previous = unsafe { mask_non_iram_safe() };
-        let now = unsafe { registers::read_intenable() };
+        let now = unsafe { Controller::enabled() };
 
         assert_eq!(previous, u32::MAX, "the old mask must be reported back");
         assert_ne!(now & (1 << 22), 0, "an IRAM-safe handler must stay enabled");
         assert_eq!(now & (1 << 23), 0, "everything else must be masked");
         // An interrupt with no handler at all promised nothing, so it goes too.
-        assert_eq!(now & (1 << 24), 0, "an unregistered interrupt must be masked");
+        assert_eq!(
+            now & (1 << 24),
+            0,
+            "an unregistered interrupt must be masked"
+        );
 
         unsafe { restore_mask(previous) };
-        assert_eq!(unsafe { registers::read_intenable() }, u32::MAX, "restore must be exact");
+        assert_eq!(
+            unsafe { Controller::enabled() },
+            u32::MAX,
+            "restore must be exact"
+        );
         clear_for_test(22);
         clear_for_test(23);
     }
@@ -489,9 +488,9 @@ mod tests {
         // The common case today: no handler has opted in, so this is the old
         // blanket behaviour and the change is inert until something does.
         let _s = serial();
-        unsafe { registers::write_intenable(u32::MAX) };
+        unsafe { Controller::set_enabled(u32::MAX) };
         let previous = unsafe { mask_non_iram_safe() };
-        assert_eq!(unsafe { registers::read_intenable() }, 0);
+        assert_eq!(unsafe { Controller::enabled() }, 0);
         unsafe { restore_mask(previous) };
     }
 

@@ -296,7 +296,7 @@ _flint_trap_entry:
     // SCOMPARE1: the comparand of an in-flight `s32c1i` retry loop. A handler
     // that performs an atomic read-modify-write clobbers it, and the
     // interrupted loop then spins against the wrong value forever. NuttX and
-    // Zephyr both save it here; see `hal::TaskContext::scompare1`.
+    // Zephyr both save it here; see `arch_xtensa::TaskContext::scompare1`.
     rsr.scompare1 a2
     s32i a2,  a3, 0x60
 

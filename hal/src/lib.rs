@@ -7,30 +7,33 @@
 //! This crate contains no implementations — only the contracts that
 //! architecture and driver crates must fulfil.
 //!
-//! **32-bit targets only.** This is where the assumption becomes concrete:
-//! [`types::TaskContext`] is a `#[repr(C)]` of `u32` fields that the trap entry
-//! indexes by fixed byte offset, and every peripheral address in the bus traits
-//! is a `u32`. A 64-bit port would rewrite both rather than widen them.
+//! **32-bit targets only.** Peripheral addresses and task-stack addresses in
+//! the contracts are `u32`. Saved register-frame layouts belong to architecture
+//! crates through [`arch::Architecture`].
 
 #![no_std]
 
+pub mod arch;
 pub mod bus;
 pub mod critical_section;
 pub mod dma;
 pub mod mpu;
 pub mod pinmux;
 pub mod smp;
+pub mod soc;
 pub mod stream;
 pub mod tick;
 pub mod types;
 pub mod wifi;
 
+pub use arch::{Architecture, TaskContext};
 pub use bus::*;
 pub use critical_section::CriticalSection;
 pub use dma::DmaReach;
 pub use mpu::MpuManager;
 pub use pinmux::{PinConfig, PinDrive, PinMux, PinPull, Signal, SignalDirection};
 pub use smp::{CoreId, MultiCore, MAX_CORES};
+pub use soc::{SocCapabilities, SystemOnChip};
 pub use stream::{ByteStream, StreamErrors};
 pub use tick::TickSource;
 pub use types::*;

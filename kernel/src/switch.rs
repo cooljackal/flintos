@@ -11,14 +11,14 @@
 //! Interrupts are masked for the whole handler (we are inside the trap), so the
 //! scheduler is accessed directly without an extra critical section.
 
-use hal::tick::TickSource;
-use hal::types::TaskContext;
-use crate::arch::registers;
-use crate::arch::Tick;
+use crate::arch::Context as TaskContext;
+use crate::arch::{SelectedArch, Tick};
 use core::sync::atomic::{AtomicBool, Ordering};
+use hal::arch::{Architecture, TrapCause};
+use hal::tick::TickSource;
 
 use crate::scheduler::{self, TaskState};
-use crate::{interrupt, timer, debug};
+use crate::{debug, interrupt, timer};
 
 /// Emit the trap-path bring-up diagnostics: one-shot markers for the first
 /// trap, tick and context switch, plus a heartbeat every 1000 ticks.
@@ -80,99 +80,100 @@ pub unsafe extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContex
         return frame;
     }
 
-    let cause = unsafe { registers::read_exccause() };
+    let cause = unsafe { SelectedArch::trap_cause(frame) };
     announce_once(&FIRST_TRAP, "[FLINT] first trap serviced\r\n");
 
-    if cause == registers::EXCCAUSE_LEVEL1_INTERRUPT {
-        let pending = unsafe { registers::read_interrupt() & registers::read_intenable() };
+    match cause {
+        TrapCause::Interrupt(interrupts) => {
+            // Timer tick.
+            if interrupts.tick {
+                Tick::tick(); // ack + re-arm + advance counter
 
-        // Timer tick.
-        if pending & registers::INT_TIMER0_MASK != 0 {
-            Tick::tick(); // ack + re-arm + advance counter
+                // Proof of life for the RTC watchdog. Here rather than anywhere in
+                // task context: this runs if and only if the kernel is still
+                // servicing interrupts, which is exactly the property it attests.
+                crate::watchdog::feed_from_tick();
+                announce_once(&FIRST_TICK, "[FLINT] first timer tick\r\n");
+                let now = Tick::now();
 
-            // Proof of life for the RTC watchdog. Here rather than anywhere in
-            // task context: this runs if and only if the kernel is still
-            // servicing interrupts, which is exactly the property it attests.
-            crate::watchdog::feed_from_tick();
-            announce_once(&FIRST_TICK, "[FLINT] first timer tick\r\n");
-            let now = Tick::now();
+                if TRAP_DIAGNOSTICS && now % 1000 == 0 {
+                    scheduler::with(|sched| {
+                        let cur = sched.current();
+                        debug::fault::raw_print("[FLINT] core=");
+                        debug::fault::raw_dec(crate::smp::current_core().0 as u32);
+                        debug::fault::raw_print(" t=");
+                        debug::fault::raw_dec(now as u32);
+                        debug::fault::raw_print(" cur=");
+                        debug::fault::raw_dec(cur);
+                        debug::fault::raw_print(":");
+                        debug::fault::raw_print(match &sched.tasks[cur as usize] {
+                            Some(tcb) => tcb.name,
+                            None => "?",
+                        });
+                        // Affinity, because "why is this task here" is the
+                        // question a pinned system makes you ask.
+                        debug::fault::raw_print(
+                            match sched.tasks[cur as usize].as_ref().map(|t| t.affinity) {
+                                Some(scheduler::Affinity::Any) => " aff=any",
+                                Some(scheduler::Affinity::Core(c)) if c.0 == 0 => " aff=core0",
+                                Some(scheduler::Affinity::Core(_)) => " aff=core1",
+                                None => " aff=?",
+                            },
+                        );
+                        debug::fault::raw_print(" ready=");
+                        debug::fault::raw_hex(sched.ready_mask as u32);
+                    });
+                    let context = unsafe { &*frame };
+                    let diagnostics = SelectedArch::context_diagnostics(context);
+                    debug::fault::raw_print(" pc=");
+                    debug::fault::raw_hex(diagnostics.pc);
+                    debug::fault::raw_print(" arch=");
+                    debug::fault::raw_hex(diagnostics.architecture_state);
+                    debug::fault::raw_print("\r\n");
+                }
 
-            if TRAP_DIAGNOSTICS && now % 1000 == 0 {
+                // One lock for the whole tick update, not one per read: the other
+                // core must never observe `on_tick` half applied.
                 scheduler::with(|sched| {
+                    if sched.on_tick(now) {
+                        scheduler::set_pending_switch();
+                    }
+                    // Stack high-water for the running task, while we hold it.
                     let cur = sched.current();
-                    debug::fault::raw_print("[FLINT] core=");
-                    debug::fault::raw_dec(crate::smp::current_core().0 as u32);
-                    debug::fault::raw_print(" t=");
-                    debug::fault::raw_dec(now as u32);
-                    debug::fault::raw_print(" cur=");
-                    debug::fault::raw_dec(cur);
-                    debug::fault::raw_print(":");
-                    debug::fault::raw_print(match &sched.tasks[cur as usize] {
-                        Some(tcb) => tcb.name,
-                        None => "?",
-                    });
-                    // Affinity, because "why is this task here" is the
-                    // question a pinned system makes you ask.
-                    debug::fault::raw_print(match sched.tasks[cur as usize]
-                        .as_ref()
-                        .map(|t| t.affinity)
-                    {
-                        Some(scheduler::Affinity::Any) => " aff=any",
-                        Some(scheduler::Affinity::Core(c)) if c.0 == 0 => " aff=core0",
-                        Some(scheduler::Affinity::Core(_)) => " aff=core1",
-                        None => " aff=?",
-                    });
-                    debug::fault::raw_print(" ready=");
-                    debug::fault::raw_hex(sched.ready_mask as u32);
+                    debug::stack::update_hwm(sched, cur);
                 });
-                debug::fault::raw_print(" pc=");
-                debug::fault::raw_hex(unsafe { (*frame).pc });
-                debug::fault::raw_print(" ws=");
-                debug::fault::raw_hex(unsafe { (*frame).windowstart });
-                debug::fault::raw_print("\r\n");
+                timer::process_timers(now);
             }
 
-            // One lock for the whole tick update, not one per read: the other
-            // core must never observe `on_tick` half applied.
-            scheduler::with(|sched| {
-                if sched.on_tick(now) {
-                    scheduler::set_pending_switch();
-                }
-                // Stack high-water for the running task, while we hold it.
-                let cur = sched.current();
-                debug::stack::update_hwm(sched, cur);
-            });
-            timer::process_timers(now);
-        }
+            // Software interrupt: a cooperative switch was requested.
+            if interrupts.switch_request {
+                SelectedArch::acknowledge_switch_request();
+            }
 
-        // Software interrupt: a cooperative switch was requested.
-        if pending & registers::INT_SOFTWARE_MASK != 0 {
-            unsafe { registers::intclear(registers::INT_SOFTWARE_MASK) };
-        }
-
-        // Routed peripheral IRQs (everything except timer/software).
-        let routed = pending & !(registers::INT_TIMER0_MASK | registers::INT_SOFTWARE_MASK);
-        if routed != 0 {
-            for irq in 0..32u32 {
-                if routed & (1 << irq) != 0 {
-                    interrupt::dispatch(irq as u8);
+            // Routed peripheral IRQs (everything except timer/software).
+            let routed = interrupts.external;
+            if routed != 0 {
+                for irq in 0..32u32 {
+                    if routed & (1 << irq) != 0 {
+                        interrupt::dispatch(irq as u8);
+                    }
                 }
             }
         }
-    } else {
-        // A genuine exception (not an interrupt) reached the trap handler.
-        // In a single protection domain this is a fatal fault — dump it over
-        // raw UART0 (works even before our own UART init) and halt.
-        let (epc, ps, vaddr, a0, a1) = unsafe {
-            (
-                (*frame).pc,
-                (*frame).ps,
-                registers::read_excvaddr(),
-                (*frame).a[0],
-                (*frame).a[1],
-            )
-        };
-        debug::fault::raw_uart_fault("exc", cause, epc, ps, vaddr, a0, a1);
+        TrapCause::Fault(fault) => {
+            // A genuine exception (not an interrupt) reached the trap handler.
+            // In a single protection domain this is a fatal fault — dump it over
+            // raw UART0 (works even before our own UART init) and halt.
+            debug::fault::raw_uart_fault(
+                "exc",
+                fault.cause,
+                fault.pc,
+                fault.status,
+                fault.address,
+                fault.arg0,
+                fault.arg1,
+            );
+        }
     }
 
     // Decide whether to switch.
@@ -205,12 +206,12 @@ pub unsafe extern "C" fn _flint_trap(frame: *mut TaskContext) -> *mut TaskContex
                 let prio = tcb.priority;
                 sched.ready_mask |= 1u64 << prio;
             }
-            unsafe { core::ptr::copy_nonoverlapping(frame, &mut tcb.context, 1) };
+            unsafe { SelectedArch::save_context(frame, &mut tcb.context) };
         }
         sched.set_current(next);
         sched.tasks[next as usize]
             .as_mut()
-            .map(|tcb| &mut tcb.context as *mut TaskContext)
+            .map(|tcb| SelectedArch::restore_context(&mut tcb.context))
     });
 
     next_frame.unwrap_or(frame)

@@ -4,8 +4,10 @@
 //!
 //! Called from FlintMain() before the scheduler starts.
 
-use hal::bus::BusKind;
+#[cfg(feature = "soc-esp32")]
 use crate::board::active;
+#[cfg(feature = "soc-esp32")]
+use hal::bus::BusKind;
 
 /// Global UART console driver (used by log/panic).
 /// The console UART.
@@ -18,11 +20,14 @@ use crate::board::active;
 /// What that argument does *not* cover is a second write. There is no path to
 /// one today; adding one -- reconfiguring the console at runtime, say -- needs
 /// this behind a lock first.
+#[cfg(feature = "soc-esp32")]
 pub static mut CONSOLE_UART: Option<esp32_uart::Esp32Uart> = None;
 
 /// Initialise board-level hardware.
 /// Must be called before the scheduler starts.
 pub fn init() {
+    #[cfg(feature = "soc-esp32")]
+    {
     // Find the UART console from the board manifest.
     for bus in active::TARGET_BUSES {
         if bus.kind == BusKind::Uart {
@@ -49,13 +54,17 @@ pub fn init() {
             break;
         }
     }
+    }
 }
 
 /// Write bytes to the console UART.
 pub fn console_write(data: &[u8]) {
+    #[cfg(feature = "soc-esp32")]
     unsafe {
         if let Some(ref uart) = CONSOLE_UART {
             uart.write_str(data);
         }
     }
+    #[cfg(not(feature = "soc-esp32"))]
+    let _ = data;
 }

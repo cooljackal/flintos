@@ -7,8 +7,8 @@
 //! initial `TaskContext` is built so the first dispatch (`rfe` in the trap
 //! handler) lands at the entry point with a clean single register window.
 
+use hal::arch::Architecture;
 use hal::types::{Priority, TaskId};
-use crate::arch::registers::PS_WOE;
 
 use crate::scheduler::{self, TaskState};
 
@@ -22,12 +22,6 @@ const MAX_STACK_SIZE: u32 = 16384;
 /// spill further frames below that. A stack under this size can be overrun by
 /// the interrupt machinery alone, before the task's own locals are counted.
 const MIN_STACK_SIZE: u32 = 1024;
-
-/// Bytes reserved at the top of a task stack for the caller's register save
-/// area. Xtensa window overflow handlers store four to twelve registers just
-/// below the base register they are given, so the outermost frame needs real
-/// memory there or the very first spill writes off the end of the stack.
-const BASE_SAVE_AREA: u32 = 32;
 
 const STACK_PAINT: u32 = 0xDEADBEEF;
 
@@ -116,7 +110,14 @@ pub fn sys_spawn_with_affinity(
     stack_size: usize,
     affinity: scheduler::Affinity,
 ) -> Option<TaskId> {
-    spawn_inner(name, entry, priority, stack_size, affinity, StackSource::Pool)
+    spawn_inner(
+        name,
+        entry,
+        priority,
+        stack_size,
+        affinity,
+        StackSource::Pool,
+    )
 }
 
 /// Where a new task's stack comes from.
@@ -215,61 +216,19 @@ fn spawn_inner(
             tcb.stack_hwm = 0;
             tcb.state = TaskState::Ready;
             tcb.quantum = scheduler::DEFAULT_QUANTUM_MS;
-            unsafe { init_context(&mut tcb.context, entry as usize, stack_base + stack_size) };
+            unsafe {
+                crate::arch::SelectedArch::init_context(
+                    &mut tcb.context,
+                    entry as usize,
+                    stack_base + stack_size,
+                )
+            };
             let prio = tcb.priority;
             sched.ready_mask |= 1u64 << prio;
         }
 
         Some(TaskId(id as u32))
     })
-}
-
-/// Initialise a fresh task's saved context.
-///
-/// The task is not entered directly. `pc` points at `_flint_task_start`, an
-/// assembly trampoline with no `entry` of its own, which reaches the task
-/// through a real `callx4` so the hardware -- not this function -- establishes
-/// CALLINC, the return address and the window state.
-///
-/// Hand-synthesising that state is what failed on hardware: a real `call4`
-/// leaves the return address in the caller's a4, which only becomes the
-/// callee's a0 once `entry` rotates the window. Putting it in a0 here produced
-/// a layout the hardware never generates, and the task's first `entry` never
-/// retired.
-unsafe fn init_context(ctx: &mut hal::TaskContext, entry: usize, stack_top: u32) {
-    extern "C" {
-        fn _flint_task_start();
-    }
-
-    ctx.pc = _flint_task_start as *const () as usize as u32;
-
-    // Kernel mode: FlintOS is a single protection domain and startup.S runs the
-    // kernel with PS.UM clear, so tasks run at the same level as the handlers
-    // that serve them. CALLINC is left at 0 -- the trampoline's `callx4` sets
-    // it, rather than this function pretending a call already happened.
-    ctx.ps = PS_WOE;
-    ctx.sar = 0;
-    ctx.lbeg = 0;
-    ctx.lend = 0;
-    ctx.lcount = 0;
-
-    // Reserve a save area below the top of the stack so the first window
-    // overflow has real memory to spill into.
-    let sp = (stack_top - BASE_SAVE_AREA) & !15;
-
-    ctx.a = [0u32; 16];
-    ctx.a[0] = 0;       // no caller; terminates the spill chain
-    ctx.a[1] = sp;
-    ctx.a[3] = entry as u32; // the trampoline calls this
-
-    // Xtensa windows overlap by four registers, so window WB+k's a1 is register
-    // 4k+1. Give each a valid stack pointer so any spill base is sane.
-    ctx.a[5] = sp;
-    ctx.a[9] = sp;
-    ctx.a[13] = sp;
-
-    ctx.windowbase = 0;
-    ctx.windowstart = 1;
 }
 
 /// Called when a task function returns. De-schedules the task forever.

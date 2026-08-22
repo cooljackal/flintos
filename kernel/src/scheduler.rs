@@ -17,10 +17,10 @@
 //! context inside a `cs_with` critical section, or from the trap handler with
 //! interrupts already masked. Both exclude each other.
 
+use crate::arch::{Context, Tick};
 use core::sync::atomic::{AtomicBool, Ordering};
+use hal::arch::Architecture;
 use hal::tick::TickSource;
-use hal::types::TaskContext;
-use crate::arch::Tick;
 
 pub const MAX_TASKS: usize = 32;
 
@@ -102,7 +102,7 @@ pub struct TaskControlBlock {
     pub stack_base: u32,
     pub stack_size: u32,
     pub stack_hwm: u32,
-    pub context: TaskContext,
+    pub context: Context,
     pub quantum: u32,
     pub sleep_until: u64,
     /// Set while the task's priority is boosted by inheritance: the value to
@@ -134,7 +134,7 @@ impl TaskControlBlock {
             stack_base: 0,
             stack_size: 0,
             stack_hwm: 0,
-            context: TaskContext::zeroed(),
+            context: <Context as hal::arch::TaskContext>::ZERO,
             quantum: 0,
             sleep_until: 0,
             boosted_from: None,
@@ -382,9 +382,10 @@ impl Scheduler {
     }
 
     fn another_ready_at(&self, prio: u8, except: u32) -> bool {
-        self.tasks.iter().flatten().any(|t| {
-            t.id != except && t.priority == prio && t.state == TaskState::Ready
-        })
+        self.tasks
+            .iter()
+            .flatten()
+            .any(|t| t.id != except && t.priority == prio && t.state == TaskState::Ready)
     }
 
     /// Pick the next task to run. Round-robin within the top ready priority.
@@ -539,7 +540,9 @@ impl Scheduler {
     }
 
     pub fn base_priority(&self, id: u32) -> u8 {
-        self.tasks[id as usize].as_ref().map_or(IDLE_PRIORITY, |t| t.base_prio)
+        self.tasks[id as usize]
+            .as_ref()
+            .map_or(IDLE_PRIORITY, |t| t.base_prio)
     }
 }
 
@@ -611,12 +614,11 @@ pub fn try_with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> Option<R> {
     SCHEDULER.try_with(f)
 }
 
-
 /// Request a context switch: set the flag and raise the software interrupt so
 /// the switch happens in the trap handler.
 pub fn request_switch() {
     set_pending_switch();
-    unsafe { crate::arch::registers::request_switch() }
+    crate::arch::SelectedArch::request_switch();
 }
 
 // ── Affinity tests ──────────────────────────────────────────────────────────
@@ -668,7 +670,12 @@ mod affinity_tests {
         // second core for every application that never thought about it.
         let _k = testsupport::lock();
         let id = testsupport::task(5);
-        with(|s| assert_eq!(s.tasks[id as usize].as_ref().unwrap().affinity, Affinity::Any));
+        with(|s| {
+            assert_eq!(
+                s.tasks[id as usize].as_ref().unwrap().affinity,
+                Affinity::Any
+            )
+        });
     }
 
     #[test]
@@ -692,7 +699,10 @@ mod affinity_tests {
         // task pinned to the *other* one.
         let core = crate::smp::current_core();
         let aff = with(|s| s.tasks[picked as usize].as_ref().unwrap().affinity);
-        assert!(aff.allows(core), "picked {picked}, pinned {aff:?}, on {core:?}");
+        assert!(
+            aff.allows(core),
+            "picked {picked}, pinned {aff:?}, on {core:?}"
+        );
     }
 
     #[test]
@@ -786,4 +796,3 @@ mod affinity_tests {
         .is_none());
     }
 }
-

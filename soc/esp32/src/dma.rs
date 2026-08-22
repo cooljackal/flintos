@@ -71,7 +71,8 @@ impl hal::dma::DmaReach for DmaReach {
         }
         // Both ends must land inside the window; `reachable` is an inclusive
         // lower / exclusive upper check, so the last byte is `addr + len - 1`.
-        reachable(addr) && reachable(addr + len - 1)
+        addr.checked_add(len - 1)
+            .is_some_and(|last| reachable(addr) && reachable(last))
     }
 }
 

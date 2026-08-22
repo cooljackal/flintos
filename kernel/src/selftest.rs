@@ -28,9 +28,9 @@
 //! [FLINT] SELFTEST END pass=4 fail=1
 //! ```
 
-use crate::arch::registers;
-use crate::arch::Tick;
+use crate::arch::{SelectedArch, Tick};
 use crate::debug::fault::raw_print;
+use hal::arch::Architecture;
 use hal::tick::TickSource;
 
 #[path = "selftest_races.rs"]
@@ -105,13 +105,43 @@ pub fn run() {
     let mut pass = 0u32;
     let mut fail = 0u32;
 
-    check("timer_preserves_windowed_context", timer_preserves_windowed_context(), &mut pass, &mut fail);
-    check("deep_window_recursion_returns_intact", deep_window_recursion_returns_intact(), &mut pass, &mut fail);
-    check("call8_windows_survive_preemption", call8_windows_survive_preemption(), &mut pass, &mut fail);
-    check("an_erase_does_not_stop_an_iram_safe_interrupt", flash::an_erase_does_not_stop_an_iram_safe_interrupt(), &mut pass, &mut fail);
+    check(
+        "timer_preserves_windowed_context",
+        timer_preserves_windowed_context(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "deep_window_recursion_returns_intact",
+        deep_window_recursion_returns_intact(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "call8_windows_survive_preemption",
+        call8_windows_survive_preemption(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "an_erase_does_not_stop_an_iram_safe_interrupt",
+        flash::an_erase_does_not_stop_an_iram_safe_interrupt(),
+        &mut pass,
+        &mut fail,
+    );
     check("tick_advances", tick_advances(), &mut pass, &mut fail);
-    check("tick_never_goes_backwards", tick_never_goes_backwards(), &mut pass, &mut fail);
-    check("critical_section_masks_the_tick", critical_section_masks_the_tick(), &mut pass, &mut fail);
+    check(
+        "tick_never_goes_backwards",
+        tick_never_goes_backwards(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "critical_section_masks_the_tick",
+        critical_section_masks_the_tick(),
+        &mut pass,
+        &mut fail,
+    );
 
     // Light sleep pauses the CPU clock, so the tick freezes and must be
     // reconciled from the RTC on wake. Short and timer-armed, so a bad config
@@ -122,19 +152,74 @@ pub fn run() {
     // Task-versus-ISR races. These are the reason an on-target suite exists at
     // all: the host stand-ins mask nothing, so none of the properties below is
     // even falsifiable there.
-    check("nested_critical_sections_stay_masked", races::nested_critical_sections_stay_masked(), &mut pass, &mut fail);
-    check("interrupt_depth_returns_to_zero", races::interrupt_depth_returns_to_zero(), &mut pass, &mut fail);
-    check("ready_mask_agrees_with_task_states", races::ready_mask_agrees_with_task_states(), &mut pass, &mut fail);
-    check("pending_switch_is_taken_once", races::pending_switch_is_taken_once(), &mut pass, &mut fail);
-    check("mutex_cycle_under_ticks_leaves_no_residue", races::mutex_cycle_under_ticks_leaves_no_residue(), &mut pass, &mut fail);
-    check("isr_queue_delivers_exactly_once", races::isr_queue_delivers_exactly_once(), &mut pass, &mut fail);
+    check(
+        "nested_critical_sections_stay_masked",
+        races::nested_critical_sections_stay_masked(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "interrupt_depth_returns_to_zero",
+        races::interrupt_depth_returns_to_zero(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "ready_mask_agrees_with_task_states",
+        races::ready_mask_agrees_with_task_states(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "pending_switch_is_taken_once",
+        races::pending_switch_is_taken_once(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "mutex_cycle_under_ticks_leaves_no_residue",
+        races::mutex_cycle_under_ticks_leaves_no_residue(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "isr_queue_delivers_exactly_once",
+        races::isr_queue_delivers_exactly_once(),
+        &mut pass,
+        &mut fail,
+    );
 
-    check("dport_read_agrees_with_a_plain_read", dport::dport_read_agrees_with_a_plain_read(), &mut pass, &mut fail);
-    check("dport_read_leaves_the_tick_running", dport::dport_read_leaves_the_tick_running(), &mut pass, &mut fail);
-    check("timg_counts_at_the_rate_it_was_given", timg::timg_counts_at_the_rate_it_was_given(), &mut pass, &mut fail);
-    check("a_timg_alarm_fires_once_from_the_isr", timg::a_timg_alarm_fires_once_from_the_isr(), &mut pass, &mut fail);
+    check(
+        "dport_read_agrees_with_a_plain_read",
+        dport::dport_read_agrees_with_a_plain_read(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "dport_read_leaves_the_tick_running",
+        dport::dport_read_leaves_the_tick_running(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "timg_counts_at_the_rate_it_was_given",
+        timg::timg_counts_at_the_rate_it_was_given(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "a_timg_alarm_fires_once_from_the_isr",
+        timg::a_timg_alarm_fires_once_from_the_isr(),
+        &mut pass,
+        &mut fail,
+    );
 
-    check("a_periodic_alarm_keeps_firing_at_its_rate", timg::a_periodic_alarm_keeps_firing_at_its_rate(), &mut pass, &mut fail);
+    check(
+        "a_periodic_alarm_keeps_firing_at_its_rate",
+        timg::a_periodic_alarm_keeps_firing_at_its_rate(),
+        &mut pass,
+        &mut fail,
+    );
 
     // The CPU clock the boot path raised to 240 MHz, checked against the RTC
     // measurement and cross-checked against the APB-clocked TIMG. After the TIMG
@@ -157,13 +242,28 @@ pub fn run() {
             "this board declares no externally-held-high ADC1 pin",
         ),
     }
-    check("every_adc1_channel_converts", adc::every_adc1_channel_converts(), &mut pass, &mut fail);
+    check(
+        "every_adc1_channel_converts",
+        adc::every_adc1_channel_converts(),
+        &mut pass,
+        &mut fail,
+    );
 
     // DAC↔ADC2 shared-pad loopback: GPIO 25/26 are both DAC and ADC2 channels,
     // so the DAC's output is read straight back on the same pin. Tests both
     // drivers and the ADC2 radio interlock.
-    check("dac_drives_and_adc2_reads_it_back", dac_adc2::dac_drives_and_adc2_reads_it_back(), &mut pass, &mut fail);
-    check("adc2_refuses_a_read_while_the_radio_is_up", dac_adc2::adc2_refuses_a_read_while_the_radio_is_up(), &mut pass, &mut fail);
+    check(
+        "dac_drives_and_adc2_reads_it_back",
+        dac_adc2::dac_drives_and_adc2_reads_it_back(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "adc2_refuses_a_read_while_the_radio_is_up",
+        dac_adc2::adc2_refuses_a_read_while_the_radio_is_up(),
+        &mut pass,
+        &mut fail,
+    );
 
     // TWAI (CAN) self-test loopback: transmit a frame and self-receive it on
     // one pad. Needs a free GPIO the board declares.
@@ -315,25 +415,90 @@ pub fn run() {
         ),
     }
 
-    check("dport_modify_changes_only_its_own_bit", dport::dport_modify_changes_only_its_own_bit(), &mut pass, &mut fail);
+    check(
+        "dport_modify_changes_only_its_own_bit",
+        dport::dport_modify_changes_only_its_own_bit(),
+        &mut pass,
+        &mut fail,
+    );
 
     // The radio heap. The allocator is host-tested; what needs the chip is
     // that the reclaimed regions are real, writable, and nobody else's.
-    check("reclaimed_memory_is_available", heap::reclaimed_memory_is_available(), &mut pass, &mut fail);
-    check("general_memory_holds_a_pattern", heap::general_memory_holds_a_pattern(), &mut pass, &mut fail);
-    check("two_allocations_do_not_overlap", heap::two_allocations_do_not_overlap(), &mut pass, &mut fail);
-    check("dma_memory_is_where_dma_can_reach", heap::dma_memory_is_where_dma_can_reach(), &mut pass, &mut fail);
-    check("every_allocation_is_dma_capable", heap::every_allocation_is_dma_capable(), &mut pass, &mut fail);
-    check("the_pool_returns_to_full_after_use", heap::the_pool_returns_to_full_after_use(), &mut pass, &mut fail);
+    check(
+        "reclaimed_memory_is_available",
+        heap::reclaimed_memory_is_available(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "general_memory_holds_a_pattern",
+        heap::general_memory_holds_a_pattern(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "two_allocations_do_not_overlap",
+        heap::two_allocations_do_not_overlap(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "dma_memory_is_where_dma_can_reach",
+        heap::dma_memory_is_where_dma_can_reach(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "every_allocation_is_dma_capable",
+        heap::every_allocation_is_dma_capable(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "the_pool_returns_to_full_after_use",
+        heap::the_pool_returns_to_full_after_use(),
+        &mut pass,
+        &mut fail,
+    );
 
     // Dynamic kernel objects. The allocator logic is host-tested; these need
     // the chip because a task's stack_base is a u32 and the host heap is not.
-    check("a_dynamic_task_returns_its_stack", dynobj::a_dynamic_task_returns_its_stack(), &mut pass, &mut fail);
-    check("task_churn_does_not_leak", dynobj::task_churn_does_not_leak(), &mut pass, &mut fail);
-    check("the_reaper_returns_a_deleted_task_s_stack", dynobj::the_reaper_returns_a_deleted_task_s_stack(), &mut pass, &mut fail);
-    check("the_reaper_skips_a_task_a_core_is_on", dynobj::the_reaper_skips_a_task_a_core_is_on(), &mut pass, &mut fail);
-    check("a_dynamic_queue_round_trips_on_hardware", dynobj::a_dynamic_queue_round_trips_on_hardware(), &mut pass, &mut fail);
-    check("semaphores_and_event_bits_work_on_target", dynobj::semaphores_and_event_bits_work_on_target(), &mut pass, &mut fail);
+    check(
+        "a_dynamic_task_returns_its_stack",
+        dynobj::a_dynamic_task_returns_its_stack(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "task_churn_does_not_leak",
+        dynobj::task_churn_does_not_leak(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "the_reaper_returns_a_deleted_task_s_stack",
+        dynobj::the_reaper_returns_a_deleted_task_s_stack(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "the_reaper_skips_a_task_a_core_is_on",
+        dynobj::the_reaper_skips_a_task_a_core_is_on(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "a_dynamic_queue_round_trips_on_hardware",
+        dynobj::a_dynamic_queue_round_trips_on_hardware(),
+        &mut pass,
+        &mut fail,
+    );
+    check(
+        "semaphores_and_event_bits_work_on_target",
+        dynobj::semaphores_and_event_bits_work_on_target(),
+        &mut pass,
+        &mut fail,
+    );
 
     // SHA/AES accelerators (#33). Pure compute — no pins — so it needs no
     // board wiring; each check cross-verifies the hardware against the software
@@ -617,8 +782,12 @@ fn critical_section_masks_the_tick() -> Check {
 /// that boundary, which a plain subtraction would get wrong roughly once every
 /// 18 seconds at 240 MHz.
 pub(crate) fn spin_cycles(cycles: u32) {
-    let start = unsafe { registers::read_ccount() };
-    while unsafe { registers::read_ccount() }.wrapping_sub(start) < cycles {
+    let start = SelectedArch::cycle_count().expect("target self-test requires a cycle counter");
+    while SelectedArch::cycle_count()
+        .expect("cycle counter disappeared")
+        .wrapping_sub(start)
+        < cycles
+    {
         core::hint::spin_loop();
     }
 }

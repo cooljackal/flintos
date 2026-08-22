@@ -29,55 +29,37 @@
 // ── Target: the real thing ──────────────────────────────────────────────────
 
 #[cfg(target_os = "none")]
-pub use arch_xtensa::{cs_enter, cs_exit, cs_with};
-#[cfg(target_os = "none")]
 pub use arch_xtensa::registers;
 #[cfg(target_os = "none")]
 pub use arch_xtensa::smp::XtensaSmp as Smp;
 #[cfg(target_os = "none")]
 pub use arch_xtensa::tick::XtensaTick as Tick;
-
-/// Park the CPU until the next interrupt.
-///
-/// Always called inside a `loop`; it is one instruction, not a loop itself.
 #[cfg(target_os = "none")]
-#[inline]
-pub fn wait_for_interrupt() {
-    unsafe { core::arch::asm!("waiti 0") };
-}
-
-/// Park the CPU with every maskable interrupt masked — a terminal halt.
+pub use arch_xtensa::XtensaArch as SelectedArch;
 #[cfg(target_os = "none")]
-#[inline]
-pub fn wait_masked() {
-    unsafe { core::arch::asm!("waiti 15") };
-}
+pub use arch_xtensa::{cs_enter, cs_exit, cs_with};
 
 // ── Host: stand-ins, with the instrumentation the real ones cannot offer ────
 
 #[cfg(not(target_os = "none"))]
-pub use host::{cs_enter, cs_exit, cs_with, registers, HostSmp as Smp, HostTick as Tick};
+pub use host::{
+    cs_enter, cs_exit, cs_with, registers, HostArch as SelectedArch, HostSmp as Smp,
+    HostTick as Tick,
+};
 
-/// On a host these are only reachable by mistake: every caller is a terminal
-/// `loop` in code that only runs on hardware (the idle task, the fault
-/// handler, the panic halt). Returning would spin a CI job until it timed out,
-/// so say what happened instead. A hang is the worst failure mode there is —
-/// it reports nothing and costs a runner.
-// Returning `()` rather than `!`, deliberately. Both are called as
-// `loop { wait_for_interrupt(); }`, and a diverging return type turns that into
-// a loop clippy correctly reports as never looping — on the host build only,
-// for a construct that is right on the target. Matching the Xtensa signature
-// exactly keeps the call sites identical on both.
-#[cfg(not(target_os = "none"))]
+/// Saved frame selected with the architecture in exactly one place.
+pub type Context = <SelectedArch as hal::arch::Architecture>::Context;
+
+/// Park until an interrupt, through the selected architecture.
 #[inline]
 pub fn wait_for_interrupt() {
-    panic!("wait_for_interrupt() is target-only; a host test reached hardware idle")
+    <SelectedArch as hal::arch::Architecture>::wait_for_interrupt();
 }
 
-#[cfg(not(target_os = "none"))]
+/// Terminal halt through the selected architecture.
 #[inline]
 pub fn wait_masked() {
-    panic!("wait_masked() is target-only; a host test reached the halt path")
+    <SelectedArch as hal::arch::Architecture>::wait_masked();
 }
 
 #[cfg(not(target_os = "none"))]
@@ -92,6 +74,55 @@ pub mod host {
     extern crate std;
 
     use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+    pub struct HostContext;
+
+    impl hal::arch::TaskContext for HostContext {
+        const ZERO: Self = Self;
+    }
+
+    pub struct HostArch;
+
+    impl hal::arch::Architecture for HostArch {
+        type Context = HostContext;
+
+        unsafe fn init_context(_context: &mut HostContext, _entry: usize, _stack_top: u32) {}
+
+        unsafe fn save_context(_frame: *const HostContext, _saved: &mut HostContext) {}
+
+        fn restore_context(saved: &mut HostContext) -> *mut HostContext {
+            saved
+        }
+
+        fn request_switch() {
+            SWITCH_REQUESTS.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn wait_for_interrupt() {
+            panic!("wait_for_interrupt() is target-only; a host test reached hardware idle")
+        }
+
+        fn wait_masked() {
+            panic!("wait_masked() is target-only; a host test reached the halt path")
+        }
+
+        fn cycle_count() -> Option<u32> {
+            None
+        }
+
+        unsafe fn trap_cause(_frame: *const HostContext) -> hal::arch::TrapCause {
+            panic!("trap_cause() is target-only; a host test entered a trap")
+        }
+
+        fn acknowledge_switch_request() {}
+
+        fn context_diagnostics(_context: &HostContext) -> hal::arch::ContextDiagnostics {
+            hal::arch::ContextDiagnostics {
+                pc: 0,
+                architecture_state: 0,
+            }
+        }
+    }
 
     /// Core identity on a host.
     ///
@@ -142,7 +173,6 @@ pub mod host {
             MY_CONTEXT.with(|c| *c)
         }
     }
-
 
     // Per-thread, because masking is per-core and a thread stands in for a
     // core here. It was a process-global counter, which meant one test's
@@ -350,21 +380,12 @@ pub mod host {
     /// Register-level stand-ins. Same names and signatures as the Xtensa ones,
     /// so no call site needs a `cfg`.
     pub mod registers {
-        use super::{AtomicU32, Ordering, SWITCH_REQUESTS};
+        use super::{AtomicU32, Ordering};
 
         /// PS.WOE — Window Overflow Enable, bit 18. A bit pattern, not a
         /// machine action, so the real value is used: `spawn` writes it into
         /// the initial PS of a task frame, and a test may check that framing.
         pub const PS_WOE: u32 = 1 << 18;
-
-        /// Record a context-switch request instead of raising a software
-        /// interrupt.
-        ///
-        /// # Safety
-        /// Sound on a host. `unsafe` only to match the Xtensa signature.
-        pub unsafe fn request_switch() {
-            SWITCH_REQUESTS.fetch_add(1, Ordering::SeqCst);
-        }
 
         /// # Safety
         /// Sound on a host; `unsafe` matches the Xtensa signature.

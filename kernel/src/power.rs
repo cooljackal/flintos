@@ -66,7 +66,7 @@ pub fn ticks_elapsed(elapsed_us: u64, period_us: u32) -> u64 {
 /// never resolved: continuing would mean running with a clock the kernel knows
 /// is wrong, which the project's philosophy forbids over a plausible-looking
 /// wrong result.
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "soc-esp32"))]
 pub fn light_sleep(ms: u32) -> u64 {
     use crate::arch::Tick;
 
@@ -99,7 +99,7 @@ pub fn light_sleep(ms: u32) -> u64 {
 ///
 /// # Panics
 /// As [`light_sleep`], if the RTC clock is stopped.
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "soc-esp32"))]
 pub fn deep_sleep(ms: u32) {
     match unsafe { soc_esp32::sleep::deep_sleep((ms as u64) * 1_000) } {
         // Rejected/timeout: CPU still running, no state lost, nothing to do.

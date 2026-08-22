@@ -10,12 +10,13 @@
 //! idle task, interrupt unmasking. Everything below it is the application's.
 
 use crate::arch::registers;
-use crate::arch::Tick;
+use crate::arch::{SelectedArch, Tick};
+use hal::arch::Architecture;
 use hal::tick::TickSource;
 
-use crate::{board, debug, scheduler};
 #[cfg(target_os = "none")]
 use crate::clock;
+use crate::{board, debug, scheduler};
 
 /// Print the boot banner over raw UART0.
 ///
@@ -127,7 +128,8 @@ pub extern "C" fn FlintMain() -> ! {
     // (the other PLL user) exists — so nothing races the clock switch.
     #[cfg(target_os = "none")]
     unsafe {
-        soc_esp32::cpu_clk::set_240mhz();
+        use hal::soc::SystemOnChip;
+        crate::board::SelectedSoc::configure_cpu_clock();
     }
 
     // If the last boot panicked, say so now that there is a console to say it
@@ -150,9 +152,11 @@ pub extern "C" fn FlintMain() -> ! {
     // before any second core exists to race the one write it makes.
     #[cfg(target_os = "none")]
     if !unsafe { clock::init() } {
-        debug::fault::raw_print("[FLINT] TIMG1/T1 unavailable: now_us() will read 0
+        debug::fault::raw_print(
+            "[FLINT] TIMG1/T1 unavailable: now_us() will read 0
 
-");
+",
+        );
     }
 
     let (cpu_hz, measured) = measure_cpu_hz();
@@ -240,13 +244,17 @@ pub extern "C" fn FlintMain() -> ! {
 /// exist and are armed for different reasons, so "a watchdog did it" is not an
 /// answer -- the register distinguishes them and this prints which.
 fn report_reset_cause() {
-    let cause = unsafe { soc_esp32::reset::cause() };
+    use hal::soc::SystemOnChip;
+
+    let cause = unsafe { crate::board::SelectedSoc::reset_cause() };
     debug::fault::raw_print("[FLINT] reset cause=");
     debug::fault::raw_dec(cause);
     debug::fault::raw_print(" (");
-    debug::fault::raw_print(soc_esp32::reset::name(cause));
-    debug::fault::raw_print(")
-");
+    debug::fault::raw_print(crate::board::SelectedSoc::reset_cause_name(cause));
+    debug::fault::raw_print(
+        ")
+",
+    );
 }
 
 /// Report what `startup.S` left behind: vector table, window state, stack.
@@ -292,8 +300,7 @@ fn report_boot_state() {
 /// number itself: every timeout in the system is scaled by it, so an assumed
 /// value produces a kernel whose delays are all wrong by the same factor.
 /// Whether [`measure_cpu_hz`] got a real answer or fell back.
-static CPU_HZ_MEASURED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static CPU_HZ_MEASURED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// Time CCOUNT against the RTC slow clock to find the CPU frequency.
 ///
@@ -303,8 +310,8 @@ static CPU_HZ_MEASURED: core::sync::atomic::AtomicBool =
 ///
 /// # Why this lives in the kernel
 ///
-/// It needs a cycle counter and a reference clock: `arch::registers` has the
-/// first, `soc_esp32::rtc` the second, and neither crate may name the other --
+/// It needs a cycle counter and a reference clock: the architecture has the
+/// first, the selected SoC the second, and neither crate may name the other --
 /// `arch/*` and `soc/*` both depend on `hal` and nothing else. `arch-xtensa`
 /// used to do it anyway by carrying its own copy of RTC_CNTL's base address
 /// and offsets, which put an ESP32 peripheral inside the crate whose subject
@@ -312,58 +319,28 @@ static CPU_HZ_MEASURED: core::sync::atomic::AtomicBool =
 ///
 /// The kernel is the one place allowed to name both, so the measurement
 /// belongs here and `TickSource::init` takes the answer.
-#[cfg(target_os = "none")]
 fn measure_cpu_hz() -> (u32, bool) {
-    use soc_esp32::rtc;
+    use hal::soc::SystemOnChip;
 
-    /// RTC slow-clock ticks to measure across. ~1500 is ~10 ms at the nominal
-    /// 150 kHz: long enough to average out RC jitter, short enough not to
-    /// visibly delay boot.
-    const MEASURE_RTC_TICKS: u64 = 1500;
-    /// Bound on CCOUNT cycles spent waiting for the RTC counter to move, so a
-    /// stuck RTC block cannot hang boot. 50M cycles is ~0.6 s at 80 MHz, and
-    /// nowhere near the ~4.29e9 where a 32-bit CCOUNT read could wrap.
-    const MEASURE_TIMEOUT_CYCLES: u32 = 50_000_000;
-    /// Polls allowed per RTC sample before calling the clock stopped.
-    const RTC_POLLS: u32 = 10_000;
-
-    let measured = (|| unsafe {
-        let rtc0 = rtc::counter(RTC_POLLS)?;
-        let c0 = registers::read_ccount();
-        loop {
-            let elapsed_rtc = rtc::counter(RTC_POLLS)?.wrapping_sub(rtc0);
-            if elapsed_rtc >= MEASURE_RTC_TICKS {
-                let cycles = registers::read_ccount().wrapping_sub(c0) as u64;
-                return rtc::round_to_plausible(cycles * rtc::SLOW_HZ_NOMINAL / elapsed_rtc);
-            }
-            if registers::read_ccount().wrapping_sub(c0) > MEASURE_TIMEOUT_CYCLES {
-                return None; // the RTC counter never moved
-            }
-        }
-    })();
+    let measured = crate::board::SelectedSoc::measure_cpu_hz(SelectedArch::cycle_count);
 
     match measured {
         Some(hz) => (hz, true),
-        None => (rtc::DEFAULT_CPU_HZ, false),
+        None => (crate::board::SelectedSoc::DEFAULT_CPU_HZ, false),
     }
-}
-
-/// Host stand-in: there is no CCOUNT and no RTC to time it against. Returns the
-/// same default the on-target path falls back to, from the one source.
-#[cfg(not(target_os = "none"))]
-fn measure_cpu_hz() -> (u32, bool) {
-    (soc_esp32::rtc::DEFAULT_CPU_HZ, false)
 }
 
 fn report_clock() {
     debug::fault::raw_print("[FLINT] cpu_hz=");
     debug::fault::raw_dec(Tick::cpu_hz());
-    debug::fault::raw_print(if CPU_HZ_MEASURED.load(core::sync::atomic::Ordering::Relaxed) {
-        " (measured: CCOUNT timed against RTC slow clock)\r\n"
-    } else {
-        " (ASSUMED -- RTC measurement failed or was implausible; \
+    debug::fault::raw_print(
+        if CPU_HZ_MEASURED.load(core::sync::atomic::Ordering::Relaxed) {
+            " (measured: CCOUNT timed against RTC slow clock)\r\n"
+        } else {
+            " (ASSUMED -- RTC measurement failed or was implausible; \
           falling back to the hardcoded constant, which may be WRONG)\r\n"
-    });
+        },
+    );
     debug::fault::raw_print("[FLINT] tick period=");
     debug::fault::raw_dec(Tick::ticks_per_period());
     debug::fault::raw_print(" CCOUNT ticks\r\n");
@@ -470,7 +447,9 @@ pub unsafe fn join_scheduler() -> ! {
 
     let me = crate::smp::current_core();
     scheduler::with(|sched| {
-        let id = sched.alloc_id().expect("no TCB slot for a secondary idle task");
+        let id = sched
+            .alloc_id()
+            .expect("no TCB slot for a secondary idle task");
         if let Some(tcb) = &mut sched.tasks[id as usize] {
             tcb.name = "idle1";
             tcb.entry = Some(idle_loop_entry);
