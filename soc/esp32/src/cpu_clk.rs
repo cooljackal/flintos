@@ -124,7 +124,7 @@ pub unsafe fn set_240mhz() {
     //    Update g_ticks_per_us first, so the delays below are paced correctly.
     update_cpu_freq(40);
     reg::modify(SYSCON_SYSCLK_CONF as *mut u32, PRE_DIV_CNT_MASK, 0); // divide by 1
-    (SYSCON_XTAL_TICK_CONF as *mut u32).write_volatile(39); // 40 MHz / 1 MHz - 1
+    (SYSCON_XTAL_TICK_CONF as *mut u32).write_volatile(xtal_tick_conf(40)); // 40 MHz / 1 MHz - 1
     reg::modify(RTC_CNTL_CLK_CONF as *mut u32, SOC_CLK_SEL_MASK, SOC_CLK_SEL_XTL);
     apb_freq_update(40);
     reg::modify(RTC_CNTL_REG as *mut u32, DIG_DBIAS_MASK, DIG_DBIAS_XTAL);
@@ -169,6 +169,61 @@ pub unsafe fn set_240mhz() {
 /// halves — the encoding esp-idf's `clk_val_to_reg_val` produces.
 #[inline]
 unsafe fn apb_freq_update(mhz: u32) {
-    let v = ((mhz * 1_000_000) >> 12) & 0xFFFF;
-    (RTC_APB_FREQ_REG as *mut u32).write_volatile(v | (v << 16));
+    (RTC_APB_FREQ_REG as *mut u32).write_volatile(apb_freq_reg_val(mhz * 1_000_000));
+}
+
+/// The value `esp_hw_support/port/esp32/rtc_clk.c` `rtc_clk_apb_freq_update`
+/// stores in `RTC_APB_FREQ_REG`: `clk_val_to_reg_val(hz >> 12)`, i.e. the low
+/// 16 bits of `hz >> 12` copied into both halves. Pure so the encoding can be
+/// checked on the host, where a wrong shift or a missing duplication is silent.
+const fn apb_freq_reg_val(hz: u32) -> u32 {
+    let v = (hz >> 12) & 0xFFFF;
+    v | (v << 16)
+}
+
+/// The `SYSCON_XTAL_TICK_CONF` value for a given crystal: one microsecond of
+/// crystal ticks, minus one, so the APB µs reference divides cleanly. esp-idf
+/// writes `xtal_freq_mhz - 1` (`rtc_clk.c`, `rtc_clk_cpu_freq_set_config`).
+/// Pure so the off-by-one is testable off-target.
+const fn xtal_tick_conf(xtal_mhz: u32) -> u32 {
+    xtal_mhz - 1
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apb_reg_val_duplicates_the_shifted_halves() {
+        // 80 MHz APB: 80_000_000 >> 12 = 19531 (0x4C4B), copied into both
+        // halves. This is the number the Wi-Fi blob reads back for its timing,
+        // so a wrong shift here mis-times the radio silently.
+        assert_eq!(apb_freq_reg_val(80_000_000), 0x4C4B_4C4B);
+        // 40 MHz APB (the crystal step mid-sequence).
+        assert_eq!(apb_freq_reg_val(40_000_000), 0x2625_2625);
+        // Both halves always match — the validity invariant every reader uses.
+        for hz in [40_000_000u32, 80_000_000, 26_000_000] {
+            let v = apb_freq_reg_val(hz);
+            assert_eq!(v & 0xFFFF, v >> 16, "halves must match");
+        }
+    }
+
+    #[test]
+    fn xtal_tick_conf_is_mhz_minus_one() {
+        // 40 MHz / 1 MHz - 1 = 39; a plain 40 would stretch the µs reference.
+        assert_eq!(xtal_tick_conf(XTAL_40MHZ_TICK_INPUT), 39);
+        assert_eq!(xtal_tick_conf(26), 25);
+    }
+
+    /// Documents the crystal the sequence is transcribed for.
+    const XTAL_40MHZ_TICK_INPUT: u32 = 40;
+
+    #[test]
+    fn cpuperiod_selects_the_240_case() {
+        // CPUPERIOD_SEL == 2 is the 480/2 = 240 MHz case in the TRM; 0 and 1
+        // are 160 and are-you-sure territory.
+        assert_eq!(CPUPERIOD_SEL_240, 2);
+    }
 }
