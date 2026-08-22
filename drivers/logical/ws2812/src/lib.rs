@@ -59,18 +59,20 @@ pub struct Timing {
     pub zero_low_ns: u32,
     pub one_high_ns: u32,
     pub one_low_ns: u32,
-    /// Line held low to latch the frame.
-    pub reset_us: u32,
 }
 
 impl Timing {
     /// The datasheet figures, which both WS2812B and SK6812 accept.
+    ///
+    /// The inter-frame reset (the ~80 µs low period that latches the frame) is
+    /// not here: it belongs to whatever drives the line, so the [`PulseEmitter`]
+    /// owns it in [`PulseEmitter::finish`], and a timing figure this struct
+    /// never reads would only invite the two to disagree.
     pub const WS2812: Self = Self {
         zero_high_ns: 350,
         zero_low_ns: 800,
         one_high_ns: 700,
         one_low_ns: 600,
-        reset_us: 80,
     };
 }
 

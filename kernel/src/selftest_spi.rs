@@ -69,7 +69,7 @@ pub(crate) fn spi_bus_loopback_round_trips(scratch: u8, sck: u8, miso_placeholde
         p.write(Some(spi));
         (*p).as_ref().unwrap()
     };
-    let bus = SpiBus::new(dev, config);
+    let bus = SpiBus::new(dev);
 
     let txb = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(TXB) as *mut u8, MAX) };
     let rxb = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(RXB) as *mut u8, MAX) };

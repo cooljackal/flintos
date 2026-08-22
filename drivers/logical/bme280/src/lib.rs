@@ -53,6 +53,9 @@ use api::bus::{BusError, BusHandle, BusResult};
 // register address, so the constants are used unmodified either way.
 const REG_ID: u8 = 0xD0;
 const REG_RESET: u8 = 0xE0;
+/// Datasheet soft-reset command word: writing it to `REG_RESET` reboots the
+/// device. Any other value is ignored.
+const RESET_CMD: u8 = 0xB6;
 const REG_CTRL_HUM: u8 = 0xF2;
 const REG_CTRL_MEAS: u8 = 0xF4;
 const REG_CONFIG: u8 = 0xF5;
@@ -161,7 +164,7 @@ impl Bme280 {
             _ => return Err(BusError::DeviceNotResponding),
         };
 
-        self.write_reg(REG_RESET, 0xB6)?;
+        self.write_reg(REG_RESET, RESET_CMD)?;
         let calib = self.read_calibration(variant)?;
 
         if variant == Variant::Bme280 {

@@ -16,14 +16,16 @@ const MAX_TRANSFER: usize = 64;
 /// SPI bus abstraction.
 pub struct SpiBus {
     phys: &'static dyn PhysicalBus,
-    #[allow(dead_code)]
-    config: api::bus::BusConfig,
 }
 
 impl SpiBus {
     /// Create a new SPI bus wrapping a physical driver.
-    pub fn new(phys: &'static dyn PhysicalBus, config: api::bus::BusConfig) -> Self {
-        Self { phys, config }
+    ///
+    /// The bus's configuration (pins, mode, speed) is applied to the physical
+    /// driver at `init` time by whoever constructs it; this wrapper holds no
+    /// copy of its own, and speed changes go straight through to `phys`.
+    pub fn new(phys: &'static dyn PhysicalBus) -> Self {
+        Self { phys }
     }
 }
 
@@ -78,7 +80,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{BusConfig, BusHandle, SpiMode};
+    use api::bus::{BusConfig, BusHandle};
     use core::sync::atomic::{AtomicU32, Ordering};
     use std::boxed::Box;
     use std::sync::Mutex;
@@ -109,20 +111,10 @@ mod tests {
         std::boxed::Box::leak(std::boxed::Box::new(MockSpi { last_speed_hz: AtomicU32::new(0) }))
     }
 
-    fn config() -> BusConfig {
-        BusConfig::Spi {
-            mosi: 23,
-            miso: 19,
-            sck: 18,
-            max_speed: BusSpeed::MHz(1),
-            mode: SpiMode::Mode0,
-        }
-    }
-
     #[test]
     fn exchange_echoes_tx_into_rx() {
         let phys = mock();
-        let bus = SpiBus::new(phys, config());
+        let bus = SpiBus::new(phys);
         let mut rx = [0u8; 4];
         bus.transfer(&mut [Op::exchange(b"data", &mut rx)]).unwrap();
         assert_eq!(&rx, b"data");
@@ -131,7 +123,7 @@ mod tests {
     #[test]
     fn a_read_op_clocks_zeros_and_fills_the_buffer() {
         let phys = mock();
-        let bus = SpiBus::new(phys, config());
+        let bus = SpiBus::new(phys);
         let mut rx = [0xAAu8; 3];
         bus.transfer(&mut [Op::read(&mut rx)]).unwrap();
         // MockSpi echoes tx (zeros) into rx.
@@ -141,7 +133,7 @@ mod tests {
     #[test]
     fn a_non_byte_word_is_rejected() {
         let phys = mock();
-        let bus = SpiBus::new(phys, config());
+        let bus = SpiBus::new(phys);
         let mut rx = [0u8; 2];
         assert_eq!(
             bus.transfer(&mut [Op::exchange(b"hi", &mut rx).with_word_bits(16)]),
@@ -152,7 +144,7 @@ mod tests {
     #[test]
     fn set_speed_reaches_the_physical_driver() {
         let phys = mock();
-        let bus = SpiBus::new(phys, config());
+        let bus = SpiBus::new(phys);
         assert!(bus.set_speed(BusSpeed::MHz(8)).is_ok());
     }
 
@@ -179,7 +171,7 @@ mod tests {
     fn recording() -> (SpiBus, &'static SendRecorder) {
         let rec: &'static SendRecorder =
             Box::leak(Box::new(SendRecorder { sent: Mutex::new(Vec::new()) }));
-        (SpiBus::new(rec, config()), rec)
+        (SpiBus::new(rec), rec)
     }
 
     #[test]
@@ -197,7 +189,7 @@ mod tests {
     fn logical_drivers_still_reach_it_through_bushandle() {
         // The Layer-3 surface (write/read/transfer/write_read) is unchanged.
         let phys = mock();
-        let bus: &'static SpiBus = std::boxed::Box::leak(std::boxed::Box::new(SpiBus::new(phys, config())));
+        let bus: &'static SpiBus = std::boxed::Box::leak(std::boxed::Box::new(SpiBus::new(phys)));
         let handle = BusHandle::new(bus);
         let mut rx = [0u8; 4];
         assert!(handle.transfer(b"data", &mut rx).is_ok());

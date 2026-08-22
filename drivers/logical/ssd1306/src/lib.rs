@@ -126,9 +126,7 @@ impl Ssd1306 {
         self.cmd(0)?;
         self.cmd(self.pages - 1)?;
 
-        for _ in 0..total {
-            self.data(0x00)?;
-        }
+        self.fill_data(0x00, total as usize)?;
         Ok(())
     }
 
@@ -142,14 +140,50 @@ impl Ssd1306 {
         result
     }
 
-    /// Send a GRAM data byte. I2C-only: prefixes the 0x40 "data stream"
-    /// control byte — see the module-level docs for why this cannot also
-    /// serve SPI.
-    fn data(&self, byte: u8) -> BusResult<()> {
-        self.bus.select()?;
-        let result = self.bus.write(&[0x40, byte]);
-        self.bus.deselect()?;
-        result
+    /// Largest GRAM run this driver packs into one data transaction, over and
+    /// above the leading 0x40 control byte. The buffers below are sized to it.
+    const DATA_CHUNK: usize = 32;
+
+    /// Per-transaction GRAM capacity: `DATA_CHUNK`, but never more than the
+    /// bus's own limit minus the control byte.
+    fn data_capacity(&self) -> usize {
+        self.bus
+            .max_transfer()
+            .saturating_sub(1)
+            .clamp(1, Self::DATA_CHUNK)
+    }
+
+    /// Write a run of GRAM bytes as `0x40` followed by up to a bus-full of data
+    /// per transaction, instead of one transaction per byte.
+    fn write_data(&self, bytes: &[u8]) -> BusResult<()> {
+        let cap = self.data_capacity();
+        let mut buf = [0x40u8; Self::DATA_CHUNK + 1];
+        for run in bytes.chunks(cap) {
+            buf[1..1 + run.len()].copy_from_slice(run);
+            self.bus.select()?;
+            let result = self.bus.write(&buf[..1 + run.len()]);
+            self.bus.deselect()?;
+            result?;
+        }
+        Ok(())
+    }
+
+    /// Write `count` copies of one GRAM byte, batched like [`write_data`] — the
+    /// GRAM fill that `clear` needs without a `count`-sized buffer.
+    fn fill_data(&self, byte: u8, count: usize) -> BusResult<()> {
+        let cap = self.data_capacity();
+        let mut buf = [0x40u8; Self::DATA_CHUNK + 1];
+        buf[1..1 + cap].fill(byte);
+        let mut remaining = count;
+        while remaining > 0 {
+            let n = remaining.min(cap);
+            self.bus.select()?;
+            let result = self.bus.write(&buf[..1 + n]);
+            self.bus.deselect()?;
+            result?;
+            remaining -= n;
+        }
+        Ok(())
     }
 
     /// Render a temperature reading as text (e.g. "-12.3" or "25.9") on
@@ -172,14 +206,21 @@ impl Ssd1306 {
         self.cmd(0)?;
         self.cmd(end_col as u8)?;
 
+        // Build the row of glyph columns (5 per glyph + 1 spacing) and send it
+        // in batched data transactions rather than one per column.
+        let mut cols = [0u8; 6 * 6];
+        let mut n = 0;
         for (i, &ch) in chars[..len].iter().enumerate() {
             for &col in &glyph_for(ch) {
-                self.data(col)?;
+                cols[n] = col;
+                n += 1;
             }
             if i + 1 < len {
-                self.data(0x00)?; // inter-glyph spacing column
+                cols[n] = 0x00; // inter-glyph spacing column
+                n += 1;
             }
         }
+        self.write_data(&cols[..n])?;
         Ok(())
     }
 }
@@ -258,23 +299,25 @@ mod tests {
     use std::vec::Vec;
 
     // `Bus` requires `Send + Sync`, so recorded writes use a `Mutex`
-    // rather than a `RefCell` (which is not `Sync`).
+    // rather than a `RefCell` (which is not `Sync`). Each transaction is kept
+    // whole: a command is `[0x00, cmd]` and a GRAM run is `[0x40, data..]`, and
+    // batching means a data run is no longer a fixed two bytes.
     struct MockDisplayBus {
-        writes: Mutex<Vec<u8>>,
+        transactions: Mutex<Vec<Vec<u8>>>,
     }
 
     impl Default for MockDisplayBus {
         fn default() -> Self {
-            Self { writes: Mutex::new(Vec::new()) }
+            Self { transactions: Mutex::new(Vec::new()) }
         }
     }
 
     impl Bus for MockDisplayBus {
         fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
             for op in ops.iter_mut() {
-                // The display is write-only; record the command/data bytes.
+                // The display is write-only; record each transaction whole.
                 if let Some(tx) = op.tx {
-                    self.writes.lock().unwrap().extend_from_slice(tx);
+                    self.transactions.lock().unwrap().push(tx.to_vec());
                 }
             }
             Ok(())
@@ -308,19 +351,16 @@ mod tests {
         let display = Ssd1306::new(handle);
         assert!(display.init().is_ok());
 
-        let writes = bus.writes.lock().unwrap();
-        // Every write is [control_byte, payload]; commands use 0x00. Pull
-        // out just the command stream (skip the GRAM-clear data bytes,
-        // which are covered by `ssd1306_clear`) and check the documented
-        // power-up sequence up through charge-pump enable.
-        let mut commands = Vec::new();
-        let mut i = 0;
-        while i + 1 < writes.len() {
-            if writes[i] == 0x00 {
-                commands.push(writes[i + 1]);
-            }
-            i += 2;
-        }
+        let txns = bus.transactions.lock().unwrap();
+        // A command transaction is [0x00, cmd]; a GRAM run is [0x40, data..].
+        // Pull out just the command stream (skip the GRAM-clear data, covered
+        // by `ssd1306_clear`) and check the documented power-up sequence up
+        // through charge-pump enable.
+        let commands: Vec<u8> = txns
+            .iter()
+            .filter(|t| t.first() == Some(&0x00) && t.len() >= 2)
+            .map(|t| t[1])
+            .collect();
         assert_eq!(
             &commands[0..11],
             &[

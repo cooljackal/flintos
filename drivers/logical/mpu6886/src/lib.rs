@@ -136,12 +136,6 @@ impl Mpu6886 {
         Self { bus }
     }
 
-    fn read_reg(&self, reg: u8) -> BusResult<u8> {
-        let mut buf = [0u8; 1];
-        self.bus.transfer(&[reg], &mut buf)?;
-        Ok(buf[0])
-    }
-
     fn write_reg(&self, reg: u8, val: u8) -> BusResult<()> {
         self.bus.write(&[reg, val])
     }
@@ -163,7 +157,7 @@ impl Mpu6886 {
 
     /// The identity register.
     pub fn who_am_i(&self) -> BusResult<u8> {
-        self.read_reg(REG_WHO_AM_I)
+        self.bus.read_reg(REG_WHO_AM_I)
     }
 
     /// Whether an MPU6886 is answering.

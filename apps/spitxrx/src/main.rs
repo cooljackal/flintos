@@ -128,7 +128,7 @@ unsafe fn bring_up(config: &BusConfig, scratch: u8) -> Option<()> {
     mux.route(Signal::SpiMiso(SPI2), scratch, PinConfig::PUSH_PULL).ok()?;
 
     let phys_ref: &'static dyn PhysicalBus = (*addr_of!(PHYS)).as_ref()?;
-    BUS = Some(SpiBus::new(phys_ref, *config));
+    BUS = Some(SpiBus::new(phys_ref));
     Some(())
 }
 

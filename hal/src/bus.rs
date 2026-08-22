@@ -346,6 +346,14 @@ impl BusHandle {
         self.inner.transfer(&mut [Op::read(buf)])
     }
 
+    /// Read one register: exchange its address for one byte back. The common
+    /// "write the address, read the value" any register-mapped device does.
+    pub fn read_reg(&self, reg: u8) -> BusResult<u8> {
+        let mut buf = [0u8; 1];
+        self.transfer(&[reg], &mut buf)?;
+        Ok(buf[0])
+    }
+
     /// Assert chip-select / begin a transaction.
     ///
     /// Chip-select is expressed per-[`Op`] now via [`CsHold`], so this is a

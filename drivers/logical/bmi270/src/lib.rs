@@ -90,16 +90,9 @@ impl Bmi270 {
         Self { bus }
     }
 
-    /// Read one register.
-    fn read_reg(&self, reg: u8) -> BusResult<u8> {
-        let mut buf = [0u8; 1];
-        self.bus.transfer(&[reg], &mut buf)?;
-        Ok(buf[0])
-    }
-
     /// The chip ID register.
     pub fn chip_id(&self) -> BusResult<u8> {
-        self.read_reg(REG_CHIP_ID)
+        self.bus.read_reg(REG_CHIP_ID)
     }
 
     /// Whether the part on the bus is a BMI270.
@@ -117,7 +110,7 @@ impl Bmi270 {
         if id == CHIP_ID {
             return Ok(Identity::Bmi270);
         }
-        if self.read_reg(MPU6886_REG_WHO_AM_I)? == MPU6886_WHO_AM_I {
+        if self.bus.read_reg(MPU6886_REG_WHO_AM_I)? == MPU6886_WHO_AM_I {
             return Ok(Identity::Mpu6886);
         }
         Ok(Identity::Unknown(id))
