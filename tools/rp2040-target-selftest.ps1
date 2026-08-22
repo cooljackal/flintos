@@ -45,6 +45,8 @@ Invoke-Case 'never-disconnected' @{ snapshots=@(@($device)) } @('-Action','obser
 Invoke-Case 'wrong-device-returned' @{ snapshots=@(@($device), @(), @(@{ port='COM9'; instance_id='USB\VID_2E8A&PID_000A\OTHER'; serial='OTHER' })) } @('-Action','observe-reconnect','-TimeoutSeconds','1') 1 'different matching device appeared'
 Invoke-LogCase 'marker-pass' "[FLINT] SELFTEST BEGIN`r`n[FLINT] TEST boot_marker PASS`r`n[FLINT] SELFTEST END pass=1 fail=0`r`n" 0 '"state":"passed"'
 Invoke-LogCase 'marker-dropped-line' "[FLINT] SELFTEST BEGIN`n[FLINT] TEST boot_marker PASS`n[FLINT] SELFTEST END pass=2 fail=0`n" 1 'do not agree'
+Invoke-LogCase 'marker-skip-visible' "[FLINT] SELFTEST BEGIN`n[FLINT] TEST tick_advances PASS`n[FLINT] TEST i2c_loopback SKIP target driver absent`n[FLINT] SELFTEST END pass=1 fail=0`n" 0 '"skipped":1'
+Invoke-LogCase 'marker-malformed-status' "[FLINT] SELFTEST BEGIN`n[FLINT] TEST i2c_loopback OMITTED`n[FLINT] SELFTEST END pass=1 fail=0`n" 1 'no valid PASS, FAIL, or SKIP'
 
 Remove-Item -Recurse -Force -LiteralPath $work
 if ($failures) { throw "$failures RP2040 harness self-test(s) failed" }

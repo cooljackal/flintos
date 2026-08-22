@@ -33,9 +33,12 @@ if ($Action -eq 'judge-log') {
     $reportedFail = [int]$Matches[2]
     $passed = @($lines | Where-Object { $_ -match '^\[FLINT\] TEST .+ PASS$' }).Count
     $failed = @($lines | Where-Object { $_ -match '^\[FLINT\] TEST .+ FAIL(?: .*)?$' }).Count
+    $skipped = @($lines | Where-Object { $_ -match '^\[FLINT\] TEST .+ SKIP .+$' }).Count
+    $testLines = @($lines | Where-Object { $_ -match '^\[FLINT\] TEST ' })
+    if ($testLines.Count -ne ($passed + $failed + $skipped)) { throw 'a test line has no valid PASS, FAIL, or SKIP disposition' }
     if ($passed -ne $reportedPass -or $failed -ne $reportedFail) { throw 'test lines do not agree with summary counts' }
     if ($reportedFail -ne 0 -or $reportedPass -eq 0) { throw "self-test did not pass: pass=$reportedPass fail=$reportedFail" }
-    [pscustomobject]@{ state='passed'; passed=$reportedPass; failed=$reportedFail } | ConvertTo-Json -Compress
+    [pscustomobject]@{ state='passed'; passed=$reportedPass; failed=$reportedFail; skipped=$skipped } | ConvertTo-Json -Compress
     exit 0
 }
 
