@@ -81,6 +81,7 @@ members = [
     "drivers/physical/esp32/i2s",
     "drivers/physical/esp32/pcnt",
     "drivers/physical/esp32/touch",
+    "drivers/physical/esp32/mcpwm",
     "drivers/physical/esp32/flash",
     "drivers/bus/spi-bus",
     "drivers/bus/i2c-bus",

@@ -82,6 +82,9 @@ esp32-pcnt = { path = "../drivers/physical/esp32/pcnt" }
 esp32-gpio = { path = "../drivers/physical/esp32/gpio" }
 # The touch-sensor self-test reads a free touch pad's capacitance count.
 esp32-touch = { path = "../drivers/physical/esp32/touch" }
+# The MCPWM self-test drives a complementary pair and counts its edges with
+# PCNT; the two only appear together in the on-target self-test.
+esp32-mcpwm = { path = "../drivers/physical/esp32/mcpwm" }
 # The SPI-bus (Layer 2) loopback self-test drives the wrapper over this driver.
 esp32-spi = { path = "../drivers/physical/esp32/spi" }
 spi-bus = { path = "../drivers/bus/spi-bus" }

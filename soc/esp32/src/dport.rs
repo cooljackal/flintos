@@ -101,6 +101,8 @@ impl ClockBit {
     pub const I2S0: Self = Self(1 << 4);
     /// `DPORT_PCNT_CLK_EN`.
     pub const PCNT: Self = Self(1 << 10);
+    /// `DPORT_PWM0_CLK_EN` — the first MCPWM unit.
+    pub const PWM0: Self = Self(1 << 17);
 
     pub const fn mask(self) -> u32 {
         self.0

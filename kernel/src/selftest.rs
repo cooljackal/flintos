@@ -69,6 +69,9 @@ mod pcnt;
 #[path = "selftest_touch.rs"]
 mod touch;
 
+#[path = "selftest_mcpwm.rs"]
+mod mcpwm;
+
 #[path = "selftest_uart.rs"]
 mod uart;
 
@@ -293,6 +296,22 @@ pub fn run() {
         None => skip(
             "touch_reads_a_stable_capacitance_count",
             "this board declares no free touch-capable GPIO",
+        ),
+    }
+
+    // MCPWM: drive a complementary pair with dead time on two pads, count both
+    // with PCNT, measure the dead time with the capture unit, and prove a fault
+    // input shuts the outputs down. Needs three free pads the board declares.
+    match crate::board::active::MCPWM_SELFTEST_GPIOS {
+        Some(pins) => check(
+            "mcpwm_complementary_pair_deadtime_and_fault",
+            mcpwm::mcpwm_complementary_pair_deadtime_and_fault(pins),
+            &mut pass,
+            &mut fail,
+        ),
+        None => skip(
+            "mcpwm_complementary_pair_deadtime_and_fault",
+            "this board declares no free MCPWM self-test GPIOs",
         ),
     }
 

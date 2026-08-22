@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-mcpwm"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "MCPWM: motor-control PWM — complementary pairs, dead time, fault shutdown, capture"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hal = { path = "../../../../hal" }
+soc-esp32 = { path = "../../../../soc/esp32" }

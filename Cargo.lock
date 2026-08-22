@@ -136,6 +136,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-mcpwm"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-esp32",
+]
+
+[[package]]
 name = "esp32-pcnt"
 version = "0.1.0"
 dependencies = [
@@ -268,6 +276,7 @@ dependencies = [
  "esp32-flash",
  "esp32-gpio",
  "esp32-i2s",
+ "esp32-mcpwm",
  "esp32-pcnt",
  "esp32-rng",
  "esp32-spi",

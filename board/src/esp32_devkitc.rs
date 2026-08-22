@@ -107,6 +107,15 @@ pub const PCNT_LOOPBACK_GPIO: Option<u8> = Some(22);
 /// a bare DevKitC.
 pub const TOUCH_SELFTEST_GPIO: Option<u8> = Some(27);
 
+/// Three free pads for the MCPWM self-test, as `[pwm_a, pwm_b, fault]`, or
+/// `None` to skip. No wire: the driver routes PWM0A/PWM0B out to the first two
+/// pads and taps them back through the matrix into PCNT (edge counting) and the
+/// MCPWM capture unit (dead-time timing); the fault pad is driven high in
+/// software and routed into the MCPWM fault input to prove the hardware
+/// shutdown. GPIO 21/23/19 are the free loopback pads, clear of the strapping
+/// and flash pins; reused here because the self-tests run one at a time.
+pub const MCPWM_SELFTEST_GPIOS: Option<[u8; 3]> = Some([21, 23, 19]);
+
 
 /// Maximum radio transmit power, in dBm.
 ///
