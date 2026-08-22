@@ -38,9 +38,10 @@ this target. The second command must produce
 | `portable-atomic` 1.15.0 with `critical-section` 1.2.0 | Optimized binary links, 66,504 bytes including ELF metadata |
 | Linked `reset` code | Three `mrs PRIMASK` / `cpsid i` / SIO-lock / `msr PRIMASK` sequences |
 | SIO lock address | Literal `0xd0000138`, RP2040 spinlock 14 |
-| Hardware execution | Not run; no atomic result or two-core contention is measured yet |
+| Hardware image | Pico SDK 2.1.1 builds an ELF/BIN/UF2 for the Wio RP2040 |
+| Hardware execution | Passed on the Wio RP2040; the exact PASS line repeated 20 times over 20 seconds on COM8 |
 
-The probe's critical-section implementation is intentionally minimal. It is
+The Rust compile probe's critical-section implementation is intentionally minimal. It is
 enough to inspect the compiler and linker path, but is not production code:
 it does not handle nested entry, initialize/claim the lock, or test reset and
 two-core contention.
@@ -54,6 +55,19 @@ core 1, add an on-target stress test that concurrently performs byte, word,
 and pointer compare-exchange/fetch operations from both cores and interrupt
 context, including nested critical-section cases.
 
+The `hardware` probe implements that test independently of FlintOS. It uses
+spinlock 14, per-core nesting depth, exact interrupt-state restoration, 1,000
+timer-interrupt operations, and 100,000 word and pointer increments from each
+core. A passing run must print:
+
+```text
+FLINTOS-ARM-ATOMIC PASS word=200000 pointer=200000 irq=1000 nested=1 depth=0,0
+```
+
+That exact result was measured on the attached Wio RP2040 on 2026-08-21. The
+hardware probe validates the synchronization mechanism, but it is written
+against the Pico SDK rather than the eventual Rust `portable-atomic` adapter.
+
 This matches the vendor design: RP2040 has 32 SIO hardware spinlocks, spinlocks
 are not re-entrant, and the SDK reserves locks 14 and 15 for an operating
 system. The SDK's own RP2040 C11 atomics are also spinlock-protected.
@@ -63,3 +77,4 @@ Primary sources:
 - [Raspberry Pi pico-sdk hardware synchronization API](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2_common/hardware_sync/include/hardware/sync.h)
 - [Raspberry Pi pico-sdk atomic implementation](https://github.com/raspberrypi/pico-sdk/tree/2.2.0/src/rp2_common/pico_atomic)
 - [`portable-atomic` 1.15.0 target support](https://github.com/taiki-e/portable-atomic/tree/v1.15.0#optional-features)
+- [Zephyr SMP synchronization contract](https://github.com/zephyrproject-rtos/zephyr/blob/v4.2.0/doc/kernel/services/smp/smp.rst#synchronization)
