@@ -165,3 +165,52 @@ source by hand; register-level claims were checked against the ESP32 Technical
 Reference Manual and Espressif's own headers, and ABI claims were settled by
 disassembling the linked ELF. Reviewer output was treated as a hypothesis to
 test, not as a result to report.
+
+---
+
+# Second review — 2026-08-22
+
+Scope: duplication, dead code, magic numbers, and design/best-practice
+refactors across the whole tree. Five parallel finders (kernel/api,
+arch/soc/hal, physical drivers, logical/bus drivers, radio/lib), each output
+then handed to a skeptic prompted to refute it. 24 findings survived; several
+false positives were killed in verification (e.g. the `api::Deadline` vs
+`kernel::deadline_for` "duplication" — the two use different forever sentinels
+and add strategies, so it is not shared code).
+
+None of these block anything. Two are latent correctness traps, not just
+cleanups — flagged ⚠.
+
+## Medium
+
+| # | Kind | Location | Finding | Fix |
+|---|---|---|---|---|
+| 1 ⚠ | design | `drivers/physical/esp32/gpio` `lib.rs:129` | `set_mode` silently ignores pull and open-drain: `InputPullUp/Down` act as plain `Input`, `OutputOpenDrain` as plain `Output` — the rest is dropped with `let _ = mode;` | Program the pull/open-drain bits, or reject the mode with `InvalidConfig` rather than accepting a config it won't honor |
+| 2 | dead-code | `kernel/scheduler.rs:723` | `pub fn request_switch_all` fully documented, zero callers, not re-exported, not an ABI symbol | Remove it, or wire it into the cross-core fan-out it was written for |
+| 3 | dead-code | `arch/xtensa/registers.rs:13` | Cluster of `PS_*` bitfield consts + `read_windowbase/windowstart` referenced nowhere | Delete (this file already pruned `write_ps`/`restore_ps` the same way) |
+| 4 | magic-number | `arch/armv6m/smp.rs:10`, `tick.rs:57` | RP2040 SIO CPUID `0xd000_0000` hard-coded raw, while `critical_section.rs` names `SIO_CPUID` and soc names `SIO_BASE` | One shared named const |
+| 5 | duplication | `soc/esp32/dma.rs:74` + `soc/rp2040/lib.rs` | DMA `reachable` range-check boilerplate near-identical across both SoCs | `hal::dma::range_within(addr, len, low, high)`; only the window bounds differ |
+| 6 | duplication | `drivers/physical/esp32/adc2/lib.rs:51` | adc2 duplicates adc wholesale: `Attenuation`, `FULL_SCALE`, SAR power-up sequence, `read`/`read_averaged` | Extract an `esp32-adc-core` both build on |
+| 7 | duplication | `drivers/physical/esp32/spi/slave.rs:61` + `dma.rs` | `SPI_SYNC_RESET`/`SPI_TRANS_DONE`/`SPI_CK_I_EDGE` re-declared in both sibling modules | Define once in `lib.rs` as `pub(crate)` |
+| 8 | duplication | `drivers/physical/esp32/touch/lib.rs:194` | Reimplements local `read`/`write`/`modify` (its `modify` is byte-for-byte `soc_esp32::reg::modify`); adc/adc2/dac also open-code RMW | Use `soc_esp32::reg` as i2s/mcpwm/pcnt do |
+| 9 | design | `drivers/logical/ssd1306/lib.rs:129` | `clear()` sends the 1024-byte GRAM fill one byte per bus transaction, each re-sending address + `0x40` | Batch into `max_transfer`-sized data writes |
+| 10 | dead-code | `drivers/bus/spi-bus/lib.rs:20` | `config: BusConfig` field written in `new()`, never read (masked by `#[allow(dead_code)]`) | Drop the field, or consult it in `set_speed`/`transfer` |
+| 11 | dead-code | `lib/wpa/keydata.rs:104` | `KDE_HDR` const unused; `let _ = KDE_HDR;` discards it and its comment implies a cursor advance that `i = body_end` already does | Delete the const, the discard, and the comment |
+
+## Low
+
+| # | Kind | Location | Finding | Fix |
+|---|---|---|---|---|
+| 12 ⚠ | design | `drivers/physical/esp32/ledc/lib.rs:211` | `SIG_OUT_EN & !CONF0_IDLE_LV` binds tighter than the surrounding `\|`, so the `& !CONF0_IDLE_LV` is an inert no-op; idle-low works only because it's a whole-register write | Drop the misleading clause, or parenthesize the intent |
+| 13 | duplication | `kernel/selftest.rs:233` | GPIO-gated check/skip block copy-pasted ~7×, test-name string duplicated across both arms so they can drift | `check_or_skip(name, gpio, reason, closure)` helper naming the test once |
+| 14 | duplication | `arch/armv6m/tick.rs:26` | SysTick reload computation written twice, `0x00ff_ffff` repeated | `fn reload_value()` + named `SYST_RELOAD_MAX` |
+| 15 | magic-number | `arch/xtensa/appcpu.rs:28` | APP-CPU stack size `4096` repeated in the struct, static, and top-of-stack math | `const APPCPU_STACK_BYTES` |
+| 16 | dead-code | `kernel/smp.rs:217` | `scheduling_cores` used only by a test; doc comment is a stray duplicate | Delete or `#[cfg(test)]` |
+| 17 | dead-code | `drivers/physical/esp32/i2c/lib.rs:78` | `I2C_SDA_SAMPLE` (0x34) is a redundant alias of `I2C_SDA_SAMPLE_REG`, used only by its own test | Delete, point the test at `_REG` |
+| 18 | magic-number | `drivers/physical/esp32/twai/lib.rs:120` | LOM mode bit inline `1 << 1` while siblings `MODE_RM/STM/AFM` are named | `const MODE_LOM` |
+| 19 | dead-code | `drivers/logical/ws2812/lib.rs:63` | `Timing::reset_us` (80) populated but never read; `finish()` takes no timing, so the latch duration is never communicated | Pass it to the emitter, or remove it |
+| 20 | duplication | `drivers/logical/bmi270/lib.rs:94` + `mpu6886/lib.rs:139` | `read_reg` byte-for-byte identical | Shared single-register-read helper |
+| 21 | magic-number | `drivers/logical/bme280/lib.rs:164` | `write_reg(REG_RESET, 0xB6)` — bare soft-reset word, unlike annotated neighbours | Name it |
+| 22 | duplication | `radio/esp32/adapter.rs:1558` | `log_c_str` and `c_str_bounded` are two near-identical bounded C-string readers (also `nvs::c_str`, `tasks::store_name`) | One shared bounded-C-string helper |
+| 23 | magic-number | `radio/esp32/phy_init.rs:114` | Six `limit(...)` calls hardcode floor `40` and ceilings `78/72/66/60/56/52`, duplicating `TX_POWER_FLOOR`/`TX_POWER_CEILINGS` defined just above | Reference the named constants |
+| 24 | duplication | `lib/crypto/sha1.rs:53` | `Sha1::update`/`finish` duplicate ~50 lines of block-buffering/padding from `Sha256`; only the compress fn + digest length differ | Shared buffer/padding helper or trait |
