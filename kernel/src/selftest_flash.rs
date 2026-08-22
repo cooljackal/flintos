@@ -135,34 +135,53 @@ pub(crate) fn an_erase_does_not_stop_an_iram_safe_interrupt() -> Check {
 
     let region = unsafe { esp32_flash::FlashRegion::new(SCRATCH_BASE, SCRATCH_LEN) };
 
-    // The measurement. `clock::now_us` is TIMG1 T1 free-running: a counter, not
-    // an interrupt, so it keeps time through a window in which interrupts are
-    // masked — which is exactly what the tick cannot do, and why the tick is
-    // the control rather than the clock.
-    let hits_before = ALARM_HITS.load(Ordering::SeqCst);
-    let tick_before = Tick::now();
-    let us_before = crate::clock::now_us();
+    // The measurement, retried against a rare short read. `clock::now_us` is
+    // TIMG1 T1 free-running: a counter, not an interrupt, so it keeps time
+    // through a window in which interrupts are masked — which is exactly what
+    // the tick cannot do, and why the tick is the control rather than the clock.
+    //
+    // The window it measures must be a real erase (tens of ms) for the counts
+    // below to mean anything. Very occasionally the reading comes back
+    // implausibly short — a stale TIMG latch, or a quick erase of the
+    // already-blank scratch sector — which would void an otherwise-good run
+    // (~1 in 10). A transient short read does not survive a repeat, and
+    // re-erasing the untouched scratch sector costs nothing, so re-measure a
+    // few times before giving up. Three genuine sub-5 ms erases in a row is a
+    // real anomaly worth reporting, not a flake.
+    let (elapsed_us, hits, ticks) = {
+        let mut attempt = 0;
+        loop {
+            let hits_before = ALARM_HITS.load(Ordering::SeqCst);
+            let tick_before = Tick::now();
+            let us_before = crate::clock::now_us();
 
-    let erased = unsafe { region.erase_sector(0) };
+            let erased = unsafe { region.erase_sector(0) };
 
-    let us_after = crate::clock::now_us();
-    let tick_after = Tick::now();
-    let hits_after = ALARM_HITS.load(Ordering::SeqCst);
+            let us_after = crate::clock::now_us();
+            let tick_after = Tick::now();
+            let hits_after = ALARM_HITS.load(Ordering::SeqCst);
+
+            if erased.is_err() {
+                unsafe { t.stop() };
+                return Err("the scratch sector would not erase");
+            }
+
+            let elapsed_us = us_after.saturating_sub(us_before);
+            if elapsed_us >= 5_000 {
+                break (
+                    elapsed_us,
+                    hits_after.saturating_sub(hits_before) as u64,
+                    tick_after.saturating_sub(tick_before),
+                );
+            }
+            attempt += 1;
+            if attempt >= 3 {
+                unsafe { t.stop() };
+                return Err("the erase repeatedly measured too short to judge the mask");
+            }
+        }
+    };
     unsafe { t.stop() };
-
-    if erased.is_err() {
-        return Err("the scratch sector would not erase");
-    }
-
-    let elapsed_us = us_after.saturating_sub(us_before);
-    let hits = hits_after.saturating_sub(hits_before) as u64;
-    let ticks = tick_after.saturating_sub(tick_before);
-
-    // A sector erase is tens of milliseconds. If this one was not, the test
-    // measured nothing and must say so rather than pass.
-    if elapsed_us < 5_000 {
-        return Err("the erase returned too fast to have erased anything");
-    }
 
     // The claim. Allow for the alarm being re-armed by the handler rather than
     // free-running, and for the handler itself costing time: half the ideal
