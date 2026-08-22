@@ -40,6 +40,12 @@ pub const EFUSE_BASE: u32 = 0x3FF5_A000;
 pub const TIMG0_BASE: u32 = 0x3FF5_F000;
 pub const TIMG1_BASE: u32 = 0x3FF6_0000;
 
+/// `DR_REG_AES_BASE`. The AES accelerator. Lives inside the DPORT window, so
+/// its registers take the erratum-safe DPORT access, not plain volatile.
+pub const AES_BASE: u32 = 0x3FF0_1000;
+/// `DR_REG_SHA_BASE`. The SHA accelerator. Also inside the DPORT window.
+pub const SHA_BASE: u32 = 0x3FF0_3000;
+
 // ── Interrupt sources ───────────────────────────────────────────────────────
 //
 // These are *peripheral interrupt source* numbers fed to the interrupt matrix,

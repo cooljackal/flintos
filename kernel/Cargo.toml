@@ -78,6 +78,13 @@ esp32-i2s = { path = "../drivers/physical/esp32/i2s" }
 # The SPI-bus (Layer 2) loopback self-test drives the wrapper over this driver.
 esp32-spi = { path = "../drivers/physical/esp32/spi" }
 spi-bus = { path = "../drivers/bus/spi-bus" }
+# The SHA/AES accelerator self-test drives this and cross-checks it against the
+# software `crypto` lib below.
+esp32-crypto = { path = "../drivers/physical/esp32/crypto" }
+# The reference the hardware crypto is checked against (#33). Software-only and
+# host-testable, so it could be unconditional, but it is only ever named by the
+# target-scoped self-test, so it lives here beside its one user.
+crypto = { path = "../lib/crypto" }
 
 [features]
 # Board selection forwards straight through to `board` (see board/src/lib.rs

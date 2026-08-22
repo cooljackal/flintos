@@ -49,6 +49,14 @@ pub const PERIP_CLK_EN: u32 = DPORT_BASE + 0xC0;
 /// `DPORT_PERIP_RST_EN_REG`.
 pub const PERIP_RST_EN: u32 = DPORT_BASE + 0xC4;
 
+/// `DPORT_PERI_CLK_EN_REG`. The crypto blocks — AES, SHA, RSA — are *not*
+/// gated by `PERIP_CLK_EN` like every other peripheral; they share this
+/// separate register (and `PERI_RST_EN` below). Confirmed against esp-idf
+/// `soc/esp32/include/soc/dport_reg.h` and `hal/esp32/clk_gate_ll.h`.
+pub const PERI_CLK_EN: u32 = DPORT_BASE + 0x1C;
+/// `DPORT_PERI_RST_EN_REG`.
+pub const PERI_RST_EN: u32 = DPORT_BASE + 0x20;
+
 /// The APB register read immediately before every DPORT read.
 ///
 /// Any readable APB register would serve — the load is never used, and only
@@ -291,6 +299,81 @@ pub unsafe fn disable(bit: ClockBit) {
         write(PERIP_RST_EN, apply(rst, 0, bit.mask()));
         let clk = read(PERIP_CLK_EN);
         write(PERIP_CLK_EN, apply(clk, bit.mask(), 0));
+    })
+}
+
+// ── The crypto blocks' clock gate ───────────────────────────────────────────
+//
+// AES, SHA and RSA sit on `PERI_CLK_EN`/`PERI_RST_EN`, not the `PERIP_*` pair
+// the rest of the chip uses. Their bit assignment is its own, so this is a
+// separate `CryptoClockBit` rather than more `ClockBit` variants — mixing the
+// two would let a caller write an AES bit into the wrong register and gate the
+// wrong peripheral. Bits from esp-idf `soc/esp32/include/soc/dport_reg.h`
+// (`DPORT_PERI_EN_AES` = bit 0, `DPORT_PERI_EN_SHA` = bit 1).
+
+/// A clock-enable / reset bit in `DPORT_PERI_CLK_EN_REG` / `DPORT_PERI_RST_EN_REG`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CryptoClockBit(u32);
+
+impl CryptoClockBit {
+    /// `DPORT_PERI_EN_AES`.
+    pub const AES: Self = Self(1 << 0);
+    /// `DPORT_PERI_EN_SHA`.
+    pub const SHA: Self = Self(1 << 1);
+
+    pub const fn mask(self) -> u32 {
+        self.0
+    }
+
+    /// Reset bits to release when enabling this block. The crypto units share
+    /// reset lines, so releasing a block's own bit is not enough: SHA is held
+    /// in reset unless `SECUREBOOT` (bit 3) is also released, and AES needs
+    /// `SECUREBOOT` and `DIGITAL_SIGNATURE` (bit 4) too. From esp-idf
+    /// `clk_gate_ll.h` `periph_ll_get_rst_en_mask(enable=true)`. Only the
+    /// block's own bit is *re-asserted* on disable, so a shared unit is never
+    /// pulled back into reset under a peer that is still running.
+    const fn reset_release_mask(self) -> u32 {
+        const SECUREBOOT: u32 = 1 << 3;
+        const DIGITAL_SIGNATURE: u32 = 1 << 4;
+        if self.0 == 1 << 0 {
+            (1 << 0) | SECUREBOOT | DIGITAL_SIGNATURE // AES
+        } else if self.0 == 1 << 1 {
+            (1 << 1) | SECUREBOOT // SHA
+        } else {
+            self.0
+        }
+    }
+}
+
+/// Enable a crypto block's clock and release it from reset.
+///
+/// The reset polarity here is the reverse of [`enable`]: a set bit in
+/// `PERI_RST_EN` holds the block in reset, so releasing it *clears* the bit.
+/// Same one-lock invariant as [`enable`] — clock and reset move together so no
+/// core sees the block clocked but still reset.
+///
+/// # Safety
+/// Touches shared DPORT state. Safe against the other core and interrupts;
+/// still requires that the block is yours to gate.
+pub unsafe fn enable_crypto(bit: CryptoClockBit) {
+    locked(|| {
+        let clk = read(PERI_CLK_EN);
+        write(PERI_CLK_EN, apply(clk, 0, bit.mask()));
+        let rst = read(PERI_RST_EN);
+        write(PERI_RST_EN, apply(rst, bit.reset_release_mask(), 0));
+    })
+}
+
+/// Gate a crypto block's clock off and hold it in reset.
+///
+/// # Safety
+/// Same as [`enable_crypto`].
+pub unsafe fn disable_crypto(bit: CryptoClockBit) {
+    locked(|| {
+        let rst = read(PERI_RST_EN);
+        write(PERI_RST_EN, apply(rst, 0, bit.mask()));
+        let clk = read(PERI_CLK_EN);
+        write(PERI_CLK_EN, apply(clk, bit.mask(), 0));
     })
 }
 

@@ -75,6 +75,9 @@ mod dynobj;
 #[path = "selftest_flash.rs"]
 mod flash;
 
+#[path = "selftest_crypto_accel.rs"]
+mod crypto_accel;
+
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
 pub(crate) type Check = Result<(), &'static str>;
@@ -110,15 +113,17 @@ pub fn run() {
 
     check("dport_read_agrees_with_a_plain_read", dport::dport_read_agrees_with_a_plain_read(), &mut pass, &mut fail);
     check("dport_read_leaves_the_tick_running", dport::dport_read_leaves_the_tick_running(), &mut pass, &mut fail);
-    // The CPU clock the boot path raised to 240 MHz, checked against the RTC
-    // measurement and cross-checked against the APB-clocked TIMG.
-    check("cpu_runs_at_240mhz", cpu_clk::cpu_runs_at_240mhz(), &mut pass, &mut fail);
-    check("cpu_and_apb_agree_on_an_interval", cpu_clk::cpu_and_apb_agree_on_an_interval(), &mut pass, &mut fail);
-
     check("timg_counts_at_the_rate_it_was_given", timg::timg_counts_at_the_rate_it_was_given(), &mut pass, &mut fail);
     check("a_timg_alarm_fires_once_from_the_isr", timg::a_timg_alarm_fires_once_from_the_isr(), &mut pass, &mut fail);
 
     check("a_periodic_alarm_keeps_firing_at_its_rate", timg::a_periodic_alarm_keeps_firing_at_its_rate(), &mut pass, &mut fail);
+
+    // The CPU clock the boot path raised to 240 MHz, checked against the RTC
+    // measurement and cross-checked against the APB-clocked TIMG. After the TIMG
+    // tests: `cpu_and_apb` borrows TIMG0/T0, and running it first left that timer
+    // in a state that flaked the `timg_counts` test's own use of T0.
+    check("cpu_runs_at_240mhz", cpu_clk::cpu_runs_at_240mhz(), &mut pass, &mut fail);
+    check("cpu_and_apb_agree_on_an_interval", cpu_clk::cpu_and_apb_agree_on_an_interval(), &mut pass, &mut fail);
 
     // Needs a pin the *board* holds high; the chip cannot supply one. See
     // `board::active::ADC_EXTERNAL_HIGH_GPIO`.
@@ -264,6 +269,14 @@ pub fn run() {
     check("the_reaper_skips_a_task_a_core_is_on", dynobj::the_reaper_skips_a_task_a_core_is_on(), &mut pass, &mut fail);
     check("a_dynamic_queue_round_trips_on_hardware", dynobj::a_dynamic_queue_round_trips_on_hardware(), &mut pass, &mut fail);
     check("semaphores_and_event_bits_work_on_target", dynobj::semaphores_and_event_bits_work_on_target(), &mut pass, &mut fail);
+
+    // SHA/AES accelerators (#33). Pure compute — no pins — so it needs no
+    // board wiring; each check cross-verifies the hardware against the software
+    // `crypto` lib on the same input.
+    check("hw_sha1_matches_software", crypto_accel::hw_sha1_matches_software(), &mut pass, &mut fail);
+    check("hw_sha256_matches_software", crypto_accel::hw_sha256_matches_software(), &mut pass, &mut fail);
+    check("hw_aes128_matches_software", crypto_accel::hw_aes128_matches_software(), &mut pass, &mut fail);
+    check("hw_aes256_matches_software", crypto_accel::hw_aes256_matches_software(), &mut pass, &mut fail);
 
     raw_print("[FLINT] SELFTEST END pass=");
     print_u32(pass);

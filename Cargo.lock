@@ -87,6 +87,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-crypto"
+version = "0.1.0"
+dependencies = [
+ "soc-esp32",
+]
+
+[[package]]
 name = "esp32-dac"
 version = "0.1.0"
 
@@ -241,8 +248,10 @@ dependencies = [
  "api",
  "arch-xtensa",
  "board",
+ "crypto",
  "esp32-adc",
  "esp32-adc2",
+ "esp32-crypto",
  "esp32-dac",
  "esp32-flash",
  "esp32-i2s",

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "esp32-crypto"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "ESP32 hardware SHA and AES accelerator physical drivers"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# A peripheral driver names the chip's infrastructure -- the address map, clock
+# gating, the poll helper -- and nothing above it. That is what Layer 1 is
+# allowed. The software crypto lib it is checked against lives in the caller
+# (the self-test), not here: this crate is the hardware, not the reference.
+[dependencies]
+soc-esp32 = { path = "../../../../soc/esp32" }
