@@ -74,6 +74,28 @@ impl XtensaTick {
         registers::enable_interrupt(registers::INT_TIMER0);
     }
 
+    /// Advance the shared tick counter by `ticks`, forwards only.
+    ///
+    /// The one path that may move time other than a Timer0 interrupt: after a
+    /// light sleep the CPU clock — and so CCOUNT and the Timer0 interrupt — was
+    /// stopped for the whole sleep, and the counter is behind by however many
+    /// tick periods elapsed. The kernel measures the paused interval from the
+    /// RTC (which kept running) and reconciles it here.
+    ///
+    /// **Forwards only, by construction.** `ticks` is added, never subtracted,
+    /// so `now()` cannot go backwards across a reconciliation — the property
+    /// the whole sleep path exists to protect. Runs under a critical section so
+    /// it does not tear against a Timer0 interrupt updating the same counter.
+    ///
+    /// # Safety
+    /// Writes the shared tick counter.
+    pub unsafe fn advance(ticks: u64) {
+        critical_section::with(|| unsafe {
+            let p = core::ptr::addr_of_mut!(TICK_COUNT);
+            *p = (*p).wrapping_add(ticks);
+        });
+    }
+
     /// Re-arm this core's timer without touching the shared tick count.
     ///
     /// The counter is the system's single notion of time. A second core

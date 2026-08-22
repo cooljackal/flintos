@@ -62,6 +62,7 @@ pub mod poll;
 pub mod reg;
 pub mod reset;
 pub mod rtc;
+pub mod sleep;
 
 pub use pinmux::Esp32PinMux;
 

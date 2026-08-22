@@ -265,6 +265,16 @@ pub mod host {
     /// Xtensa one does, so the kernel cannot tell them apart by type.
     pub struct HostTick;
 
+    impl HostTick {
+        /// Advance the tick counter by `ticks`, forwards only — the host twin
+        /// of `XtensaTick::advance`, so the kernel's sleep reconciliation can
+        /// be exercised off-target. Adds, never subtracts, so `now()` cannot
+        /// regress.
+        pub fn advance(ticks: u64) {
+            NOW.fetch_add(ticks, Ordering::SeqCst);
+        }
+    }
+
     impl hal::tick::TickSource for HostTick {
         fn init(_period_us: u32, _cpu_hz: u32) {}
 

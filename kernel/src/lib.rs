@@ -53,6 +53,7 @@ pub use esp32_rng as rng;
 pub mod selftest;
 pub mod alarm;
 pub mod clock;
+pub mod power;
 pub mod queue;
 pub mod scheduler;
 pub mod smp;

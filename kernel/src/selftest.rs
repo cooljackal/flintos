@@ -81,6 +81,9 @@ mod flash;
 #[path = "selftest_crypto_accel.rs"]
 mod crypto_accel;
 
+#[path = "selftest_sleep.rs"]
+mod sleep;
+
 /// Result of one check. The reason travels with the failure because a bare
 /// FAIL over a serial line tells whoever reads it nothing they can act on.
 pub(crate) type Check = Result<(), &'static str>;
@@ -103,6 +106,12 @@ pub fn run() {
     check("tick_advances", tick_advances(), &mut pass, &mut fail);
     check("tick_never_goes_backwards", tick_never_goes_backwards(), &mut pass, &mut fail);
     check("critical_section_masks_the_tick", critical_section_masks_the_tick(), &mut pass, &mut fail);
+
+    // Light sleep pauses the CPU clock, so the tick freezes and must be
+    // reconciled from the RTC on wake. Short and timer-armed, so a bad config
+    // fails as a panic rather than a hung board. Deep sleep is deliberately not
+    // here: it wakes as a reset and would break the harness's serial stream.
+    check("light_sleep_wakes_and_the_tick_catches_up", sleep::light_sleep_wakes_and_the_tick_catches_up(), &mut pass, &mut fail);
 
     // Task-versus-ISR races. These are the reason an on-target suite exists at
     // all: the host stand-ins mask nothing, so none of the properties below is
