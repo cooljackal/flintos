@@ -75,6 +75,32 @@ pub unsafe fn enter_raw() -> u32 {
 }
 
 #[cfg(target_arch = "arm")]
+unsafe fn try_enter_raw() -> Option<u32> {
+    let primask: u32;
+    unsafe {
+        asm!(
+            "mrs {state}, PRIMASK",
+            "cpsid i",
+            state = out(reg) primask,
+            options(nomem, nostack)
+        );
+    }
+    let core = unsafe { SIO_CPUID.read_volatile() as usize };
+    let state = unsafe { &mut LOCAL[core] };
+    if state.depth == 0 {
+        if unsafe { SIO_SPINLOCK_14.read_volatile() } == 0 {
+            unsafe {
+                asm!("msr PRIMASK, {state}", state = in(reg) primask, options(nomem, nostack));
+            }
+            return None;
+        }
+        unsafe { asm!("dmb", options(nostack)) };
+    }
+    state.depth += 1;
+    Some(primask)
+}
+
+#[cfg(target_arch = "arm")]
 /// Leave the matching RP2040-wide kernel critical section.
 ///
 /// # Safety
@@ -106,6 +132,21 @@ pub fn with<R>(f: impl FnOnce() -> R) -> R {
     #[cfg(not(target_arch = "arm"))]
     {
         f()
+    }
+}
+
+/// Run `f` only if the global critical section can be acquired immediately.
+pub fn try_with<R>(f: impl FnOnce() -> R) -> Option<R> {
+    #[cfg(target_arch = "arm")]
+    {
+        let state = unsafe { try_enter_raw()? };
+        let result = f();
+        unsafe { exit_raw(state) };
+        Some(result)
+    }
+    #[cfg(not(target_arch = "arm"))]
+    {
+        Some(f())
     }
 }
 

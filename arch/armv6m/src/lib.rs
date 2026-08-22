@@ -16,7 +16,8 @@ pub mod smp;
 pub mod tick;
 
 pub use critical_section::{
-    enter_raw as cs_enter, exit_raw as cs_exit, init_boot_core, with as cs_with,
+    enter_raw as cs_enter, exit_raw as cs_exit, init_boot_core, try_with as cs_try_with,
+    with as cs_with,
 };
 
 use hal::arch::{
@@ -328,5 +329,30 @@ mod tests {
         assert_eq!(entries[11], "SVC");
         assert_eq!(entries[14], "PendSV");
         assert_eq!(entries[15], "SysTick");
+        // The parser intentionally skips `.rept`; the two explicit words
+        // follow 15 repeated external handlers, placing them at IRQ15/16.
+        assert_eq!(entries[17], "SioIrq15");
+        assert_eq!(entries[18], "SioIrq16");
+        assert!(table.contains(
+            ".rept 15\n    .word DefaultHandler\n    .endr\n    .word SioIrq15\n    .word SioIrq16"
+        ));
+    }
+
+    #[test]
+    fn core1_entry_skips_global_memory_and_spinlock_initialization() {
+        let startup = include_str!("startup.S");
+        let entry = startup
+            .split("_flint_armv6m_core1_entry:\n")
+            .nth(1)
+            .expect("core-1 entry")
+            .split(".thumb_func\n.global SVC")
+            .next()
+            .expect("core-1 entry body");
+        assert!(entry.contains("_flint_armv6m_core1_boot"));
+        assert!(entry.contains("svc 0"));
+        assert!(!entry.contains("_sidata"));
+        assert!(!entry.contains("_sbss"));
+        assert!(!entry.contains("0xd0000100"));
+        assert!(!entry.contains("_flint_armv6m_boot"));
     }
 }

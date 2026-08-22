@@ -403,7 +403,7 @@ pub unsafe fn join_scheduler() -> ! {
     registers::set_vecbase(core::ptr::addr_of!(_vector_table_start) as u32);
 
     let me = crate::smp::current_core();
-    scheduler::with(|sched| {
+    let idle = scheduler::with(|sched| {
         let id = sched
             .alloc_id()
             .expect("no TCB slot for a secondary idle task");
@@ -418,8 +418,9 @@ pub unsafe fn join_scheduler() -> ! {
             tcb.affinity = scheduler::Affinity::Core(me);
         }
         sched.ready_mask |= 1u64 << scheduler::IDLE_PRIORITY;
-        sched.set_current(id);
+        id
     });
+    scheduler::join_current_core(idle);
 
     Tick::init_this_core();
 

@@ -56,6 +56,15 @@ pub trait MultiCore {
     /// How many cores this part has running FlintOS. Not how many exist.
     fn cores() -> u8;
 
+    /// Notify `core` that kernel scheduling work is pending there.
+    ///
+    /// Returns `true` when a hardware notification was sent. Architectures
+    /// without an inter-core interrupt may keep the default; the pending work
+    /// remains recorded and will be observed by that core's next tick.
+    fn request_reschedule(_core: CoreId) -> bool {
+        false
+    }
+
     /// Identifies the calling *execution context* for lock ownership.
     ///
     /// On hardware this is the core id, and the default reflects that: one

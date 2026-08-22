@@ -20,7 +20,7 @@
 use crate::arch::{Context, Tick};
 use hal::arch::Architecture;
 use hal::tick::TickSource;
-use portable_atomic::{AtomicBool, Ordering};
+use portable_atomic::{AtomicBool, AtomicU8, Ordering};
 
 pub const MAX_TASKS: usize = 32;
 
@@ -265,6 +265,7 @@ impl Scheduler {
             // set it inline rather than via `self.set_ready_bit` (which would
             // re-borrow all of `self`).
             self.ready_mask |= 1u64 << prio;
+            record_ready(tcb.affinity);
         }
     }
 
@@ -329,6 +330,7 @@ impl Scheduler {
                     let prio = tcb.priority;
                     // Disjoint-field write (see `make_ready`).
                     self.ready_mask |= 1u64 << prio;
+                    record_ready(tcb.affinity);
                     // W3.4: a woken higher-priority task preempts immediately.
                     if prio < cur_prio {
                         need_switch = true;
@@ -386,6 +388,30 @@ impl Scheduler {
             .iter()
             .flatten()
             .any(|t| t.id != except && t.priority == prio && t.state == TaskState::Ready)
+    }
+
+    /// Make the current task yield only when this core has a real peer to run.
+    pub fn yield_current(&mut self) -> bool {
+        let current = self.current();
+        let core = crate::smp::current_core();
+        let Some(priority) = self.tasks[current as usize].as_ref().map(|t| t.priority) else {
+            return false;
+        };
+        let has_peer = self.tasks.iter().flatten().any(|task| {
+            task.id != current
+                && task.state == TaskState::Ready
+                && task.priority <= priority
+                && task.affinity.allows(core)
+                && !self.running_elsewhere(task.id, core)
+        });
+        if !has_peer {
+            return false;
+        }
+        if let Some(task) = &mut self.tasks[current as usize] {
+            task.state = TaskState::Ready;
+            self.ready_mask |= 1u64 << task.priority;
+        }
+        true
     }
 
     /// Pick the next task to run. Round-robin within the top ready priority.
@@ -479,6 +505,9 @@ impl Scheduler {
         };
         if let Some(prio) = info {
             self.set_ready_bit(prio);
+            if let Some(tcb) = &self.tasks[id as usize] {
+                record_ready(tcb.affinity);
+            }
             // A higher-priority unblocked task should preempt.
             if prio < self.current_priority() {
                 set_pending_switch();
@@ -571,6 +600,15 @@ pub fn set_pending_switch() {
     PENDING_SWITCH[crate::smp::current_core().index()].store(true, Ordering::Relaxed);
 }
 
+/// Record scheduling work for a particular joined core.
+pub fn set_pending_switch_on(core: hal::smp::CoreId) {
+    assert!(
+        crate::smp::is_pinnable(core.0),
+        "reschedule target has not joined"
+    );
+    PENDING_SWITCH[core.index()].store(true, Ordering::Release);
+}
+
 /// Clear every core's pending-switch flag.
 ///
 /// For the test harness: `reset` means power-on state, and clearing only the
@@ -587,6 +625,11 @@ pub fn take_pending_switch() -> bool {
     PENDING_SWITCH[crate::smp::current_core().index()].swap(false, Ordering::Relaxed)
 }
 
+/// Whether this core has scheduling work pending, without consuming it.
+pub fn switch_pending() -> bool {
+    PENDING_SWITCH[crate::smp::current_core().index()].load(Ordering::Acquire)
+}
+
 /// The scheduler, behind a lock that excludes the other core as well as this
 /// core's own interrupts.
 ///
@@ -597,13 +640,42 @@ pub fn take_pending_switch() -> bool {
 /// calling core only.
 static SCHEDULER: crate::smp::Spinlock<Scheduler> = crate::smp::Spinlock::new(Scheduler::new());
 
+/// Cores that must reconsider their current task after a Ready transition.
+///
+/// Readiness is recorded while the scheduler lock is held, then delivered
+/// after unlocking so a remote IPI cannot immediately spin on the same lock.
+static READY_RESCHEDULE_MASK: AtomicU8 = AtomicU8::new(0);
+
+fn record_ready(affinity: Affinity) {
+    let mask = match affinity {
+        Affinity::Any => crate::smp::joined_mask(),
+        Affinity::Core(core) => 1u8 << core.0,
+    };
+    READY_RESCHEDULE_MASK.fetch_or(mask, Ordering::Release);
+}
+
+fn dispatch_ready_reschedules(mask: u8) {
+    let mask = mask & crate::smp::joined_mask();
+    for index in 0..hal::smp::MAX_CORES {
+        if mask & (1u8 << index) != 0 {
+            request_switch_on(hal::smp::CoreId(index as u8));
+        }
+    }
+}
+
 /// Run `f` with the scheduler locked. Safe from task or interrupt context, on
 /// either core.
 ///
 /// Keep `f` short: interrupts are masked on this core throughout, and the
 /// other core spins if it wants the scheduler meanwhile.
 pub fn with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
-    SCHEDULER.with(f)
+    let (result, ready_mask) = SCHEDULER.with(|scheduler| {
+        let result = f(scheduler);
+        let ready_mask = READY_RESCHEDULE_MASK.swap(0, Ordering::AcqRel);
+        (result, ready_mask)
+    });
+    dispatch_ready_reschedules(ready_mask);
+    result
 }
 
 /// Run `f` only if the scheduler is free, rather than waiting.
@@ -611,7 +683,17 @@ pub fn with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
 /// For diagnostics that must not hang — a fault handler reporting task state
 /// cannot afford to block on a lock whose holder may be the thing that faulted.
 pub fn try_with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> Option<R> {
-    SCHEDULER.try_with(f)
+    let result = SCHEDULER.try_with(|scheduler| {
+        let result = f(scheduler);
+        let ready_mask = READY_RESCHEDULE_MASK.swap(0, Ordering::AcqRel);
+        (result, ready_mask)
+    });
+    if let Some((value, ready_mask)) = result {
+        dispatch_ready_reschedules(ready_mask);
+        Some(value)
+    } else {
+        None
+    }
 }
 
 /// Request a context switch: set the flag and raise the software interrupt so
@@ -619,6 +701,59 @@ pub fn try_with<R>(f: impl FnOnce(&mut Scheduler) -> R) -> Option<R> {
 pub fn request_switch() {
     set_pending_switch();
     crate::arch::SelectedArch::request_switch();
+}
+
+/// Request a switch on another joined core.
+///
+/// The pending flag is published before the inter-core notification. If the
+/// architecture has no remote interrupt hook, the next periodic tick still
+/// observes the request.
+pub fn request_switch_on(core: hal::smp::CoreId) {
+    use hal::smp::MultiCore;
+
+    set_pending_switch_on(core);
+    if core == crate::smp::current_core() {
+        crate::arch::SelectedArch::request_switch();
+    } else {
+        let _ = crate::arch::Smp::request_reschedule(core);
+    }
+}
+
+/// Notify every scheduler member that newly-ready work may change its choice.
+pub fn request_switch_all() {
+    let joined = crate::smp::joined_mask();
+    for index in 0..hal::smp::MAX_CORES {
+        if joined & (1u8 << index) != 0 {
+            request_switch_on(hal::smp::CoreId(index as u8));
+        }
+    }
+}
+
+/// Attach the calling secondary core to an already-created pinned idle task.
+///
+/// The joined bit is deliberately the last write. Until the task is both
+/// `Running` and installed as this core's `current`, affinity requests must
+/// continue to reject the core.
+pub fn join_current_core(idle: u32) {
+    let core = crate::smp::current_core();
+    assert!(!core.is_boot(), "the boot core is joined during reset");
+    with(|sched| {
+        let task = sched.tasks[idle as usize]
+            .as_ref()
+            .expect("secondary core idle TCB is missing");
+        assert_eq!(
+            task.affinity,
+            Affinity::Core(core),
+            "secondary idle is not pinned here"
+        );
+        assert_eq!(
+            task.state,
+            TaskState::Running,
+            "secondary idle is not running"
+        );
+        sched.set_current(idle);
+    });
+    crate::smp::mark_joined(core);
 }
 
 // ── Affinity tests ──────────────────────────────────────────────────────────
@@ -652,6 +787,22 @@ mod affinity_tests {
         assert!(!PENDING_SWITCH[other.index()].swap(false, portable_atomic::Ordering::Relaxed));
         assert!(take_pending_switch(), "our own request went missing");
         assert!(!take_pending_switch(), "consumed twice");
+    }
+
+    #[test]
+    fn a_remote_request_is_published_to_the_target_core() {
+        let _k = testsupport::lock();
+        let me = crate::smp::current_core();
+        let other = CoreId(if me.0 == 0 { 1 } else { 0 });
+        crate::smp::mark_joined(other);
+
+        request_switch_on(other);
+
+        assert!(PENDING_SWITCH[other.index()].swap(false, Ordering::Acquire));
+        assert!(
+            !take_pending_switch(),
+            "remote request contaminated this core"
+        );
     }
 
     #[test]
@@ -752,7 +903,7 @@ mod affinity_tests {
         // `schedule()` yet. A task pinned there would look spawned and never
         // run -- the worst of the three possible outcomes.
         let _k = testsupport::lock();
-        if crate::smp::SCHEDULING_CORES < 2 {
+        if !crate::smp::is_pinnable(1) {
             assert!(crate::syscall::_flint_sys_spawn_on(
                 1,
                 "pinned-to-idle-core",

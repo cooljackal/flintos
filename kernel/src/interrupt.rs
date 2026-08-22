@@ -34,30 +34,34 @@ const MAX_HANDLERS: usize = 32;
 // callback firing from inside `dispatch` — or any other nesting we haven't
 // thought of — still reports "in interrupt" correctly as long as every entry
 // is paired with an exit via [`InterruptGuard`].
-static IN_INTERRUPT_DEPTH: AtomicU32 = AtomicU32::new(0);
+static IN_INTERRUPT_DEPTH: [AtomicU32; hal::smp::MAX_CORES] =
+    [const { AtomicU32::new(0) }; hal::smp::MAX_CORES];
 
 /// True while executing a top-half ISR or a software-timer callback (trap
 /// context). Blocking primitives in `mutex.rs`/`queue.rs`/`timer.rs` check
 /// this and refuse rather than silently blocking the interrupted task.
 pub fn in_interrupt() -> bool {
-    IN_INTERRUPT_DEPTH.load(Ordering::Relaxed) != 0
+    IN_INTERRUPT_DEPTH[crate::smp::current_core().index()].load(Ordering::Relaxed) != 0
 }
 
 /// RAII marker for "we are now running trap-context code that must not
 /// block". Held around the top-half call in [`dispatch`] and around the
 /// callback invocation in `timer::process_timers`.
-pub struct InterruptGuard;
+pub struct InterruptGuard {
+    core: usize,
+}
 
 impl InterruptGuard {
     pub fn enter() -> Self {
-        IN_INTERRUPT_DEPTH.fetch_add(1, Ordering::Relaxed);
-        InterruptGuard
+        let core = crate::smp::current_core().index();
+        IN_INTERRUPT_DEPTH[core].fetch_add(1, Ordering::Relaxed);
+        InterruptGuard { core }
     }
 }
 
 impl Drop for InterruptGuard {
     fn drop(&mut self) {
-        IN_INTERRUPT_DEPTH.fetch_sub(1, Ordering::Relaxed);
+        IN_INTERRUPT_DEPTH[self.core].fetch_sub(1, Ordering::Relaxed);
     }
 }
 

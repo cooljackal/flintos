@@ -16,6 +16,21 @@ impl MultiCore for Armv6mSmp {
         2
     }
 
+    fn request_reschedule(core: CoreId) -> bool {
+        #[cfg(target_arch = "arm")]
+        unsafe {
+            unsafe extern "C" {
+                fn _flint_armv6m_request_reschedule(core: u32) -> bool;
+            }
+            return _flint_armv6m_request_reschedule(u32::from(core.0));
+        }
+        #[cfg(not(target_arch = "arm"))]
+        {
+            let _ = core;
+            false
+        }
+    }
+
     fn context_id() -> u8 {
         Self::current_core().0
     }

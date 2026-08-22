@@ -8,12 +8,12 @@
 //! critical section (`scheduler::with` / `cs_with`) so it cannot race the trap
 //! handler (plan W2.2).
 
-use hal::types::{Priority, TaskId};
-use crate::scheduler::{self, TaskState};
+use crate::debug;
+use crate::queue as kqueue;
+use crate::scheduler;
 use crate::spawn;
 use crate::timer;
-use crate::queue as kqueue;
-use crate::debug;
+use hal::types::{Priority, TaskId};
 
 // ── Task syscalls ─────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ pub fn _flint_sys_spawn_on(
 ) -> Option<TaskId> {
     // Refused, not clamped, and refused for a second reason as well: a core
     // that exists but does not run the scheduler would hold the task forever.
-    // See `smp::SCHEDULING_CORES`.
+    // See `smp::is_pinnable`.
     if !crate::smp::is_pinnable(core) {
         return None;
     }
@@ -58,15 +58,9 @@ pub fn _flint_sys_spawn_on(
 
 #[no_mangle]
 pub fn _flint_sys_yield() {
-    scheduler::with(|sched| {
-        let cur = sched.current();
-        if let Some(tcb) = &mut sched.tasks[cur as usize] {
-            tcb.state = TaskState::Ready;
-            let prio = tcb.priority;
-            sched.ready_mask |= 1u64 << prio;
-        }
-    });
-    scheduler::request_switch();
+    if scheduler::with(|sched| sched.yield_current()) {
+        scheduler::request_switch();
+    }
 }
 
 #[no_mangle]
@@ -152,10 +146,7 @@ pub fn _flint_sys_mutex_unlock(mutex: *const core::ffi::c_void) {
 // ── Log / panic syscalls ────────────────────────────────────────────────────
 
 #[no_mangle]
-pub fn _flint_sys_log_write(
-    level: api::debug::log::Level,
-    args: &core::fmt::Arguments<'_>,
-) {
+pub fn _flint_sys_log_write(level: api::debug::log::Level, args: &core::fmt::Arguments<'_>) {
     debug::log::write(level, args);
 }
 

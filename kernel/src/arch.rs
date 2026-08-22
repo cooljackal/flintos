@@ -63,7 +63,7 @@ pub use arch_armv6m::tick::Armv6mTick as Tick;
 #[cfg(all(target_os = "none", feature = "arch-armv6m"))]
 pub use arch_armv6m::Armv6mArch as SelectedArch;
 #[cfg(all(target_os = "none", feature = "arch-armv6m"))]
-pub use arch_armv6m::{cs_enter, cs_exit, cs_with, init_boot_core};
+pub use arch_armv6m::{cs_enter, cs_exit, cs_try_with, cs_with, init_boot_core};
 
 // ── Host: stand-ins, with the instrumentation the real ones cannot offer ────
 
@@ -72,6 +72,16 @@ pub use host::{
     cs_enter, cs_exit, cs_with, registers, HostArch as SelectedArch, HostSmp as Smp,
     HostTick as Tick,
 };
+
+#[cfg(not(target_os = "none"))]
+pub fn cs_try_with<R>(f: impl FnOnce() -> R) -> Option<R> {
+    Some(host::cs_with(f))
+}
+
+#[cfg(all(target_os = "none", feature = "arch-xtensa"))]
+pub fn cs_try_with<R>(f: impl FnOnce() -> R) -> Option<R> {
+    Some(arch_xtensa::cs_with(f))
+}
 
 /// Saved frame selected with the architecture in exactly one place.
 pub type Context = <SelectedArch as hal::arch::Architecture>::Context;

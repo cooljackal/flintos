@@ -75,6 +75,12 @@ pub unsafe fn pass_to_bootsel() -> ! {
     unsafe { core::ptr::write_volatile(&raw mut FLINT_RP2040_TEST_STATUS, 0x600d) };
     led_init();
     pulse(2);
+    #[cfg(target_arch = "arm")]
+    {
+        if unsafe { crate::multicore::stop_core1() }.is_err() {
+            fail(15);
+        }
+    }
     unsafe { reset_usb_boot() }
 }
 

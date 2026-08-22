@@ -100,6 +100,14 @@ impl<T> Spinlock<T> {
                 panic!("spinlock: core {me} already holds this lock");
             }
 
+            // On RP2040 `cs_with` already holds the kernel hardware spinlock.
+            // Waiting on this software owner while holding that hardware lock
+            // deadlocks: the owner needs the same hardware lock to execute its
+            // portable-atomic release. Once inside `cs_with`, an owner from
+            // another core has necessarily finished and released this byte.
+            #[cfg(target_arch = "arm")]
+            self.holder.store(me, Ordering::Relaxed);
+            #[cfg(not(target_arch = "arm"))]
             while self
                 .holder
                 .compare_exchange_weak(UNLOCKED, me, Ordering::Acquire, Ordering::Relaxed)
@@ -124,11 +132,14 @@ impl<T> Spinlock<T> {
     /// scheduler state without hanging if the scheduler is mid-update.
     #[inline(always)]
     pub fn try_with<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
-        crate::arch::cs_with(|| {
+        crate::arch::cs_try_with(|| {
             let me = Smp::context_id();
             if self.holder.load(Ordering::Relaxed) == me {
                 return None;
             }
+            #[cfg(target_arch = "arm")]
+            self.holder.store(me, Ordering::Relaxed);
+            #[cfg(not(target_arch = "arm"))]
             if self
                 .holder
                 .compare_exchange(UNLOCKED, me, Ordering::Acquire, Ordering::Relaxed)
@@ -139,6 +150,7 @@ impl<T> Spinlock<T> {
             let _release = Release { lock: self };
             Some(f(unsafe { &mut *self.data.get() }))
         })
+        .flatten()
     }
 
     /// Which execution context holds this, if any. Diagnostics only — the
@@ -177,28 +189,58 @@ pub fn cores() -> u8 {
     Smp::cores()
 }
 
-/// How many cores currently run the scheduler.
+/// One bit for every core that has completed its scheduler join.
 ///
-/// Both, once `boot::join_scheduler` has run on the second one.
+/// Core 0 owns kernel bring-up and is joined from reset. A secondary core sets
+/// its bit only after its pinned idle TCB and per-core `current` entry exist;
+/// accepting affinity before that point strands tasks indefinitely.
+static JOINED_CORES: AtomicU8 = AtomicU8::new(1 << CoreId::BOOT.0);
+
+/// Record that `core` has a valid scheduler context and can accept work.
+///
+/// Call this after installing that core's idle/current state and before
+/// unmasking its scheduling interrupts.
+pub fn mark_joined(core: CoreId) {
+    assert!(
+        core.index() < hal::smp::MAX_CORES && core.0 < cores(),
+        "joined core is out of range"
+    );
+    JOINED_CORES.fetch_or(1u8 << core.0, Ordering::Release);
+}
+
+/// The current scheduler membership bitmap.
+pub fn joined_mask() -> u8 {
+    JOINED_CORES.load(Ordering::Acquire)
+}
+
+/// How many cores currently run the scheduler.
+pub fn scheduling_cores() -> u8 {
+    joined_mask().count_ones() as u8
+}
+
+/// Whether this core is the sole writer of shared kernel time.
+pub fn is_timekeeper() -> bool {
+    current_core().is_boot()
+}
+
+/// How many cores currently run the scheduler.
 ///
 /// This exists so `spawn_on` can *refuse* a core that would never run the
 /// task. A pinned task that is silently never scheduled is the worst outcome
 /// available: it looks like a spawn that worked.
 ///
-/// It is a compile-time constant rather than a count of cores that have
-/// actually joined, which means pinning to core 1 is accepted from the moment
-/// the image is built. An application that pins without starting the second
-/// core gets a task that waits — visible in the trap diagnostics as a ready
-/// task nobody runs, rather than a silent nothing.
-pub const SCHEDULING_CORES: u8 = 2;
-
 /// Whether a task may be pinned to `core`.
 ///
 /// Three ways to say no, and they are different failures worth separating from
 /// the allocation failures that follow: the core is beyond `MAX_CORES`, the
 /// part does not have it, or it has it but nothing there runs the scheduler.
-pub const fn is_pinnable(core: u8) -> bool {
-    (core as usize) < hal::smp::MAX_CORES && core < SCHEDULING_CORES
+pub fn is_pinnable(core: u8) -> bool {
+    (core as usize) < hal::smp::MAX_CORES && core < cores() && joined_mask() & (1u8 << core) != 0
+}
+
+#[cfg(test)]
+pub(crate) fn reset_joined_cores() {
+    JOINED_CORES.store(1 << CoreId::BOOT.0, Ordering::Release);
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -214,14 +256,19 @@ mod tests {
 
     #[test]
     fn only_a_core_that_schedules_can_be_pinned_to() {
+        let _k = crate::testsupport::lock();
         // A core is pinnable once it schedules. Core 0 always does; core 1
-        // does after `boot::join_scheduler` installs its vector table, idle
-        // task and tick. Pinning to a core that never schedules would produce
-        // a task that looks spawned and never runs, which is what
-        // `SCHEDULING_CORES` exists to refuse.
+        // does after platform bring-up installs its vector table, idle task,
+        // and tick. Pinning to a core that never schedules would produce a
+        // task that looks spawned and never runs, so the joined mask refuses
+        // it until initialization is complete.
+        reset_joined_cores();
         assert!(is_pinnable(0));
         assert!(!is_pinnable(hal::smp::MAX_CORES as u8), "past the end");
-        assert_eq!(is_pinnable(1), SCHEDULING_CORES > 1);
+        assert!(!is_pinnable(1), "core 1 has not joined");
+        mark_joined(CoreId(1));
+        assert!(is_pinnable(1), "joined core 1 refused affinity");
+        assert_eq!(scheduling_cores(), 2);
     }
 
     #[test]

@@ -24,7 +24,12 @@ _vector_table_start:
     .word 0
     .word PendSV
     .word SysTick
-    .rept 32
+    .rept 15
+    .word DefaultHandler
+    .endr
+    .word SioIrq15
+    .word SioIrq16
+    .rept 15
     .word DefaultHandler
     .endr
 
@@ -69,6 +74,26 @@ Reset:
     svc 0
 5:  wfi
     b 5b
+
+/* Entered by the RP2040 ROM core-1 launch sequence with MSP already set to
+ * _core1_boot_stack_top. Global RAM and spinlock initialization belongs to
+ * core 0 and must never be repeated here. */
+.section .text.Core1Entry, "ax", %progbits
+.thumb_func
+.global _flint_armv6m_core1_entry
+_flint_armv6m_core1_entry:
+    cpsid i
+    ldr r0, =0xe000ed08
+    ldr r1, =_vector_table_start
+    str r1, [r0]
+    ldr r0, =0xe000ed20
+    ldr r1, =0xc0ff0000
+    str r1, [r0]
+    bl _flint_armv6m_core1_boot
+    cpsie i
+    svc 0
+10: wfi
+    b 10b
 
 .thumb_func
 .global SVC
@@ -123,6 +148,22 @@ PendSV:
 SysTick:
     push {r0, lr}
     bl _flint_armv6m_systick
+    pop {r0, pc}
+
+.thumb_func
+.global SioIrq15
+SioIrq15:
+    push {r0, lr}
+    movs r0, #15
+    bl _flint_armv6m_sio_irq
+    pop {r0, pc}
+
+.thumb_func
+.global SioIrq16
+SioIrq16:
+    push {r0, lr}
+    movs r0, #16
+    bl _flint_armv6m_sio_irq
     pop {r0, pc}
 
 .thumb_func

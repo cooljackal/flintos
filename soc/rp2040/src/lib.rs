@@ -9,6 +9,7 @@
 #![no_std]
 
 pub mod boot2;
+pub mod multicore;
 pub mod test_status;
 
 pub const XIP_BASE: u32 = 0x1000_0000;

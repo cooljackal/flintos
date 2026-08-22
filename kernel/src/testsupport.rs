@@ -54,6 +54,7 @@ fn reset() {
     // leftover on another core makes the next test's first
     // `take_pending_switch` lie.
     scheduler::clear_all_pending_switches();
+    crate::smp::reset_joined_cores();
 }
 
 /// Create a Ready task at `prio` and return its id.
@@ -62,7 +63,9 @@ fn reset() {
 /// priority, state and the inheritance fields, and nothing else.
 pub fn task(prio: u8) -> u32 {
     scheduler::with(|sched| {
-        let id = sched.alloc_id().expect("test wanted more tasks than MAX_TASKS");
+        let id = sched
+            .alloc_id()
+            .expect("test wanted more tasks than MAX_TASKS");
         if let Some(tcb) = &mut sched.tasks[id as usize] {
             tcb.name = "test";
             tcb.base_prio = prio;
@@ -116,24 +119,24 @@ pub fn state_of(id: u32) -> TaskState {
 #[track_caller]
 pub fn assert_ready_mask_consistent() {
     scheduler::with(|sched| {
-    for prio in 0..scheduler::NUM_PRIORITIES as u8 {
-        let runnable = sched.tasks.iter().flatten().any(|t| {
-            t.priority == prio && matches!(t.state, TaskState::Ready | TaskState::Running)
-        });
-        let bit = sched.ready_mask & (1u64 << prio) != 0;
-        assert_eq!(
-            bit,
-            runnable,
-            "ready_mask bit {prio} is {}, but {} runnable task(s) sit at that priority",
-            if bit { "set" } else { "clear" },
-            sched
-                .tasks
-                .iter()
-                .flatten()
-                .filter(|t| t.priority == prio
-                    && matches!(t.state, TaskState::Ready | TaskState::Running))
-                .count()
-        );
-    }
+        for prio in 0..scheduler::NUM_PRIORITIES as u8 {
+            let runnable = sched.tasks.iter().flatten().any(|t| {
+                t.priority == prio && matches!(t.state, TaskState::Ready | TaskState::Running)
+            });
+            let bit = sched.ready_mask & (1u64 << prio) != 0;
+            assert_eq!(
+                bit,
+                runnable,
+                "ready_mask bit {prio} is {}, but {} runnable task(s) sit at that priority",
+                if bit { "set" } else { "clear" },
+                sched
+                    .tasks
+                    .iter()
+                    .flatten()
+                    .filter(|t| t.priority == prio
+                        && matches!(t.state, TaskState::Ready | TaskState::Running))
+                    .count()
+            );
+        }
     });
 }

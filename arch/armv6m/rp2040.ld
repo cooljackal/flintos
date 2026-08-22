@@ -68,11 +68,15 @@ SECTIONS
     _dma_pool_end = .;
   } > RAM
 
-  _stack_top = ORIGIN(RAM) + LENGTH(RAM);
+  /* The RP2040 ROM installs this stack before branching to core 1. Keep it
+   * disjoint from core 0's downward-growing reset stack. */
+  _core1_boot_stack_top = ORIGIN(RAM) + LENGTH(RAM);
+  _core1_boot_stack_bottom = _core1_boot_stack_top - 1K;
+  _stack_top = _core1_boot_stack_bottom;
   /DISCARD/ : { *(.eh_frame .ARM.exidx .ARM.extab) }
 }
 
 ASSERT(SIZEOF(.boot2) == 0x100, "RP2040 boot2 must be exactly 256 bytes");
 ASSERT(ADDR(.vector_table) == 0x10000100, "RP2040 vectors must follow boot2");
 ASSERT(SIZEOF(.vector_table) >= 0xC0, "RP2040 vector table is incomplete");
-ASSERT(_ebss <= _stack_top, "RP2040 RAM image exceeds SRAM");
+ASSERT(_dma_pool_end <= _stack_top, "RP2040 RAM image overlaps reset stacks");

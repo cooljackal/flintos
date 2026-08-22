@@ -18,11 +18,19 @@ use crate::arch::Tick;
 use crate::board;
 #[cfg(target_os = "none")]
 use crate::scheduler;
+#[cfg(target_os = "none")]
+use portable_atomic::{AtomicU32, Ordering};
 
 #[cfg(target_os = "none")]
 unsafe extern "C" {
     fn flint_app_main();
+    static _vector_table_start: u8;
+    static _core1_boot_stack_top: u8;
+    fn _flint_armv6m_core1_entry();
 }
+
+#[cfg(target_os = "none")]
+pub(crate) static CORE1_IDLE: AtomicU32 = AtomicU32::new(u32::MAX);
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,12 +81,67 @@ pub extern "C" fn _flint_armv6m_boot() {
         <board::SelectedSoc as hal::soc::SystemOnChip>::DEFAULT_CPU_HZ,
     );
     install_idle_task();
-    unsafe { flint_app_main() };
+    let core1_idle = install_core1_idle_task();
+    CORE1_IDLE.store(core1_idle, Ordering::Release);
 
-    // Release the outer RP2040 spinlock and restore Reset's PRIMASK. Reset
-    // immediately enters SVC, which selects and exception-returns into the
-    // highest-priority ready task.
+    // Core 1 must take the scheduler spinlock to publish its join. Release the
+    // boot-wide lock before launch or the two cores deadlock here.
     unsafe { crate::arch::cs_exit(boot_primask) };
+    launch_core1();
+    unsafe { flint_app_main() };
+}
+
+#[cfg(target_os = "none")]
+fn launch_core1() {
+    unsafe {
+        soc_rp2040::multicore::launch_core1(
+            core::ptr::addr_of!(_vector_table_start) as u32,
+            core::ptr::addr_of!(_core1_boot_stack_top) as u32,
+            _flint_armv6m_core1_entry as *const () as u32,
+        )
+        .expect("RP2040 core 1 launch failed");
+    }
+    super::armv6m::enable_sio_fifo_irq(soc_rp2040::multicore::IRQ_SIO_PROC0);
+
+    for _ in 0..1_000_000 {
+        if crate::smp::is_pinnable(1) {
+            return;
+        }
+        core::hint::spin_loop();
+    }
+    panic!("RP2040 core 1 did not join the scheduler");
+}
+
+#[cfg(target_os = "none")]
+fn install_core1_idle_task() -> u32 {
+    scheduler::with(|sched| {
+        let id = sched.alloc_id().expect("no core-1 idle slot");
+        const IDLE_STACK_SIZE: u32 = 1024;
+        let stack_base =
+            crate::spawn::allocate_stack(IDLE_STACK_SIZE).expect("no ARM core-1 idle stack");
+        crate::spawn::paint_stack(stack_base, IDLE_STACK_SIZE);
+        let tcb = sched.tasks[id as usize]
+            .as_mut()
+            .expect("core-1 idle TCB missing");
+        tcb.name = "idle1";
+        tcb.entry = Some(idle_loop_entry);
+        tcb.base_prio = scheduler::IDLE_PRIORITY;
+        tcb.priority = scheduler::IDLE_PRIORITY;
+        tcb.state = scheduler::TaskState::Ready;
+        tcb.quantum = scheduler::DEFAULT_QUANTUM_MS;
+        tcb.stack_base = stack_base;
+        tcb.stack_size = IDLE_STACK_SIZE;
+        tcb.affinity = scheduler::Affinity::Core(hal::smp::CoreId(1));
+        unsafe {
+            crate::arch::SelectedArch::init_context(
+                &mut tcb.context,
+                idle_loop_entry as *const () as usize,
+                stack_base + IDLE_STACK_SIZE,
+            )
+        };
+        sched.ready_mask |= 1u64 << scheduler::IDLE_PRIORITY;
+        id
+    })
 }
 
 #[cfg(target_os = "none")]

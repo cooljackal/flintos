@@ -63,9 +63,10 @@ if (-not $passed) {
     probe_serial = $ProbeSerial
     target_bootsel_serial = $BootselSerial
     measured = @(
-        'cooperative-context-switch', 'involuntary-preemption', 'callee-saved-registers',
-        'sleep-timeout', 'queue-timeout', 'isr-to-task-queue', 'timer-callback',
-        'nested-critical-sections', 'stack-guard', 'heap-allocation'
+        'sleep-timeout', 'queue-timeout',
+        'nested-critical-sections', 'stack-guard', 'heap-allocation',
+        'dual-core-affinity', 'cross-core-wakeup-soak', 'cross-core-spinlock-contention',
+        'duplicate-execution-detection'
     )
     compile_only = @()
 } | ConvertTo-Json -Compress

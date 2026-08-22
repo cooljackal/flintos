@@ -23,7 +23,15 @@ impl Armv6mTick {
     /// The reload value must already have been configured by [`TickSource::init`].
     #[cfg(target_arch = "arm")]
     pub unsafe fn start() {
-        unsafe { SYST_CSR.write_volatile(0b111) };
+        let reload = Self::ticks_per_period().saturating_sub(1).min(0x00ff_ffff);
+        unsafe {
+            // SysTick is banked per Cortex-M0+ core. Core 1 therefore needs
+            // its own reload/current setup even though core 0 published the
+            // shared frequency and period during global initialization.
+            SYST_RVR.write_volatile(reload);
+            SYST_CVR.write_volatile(0);
+            SYST_CSR.write_volatile(0b111);
+        }
     }
 
     /// Stop SysTick without changing its reload value.
@@ -41,6 +49,14 @@ impl Armv6mTick {
 
     pub fn ticks_per_period() -> u32 {
         ((Self::cpu_hz() as u64 * PERIOD_US.load(Ordering::Relaxed) as u64) / 1_000_000) as u32
+    }
+
+    /// Whether this core owns the system-wide monotonic clock.
+    pub fn is_timekeeper_core() -> bool {
+        #[cfg(target_arch = "arm")]
+        return unsafe { (0xd000_0000 as *const u32).read_volatile() == 0 };
+        #[cfg(not(target_arch = "arm"))]
+        true
     }
 }
 
@@ -63,7 +79,9 @@ impl TickSource for Armv6mTick {
     }
 
     fn tick() -> bool {
-        crate::cs_with(|| unsafe { NOW = NOW.wrapping_add(1) });
+        if Self::is_timekeeper_core() {
+            crate::cs_with(|| unsafe { NOW = NOW.wrapping_add(1) });
+        }
         false
     }
 
