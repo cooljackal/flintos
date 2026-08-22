@@ -1502,25 +1502,20 @@ mod by_name {
     /// # Safety
     /// `fmt` must be a nul-terminated C string, which every caller here is.
     unsafe fn log_c_str(tag: &str, fmt: *const c_char) -> c_int {
-        if fmt.is_null() {
-            return 0;
+        // The same bounded read the esp_log_write path uses (`c_str_bounded`):
+        // a string with no terminator must not walk memory until it faults.
+        match unsafe { c_str_bounded(fmt) } {
+            Some(s) => {
+                api::log_info!("[{}] {}", tag, s);
+                s.len() as c_int
+            }
+            // Null or non-UTF-8: not worth reporting as an error, a corrupt
+            // format string in a diagnostic path says the same thing either way.
+            None => {
+                api::log_info!("[{}] <non-utf8 message>", tag);
+                0
+            }
         }
-        // Bounded: a string with no terminator would otherwise walk memory
-        // until it faulted, and a diagnostic path must not be able to make
-        // things worse.
-        const MAX: usize = 256;
-        let mut len = 0;
-        while len < MAX && unsafe { *fmt.add(len) } != 0 {
-            len += 1;
-        }
-        let bytes = unsafe { core::slice::from_raw_parts(fmt as *const u8, len) };
-        match core::str::from_utf8(bytes) {
-            Ok(s) => api::log_info!("[{}] {}", tag, s),
-            // Not worth reporting as an error: a corrupt format string in a
-            // diagnostic path says the same thing either way.
-            Err(_) => api::log_info!("[{}] <non-utf8 message>", tag),
-        }
-        len as c_int
     }
 
     macro_rules! blob_printf {

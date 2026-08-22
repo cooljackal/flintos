@@ -111,12 +111,12 @@ pub const fn init_data(max_tx_power_dbm: i32) -> [u8; PHY_INIT_DATA_LEN] {
     24,
     24,
     24,
-    limit(max_tx_power_dbm * 4, 40, 78),   // TX power 0
-    limit(max_tx_power_dbm * 4, 40, 72),   // TX power 1
-    limit(max_tx_power_dbm * 4, 40, 66),   // TX power 2
-    limit(max_tx_power_dbm * 4, 40, 60),   // TX power 3
-    limit(max_tx_power_dbm * 4, 40, 56),   // TX power 4
-    limit(max_tx_power_dbm * 4, 40, 52),   // TX power 5
+    limit(max_tx_power_dbm * 4, TX_POWER_FLOOR as i32, TX_POWER_CEILINGS[0] as i32), // TX power 0
+    limit(max_tx_power_dbm * 4, TX_POWER_FLOOR as i32, TX_POWER_CEILINGS[1] as i32), // TX power 1
+    limit(max_tx_power_dbm * 4, TX_POWER_FLOOR as i32, TX_POWER_CEILINGS[2] as i32), // TX power 2
+    limit(max_tx_power_dbm * 4, TX_POWER_FLOOR as i32, TX_POWER_CEILINGS[3] as i32), // TX power 3
+    limit(max_tx_power_dbm * 4, TX_POWER_FLOOR as i32, TX_POWER_CEILINGS[4] as i32), // TX power 4
+    limit(max_tx_power_dbm * 4, TX_POWER_FLOOR as i32, TX_POWER_CEILINGS[5] as i32), // TX power 5
     0,
     1,
     1,

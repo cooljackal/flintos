@@ -55,8 +55,6 @@ pub struct Gtk {
 pub fn find_gtk(key_data: &[u8]) -> Option<Gtk> {
     /// KKDE data type 1 within the RSN OUI is the GTK.
     const GTK_KDE_TYPE: u8 = 1;
-    /// The KDE header before its payload: type, len, OUI(3), data-type.
-    const KDE_HDR: usize = 6;
 
     let mut i = 0;
     while i + 2 <= key_data.len() {
@@ -100,8 +98,6 @@ pub fn find_gtk(key_data: &[u8]) -> Option<Gtk> {
         } else {
             i = body_end;
         }
-        // Skip the KDE header accounting cleanly for the next element.
-        let _ = KDE_HDR;
     }
     None
 }
