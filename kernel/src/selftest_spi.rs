@@ -106,6 +106,25 @@ pub(crate) fn spi_bus_loopback_round_trips(scratch: u8, sck: u8, miso_placeholde
     // one on the same peripheral.
     dev.set_dma(false);
     roundtrip(200, seed)?;
+    seed = seed.wrapping_add(1);
+
+    // #91: the FIFO master path hung at low bus clocks — the SPI_CLOCK divider
+    // overflowed its 6-bit counter instead of engaging the prescaler, leaving
+    // h > n so SPI_CMD.usr never self-cleared. Re-clock to 1 MHz and drive the
+    // driver's FIFO `transfer()` directly (the exact path that hung); it must
+    // complete and round-trip byte-for-byte, not time out.
+    dev.set_speed(BusSpeed::MHz(1)).map_err(|_| "could not reclock to 1 MHz")?;
+    for (i, b) in txb[..32].iter_mut().enumerate() {
+        *b = seed.wrapping_add((i as u8).wrapping_mul(31));
+    }
+    rxb[..32].fill(seed ^ 0xFF);
+    dev.transfer(&txb[..32], &mut rxb[..32])
+        .map_err(|_| "1 MHz FIFO transfer timed out -- the #91 divider bug")?;
+    if rxb[..32] != txb[..32] {
+        return Err("1 MHz FIFO transfer did not round-trip");
+    }
+    dev.set_speed(BusSpeed::MHz(4)).map_err(|_| "could not reclock back to 4 MHz")?;
+
     dev.set_dma(true);
 
     Ok(())

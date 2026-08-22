@@ -217,6 +217,60 @@ fn unpack_word(word: u32, out: &mut [u8]) {
     }
 }
 
+/// Compute the `SPI_CLOCK` register value for a target bus clock, a port of
+/// esp-idf's `spi_ll_master_cal_clock` (`hal/esp32/include/hal/spi_ll.h`) at a
+/// fixed 50% duty cycle.
+///
+/// The register packs a two-stage divider: `clkdiv_pre` [30:18] (pre−1) then a
+/// counter `clkcnt_n` [17:12] (n−1) with high/low phase boundaries `clkcnt_h`
+/// [11:6] and `clkcnt_l` [5:0]. Effective clock is `fapb / (pre · n)`. `n` alone
+/// is only six bits, so it maxes at 64: for any divider above that the prescaler
+/// **must** engage. The previous code never set `clkdiv_pre`, so a 1 MHz request
+/// off an 80 MHz APB needed n = 80, which overflowed its field to 15 while the
+/// high-phase boundary stayed 39 — h > n, an inconsistent register the hardware
+/// never completes, so `SPI_CMD.usr` never self-cleared and `transfer()` hung
+/// (issue #91). Brute-forcing n and deriving the best pre, as esp-idf does,
+/// reaches low frequencies with a consistent register.
+///
+/// For a target above ¾·fapb the divider cannot help, so `clk_equ_sysclk`
+/// (bit 31) runs the bus straight off the APB.
+fn spi_clock_reg(fapb: u32, hz: u32) -> u32 {
+    /// 50% duty in esp-idf's 0..256 scale; h = round(duty·n / 256).
+    const DUTY: u32 = 128;
+    let hz = hz.max(1);
+
+    // Above three-quarters of the APB, drive the bus from the APB directly.
+    if hz > (fapb / 4) * 3 {
+        return 1 << 31; // clk_equ_sysclk
+    }
+
+    // Bruteforce n (2..=64), pick the best pre for each, keep the lowest error;
+    // on a tie prefer the higher n for finer duty-cycle resolution (the `<=`).
+    let mut best_n = 2u32;
+    let mut best_pre = 1u32;
+    let mut best_err = u32::MAX;
+    for n in 2..=64u32 {
+        let mut pre = ((fapb / n) + hz / 2) / hz; // round((fapb/n)/hz)
+        pre = pre.clamp(1, 8192);
+        let err = (fapb / (pre * n)).abs_diff(hz);
+        if err <= best_err {
+            best_err = err;
+            best_n = n;
+            best_pre = pre;
+        }
+    }
+
+    let n = best_n;
+    let pre = best_pre;
+    let l = n;
+    let h = ((DUTY * n + 127) / 256).max(1);
+
+    (((pre - 1) & 0x1FFF) << 18)
+        | (((n - 1) & 0x3F) << 12)
+        | (((h - 1) & 0x3F) << 6)
+        | ((l - 1) & 0x3F)
+}
+
 impl Esp32Spi {
     /// Bind a driver instance to the SPI register block at `base_addr`.
     ///
@@ -235,24 +289,10 @@ impl Esp32Spi {
     }
 
     /// Program SPI_CLOCK for `speed_hz` off the APB clock.
-    ///
-    /// clkcnt_N and clkcnt_L hold the same value: the frequency is
-    /// APB / ((pre + 1) * (N + 1)), and L is the low-phase count, not an
-    /// independent divisor. clkcnt_H is the high-phase boundary, so N/2 gives a
-    /// roughly even duty cycle. Matches esp-idf's `spi_ll_master_cal_clock`.
-    ///
-    /// A previous revision wrote N = div/2 and L = div-1, which agree only at
-    /// div == 2 (40 MHz off an 80 MHz APB, the one value both board manifests
-    /// ask for) and ran at roughly double the requested clock otherwise.
     fn apply_clock(&self, speed_hz: u32) {
-        let div = (APB_HZ / speed_hz.max(1)).max(2);
-        let n = div - 1;
         unsafe {
-            self.reg(SPI_CLOCK).write_volatile(
-                ((n & 0x3F) << 12) |        // clkcnt_N
-                (((n / 2) & 0x3F) << 6) |   // clkcnt_H
-                (n & 0x3F),                 // clkcnt_L
-            );
+            self.reg(SPI_CLOCK)
+                .write_volatile(spi_clock_reg(APB_HZ, speed_hz));
         }
     }
 
@@ -542,6 +582,62 @@ impl PhysicalBus for Esp32Spi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decode a `SPI_CLOCK` value into (pre, n, h, l) as used (register + 1),
+    /// or `None` for a `clk_equ_sysclk` word.
+    fn decode_clock(reg: u32) -> Option<(u32, u32, u32, u32)> {
+        if reg & (1 << 31) != 0 {
+            return None;
+        }
+        let pre = ((reg >> 18) & 0x1FFF) + 1;
+        let n = ((reg >> 12) & 0x3F) + 1;
+        let h = ((reg >> 6) & 0x3F) + 1;
+        let l = (reg & 0x3F) + 1;
+        Some((pre, n, h, l))
+    }
+
+    #[test]
+    fn clock_divider_matches_esp_idf_known_good_values() {
+        // The 4 MHz register esp-idf produces off an 80 MHz APB, and the value
+        // the issue #91 dump confirms the working path used. Golden.
+        assert_eq!(spi_clock_reg(80_000_000, 4_000_000), 0x0001_3253);
+        // 40 MHz is a single divide-by-two: pre 1, n 2, h 1, l 2.
+        assert_eq!(decode_clock(spi_clock_reg(80_000_000, 40_000_000)), Some((1, 2, 1, 2)));
+    }
+
+    #[test]
+    fn a_1mhz_clock_is_consistent_not_the_buggy_register() {
+        // The bug: n = 80 overflowed its 6-bit field to 15 while h stayed 39,
+        // giving CLOCK=0x0000f9cf with h > n — a register the core never
+        // finishes, so transfer() hung.
+        let reg = spi_clock_reg(80_000_000, 1_000_000);
+        assert_ne!(reg, 0x0000_f9cf, "reproduced the #91 hang register");
+        let (pre, n, h, l) = decode_clock(reg).expect("not equ_sysclk at 1 MHz");
+        // Effective clock is exactly 1 MHz, and the phase counters are sane.
+        assert_eq!(80_000_000 / (pre * n), 1_000_000);
+        assert!(h <= n, "high phase {h} exceeds the period {n} — the bug");
+        assert_eq!(l, n, "low phase must span the whole low half");
+    }
+
+    #[test]
+    fn the_divider_reaches_low_frequencies_within_tolerance() {
+        // Across the range that previously overflowed the counter, the effective
+        // clock stays within one LSB of the divider and the register is always
+        // consistent (h <= n). 100 kHz is well below the old 64-count ceiling.
+        for &hz in &[8_000_000, 2_000_000, 1_000_000, 500_000, 100_000, 40_000] {
+            let (pre, n, h, l) = decode_clock(spi_clock_reg(80_000_000, hz)).unwrap();
+            let eff = 80_000_000 / (pre * n);
+            assert!(eff.abs_diff(hz) * 100 <= hz * 5, "{hz} Hz off by too much: {eff}");
+            assert!(h <= n && l == n, "inconsistent phase counters at {hz} Hz");
+        }
+    }
+
+    #[test]
+    fn above_three_quarters_apb_uses_the_system_clock_directly() {
+        // 80 MHz off an 80 MHz APB can only be clk_equ_sysclk (bit 31).
+        assert_eq!(spi_clock_reg(80_000_000, 80_000_000), 1 << 31);
+        assert!(decode_clock(spi_clock_reg(80_000_000, 80_000_000)).is_none());
+    }
 
     #[test]
     fn register_offsets_match_trm_spi_summary() {
