@@ -374,3 +374,13 @@ mod tests {
         assert_eq!(DREF_FIELD_MASK, (0x3 << 29) | (0x3 << 27) | (0x3 << 25));
     }
 }
+
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<TouchError> for hal::Error {
+    fn from(e: TouchError) -> Self {
+        match e {
+            TouchError::Timeout => Self::Other("touch: conversion timed out"),
+        }
+    }
+}

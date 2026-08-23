@@ -52,3 +52,13 @@ pub enum CryptoError {
     /// came up or the block is wedged.
     Timeout,
 }
+
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<CryptoError> for hal::Error {
+    fn from(e: CryptoError) -> Self {
+        match e {
+            CryptoError::Timeout => Self::Other("crypto: accelerator timed out"),
+        }
+    }
+}

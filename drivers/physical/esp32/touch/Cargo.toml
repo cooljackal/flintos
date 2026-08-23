@@ -12,4 +12,5 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hal = { path = "../../../../hal" }
 soc-esp32 = { path = "../../../../soc/esp32" }

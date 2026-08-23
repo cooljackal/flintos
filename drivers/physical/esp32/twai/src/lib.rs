@@ -320,3 +320,13 @@ mod tests {
         assert_eq!(STATUS_RBS, 1 << 0);
     }
 }
+
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<TwaiError> for hal::Error {
+    fn from(e: TwaiError) -> Self {
+        match e {
+            TwaiError::Timeout => Self::Other("twai: no frame received in time"),
+        }
+    }
+}

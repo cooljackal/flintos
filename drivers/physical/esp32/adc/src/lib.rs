@@ -648,3 +648,14 @@ mod tests {
         assert_eq!(base & MEAS_START_FORCE, MEAS_START_FORCE);
     }
 }
+
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<AdcError> for hal::Error {
+    fn from(e: AdcError) -> Self {
+        match e {
+            AdcError::Timeout => Self::Other("adc: conversion timed out"),
+            AdcError::NoPullOnThisPad => Self::Unsupported,
+        }
+    }
+}

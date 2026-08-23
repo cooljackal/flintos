@@ -484,3 +484,14 @@ mod tests {
         assert_ne!(1u32 << 0, 1u32 << 1);
     }
 }
+
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<TimerError> for hal::Error {
+    fn from(e: TimerError) -> Self {
+        // Both variants say the hardware cannot encode what was asked.
+        match e {
+            TimerError::UnsupportedResolution | TimerError::UnsupportedPeriod => Self::Unsupported,
+        }
+    }
+}
