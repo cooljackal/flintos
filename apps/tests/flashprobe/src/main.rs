@@ -63,7 +63,7 @@ fn run() {
     task::sleep_ms(200);
     api::log_info!("reading the ROM's flash chip struct at 0x3FFAE270");
 
-    let c = unsafe { esp32_flash::ChipInfo::read() };
+    let c = esp32_flash::ChipInfo::read();
     api::log_info!("device_id   = {:#010x}", c.device_id);
     api::log_info!("chip_size   = {:#010x}", c.chip_size);
     api::log_info!("block_size  = {:#010x}", c.block_size);
