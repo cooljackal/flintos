@@ -73,6 +73,13 @@ pub fn _flint_sys_current_id() -> TaskId {
     TaskId(scheduler::with(|s| s.current()))
 }
 
+/// End the calling task. Same path a task takes when its entry function
+/// returns; `api::task::exit` is the explicit spelling of it.
+#[no_mangle]
+pub fn _flint_sys_task_exit() -> ! {
+    spawn::flint_task_exit()
+}
+
 /// Enter the kernel's critical section; returns the state `_flint_sys_cs_exit`
 /// needs to leave it. Backs `api::sync::CsCell`, so `api` stays ignorant of
 /// which architecture's interrupt mask this is.

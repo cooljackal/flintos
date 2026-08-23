@@ -3,7 +3,7 @@
 //! FlintOS public API crate.
 //!
 //! This crate provides the user-facing primitives:
-//! - `api::task::spawn`, `sleep_ms`, `yield_now`
+//! - `api::task::spawn`, `Task` builder, `exit`, `sleep_ms`, `yield_now`, `wait_until`
 //! - `api::queue::Queue<T,N>` — bounded, thread-safe message queue
 //! - `api::mutex::Mutex<T>` — priority-inheritance mutex
 //! - `api::timer::now_ms`, `once_ms`, `every_ms`

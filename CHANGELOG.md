@@ -27,6 +27,14 @@ A kernel that provides a different one refuses to build and points here.
   masks interrupts around a closure for a value a task and an ISR share.
   Both replace `static mut X: Option<T>` + `addr_of!`. The state word is a
   `portable_atomic` atomic, so it works on the Cortex-M0+ too.
+- **`task::exit()`, the `Task` builder and `task::wait_until`** (#106).
+  `task::exit() -> !` ends the calling task instead of parking it in a sleep
+  loop. `Task::new(name, entry).priority(..).stack(..).on_core(..).spawn()`
+  defaults to `Priority::Normal(1)` and a 4 KiB stack; the result is
+  `#[must_use]`, so a task that failed to start is no longer silent.
+  `wait_until(cond, timeout_ms)` polls a condition with a timeout over the
+  kernel tick. The existing `spawn` / `spawn_on` are unchanged. Additive, so
+  the ABI stays at 1.
 - **DAC, ADC2, CAN (TWAI) and I2S drivers, each with an on-chip loopback
   self-test, verified on a DevKitC.** Every one proves itself with no external
   hardware: the DAC drives GPIO25/26 and ADC2 reads it back on the same pad,
