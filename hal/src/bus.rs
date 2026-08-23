@@ -244,15 +244,16 @@ pub trait Bus: Send + Sync {
     /// Run a list of operations in order, as one logical transaction.
     ///
     /// Each [`Op`] is a write, a read, or a full-duplex exchange; the struct
-    /// carries its word width, chip-select hold, and trailing delay. A single
-    /// op's payload must not exceed [`Bus::max_transfer`]; the caller splits
-    /// anything longer across ops (or calls) itself — no bus here buffers or
-    /// chunks on the caller's behalf.
+    /// carries its word width, chip-select hold, and trailing delay. A payload
+    /// longer than [`Bus::max_transfer`] is either moved whole in pieces or
+    /// refused with an error — it is never silently cut short (#98). A bus
+    /// that splits an op may release chip-select between the pieces, so a
+    /// device that needs one framed transaction must fit in `max_transfer`.
     fn transfer(&self, ops: &mut [Op]) -> BusResult<()>;
 
     /// Largest single-op payload, in bytes, this bus moves in one go — the
-    /// controller FIFO depth. A payload past this is a caller error, not a
-    /// silent truncation.
+    /// controller FIFO depth. The bound a device-framed transaction (one
+    /// chip-select assertion) has to fit in.
     fn max_transfer(&self) -> usize;
 
     /// Set the bus clock / data rate. Default: not dynamically reclockable.

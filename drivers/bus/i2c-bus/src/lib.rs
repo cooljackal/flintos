@@ -39,8 +39,14 @@ impl Bus for I2cBus {
                 // Write (optionally with a repeated-start read): address, then
                 // the payload; the caller's `rx` is what gets filled.
                 (Some(tx), rx_opt) => {
+                    // A frame is one addressed transaction and cannot be split
+                    // without a fresh START, so a payload past the controller
+                    // FIFO is refused rather than cut short (#98).
+                    if tx.len() > MAX_PAYLOAD {
+                        return Err(BusError::InvalidConfig);
+                    }
                     let mut buf = [0u8; MAX_PAYLOAD + 1];
-                    let len = tx.len().min(MAX_PAYLOAD);
+                    let len = tx.len();
                     buf[0] = self.addr;
                     buf[1..=len].copy_from_slice(&tx[..len]);
                     match rx_opt {
@@ -171,6 +177,19 @@ mod tests {
         let (bus, rec) = bus_with(&[]);
         bus.transfer(&mut [Op::write(&[0xF4, 0x27])]).unwrap();
         assert_eq!(&rec.seen.lock().unwrap()[..], &[0x76, 0xF4, 0x27]);
+    }
+
+    #[test]
+    fn a_write_past_the_fifo_is_refused_not_cut_short() {
+        // Companion to #98: the first 64 bytes used to go out and the rest was
+        // dropped with an Ok.
+        let (bus, rec) = bus_with(&[]);
+        let tx = [0x55u8; MAX_PAYLOAD + 1];
+        assert_eq!(bus.transfer(&mut [Op::write(&tx)]), Err(BusError::InvalidConfig));
+        assert!(rec.seen.lock().unwrap().is_empty(), "nothing may reach the wire");
+        let tx = [0x55u8; MAX_PAYLOAD];
+        bus.transfer(&mut [Op::write(&tx)]).unwrap();
+        assert_eq!(rec.seen.lock().unwrap().len(), MAX_PAYLOAD + 1);
     }
 
     #[test]

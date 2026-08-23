@@ -3,8 +3,10 @@
 //! SPI bus abstraction.
 //!
 //! Wraps a [`PhysicalBus`] impl and exposes the [`Bus`] trait as a list of
-//! [`Op`]s run in order. A single op is capped at `MAX_TRANSFER` bytes — the
-//! controller's data buffer — and the caller splits anything longer itself.
+//! [`Op`]s run in order. `MAX_TRANSFER` is the controller's data buffer; a
+//! write-only or read-only op longer than that is clocked in buffer-sized
+//! pieces, and an exchange is handed to the physical driver whole (it chunks
+//! through the FIFO or uses DMA). No length is ever silently cut short.
 
 #![no_std]
 
@@ -42,18 +44,21 @@ impl Bus for SpiBus {
                 (Some(tx), None) => {
                     // A write still clocks a full duplex frame; the reply is
                     // discarded. The physical driver sends only min(tx, rx)
-                    // bytes, so a matching-length scratch rx is what makes the
-                    // whole of tx go out.
+                    // bytes, so each piece of tx goes out against a scratch rx
+                    // of the same length. This used to stop after one scratch
+                    // buffer's worth and drop the rest of tx (#98).
                     let mut scratch = [0u8; MAX_TRANSFER];
-                    let n = tx.len().min(MAX_TRANSFER);
-                    self.phys.raw_transfer(&tx[..n], &mut scratch[..n])?;
+                    for chunk in tx.chunks(MAX_TRANSFER) {
+                        self.phys.raw_transfer(chunk, &mut scratch[..chunk.len()])?;
+                    }
                 }
                 (None, Some(rx)) => {
                     // A read still has to clock: shift zeros out to shift the
                     // reply in, one buffer-full at a time.
                     let scratch = [0u8; MAX_TRANSFER];
-                    let n = rx.len().min(MAX_TRANSFER);
-                    self.phys.raw_transfer(&scratch[..n], &mut rx[..n])?;
+                    for chunk in rx.chunks_mut(MAX_TRANSFER) {
+                        self.phys.raw_transfer(&scratch[..chunk.len()], chunk)?;
+                    }
                 }
                 (None, None) => {}
             }
@@ -183,6 +188,27 @@ mod tests {
         let (bus, rec) = recording();
         bus.transfer(&mut [Op::write(b"cmd")]).unwrap();
         assert_eq!(&rec.sent.lock().unwrap()[..], b"cmd");
+    }
+
+    #[test]
+    fn a_write_longer_than_the_buffer_sends_every_byte() {
+        // Regression guard (#98): a write past MAX_TRANSFER used to send the
+        // first 64 bytes and silently drop the rest.
+        let (bus, rec) = recording();
+        let tx: Vec<u8> = (0..=200u8).collect();
+        bus.transfer(&mut [Op::write(&tx)]).unwrap();
+        assert_eq!(&rec.sent.lock().unwrap()[..], &tx[..]);
+    }
+
+    #[test]
+    fn a_read_longer_than_the_buffer_fills_every_byte() {
+        // Regression guard (#98): a read past MAX_TRANSFER used to fill the
+        // first 64 bytes, leave the rest untouched, and still return Ok.
+        let (bus, rec) = recording();
+        let mut rx = [0xAAu8; 150];
+        bus.transfer(&mut [Op::read(&mut rx)]).unwrap();
+        assert_eq!(rx, [0u8; 150], "every byte must be clocked in");
+        assert_eq!(rec.sent.lock().unwrap().len(), 150, "every byte must be clocked out");
     }
 
     #[test]
