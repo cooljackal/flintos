@@ -22,11 +22,13 @@ soc-rp2040 = { path = "../../../soc/rp2040" }
 build = { path = "../../../tools/build" }
 
 [features]
+# Board and debug level are chosen on the command line and passed straight to
+# the kernel (`--features kernel/board-wio-rp2040-mini,kernel/debug-level-1`),
+# so this manifest no longer forwards them -- see #120. What stays is what this
+# test owns: the two variants of the on-target suite.
 default = []
-board-wio-rp2040-mini = ["kernel/board-wio-rp2040-mini"]
+# The expected-hardfault variant, which faults on purpose to prove the handler
+# catches it; forwards to the kernel's matching guard.
 expected-hardfault = ["kernel/arm-expected-hardfault"]
+# The minimal variant: fewer tests, for bring-up.
 minimal = []
-debug-level-0 = ["kernel/debug-level-0"]
-debug-level-1 = ["kernel/debug-level-1"]
-debug-level-2 = ["kernel/debug-level-2"]
-debug-level-3 = ["kernel/debug-level-3"]

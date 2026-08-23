@@ -116,7 +116,7 @@ for app in "${APPS[@]}"; do
     if $CARGO build --target "$XTENSA_TARGET" \
         -Z build-std=core,compiler_builtins \
         -p "$app" --no-default-features \
-        --features "$BOARD,$DEBUG" >"$log" 2>&1
+        --features "kernel/$BOARD,kernel/$DEBUG" >"$log" 2>&1
     then
         echo "${green}ok${off}"
     else

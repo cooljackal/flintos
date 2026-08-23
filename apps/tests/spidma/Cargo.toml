@@ -23,25 +23,13 @@ esp32-spi = { path = "../../../drivers/physical/esp32/spi" }
 build = { path = "../../../tools/build" }
 
 [features]
-default = ["debug-level-1"]
+# Board, debug level and radio mode are chosen on the command line and passed
+# straight to the kernel (`--features kernel/board-esp32-devkitc,kernel/debug-level-2`),
+# so this manifest no longer forwards them -- see #120.
+default = ["kernel/debug-level-1"]
 
-board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
-board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
-board-esp32-wrover = ["kernel/board-esp32-wrover"]
-board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
-
-debug-level-0 = ["kernel/debug-level-0"]
-debug-level-1 = ["kernel/debug-level-1"]
-debug-level-2 = ["kernel/debug-level-2"]
-debug-level-3 = ["kernel/debug-level-3"]
-
-# `radio-bt` is declared here as well as in the kernel because
-# `build::link()` runs in *this* crate's build script and reads
-# CARGO_FEATURE_*, so the memory map keys off the application's own view of
-# whether Bluetooth is on. A mode that forwarded only to the kernel would
-# reserve nothing.
-radio-wifi = ["kernel/radio-wifi"]
+# `radio-bt` is the application's: `build::link()` runs in *this* crate's build
+# script and reads CARGO_FEATURE_RADIO_BT to size the DRAM map. Turn a mode on
+# with `--features kernel/radio-ble,radio-bt`.
 radio-bt = []
-radio-ble = ["radio-bt", "kernel/radio-ble"]
-radio-bt-classic = ["radio-bt", "kernel/radio-bt-classic"]
 

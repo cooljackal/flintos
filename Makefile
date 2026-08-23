@@ -238,7 +238,14 @@ PULL           ?= 1
 EXTRA_FEATURES ?=
 
 COMMA          := ,
-APP_FEATURES   := $(BOARD),$(DEBUG)$(if $(EXTRA_FEATURES),$(COMMA)$(EXTRA_FEATURES))
+# Board and debug level belong to the kernel, and cargo accepts `pkg/feature`
+# on the command line for a workspace member -- so they are passed as
+# `kernel/board-x,kernel/debug-level-n` rather than as features the app
+# re-declares and forwards. That is what let the ~25-line forwarding block leave
+# every app manifest (#120). EXTRA_FEATURES is appended verbatim, so it carries
+# whatever the app still owns (self-test, blobs, watchdog-test-*, radio-bt) or a
+# further kernel feature (`kernel/radio-ble`).
+APP_FEATURES   := kernel/$(BOARD),kernel/$(DEBUG)$(if $(EXTRA_FEATURES),$(COMMA)$(EXTRA_FEATURES))
 ifeq ($(BOARD),board-wio-rp2040-mini)
 CARGO          := cargo
 APP_FLAGS      := --target $(ARM_TARGET) -p $(APP) --no-default-features --features $(APP_FEATURES)
@@ -439,7 +446,13 @@ docs: ## Generate the API reference (rustdoc) for host-buildable crates
 # separately. The board-specific apps below override it with the one they
 # require.
 XTENSA_BOARD   ?= board-esp32-devkitc
-XTENSA_BOARD_FEATURES = --features board/$(XTENSA_BOARD),kernel/$(XTENSA_BOARD),demo/$(XTENSA_BOARD),hello/$(XTENSA_BOARD),smp/$(XTENSA_BOARD),spidma/$(XTENSA_BOARD),spitxrx/$(XTENSA_BOARD),uartecho/$(XTENSA_BOARD),flashprobe/$(XTENSA_BOARD),radioprobe/$(XTENSA_BOARD),wifiscan/$(XTENSA_BOARD),wificonnect/$(XTENSA_BOARD)
+# One board feature, on the kernel, unified across the whole workspace check.
+# The apps no longer carry a board feature to forward (#120): each reaches the
+# board through its `kernel` dependency, and cargo unifies `kernel/board-x` over
+# every member being checked. `board/x` is listed too so the `board` crate --
+# also a member, and guarded to refuse building with no board -- is selected
+# explicitly rather than only transitively.
+XTENSA_BOARD_FEATURES = --features board/$(XTENSA_BOARD),kernel/$(XTENSA_BOARD)
 
 BOARD_SPECIFIC_APPS := blink imu pwm
 ATOM_BOARD          := board-m5-atom-matrix
@@ -454,14 +467,14 @@ check-all: ## Full check including Xtensa and ARM architectures
 		echo "== $$a ($(ATOM_BOARD))"; \
 		$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
 			-p $$a --no-default-features \
-			--features "$(ATOM_BOARD),debug-level-1" || exit 1; \
+			--features "kernel/$(ATOM_BOARD),kernel/debug-level-1" || exit 1; \
 	done
 	@echo "== arm-selftest (board-wio-rp2040-mini)"
 	@# Plain `cargo`, not $(CARGO): the ARM port builds on the stable toolchain
 	@# with a prebuilt core, so this needs `rustup target add $(ARM_TARGET)`
 	@# on that toolchain rather than build-std. ci.yml installs it.
 	cargo check --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "board-wio-rp2040-mini,debug-level-1"
+		--features "kernel/board-wio-rp2040-mini,kernel/debug-level-1"
 
 # Feature combinations that gate real code, and which nothing else builds.
 #
@@ -479,13 +492,20 @@ check-all: ## Full check including Xtensa and ARM architectures
 # One entry per combination that turns code on, not a powerset. `debug-level-0`
 # earns its place by turning things *off*: it is where an unused import or a
 # variable only read by a log line becomes an error.
+# Each entry is the exact feature string to add on top of the board and
+# debug-level-1, since board and debug are kernel features now (#120) and the
+# radio modes live on the kernel too. `self-test`, `radio-bt` and the
+# `watchdog-test-*` pair are demo's own features and stay bare; the rest are
+# `kernel/...`. `radio-ble` reserves BT DRAM through demo's `radio-bt` (which
+# `build::link()` reads) and selects the mode with `kernel/radio-ble`, exactly
+# as the old app-level `radio-ble` did.
 FEATURE_CHECKS := \
 	self-test \
-	debug-level-0 \
-	debug-level-3 \
+	kernel/debug-level-0 \
+	kernel/debug-level-3 \
 	radio-bt \
-	radio-ble \
-	radio-wifi \
+	radio-bt$(COMMA)kernel/radio-ble \
+	kernel/radio-wifi \
 	watchdog-test-kernel \
 	watchdog-test-idle
 
@@ -495,7 +515,7 @@ check-features: ## Clippy every non-default feature combination (Xtensa)
 		echo "== demo --features $$f"; \
 		$(CARGO) clippy --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
 			-p demo --no-default-features \
-			--features "$(BOARD),debug-level-1,$$f" \
+			--features "kernel/$(BOARD),kernel/debug-level-1,$$f" \
 			-- -D warnings || exit 1; \
 	done
 

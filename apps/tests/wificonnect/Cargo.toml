@@ -24,23 +24,19 @@ radio-esp32 = { path = "../../../radio/esp32" }
 build = { path = "../../../tools/build" }
 
 [features]
-default = ["debug-level-1"]
+default = ["kernel/debug-level-1"]
 
 # See wifiscan: link Espressif's archives. Off by default; the useful build is
 #     FLINT_WIFI_SSID=.. FLINT_WIFI_PASS=.. make flash APP=wificonnect BOARD=.. EXTRA_FEATURES=blobs
 blobs = []
 
-board-m5-atom-lite = ["kernel/board-m5-atom-lite", "radio-esp32/board-m5-atom-lite"]
-board-m5-atom-matrix = ["kernel/board-m5-atom-matrix", "radio-esp32/board-m5-atom-matrix"]
-board-esp32-wrover = ["kernel/board-esp32-wrover", "radio-esp32/board-esp32-wrover"]
-board-esp32-devkitc = ["kernel/board-esp32-devkitc", "radio-esp32/board-esp32-devkitc"]
-
-debug-level-0 = ["kernel/debug-level-0"]
-debug-level-1 = ["kernel/debug-level-1"]
-debug-level-2 = ["kernel/debug-level-2"]
-debug-level-3 = ["kernel/debug-level-3"]
-
-radio-wifi = ["kernel/radio-wifi"]
+# Board, debug level and radio mode are chosen on the command line and passed
+# straight to the kernel (`--features kernel/board-esp32-devkitc,kernel/debug-level-2`),
+# so this manifest no longer forwards them -- see #120. `radio-esp32` reads the
+# selected board through the kernel (it declares no board `cfg` of its own), so
+# `kernel/board-x` alone is enough.
+#
+# `radio-bt` stays: `build::link()` runs in *this* crate's build script and
+# reads CARGO_FEATURE_RADIO_BT to size the DRAM map. Turn a mode on with
+# `--features kernel/radio-ble,radio-bt`.
 radio-bt = []
-radio-ble = ["radio-bt", "kernel/radio-ble"]
-radio-bt-classic = ["radio-bt", "kernel/radio-bt-classic"]

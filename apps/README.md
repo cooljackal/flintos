@@ -112,9 +112,7 @@ fn main() {
 }
 ```
 
-**`Cargo.toml`** — dependencies plus the feature pass-through. The application
-is the binary, so it is the only crate that can choose a board without the
-choice leaking into everything else that links the kernel:
+**`Cargo.toml`** — dependencies, and nothing to wire up for the board:
 
 ```toml
 [dependencies]
@@ -125,22 +123,24 @@ api = { path = "../../../api" }
 build = { path = "../../../tools/build" }
 
 [features]
-default = ["debug-level-1"]          # no default board, deliberately
-board-esp32-wrover = ["kernel/board-esp32-wrover"]
-board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
-board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
-debug-level-0 = ["kernel/debug-level-0"]
-debug-level-1 = ["kernel/debug-level-1"]
-debug-level-2 = ["kernel/debug-level-2"]
-debug-level-3 = ["kernel/debug-level-3"]
+default = ["kernel/debug-level-1"]   # bare `cargo build` still needs a board
 ```
 
-Copy the feature block verbatim. Exactly one `board-*` feature must reach
-`board`: none stops the build with the list of choices, and two is a compile
-error, because a binary with two board manifests merged in is not a build for
-either board. No board is a default feature anywhere in the tree, and `make`
-still passes `--no-default-features` so that a feature added to some crate's
-defaults later cannot quietly change what you built.
+The board and the debug level are the kernel's features, and `make` passes them
+straight through on the command line — `--features kernel/board-esp32-devkitc,kernel/debug-level-1`
+— because cargo accepts `pkg/feature` for a workspace member. So a new app's
+manifest declares **no** `board-*` or `debug-level-*` features at all: the block
+of two dozen forwarding lines that used to sit here is gone, and there is
+nothing to copy or keep in step (see #120). Exactly one board must still reach
+`board` — none stops the build with the list of choices, two is a compile error
+— but that is now enforced once, in the kernel, not re-stated in every app.
+
+Declare a feature here only for something the *application itself* owns and its
+build script or code reads: `self-test`, `blobs`, a `watchdog-test-*` switch, or
+`radio-bt` (which `build::link()` reads to size the DRAM map). `make` passes
+`--no-default-features`, so a feature added to some crate's defaults later cannot
+quietly change what you built; a further kernel feature goes through
+`EXTRA_FEATURES`, e.g. `make flash ... EXTRA_FEATURES=kernel/radio-ble`.
 
 ---
 

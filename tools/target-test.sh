@@ -298,11 +298,13 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 echo "==> Building ${APP} with the self-test suite"
+# Board and debug are kernel features passed on the command line (#120); only
+# `self-test` is the app's own.
 cargo +esp build \
     --target xtensa-esp32-none-elf \
     -Z build-std=core,compiler_builtins \
     -p "$APP" --no-default-features \
-    --features "${BOARD},${DEBUG},self-test" || exit 1
+    --features "kernel/${BOARD},kernel/${DEBUG},self-test" || exit 1
 
 LOG="$(mktemp "$WORK_ROOT/flint-target-test.XXXXXX")"
 trap 'rm -f "$LOG"' EXIT

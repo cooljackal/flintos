@@ -58,16 +58,43 @@ use ws2812::{LedStrip, PulseEmitter, Rgb, StripError, Ws2812};
 
 // Only the Atom boards declare an addressable LED. Say which board is missing
 // rather than letting the build fail on an unresolved `RGB_LED_GPIO` deep
-// inside `led_init`.
-#[cfg(not(any(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix")))]
-compile_error!(
+// inside `led_init`. The board is selected with `--features kernel/board-...`
+// now, not an application feature, so this keys on a board fact -- the board's
+// own name -- rather than a feature this crate no longer declares. Both Atom
+// boards report a name with "ATOM" in it; no other board does.
+const _: () = assert!(
+    board_name_contains("ATOM"),
     "`blink` drives an onboard addressable LED, and only the M5Stack Atom boards \
      declare one.\n\n\
      \tmake flash APP=blink BOARD=board-m5-atom-matrix   5x5 panel, 25 LEDs\n\
      \tmake flash APP=blink BOARD=board-m5-atom-lite     one LED\n\n\
      To run it on another board, give that board's manifest an `RGB_LED_GPIO`, an \
-     `RGB_LED_COUNT` and an `RGB_LED_LAYOUT`, and add a feature here."
+     `RGB_LED_COUNT` and an `RGB_LED_LAYOUT`."
 );
+
+/// Substring test over `board::BOARD_NAME`, usable in a `const` context.
+const fn board_name_contains(needle: &str) -> bool {
+    let hay = kernel::board::active::BOARD_NAME.as_bytes();
+    let ndl = needle.as_bytes();
+    if ndl.is_empty() {
+        return true;
+    }
+    if ndl.len() > hay.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + ndl.len() <= hay.len() {
+        let mut j = 0;
+        while j < ndl.len() && hay[i + j] == ndl[j] {
+            j += 1;
+        }
+        if j == ndl.len() {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
 
 kernel::flint_app!(main, abi = 2);
 

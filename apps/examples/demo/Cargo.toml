@@ -21,34 +21,20 @@ api = { path = "../../../api" }
 build = { path = "../../../tools/build" }
 
 [features]
-# No default board, deliberately. A default is a board you flash without
-# choosing it, and the one that used to be here was the least tested board in
-# the tree -- `make flash` with no argument built for hardware nobody had held.
-# Selecting a board is one word on the command line; getting it silently wrong
-# costs a debugging session against the wrong pin map.
-default = ["debug-level-1"]
+# Board, debug level and radio mode are not the application's to declare. They
+# belong to the kernel, and the build passes them straight through on the
+# command line -- `--features kernel/board-esp32-devkitc,kernel/debug-level-2`,
+# `kernel/radio-ble` -- so the ~25 lines of `board-x = ["kernel/board-x"]`
+# forwarding that used to live in every app manifest are gone (see #120 and the
+# Makefile). What stays below is what this application actually owns.
+default = ["kernel/debug-level-1"]
 
-board-esp32-wrover = ["kernel/board-esp32-wrover"]
-board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
-board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
-board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
-board-m5-atom = ["kernel/board-m5-atom"]
-
-debug-level-0 = ["kernel/debug-level-0"]
-debug-level-1 = ["kernel/debug-level-1"]
-debug-level-2 = ["kernel/debug-level-2"]
-debug-level-3 = ["kernel/debug-level-3"]
-
-# `radio-bt` is declared here as well as in the kernel because
-# `build::link()` runs in *this* crate's build script and reads
-# CARGO_FEATURE_*, so the memory map keys off the application's own view of
-# whether Bluetooth is on. A mode that forwarded only to the kernel would
-# reserve nothing.
-radio-wifi = ["kernel/radio-wifi"]
+# `radio-bt` is the application's, not the kernel's: `build::link()` runs in
+# *this* crate's build script and reads CARGO_FEATURE_RADIO_BT to size the DRAM
+# map, so the reservation keys off the application's own view of whether
+# Bluetooth is linked. Turn a mode on with `--features kernel/radio-ble,radio-bt`
+# -- the kernel gets the mode, and the memory map is reserved here.
 radio-bt = []
-radio-ble = ["radio-bt", "kernel/radio-ble"]
-radio-bt-classic = ["radio-bt", "kernel/radio-bt-classic"]
-
 
 # Boot-time register-window self-test. Off by default; `make ... EXTRA_FEATURES=self-test`.
 self-test = ["kernel/self-test"]

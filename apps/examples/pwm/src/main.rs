@@ -39,8 +39,13 @@ use soc_esp32::dport::{self, ClockBit};
 use soc_esp32::pinmux::Esp32PinMux;
 use soc_esp32::{addr, io_mux};
 
-#[cfg(not(any(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix")))]
-compile_error!(
+// The board is selected with `--features kernel/board-...` now, not an
+// application feature, so this guard keys on a board fact -- the board's own
+// name -- rather than a feature this crate no longer declares. Only the Atom
+// boards route the Grove port's SDA pin this app drives; both report a name
+// with "ATOM" in it, and no other board does.
+const _: () = assert!(
+    board_name_contains("ATOM"),
     "`pwm` drives the Grove port's SDA pin, which only the M5Stack Atom boards \
      declare.\n\n\tmake flash APP=pwm BOARD=board-m5-atom-matrix\n\n\
      To run it elsewhere, point PWM_GPIO at a free pin on your board."
@@ -49,6 +54,30 @@ compile_error!(
 kernel::flint_app!(main, abi = 2);
 
 use kernel::board::active as board;
+
+/// Substring test over `board::BOARD_NAME`, usable in a `const` context.
+const fn board_name_contains(needle: &str) -> bool {
+    let hay = board::BOARD_NAME.as_bytes();
+    let ndl = needle.as_bytes();
+    if ndl.is_empty() {
+        return true;
+    }
+    if ndl.len() > hay.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + ndl.len() <= hay.len() {
+        let mut j = 0;
+        while j < ndl.len() && hay[i + j] == ndl[j] {
+            j += 1;
+        }
+        if j == ndl.len() {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
 
 /// The pin LEDC drives and the app reads back.
 const PWM_GPIO: u8 = board::GROVE_SDA_GPIO;
