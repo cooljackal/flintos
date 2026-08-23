@@ -415,9 +415,26 @@ pub trait PhysicalBus: PhysicalTransfer {
 /// were written against — each method builds a `[Op]` and calls
 /// [`Bus::transfer`]. Logical drivers never see the bus type, and never had to
 /// change when the trait moved to a transfer list.
-#[derive(Clone)]
-pub struct BusHandle {
-    pub(crate) inner: &'static dyn Bus,
+///
+/// The borrow is `'a`, not `'static`: every method here takes `&self` and
+/// [`Bus::transfer`] does too, so nothing the handle does needs the bus to
+/// live forever. A driver can therefore be handed a bus that lives only as
+/// long as the task's stack frame — a board no longer has to leak its buses
+/// into `static`s just to satisfy this type. Building one is usually
+/// `(&bus).into()` via the [`From`] impl below, so a logical driver's
+/// constructor reads `Mpu6886::new(&bus)` rather than
+/// `Mpu6886::new(BusHandle::new(&bus))`.
+#[derive(Clone, Copy)]
+pub struct BusHandle<'a> {
+    pub(crate) inner: &'a dyn Bus,
+}
+
+/// `(&bus).into()` builds a handle, so a logical driver's `new` can take
+/// `impl Into<BusHandle<'a>>` and be called with a plain `&bus`.
+impl<'a, B: Bus> From<&'a B> for BusHandle<'a> {
+    fn from(bus: &'a B) -> Self {
+        Self { inner: bus }
+    }
 }
 
 /// Longest burst [`BusHandle::read_regs`] reads over SPI. The handle stages
@@ -425,9 +442,9 @@ pub struct BusHandle {
 /// SPI controller's data buffer, so a burst under it is one framed transfer.
 pub const REG_BURST_MAX: usize = 64;
 
-impl BusHandle {
+impl<'a> BusHandle<'a> {
     /// Wrap a bus reference into a handle.
-    pub fn new(bus: &'static dyn Bus) -> Self {
+    pub fn new(bus: &'a dyn Bus) -> Self {
         Self { inner: bus }
     }
 
@@ -515,21 +532,6 @@ impl BusHandle {
         let mut buf = [0u8; 1];
         self.read_regs(reg, &mut buf)?;
         Ok(buf[0])
-    }
-
-    /// Assert chip-select / begin a transaction.
-    ///
-    /// Chip-select is expressed per-[`Op`] now via [`CsHold`], so this is a
-    /// no-op kept for source compatibility — the drivers that bracket a
-    /// sequence in `select()`/`deselect()` still read clearly, and the bracket
-    /// costs nothing.
-    pub fn select(&self) -> BusResult<()> {
-        Ok(())
-    }
-
-    /// De-assert chip-select / end a transaction. See [`BusHandle::select`].
-    pub fn deselect(&self) -> BusResult<()> {
-        Ok(())
     }
 
     /// Set bus speed.
@@ -693,7 +695,7 @@ mod tests {
         }
     }
 
-    fn reg_device(kind: BusKind) -> (BusHandle, &'static RegDevice) {
+    fn reg_device(kind: BusKind) -> (BusHandle<'static>, &'static RegDevice) {
         let dev: &'static RegDevice =
             std::boxed::Box::leak(std::boxed::Box::new(RegDevice { kind, writes: Mutex::new(Vec::new()) }));
         (BusHandle::new(dev), dev)
@@ -735,7 +737,8 @@ mod tests {
     #[test]
     fn bus_handle_delegation() {
         let bus = MockBus { ops_seen: AtomicUsize::new(0) };
-        let handle = BusHandle::new(unsafe { &*(&bus as *const MockBus) });
+        // No lifetime gymnastics: the handle borrows `bus` for the block.
+        let handle = BusHandle::new(&bus);
         let mut rx = [0u8; 4];
 
         assert!(handle.transfer(b"test", &mut rx).is_ok());
@@ -751,8 +754,6 @@ mod tests {
         assert!(handle.write_read(b"ab", &mut rx).is_ok());
         assert_eq!(bus.ops_seen.load(Ordering::Relaxed), 2); // write op + read op
 
-        assert!(handle.select().is_ok());
-        assert!(handle.deselect().is_ok());
         assert_eq!(handle.set_speed(BusSpeed::MHz(10)), Err(BusError::InvalidConfig));
         assert_eq!(handle.max_transfer(), 64);
     }
@@ -805,6 +806,18 @@ mod tests {
         // The `&T` blanket forwards the default `set_speed` too.
         let by_ref: &Echo = &echo;
         assert_eq!(PhysicalTransfer::set_speed(&by_ref, BusSpeed::MHz(1)), Err(BusError::InvalidConfig));
+    }
+
+    #[test]
+    fn a_handle_borrows_a_stack_bus_via_from() {
+        // The ergonomic win of the `'a` handle (#115): a bus that lives only
+        // in this stack frame, no `'static`, no transmute, and `(&bus).into()`
+        // so a driver's `new` needs no `BusHandle::new` at the call site.
+        let bus = MockBus { ops_seen: AtomicUsize::new(0) };
+        let handle: BusHandle = (&bus).into();
+        let mut rx = [0u8; 4];
+        assert!(handle.transfer(b"test", &mut rx).is_ok());
+        assert_eq!(&rx, b"test");
     }
 
     #[test]
