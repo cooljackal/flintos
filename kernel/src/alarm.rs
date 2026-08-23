@@ -94,7 +94,7 @@ pub unsafe fn init() -> bool {
     // survives a flash operation. A radio timer that stopped for the tens of
     // milliseconds of a sector erase would drop the link.
     let routed = unsafe {
-        crate::interrupt::connect_iram_safe(
+        crate::interrupt::connect_iram_safe_at(
             esp32_timg::lact::TG0_LACT_INTR_SOURCE,
             ALARM_CPU_INT,
             on_alarm,

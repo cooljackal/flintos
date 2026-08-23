@@ -105,7 +105,7 @@ pub(crate) fn a_timg_alarm_fires_once_from_the_isr() -> Check {
         Ok(t) => t,
         Err(_) => return Err("could not configure TIMG0 T1"),
     };
-    if unsafe { crate::interrupt::connect(addr::IRQ_TIMG0_T1, TIMG_CPU_INT, alarm_isr) }.is_err() {
+    if unsafe { crate::interrupt::connect_at(addr::IRQ_TIMG0_T1, TIMG_CPU_INT, alarm_isr) }.is_err() {
         return Err("could not connect the timer interrupt");
     }
 
@@ -181,7 +181,7 @@ pub(crate) fn a_periodic_alarm_keeps_firing_at_its_rate() -> Check {
         Ok(t) => t,
         Err(_) => return Err("could not configure TIMG1 T0"),
     };
-    if unsafe { crate::interrupt::connect(addr::IRQ_TIMG1_T0, PERIODIC_CPU_INT, periodic_isr) }
+    if unsafe { crate::interrupt::connect_at(addr::IRQ_TIMG1_T0, PERIODIC_CPU_INT, periodic_isr) }
         .is_err()
     {
         return Err("could not connect the periodic timer interrupt");

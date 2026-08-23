@@ -224,7 +224,8 @@ pub unsafe extern "C" fn set_intr(cpu: i32, source: u32, num: u32, _prio: i32) {
         );
         return;
     }
-    let result = unsafe { interrupt::connect(source, num, TRAMPOLINES[num as usize]) };
+    // The blob names the CPU input it wants, so this is the explicit-slot form.
+    let result = unsafe { interrupt::connect_at(source, num, TRAMPOLINES[num as usize]) };
     if let Err(e) = result {
         api::log_error!("radio: _set_intr could not route source {} to CPU interrupt {}: {:?}", source, num, e);
     }

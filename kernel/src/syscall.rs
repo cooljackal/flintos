@@ -109,11 +109,41 @@ pub fn _flint_sys_current_name() -> &'static str {
     })
 }
 
+/// The core the caller is running on, as a raw index. Backs
+/// [`api::smp::current_core`].
+///
+/// A raw `u8` rather than a `CoreId` so the syscall boundary stays a plain
+/// ABI, matching `_flint_sys_spawn_on`; `api` rebuilds the `CoreId`.
+#[no_mangle]
+pub fn _flint_sys_current_core() -> u8 {
+    crate::smp::current_core().0
+}
+
 // ── Timer syscalls ─────────────────────────────────────────────────────────
 
 #[no_mangle]
 pub fn _flint_sys_timer_now_ms() -> u64 {
     scheduler::with(|s| s.ticks())
+}
+
+/// Microseconds since boot, from the free-running hardware counter. Backs
+/// [`api::time::now_us`].
+///
+/// Lock-free by design so it can be read from trap context — see
+/// `clock::now_us`. Where there is no such counter (a SoC without the TIMG
+/// clock) it falls back to the millisecond scheduler tick scaled up: monotonic
+/// and correctly ordered, a thousand times coarser.
+#[no_mangle]
+pub fn _flint_sys_now_us() -> u64 {
+    #[cfg(feature = "soc-esp32")]
+    {
+        crate::clock::now_us()
+    }
+    #[cfg(not(feature = "soc-esp32"))]
+    {
+        use hal::tick::TickSource;
+        crate::arch::Tick::now().saturating_mul(1_000)
+    }
 }
 
 #[no_mangle]
@@ -169,6 +199,46 @@ pub fn _flint_sys_mutex_lock(mutex: *const core::ffi::c_void) -> bool {
 #[no_mangle]
 pub fn _flint_sys_mutex_unlock(mutex: *const core::ffi::c_void) {
     crate::mutex::unlock(mutex as usize);
+}
+
+// ── Interrupt syscalls ──────────────────────────────────────────────────────
+
+/// Route a peripheral `source` to the first free CPU input and register
+/// `handler`. Backs [`api::interrupt::connect`].
+///
+/// # Safety
+/// `handler` runs in trap context: short, non-blocking, and it must
+/// acknowledge its peripheral. See `interrupt::connect`.
+#[no_mangle]
+pub unsafe fn _flint_sys_interrupt_connect(
+    source: u8,
+    handler: fn(),
+) -> Result<hal::CpuInt, hal::ConnectError> {
+    unsafe { crate::interrupt::connect(source, handler) }
+}
+
+// ── DMA broker syscalls ─────────────────────────────────────────────────────
+
+/// Allocate a DMA-safe buffer. Backs [`api::dma::alloc`].
+#[no_mangle]
+pub fn _flint_sys_dma_alloc(size: u32) -> Result<hal::DmaHandle, hal::DmaError> {
+    crate::dma_broker::alloc(size)
+}
+
+/// Begin a transfer over an owned buffer and mint its completion id. Backs
+/// [`api::dma::begin`].
+#[no_mangle]
+pub fn _flint_sys_dma_begin(
+    handle: &hal::DmaHandle,
+) -> Result<hal::DmaTransferId, hal::DmaError> {
+    crate::dma_broker::begin(handle)
+}
+
+/// Block until `id` completes or `timeout_ms` elapses. Backs
+/// [`api::dma::await_transfer`].
+#[no_mangle]
+pub fn _flint_sys_dma_await(id: hal::DmaTransferId, timeout_ms: u32) -> Result<(), hal::DmaError> {
+    crate::dma_broker::await_transfer(id, timeout_ms)
 }
 
 // ── Log / panic syscalls ────────────────────────────────────────────────────

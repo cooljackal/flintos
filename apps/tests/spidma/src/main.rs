@@ -205,7 +205,7 @@ fn attempt() -> Result<(), &'static str> {
     //    the peripheral's interrupt without routing it is a transfer whose
     //    completion never arrives, which is indistinguishable from one that
     //    never finished.
-    unsafe { kernel::interrupt::connect(addr::IRQ_SPI2, SPI_CPU_INT, spi_dma_isr) }
+    unsafe { kernel::interrupt::connect_at(addr::IRQ_SPI2, SPI_CPU_INT, spi_dma_isr) }
         .map_err(|_| "cannot connect the SPI2 interrupt")?;
     unsafe { spi.dma_int_enable(esp32_spi::SPI_IN_SUC_EOF) };
 

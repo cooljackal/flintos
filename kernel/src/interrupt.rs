@@ -12,6 +12,7 @@
 //! Handler-table access is guarded by a critical section.
 
 use crate::arch::cs_with;
+use hal::CpuInt;
 use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 
 #[path = "interrupt_controller.rs"]
@@ -242,7 +243,41 @@ pub fn clear_pending(irq: u8) {
 /// existing paths keep working.
 pub use hal::error::ConnectError;
 
-/// Route a peripheral source to a CPU input, take the handler, and unmask it.
+/// Route a peripheral `source` to the first free CPU input the kernel may
+/// hand out, take the handler, unmask it, and return which input it landed on.
+///
+/// This is the ergonomic form: a driver that does not care *which* CPU input
+/// its interrupt uses — which is almost all of them — no longer has to invent
+/// a number and hope nothing else picked the same one. The kernel walks the
+/// external, level-1 inputs `vectors.S` can service (`intr_map::USABLE`, in
+/// ascending order) and takes the lowest one with no handler yet. A caller
+/// that genuinely needs a specific input (an interrupt level, say) uses
+/// [`connect_at`].
+///
+/// Returns [`ConnectError::NoneFree`] when every such input already has a
+/// handler, and [`ConnectError::Route`] when the crossbar refuses the source
+/// itself (no such source) — the latter is a source problem no free input
+/// would have fixed.
+///
+/// # Safety
+/// As [`connect_at`]: writes the interrupt crossbar and unmasks a CPU input,
+/// and `handler` runs in trap context — short, non-blocking, and it must
+/// acknowledge its peripheral.
+pub unsafe fn connect(source: u8, handler: fn()) -> Result<CpuInt, ConnectError> {
+    unsafe { connect_alloc(source, handler, false) }
+}
+
+/// [`connect`], for a handler that has made the promises in
+/// [`register_iram_safe`] — IRAM, and no locks.
+///
+/// # Safety
+/// As [`connect`], plus both of those promises.
+pub unsafe fn connect_iram_safe(source: u8, handler: fn()) -> Result<CpuInt, ConnectError> {
+    unsafe { connect_alloc(source, handler, true) }
+}
+
+/// Route a peripheral source to a **named** CPU input, take the handler, and
+/// unmask it. The explicit-slot form; [`connect`] picks the input for you.
 ///
 /// Three steps that must happen in this order, and did not have one place to
 /// live: six call sites retyped them, which is how one of them eventually gets
@@ -262,21 +297,67 @@ pub use hal::error::ConnectError;
 /// Writes the interrupt crossbar and unmasks a CPU input. `handler` runs in
 /// trap context: it must be short, must not block, and must acknowledge its
 /// peripheral.
-pub unsafe fn connect(source: u8, cpu_int: u8, handler: fn()) -> Result<(), ConnectError> {
+pub unsafe fn connect_at(source: u8, cpu_int: u8, handler: fn()) -> Result<(), ConnectError> {
     unsafe { connect_inner(source, cpu_int, handler, false) }
 }
 
-/// [`connect`], for a handler that has made the promises in
+/// [`connect_at`], for a handler that has made the promises in
 /// [`register_iram_safe`] — IRAM, and no locks.
 ///
 /// # Safety
-/// As [`connect`], plus both of those promises.
-pub unsafe fn connect_iram_safe(
+/// As [`connect_at`], plus both of those promises.
+pub unsafe fn connect_iram_safe_at(
     source: u8,
     cpu_int: u8,
     handler: fn(),
 ) -> Result<(), ConnectError> {
     unsafe { connect_inner(source, cpu_int, handler, true) }
+}
+
+/// The allocation walk behind [`connect`]/[`connect_iram_safe`].
+///
+/// Allocation is tracked by the handler table itself, not a separate free
+/// list: an input is "free" exactly when nothing is registered against it, so
+/// the two can never disagree. That table is one global (not per core) — the
+/// ESP32's two crossbar tables are independent, but a CPU input carries at
+/// most one handler here regardless of core, so a global free-check is the
+/// honest model of what the kernel can actually service.
+///
+/// A source the crossbar rejects fails on every candidate, so the walk
+/// distinguishes "all inputs taken" ([`ConnectError::NoneFree`]) from "the
+/// source itself will not route" ([`ConnectError::Route`]) rather than
+/// reporting the first as the second.
+///
+/// # Safety
+/// As [`connect`].
+unsafe fn connect_alloc(
+    source: u8,
+    handler: fn(),
+    iram_safe: bool,
+) -> Result<CpuInt, ConnectError> {
+    let mut route_refused = false;
+    for cpu_int in 0..MAX_HANDLERS as u8 {
+        if !Controller::usable(cpu_int) {
+            continue;
+        }
+        let taken = cs_with(|| handlers().iter().flatten().any(|h| h.irq == cpu_int));
+        if taken {
+            continue;
+        }
+        match unsafe { connect_inner(source, cpu_int, handler, iram_safe) } {
+            Ok(()) => return Ok(CpuInt(cpu_int)),
+            // The source will not route; no other free input would help.
+            Err(ConnectError::Route) => route_refused = true,
+            // Raced with another registration onto this input; try the next.
+            Err(ConnectError::AlreadyRegistered) => continue,
+            Err(ConnectError::NoneFree) => unreachable!("connect_inner never allocates"),
+        }
+    }
+    Err(if route_refused {
+        ConnectError::Route
+    } else {
+        ConnectError::NoneFree
+    })
 }
 
 unsafe fn connect_inner(
@@ -489,6 +570,78 @@ mod tests {
         let previous = unsafe { mask_non_iram_safe() };
         assert_eq!(unsafe { Controller::enabled() }, 0);
         unsafe { restore_mask(previous) };
+    }
+
+    // ── Allocation bookkeeping (connect / connect_at) ───────────────────────
+    //
+    // Host-only: `Controller::route`/`unmask` are no-ops off-target, so what is
+    // exercised here is the allocator's choice of input and the handler-table
+    // bookkeeping it reads — not the crossbar write, which needs silicon.
+
+    /// Empty the whole table so an allocation test starts from a known floor.
+    fn clear_all() {
+        cs_with(|| {
+            for slot in handlers().iter_mut() {
+                *slot = None;
+            }
+        });
+    }
+
+    #[test]
+    fn connect_takes_the_lowest_free_input() {
+        // The contract of the auto form: lowest-numbered free usable input, so
+        // allocation is deterministic rather than "some input, who knows which".
+        let _s = serial();
+        clear_all();
+        let first = unsafe { connect(7, dummy) }.expect("a free input");
+        let second = unsafe { connect(8, dummy) }.expect("another free input");
+        assert_eq!(first, CpuInt(0));
+        assert_eq!(second, CpuInt(1));
+        clear_all();
+    }
+
+    #[test]
+    fn connect_skips_an_input_connect_at_already_took() {
+        // Allocation is tracked by the table itself: an input an explicit
+        // `connect_at` claimed must not be handed out again by `connect`.
+        let _s = serial();
+        clear_all();
+        unsafe { connect_at(3, 0, dummy) }.expect("explicit slot 0");
+        let allocated = unsafe { connect(4, dummy) }.expect("next free input");
+        assert_eq!(allocated, CpuInt(1), "input 0 was taken, so 1 is next");
+        clear_all();
+    }
+
+    #[test]
+    fn connect_reports_none_free_when_every_input_is_taken() {
+        // The failure that used to be a silent collision on a hand-picked
+        // number: now it is an error the caller can see.
+        let _s = serial();
+        clear_all();
+        for irq in 0..MAX_HANDLERS as u8 {
+            assert!(register(irq, dummy), "table should hold {irq}");
+        }
+        assert_eq!(
+            unsafe { connect(5, dummy) },
+            Err(ConnectError::NoneFree),
+            "no input left, yet an allocation succeeded"
+        );
+        clear_all();
+    }
+
+    #[test]
+    fn connect_at_still_registers_its_named_input() {
+        // The explicit form keeps the old contract: it takes exactly the input
+        // it was told to, and a second attempt on that input is refused.
+        let _s = serial();
+        clear_all();
+        assert!(unsafe { connect_at(9, 12, dummy) }.is_ok());
+        assert_eq!(
+            unsafe { connect_at(10, 12, dummy) },
+            Err(ConnectError::AlreadyRegistered),
+            "a second handler on the same input must be refused"
+        );
+        clear_all();
     }
 
     /// Free a slot so tests do not exhaust the table or collide.

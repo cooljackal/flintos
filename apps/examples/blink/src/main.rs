@@ -442,7 +442,7 @@ fn led_init() -> Option<()> {
     // SAFETY: `rmt_isr` runs as one masked closure that acknowledges the
     // threshold (inside `Rmt::service`) and copies at most half a block; it
     // never blocks.
-    if let Err(e) = unsafe { kernel::interrupt::connect(addr::IRQ_RMT, LED_CPU_INT, rmt_isr) } {
+    if let Err(e) = unsafe { kernel::interrupt::connect_at(addr::IRQ_RMT, LED_CPU_INT, rmt_isr) } {
         api::log_error!("cannot connect RMT to CPU interrupt {}: {:?}", LED_CPU_INT, e);
         return None;
     }

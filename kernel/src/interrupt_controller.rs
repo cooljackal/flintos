@@ -4,6 +4,11 @@
 
 pub(crate) trait InterruptController {
     unsafe fn route(source: u8, cpu_int: u8) -> bool;
+    /// Whether `cpu_int` is one the kernel may hand out for a peripheral: an
+    /// external, level-1 input `vectors.S` has a handler for. The allocating
+    /// `interrupt::connect` walks `0..32` and takes the first of these that is
+    /// free. Not `unsafe` and reads no hardware — it is a property of the SoC.
+    fn usable(cpu_int: u8) -> bool;
     unsafe fn clear_pending(mask: u32);
     unsafe fn unmask(cpu_int: u8);
     #[allow(dead_code)]
@@ -19,6 +24,12 @@ pub(crate) struct Selected;
 impl InterruptController for Selected {
     unsafe fn route(source: u8, cpu_int: u8) -> bool {
         unsafe { soc_esp32::intr_map::route(source, cpu_int).is_ok() }
+    }
+
+    fn usable(cpu_int: u8) -> bool {
+        // Exactly `intr_map::USABLE`: the test there pins the set to the inputs
+        // this predicate reports true for.
+        soc_esp32::intr_map::can_serve_peripheral(cpu_int)
     }
 
     unsafe fn clear_pending(mask: u32) {
@@ -56,6 +67,14 @@ pub(crate) struct Selected;
 impl InterruptController for Selected {
     unsafe fn route(source: u8, cpu_int: u8) -> bool {
         rp2040_can_route(source, cpu_int)
+    }
+
+    fn usable(cpu_int: u8) -> bool {
+        // The NVIC maps each peripheral to one fixed vector, so the allocator
+        // can only ever land on `cpu_int == source`; `route` is what enforces
+        // that. Every existing vector is a candidate here and the route gate
+        // rejects the mismatches.
+        (cpu_int as usize) < soc_rp2040::NVIC_IRQ_COUNT
     }
 
     unsafe fn clear_pending(mask: u32) {
@@ -96,6 +115,12 @@ pub(crate) struct Selected;
 impl InterruptController for Selected {
     unsafe fn route(_source: u8, _cpu_int: u8) -> bool {
         true
+    }
+
+    fn usable(cpu_int: u8) -> bool {
+        // No crossbar off-target: every input is a candidate, so the allocator
+        // bookkeeping (first-free, none-free) is exercisable by the host suite.
+        cpu_int < 32
     }
 
     unsafe fn clear_pending(_mask: u32) {}

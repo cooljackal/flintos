@@ -32,7 +32,7 @@
 //!
 //! # Confirmed by mutation
 //!
-//! Swapping `connect_iram_safe` for `connect` — the one-word change that
+//! Swapping `connect_iram_safe_at` for `connect_at` — the one-word change that
 //! says this handler made no promises — turns the pass into
 //! "the IRAM-safe alarm stopped being serviced during the erase". So the
 //! test is measuring the mask and not the weather.
@@ -84,7 +84,7 @@ const SCRATCH_BASE: u32 = 0x0000_F000;
 const SCRATCH_LEN: u32 = 0x0000_1000;
 
 /// The top-half. **Everything it touches is in IRAM**, which is the promise
-/// `connect_iram_safe` takes on trust.
+/// `connect_iram_safe_at` takes on trust.
 ///
 /// `clear_interrupt` and `rearm` are both placed there by `esp32-timg` for
 /// exactly this caller. The counter is an atomic in DRAM. There is no lock,
@@ -114,7 +114,7 @@ pub(crate) fn an_erase_does_not_stop_an_iram_safe_interrupt() -> Check {
         Ok(t) => t,
         Err(_) => return Err("could not configure TIMG0 T0"),
     };
-    if unsafe { crate::interrupt::connect_iram_safe(addr::IRQ_TIMG0_T0, CPU_INT, alarm_isr) }
+    if unsafe { crate::interrupt::connect_iram_safe_at(addr::IRQ_TIMG0_T0, CPU_INT, alarm_isr) }
         .is_err()
     {
         return Err("could not connect the alarm as IRAM-safe");

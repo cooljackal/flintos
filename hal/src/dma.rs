@@ -63,3 +63,77 @@ pub const fn range_within(addr: u32, len: u32, low: u32, high: u32) -> bool {
         None => false,
     }
 }
+
+/// Identifies one transfer, from the broker's `begin` to its `await_transfer`.
+///
+/// Lives here rather than in the kernel so a driver — and `api` — can name it
+/// without naming the kernel; the kernel re-exports it from `dma_broker`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DmaTransferId(u32);
+
+impl DmaTransferId {
+    /// The raw id, for a driver that must stash it somewhere an interrupt
+    /// handler can reach — an `AtomicU32`, typically, since the top-half
+    /// cannot take a lock.
+    pub const fn raw(&self) -> u32 {
+        self.0
+    }
+
+    /// Rebuild an id from [`DmaTransferId::raw`].
+    ///
+    /// Zero is not a valid id: the broker counts from one, so a driver can use
+    /// it to mean "nothing in flight".
+    pub const fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+}
+
+/// A handle to a DMA-safe buffer the broker handed out.
+///
+/// Lives here, not in the kernel, so a driver and `api` can name it without
+/// naming the kernel; the kernel's broker builds it with [`DmaHandle::new`]
+/// and re-exports the type from `dma_broker`.
+///
+/// It carries the buffer's already-resolved address rather than an offset: the
+/// pool base is a linker symbol only the kernel can see, so the kernel does the
+/// arithmetic once, at allocation, and every reader here just reads the answer.
+#[derive(Debug, Clone, Copy)]
+pub struct DmaHandle {
+    addr: u32,
+    size: u32,
+    owner_task: u32,
+}
+
+impl DmaHandle {
+    /// Build a handle over an already-resolved buffer. **Broker only** — the
+    /// address, size and owner are the broker's invariants (in the DMA pool,
+    /// alignment-rounded, owned by the allocating task), and a handle minted
+    /// anywhere else asserts them without having earned them.
+    pub const fn new(addr: u32, size: u32, owner_task: u32) -> Self {
+        Self {
+            addr,
+            size,
+            owner_task,
+        }
+    }
+
+    /// The buffer's address, for programming into a DMA engine.
+    ///
+    /// Guaranteed by the broker to be inside the DMA pool and 4-byte aligned: a
+    /// descriptor or buffer that is neither is the failure this type exists to
+    /// prevent. A misaligned address does not fault — the engine transfers the
+    /// wrong bytes.
+    pub const fn addr(&self) -> u32 {
+        self.addr
+    }
+
+    /// Size of this buffer in bytes, rounded up to the pool's alignment.
+    pub const fn size(&self) -> u32 {
+        self.size
+    }
+
+    /// Task that allocated this buffer, and the only one permitted to use it.
+    pub const fn owner_task(&self) -> u32 {
+        self.owner_task
+    }
+}

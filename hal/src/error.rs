@@ -32,6 +32,10 @@ pub enum ConnectError {
     /// registration would be unreachable, because dispatch stops at the first
     /// match.
     AlreadyRegistered,
+    /// Every CPU input the kernel may hand out already has a handler. Only
+    /// the allocating `interrupt::connect` returns this; `connect_at` names
+    /// its input and gets `AlreadyRegistered` instead.
+    NoneFree,
 }
 
 impl fmt::Display for ConnectError {
@@ -39,6 +43,7 @@ impl fmt::Display for ConnectError {
         match self {
             Self::Route => f.write_str("no interrupt route for that source"),
             Self::AlreadyRegistered => f.write_str("CPU interrupt already has a handler"),
+            Self::NoneFree => f.write_str("no free CPU interrupt to hand out"),
         }
     }
 }

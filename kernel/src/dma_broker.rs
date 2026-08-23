@@ -8,71 +8,20 @@
 
 use portable_atomic::{AtomicU32, Ordering};
 
-/// Identifies one transfer, from [`begin`] to [`await_transfer`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DmaTransferId(u32);
-
-impl DmaTransferId {
-    /// The raw id, for a driver that must stash it somewhere an interrupt
-    /// handler can reach — an `AtomicU32`, typically, since the top-half
-    /// cannot take a lock.
-    pub const fn raw(&self) -> u32 {
-        self.0
-    }
-
-    /// Rebuild an id from [`DmaTransferId::raw`].
-    ///
-    /// Zero is not a valid id: [`begin`] counts from one, so a driver can use
-    /// it to mean "nothing in flight".
-    pub const fn from_raw(v: u32) -> Self {
-        Self(v)
-    }
-}
-
-/// DMA-safe buffer handle.
-#[derive(Debug, Clone, Copy)]
-pub struct DmaHandle {
-    pub(crate) pool_offset: u32,
-    pub(crate) size: u32,
-    pub(crate) owner_task: u32,
-}
-
-impl DmaHandle {
-    /// The buffer's address, for programming into a DMA engine.
-    ///
-    /// Guaranteed to be inside the linker's `dma_pool` and 4-byte aligned:
-    /// the pool is placed in DRAM the engines can reach, and a descriptor or
-    /// buffer that is neither is the failure this type exists to prevent.
-    /// A misaligned address does not fault — the engine transfers the wrong
-    /// bytes.
-    pub fn addr(&self) -> u32 {
-        pool_start().wrapping_add(self.pool_offset)
-    }
-    /// Byte offset of this buffer within the DMA pool.
-    pub fn pool_offset(&self) -> u32 {
-        self.pool_offset
-    }
-
-    /// Size of this buffer in bytes, rounded up to the pool's alignment.
-    pub fn size(&self) -> u32 {
-        self.size
-    }
-
-    /// Task that allocated this buffer, and the only one permitted to use it.
-    pub fn owner_task(&self) -> u32 {
-        self.owner_task
-    }
-}
-
 // DMA pool region (defined in linker script).
 extern "C" {
     static _dma_pool_start: u32;
     static _dma_pool_end: u32;
 }
 
-/// Error from the DMA broker. Lives in `hal` so drivers can name it without
-/// naming the kernel; re-exported here so existing paths keep working.
-pub use hal::dma::DmaError;
+/// Broker types that a driver — and `api` — must name without naming the
+/// kernel. They live in `hal` (like [`DmaError`]) and are re-exported here so
+/// existing `kernel::dma_broker::` paths keep working.
+///
+/// [`DmaHandle`] carries a resolved address rather than a pool offset: the
+/// pool base is a linker symbol only the kernel can see (see [`pool_start`]),
+/// so [`alloc`] resolves it once and the handle is portable thereafter.
+pub use hal::dma::{DmaError, DmaHandle, DmaTransferId};
 
 static NEXT_TRANSFER_ID: AtomicU32 = AtomicU32::new(1);
 /// Bump allocator offset into the DMA pool.
@@ -129,11 +78,13 @@ pub fn alloc(size: u32) -> Result<DmaHandle, DmaError> {
             return Err(DmaError::PoolExhausted);
         }
         unsafe { DMA_OFFSET = end };
-        Ok(DmaHandle {
-            pool_offset: start,
-            size: aligned,
-            owner_task: sched.current(),
-        })
+        // Resolve the pool-relative offset to an absolute address here, while
+        // the linker symbol is in reach: the handle is portable afterwards.
+        Ok(DmaHandle::new(
+            pool_start().wrapping_add(start),
+            aligned,
+            sched.current(),
+        ))
     })
 }
 
@@ -170,10 +121,10 @@ static COMPLETIONS: api::queue::Queue<u32, 4> = api::queue::Queue::new();
 /// this only mints the id the two sides agree on.
 pub fn begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError> {
     let current = crate::scheduler::with(|s| s.current());
-    if handle.owner_task != current {
+    if handle.owner_task() != current {
         return Err(DmaError::NotOwner);
     }
-    Ok(DmaTransferId(
+    Ok(DmaTransferId::from_raw(
         NEXT_TRANSFER_ID.fetch_add(1, Ordering::SeqCst),
     ))
 }
@@ -184,7 +135,7 @@ pub fn begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError> {
 /// the message rather than retrying: an ISR that spins waiting for a task to
 /// drain something is an ISR that never returns.
 pub fn signal_complete(id: DmaTransferId) {
-    let _ = COMPLETIONS.send_isr(id.0);
+    let _ = COMPLETIONS.send_isr(id.raw());
 }
 
 /// Block until `id` completes, or `timeout_ms` passes.
@@ -206,7 +157,7 @@ pub fn await_transfer(id: DmaTransferId, timeout_ms: u32) -> Result<(), DmaError
             return Err(DmaError::Timeout);
         }
         match api::queue::recv(&COMPLETIONS, left as u32) {
-            Ok(got) if got == id.0 => return Ok(()),
+            Ok(got) if got == id.raw() => return Ok(()),
             Ok(_) => continue,
             Err(_) => return Err(DmaError::Timeout),
         }
@@ -314,10 +265,12 @@ mod tests {
         // is still writing.
         let _k = testsupport::lock();
         rewind();
-        let mut h = alloc(32).unwrap();
-        h.owner_task = h.owner_task.wrapping_add(1);
+        let h = alloc(32).unwrap();
+        // Same buffer, a different owner: the field is private now, so rebuild
+        // the handle rather than poking it.
+        let not_mine = DmaHandle::new(h.addr(), h.size(), h.owner_task().wrapping_add(1));
         assert_eq!(
-            begin(&h).unwrap_err(),
+            begin(&not_mine).unwrap_err(),
             DmaError::NotOwner,
             "ownership is not checked"
         );

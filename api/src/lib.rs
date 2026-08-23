@@ -34,11 +34,15 @@
 pub const ABI: u32 = 2;
 
 pub mod debug;
+pub mod dma;
+pub mod interrupt;
 pub mod mutex;
 pub mod prelude;
 pub mod queue;
+pub mod smp;
 pub mod sync;
 pub mod task;
+pub mod time;
 pub mod timer;
 
 /// Re-export key HAL types for convenient access.
