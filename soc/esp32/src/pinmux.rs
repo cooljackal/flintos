@@ -117,13 +117,21 @@ impl PinMux for Esp32PinMux {
         let reads_in = reads_in(signal);
         let drives_out = drives_out(signal);
 
+        // The pad's input *buffer* (`FUN_IE`) follows the signal's direction,
+        // but a caller that drives a pad and reads it back through the GPIO
+        // controller (`pwm` measuring its own output) forces it on with
+        // `PinConfig::input`. This only enables the buffer; the peripheral's
+        // matrix *input* connection below still follows the real direction, so
+        // an output-only signal is not wired to some input index it lacks.
+        let input_enable = reads_in || config.input;
+
         // Fast path: the pad is native to this signal, so IO_MUX connects it
         // directly and the matrix is not involved.
         if let Some((native_pin, func)) = native_pad(signal) {
             if native_pin == pin {
                 unsafe {
                     gpio_matrix::set_drive(pin, config.drive)?;
-                    io_mux::configure(pin, func, reads_in, config.pull)?;
+                    io_mux::configure(pin, func, input_enable, config.pull)?;
                 }
                 return Ok(());
             }
@@ -142,7 +150,7 @@ impl PinMux for Esp32PinMux {
 
             // The pad has to be in GPIO function for the matrix to own it, and
             // the function number for that is not the same on every pad.
-            io_mux::configure(pin, io_mux::gpio_function(pin), reads_in, config.pull)?;
+            io_mux::configure(pin, io_mux::gpio_function(pin), input_enable, config.pull)?;
 
             if reads_in {
                 gpio_matrix::connect_input(idx, pin, false)?;

@@ -149,6 +149,15 @@ pub enum PinPull {
 pub struct PinConfig {
     pub drive: PinDrive,
     pub pull: PinPull,
+    /// Force the pad's input path on even for a signal the peripheral only
+    /// drives out.
+    ///
+    /// Routing normally follows the signal's direction: an output-only signal
+    /// leaves the pad's input buffer (`FUN_IE` on the ESP32) off, so nothing
+    /// reads it back. Some uses need both at once — driving a pad *and* reading
+    /// it, as `pwm` does when it measures its own output — and set this. It has
+    /// no effect on a signal the peripheral already reads.
+    pub input: bool,
 }
 
 impl PinConfig {
@@ -157,6 +166,7 @@ impl PinConfig {
     pub const PUSH_PULL: Self = Self {
         drive: PinDrive::PushPull,
         pull: PinPull::None,
+        input: false,
     };
 
     /// Open-drain with the internal pull-up engaged.
@@ -168,7 +178,15 @@ impl PinConfig {
     pub const OPEN_DRAIN_PULLUP: Self = Self {
         drive: PinDrive::OpenDrain,
         pull: PinPull::Up,
+        input: false,
     };
+
+    /// This configuration with the pad's input path forced on. For a driver
+    /// that drives a pad and reads it back through the same signal route.
+    pub const fn with_input(mut self) -> Self {
+        self.input = true;
+        self
+    }
 }
 
 impl Default for PinConfig {
@@ -255,5 +273,20 @@ mod tests {
     fn default_is_push_pull_unpulled() {
         assert_eq!(PinConfig::default(), PinConfig::PUSH_PULL);
         assert_eq!(PinConfig::default().pull, PinPull::None);
+    }
+
+    #[test]
+    fn presets_leave_the_input_path_alone_and_with_input_forces_it() {
+        // The read-back case (`pwm`) is the only one that forces the input
+        // buffer on; the ordinary presets do not.
+        let push_pull = PinConfig::PUSH_PULL;
+        let open_drain = PinConfig::OPEN_DRAIN_PULLUP;
+        let readable = push_pull.with_input();
+        assert!(!push_pull.input);
+        assert!(!open_drain.input);
+        assert!(readable.input);
+        // `with_input` changes nothing else.
+        assert_eq!(readable.drive, PinDrive::PushPull);
+        assert_eq!(readable.pull, PinPull::None);
     }
 }
