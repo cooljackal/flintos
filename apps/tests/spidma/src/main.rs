@@ -104,11 +104,11 @@ fn main() {
 
 fn run() {
     task::sleep_ms(200);
-    api::log_info!("[spidma] {} bytes, SPI2 looped back on GPIO{}", LEN, LOOPBACK_GPIO);
+    api::log_info!("{} bytes, SPI2 looped back on GPIO{}", LEN, LOOPBACK_GPIO);
 
     match attempt() {
-        Ok(()) => api::log_info!("[spidma] PASS"),
-        Err(e) => api::log_error!("[spidma] FAIL: {}", e),
+        Ok(()) => api::log_info!("PASS"),
+        Err(e) => api::log_error!("FAIL: {}", e),
     }
     loop {
         task::sleep_ms(1000);
@@ -171,12 +171,12 @@ fn attempt() -> Result<(), &'static str> {
     //    driver.
     let transfer = spi.exchange_async(&tx_buf, &rx_buf, LEN).map_err(|_| "could not start")?;
     transfer.await_done().map_err(|_| "transfer never completed")?;
-    api::log_info!("[spidma] completed by interrupt");
+    api::log_info!("completed by interrupt");
 
     // 6. Judge it. Every check below has caught a different lie in something.
     use core::sync::atomic::Ordering;
     let raw = ISR_FLAGS.load(Ordering::SeqCst);
-    api::log_info!("[spidma] int_raw {:#x}", raw);
+    api::log_info!("int_raw {:#x}", raw);
     if raw & esp32_spi::SPI_OUT_EOF == 0 {
         return Err("the transmit chain never reached end-of-frame");
     }
@@ -200,7 +200,7 @@ fn attempt() -> Result<(), &'static str> {
             mismatches += 1;
             if first_bad == usize::MAX {
                 first_bad = i;
-                api::log_error!("[spidma] byte {}: sent {:#04x}, got {:#04x}", i, sent, got);
+                api::log_error!("byte {}: sent {:#04x}, got {:#04x}", i, sent, got);
             }
         }
     }
@@ -212,7 +212,7 @@ fn attempt() -> Result<(), &'static str> {
         return Err("nothing arrived — the receive buffer is still zero");
     }
     if mismatches != 0 {
-        api::log_error!("[spidma] {} of {} bytes differ", mismatches, LEN);
+        api::log_error!("{} of {} bytes differ", mismatches, LEN);
         return Err("data came back wrong");
     }
 

@@ -113,9 +113,9 @@ fn main() {
 #[cfg(not(feature = "blobs"))]
 fn run() {
     loop {
-        api::log_warn!("[radio] built without the blobs; there is nothing to probe");
-        api::log_warn!("[radio]   make blobs");
-        api::log_warn!("[radio]   make flash APP=radioprobe BOARD=... EXTRA_FEATURES=blobs");
+        api::log_warn!("built without the blobs; there is nothing to probe");
+        api::log_warn!("  make blobs");
+        api::log_warn!("  make flash APP=radioprobe BOARD=... EXTRA_FEATURES=blobs");
         task::sleep_ms(5000);
     }
 }
@@ -127,7 +127,7 @@ fn run() {
     // Let the console settle, so the first line is not half-eaten by the boot
     // banner on a monitor that has just attached.
     task::sleep_ms(200);
-    api::log_info!("[radio] probe starting");
+    api::log_info!("probe starting");
 
     // The blob before anything else. Needs no clock, no calibration and no
     // memory, so if this comes back wrong nothing below is worth reading.
@@ -136,16 +136,16 @@ fn run() {
     // `phy_version_str` is a common symbol, so it is a 40-byte buffer the blob
     // writes rather than a literal it returns. It is printed again after the
     // registration, which is where it becomes readable.
-    api::log_info!("[radio] rf cal version: {}", unsafe { phy::rf_cal_version() });
+    api::log_info!("rf cal version: {}", unsafe { phy::rf_cal_version() });
 
     // The store is optional and reported rather than fatal: without it the PHY
     // still comes up, it just recalibrates on every boot. That is the whole
     // difference this probe is here to measure, so say plainly which of the
     // two runs this is going to be.
     if unsafe { radio_esp32::nvs::init() } {
-        api::log_info!("[radio] nvs open; a calibration can persist across reset");
+        api::log_info!("nvs open; a calibration can persist across reset");
     } else {
-        api::log_warn!("[radio] nvs unavailable; every boot will calibrate in full");
+        api::log_warn!("nvs unavailable; every boot will calibrate in full");
     }
 
     // Printed because it is what the calibration is bound to: a stored
@@ -153,20 +153,20 @@ fn run() {
     // wrong then every second run silently pays for a full calibration.
     let m = unsafe { soc_esp32::efuse::base_mac() };
     api::log_info!(
-        "[radio] mac {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        "mac {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
         m[0], m[1], m[2], m[3], m[4], m[5]
     );
 
     // The heap. `register_chipv7_phy` is handed a 1904-byte calibration buffer
     // from it, and `alloc` against an uninitialised pool returns null — which
     // would surface as `PhyError::OutOfMemory` on a board with 100 KB free.
-    api::log_info!("[radio] reclaiming the heap");
+    api::log_info!("reclaiming the heap");
     let heap = unsafe { kernel::heap::init_from_map() };
-    api::log_info!("[radio] heap: {} bytes reclaimed", heap);
+    api::log_info!("heap: {} bytes reclaimed", heap);
 
     match probe() {
-        Ok(()) => api::log_info!("[radio] PASS"),
-        Err(e) => api::log_error!("[radio] FAIL: {}", e),
+        Ok(()) => api::log_info!("PASS"),
+        Err(e) => api::log_error!("FAIL: {}", e),
     }
 
     // Step 5.1, and the first time the OSI table is exercised for real.
@@ -186,22 +186,22 @@ fn run() {
     // the difference between a name and a bisection.
     let table = radio_esp32::adapter::table();
     let nulls = radio_esp32::adapter::report_unimplemented(&table);
-    api::log_info!("[radio] osi table: {} of 115 entries still null", nulls);
+    api::log_info!("osi table: {} of 115 entries still null", nulls);
 
-    api::log_info!("[radio] calling esp_wifi_init_internal");
+    api::log_info!("calling esp_wifi_init_internal");
     let t0 = kernel::clock::now_us();
     let rc = unsafe { radio_esp32::wifi::init() };
     let t1 = kernel::clock::now_us();
     if rc == 0 {
-        api::log_info!("[radio] wifi init OK in {} us", t1 - t0);
+        api::log_info!("wifi init OK in {} us", t1 - t0);
         api::log_info!(
-            "[radio] heap after wifi init: {} bytes free",
+            "heap after wifi init: {} bytes free",
             kernel::heap::free_bytes(kernel::heap::Caps::Internal)
         );
     } else {
         // Espressif's, not translated: `esp_err_t` values are documented and a
         // guess at what one means is worse than the number.
-        api::log_error!("[radio] wifi init returned {:#x} after {} us", rc, t1 - t0);
+        api::log_error!("wifi init returned {:#x} after {} us", rc, t1 - t0);
     }
 
     loop {
@@ -233,10 +233,10 @@ fn kv_round_trip(tag: &str, key: &[u8]) {
         None,
     );
     match outcome {
-        Some(Ok(true)) => api::log_info!("[radio] kvstore round trip {}: ok", tag),
-        Some(Ok(false)) => api::log_error!("[radio] kvstore round trip {}: wrong value", tag),
-        Some(Err(e)) => api::log_error!("[radio] kvstore round trip {}: {:?}", tag, e),
-        None => api::log_error!("[radio] kvstore round trip {}: no store", tag),
+        Some(Ok(true)) => api::log_info!("kvstore round trip {}: ok", tag),
+        Some(Ok(false)) => api::log_error!("kvstore round trip {}: wrong value", tag),
+        Some(Err(e)) => api::log_error!("kvstore round trip {}: {:?}", tag, e),
+        None => api::log_error!("kvstore round trip {}: no store", tag),
     }
 }
 
@@ -252,7 +252,7 @@ fn verify_stored() {
     // On the heap for the same reason `phy::register_once` puts it there.
     let buf = unsafe { kernel::heap::alloc(CAL_DATA_LEN, 4) };
     if buf.is_null() {
-        api::log_error!("[radio] no room to read the calibration back");
+        api::log_error!("no room to read the calibration back");
         return;
     }
     let out: &mut [u8; CAL_DATA_LEN] = unsafe { &mut *(buf as *mut [u8; CAL_DATA_LEN]) };
@@ -263,10 +263,10 @@ fn verify_stored() {
         Err(Invalid::Missing),
     );
     let t1 = kernel::clock::now_us();
-    api::log_info!("[radio] calibration load took {} us", t1 - t0);
+    api::log_info!("calibration load took {} us", t1 - t0);
     match r {
-        Ok(()) => api::log_info!("[radio] read-back OK: it is on flash in this boot"),
-        Err(e) => api::log_error!("[radio] read-back failed ({:?}): the save did not land", e),
+        Ok(()) => api::log_info!("read-back OK: it is on flash in this boot"),
+        Err(e) => api::log_error!("read-back failed ({:?}): the save did not land", e),
     }
     unsafe { kernel::heap::free(buf, kernel::heap::Caps::Internal) };
 }
@@ -296,7 +296,7 @@ fn probe() -> Result<(), &'static str> {
     let t1 = kernel::clock::now_us();
     match first {
         Ok(()) => {
-            api::log_info!("[radio] enable: {} us (refs={})", t1 - t0, phy::refs());
+            api::log_info!("enable: {} us (refs={})", t1 - t0, phy::refs());
             // Still empty, and printed anyway because that is the finding.
             // esp-idf logs this string *before* registering and gets
             // "4670,719f9f6,..."; here it is empty both before and after, on a
@@ -305,10 +305,10 @@ fn probe() -> Result<(), &'static str> {
             // correctly allocated in DRAM, so something writes it that we are
             // not calling. Cosmetic, but it is the one thing that would
             // identify which archive `make blobs` fetched.
-            api::log_info!("[radio] phy version: {}", unsafe { phy::version_str() });
+            api::log_info!("phy version: {}", unsafe { phy::version_str() });
         }
         Err(e) => {
-            api::log_error!("[radio] enable returned {:?} after {} us", e, t1 - t0);
+            api::log_error!("enable returned {:?} after {} us", e, t1 - t0);
             return Err("register_chipv7_phy did not accept our tables");
         }
     }
@@ -329,7 +329,7 @@ fn probe() -> Result<(), &'static str> {
     let t2 = kernel::clock::now_us();
     unsafe { phy::enable(RADIO_CLK_WIFI) }.map_err(|_| "the second enable failed")?;
     let t3 = kernel::clock::now_us();
-    api::log_info!("[radio] re-enable: {} us (refs={})", t3 - t2, phy::refs());
+    api::log_info!("re-enable: {} us (refs={})", t3 - t2, phy::refs());
     if phy::refs() != 2 {
         return Err("two enables did not produce two references");
     }
@@ -337,7 +337,7 @@ fn probe() -> Result<(), &'static str> {
         // Not fatal on its own -- a partial calibration on the first call
         // narrows the gap -- but it is the shape of the bug the refcount is
         // there to prevent, so it is worth saying out loud.
-        api::log_warn!("[radio] the re-enable was no cheaper; did it register twice?");
+        api::log_warn!("the re-enable was no cheaper; did it register twice?");
     }
 
     // Down again. The first disable drops a reference and must *not* close the
@@ -353,7 +353,7 @@ fn probe() -> Result<(), &'static str> {
     if phy::refs() != 0 {
         return Err("the last disable left a reference behind");
     }
-    api::log_info!("[radio] closed; refs=0");
+    api::log_info!("closed; refs=0");
 
     // And back up, from cold. The registration is done once for the life of
     // the boot, so this must be the cheap path even though the RF was closed
@@ -361,7 +361,7 @@ fn probe() -> Result<(), &'static str> {
     let t4 = kernel::clock::now_us();
     unsafe { phy::enable(RADIO_CLK_WIFI) }.map_err(|_| "re-enable after close failed")?;
     let t5 = kernel::clock::now_us();
-    api::log_info!("[radio] enable after close: {} us", t5 - t4);
+    api::log_info!("enable after close: {} us", t5 - t4);
     unsafe { phy::disable(RADIO_CLK_WIFI) };
 
     Ok(())

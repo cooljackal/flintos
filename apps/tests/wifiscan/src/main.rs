@@ -59,9 +59,9 @@ fn main() {
 #[cfg(not(feature = "blobs"))]
 fn run() {
     loop {
-        api::log_warn!("[wifi] built without the blobs; there is nothing to scan with");
-        api::log_warn!("[wifi]   make blobs");
-        api::log_warn!("[wifi]   make flash APP=wifiscan BOARD=... EXTRA_FEATURES=blobs");
+        api::log_warn!("built without the blobs; there is nothing to scan with");
+        api::log_warn!("  make blobs");
+        api::log_warn!("  make flash APP=wifiscan BOARD=... EXTRA_FEATURES=blobs");
         task::sleep_ms(5000);
     }
 }
@@ -167,7 +167,7 @@ fn run() {
     use hal::wifi::{ScanRequest, Station};
 
     task::sleep_ms(200);
-    api::log_info!("[wifi] starting");
+    api::log_info!("starting");
 
     // The whole bring-up — nvs, heap, init, station mode, start — with the
     // event handler installed before the start. `radioprobe` still steps
@@ -175,11 +175,11 @@ fn run() {
     let mut station = match radio_esp32::station::EspStation::bring_up(on_event) {
         Ok(s) => s,
         Err(e) => {
-            api::log_error!("[wifi] bring-up failed: {}", e);
+            api::log_error!("bring-up failed: {}", e);
             task::exit();
         }
     };
-    api::log_info!("[wifi] station started");
+    api::log_info!("station started");
 
     // What the driver actually routed. Recorded by `_set_intr` rather than
     // logged from inside it; see `radio_esp32::interrupts::for_each_route`.
@@ -187,7 +187,7 @@ fn run() {
     radio_esp32::interrupts::for_each_route(|r| {
         routes += 1;
         api::log_info!(
-            "[wifi] irq: source {} -> cpu-int {} on core {} ({})",
+            "irq: source {} -> cpu-int {} on core {} ({})",
             r.source,
             r.num,
             r.core,
@@ -195,7 +195,7 @@ fn run() {
         );
     });
     if routes == 0 {
-        api::log_warn!("[wifi] the driver routed no interrupts; nothing will arrive");
+        api::log_warn!("the driver routed no interrupts; nothing will arrive");
     }
 
     // Scans forever, so the output can be watched while networks come and go
@@ -205,8 +205,8 @@ fn run() {
     loop {
         SCAN_DONE.store(false, core::sync::atomic::Ordering::SeqCst);
         match station.scan(&ScanRequest::default()) {
-            Ok(()) => api::log_info!("[wifi] scan {} started", round),
-            Err(e) => api::log_error!("[wifi] scan {} refused: {}", round, e),
+            Ok(()) => api::log_info!("scan {} started", round),
+            Err(e) => api::log_error!("scan {} refused: {}", round, e),
         }
         round += 1;
         task::sleep_ms(5000);

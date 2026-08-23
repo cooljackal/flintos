@@ -61,20 +61,20 @@ fn core1_counter() {
 
 fn run() {
     task::sleep_ms(200);
-    api::log_info!("[probe] reading the ROM's flash chip struct at 0x3FFAE270");
+    api::log_info!("reading the ROM's flash chip struct at 0x3FFAE270");
 
     let c = unsafe { esp32_flash::ChipInfo::read() };
-    api::log_info!("[probe] device_id   = {:#010x}", c.device_id);
-    api::log_info!("[probe] chip_size   = {:#010x}", c.chip_size);
-    api::log_info!("[probe] block_size  = {:#010x}", c.block_size);
-    api::log_info!("[probe] sector_size = {:#010x}", c.sector_size);
-    api::log_info!("[probe] page_size   = {:#010x}", c.page_size);
-    api::log_info!("[probe] status_mask = {:#010x}", c.status_mask);
+    api::log_info!("device_id   = {:#010x}", c.device_id);
+    api::log_info!("chip_size   = {:#010x}", c.chip_size);
+    api::log_info!("block_size  = {:#010x}", c.block_size);
+    api::log_info!("sector_size = {:#010x}", c.sector_size);
+    api::log_info!("page_size   = {:#010x}", c.page_size);
+    api::log_info!("status_mask = {:#010x}", c.status_mask);
 
     if c.looks_sane() {
-        api::log_info!("[probe] the ROM knows its chip — 256/4096 geometry is right");
+        api::log_info!("the ROM knows its chip — 256/4096 geometry is right");
     } else {
-        api::log_error!("[probe] not populated: the ROM would build commands from this");
+        api::log_error!("not populated: the ROM would build commands from this");
     }
 
 
@@ -89,21 +89,21 @@ fn run() {
         Ok(id) => {
             let mfr = id & 0xFF;
             api::log_info!(
-                "[probe] jedec id={:#08x} vendor={:#04x} (ROM struct says {:#04x})",
+                "jedec id={:#08x} vendor={:#04x} (ROM struct says {:#04x})",
                 id,
                 mfr,
                 rom_mfr
             );
             match mfr {
-                0xC8 => api::log_info!("[probe] GigaDevice: unlock supported"),
-                0xEF => api::log_info!("[probe] Winbond: unlock supported"),
+                0xC8 => api::log_info!("GigaDevice: unlock supported"),
+                0xEF => api::log_info!("Winbond: unlock supported"),
                 _ => api::log_warn!(
-                    "[probe] vendor {:#04x} unknown: a protected chip reports UnknownChip rather than risk clearing QE",
+                    "vendor {:#04x} unknown: a protected chip reports UnknownChip rather than risk clearing QE",
                     mfr
                 ),
             }
         }
-        Err(e) => api::log_error!("[probe] could not read the JEDEC id: {:?}", e),
+        Err(e) => api::log_error!("could not read the JEDEC id: {:?}", e),
     }
 
     // The factory MAC, read straight out of eFuse. Printed so it can be
@@ -112,7 +112,7 @@ fn run() {
     {
         let m = unsafe { soc_esp32::efuse::base_mac() };
         api::log_info!(
-            "[probe] efuse MAC = {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            "efuse MAC = {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
             m[0], m[1], m[2], m[3], m[4], m[5]
         );
     }
@@ -128,7 +128,7 @@ fn run() {
         // SPI0 is the cache's controller and demonstrably reads this chip
         // correctly, so wherever the two differ is a candidate.
         let v0 = unsafe { ((0x3FF4_3000u32 + off) as *const u32).read_volatile() };
-        api::log_info!("[probe] {} SPI1={:#010x} SPI0={:#010x}", name, v1, v0);
+        api::log_info!("{} SPI1={:#010x} SPI0={:#010x}", name, v1, v0);
     }
 
     // The struct is fine, so the ROM is not the problem. Try the real thing
@@ -138,13 +138,13 @@ fn run() {
         use core::sync::atomic::Ordering;
         for i in 0..4 {
             let v = esp32_flash::STATUS_TRACE[i].load(Ordering::Relaxed);
-            api::log_info!("[probe] status[{}] = {:#05x}", i, v);
+            api::log_info!("status[{}] = {:#05x}", i, v);
         }
         // The two failures inside the cache-off window that cannot print for
         // themselves. 0 means neither happened.
         let cache = esp32_flash::LAST_CACHE_STATE.load(Ordering::Relaxed);
         if cache != 0 {
-            api::log_error!("[probe] cache-off window failed: {:#010x}", cache);
+            api::log_error!("cache-off window failed: {:#010x}", cache);
         }
     }
 
@@ -158,17 +158,17 @@ fn run() {
         use core::sync::atomic::Ordering;
         let parks = esp32_flash::PARKS.load(Ordering::Relaxed);
         let fell_back = esp32_flash::PARK_FELL_BACK.load(Ordering::Relaxed);
-        api::log_info!("[probe] core 1 parked by handshake {} times", parks);
+        api::log_info!("core 1 parked by handshake {} times", parks);
         if fell_back {
-            api::log_error!("[probe] and at least once it had to fall back to stalling");
+            api::log_error!("and at least once it had to fall back to stalling");
         } else if parks == 0 {
-            api::log_error!("[probe] never parked: the handshake did not run");
+            api::log_error!("never parked: the handshake did not run");
         }
     }
 
     match outcome {
-        Ok(()) => api::log_info!("[probe] PASS"),
-        Err(e) => api::log_error!("[probe] FAIL: {}", e),
+        Ok(()) => api::log_info!("PASS"),
+        Err(e) => api::log_error!("FAIL: {}", e),
     }
 
     loop {
@@ -186,21 +186,21 @@ fn round_trip() -> Result<(), &'static str> {
     use kernel::nvs::FlashStorage;
     use kvstore::Store;
 
-    api::log_info!("[probe] step {} begin", STEP);
+    api::log_info!("step {} begin", STEP);
     if STEP == 0 {
         return Ok(());
     }
 
     // 1: construct the storage handle. Touches no flash.
     let storage = unsafe { FlashStorage::nvs() };
-    api::log_info!("[probe] storage constructed");
+    api::log_info!("storage constructed");
     if STEP == 1 {
         return Ok(());
     }
 
     // 2: open, which scans — the first flash read.
     let mut store = Store::open(storage).map_err(|_| "open")?;
-    api::log_info!("[probe] opened, {} bytes used", store.used());
+    api::log_info!("opened, {} bytes used", store.used());
     if STEP == 2 {
         return Ok(());
     }
@@ -212,19 +212,19 @@ fn round_trip() -> Result<(), &'static str> {
     // stops moving, and either way the board otherwise looks fine.
     let before_core1 = CORE1_TICKS.load(core::sync::atomic::Ordering::Relaxed);
     if before_core1 == 0 {
-        api::log_error!("[probe] core 1 never started -- the cross-core path is untested");
+        api::log_error!("core 1 never started -- the cross-core path is untested");
     }
 
     // 3: erase.
     store.erase_all().map_err(|_| "erase")?;
-    api::log_info!("[probe] erased");
+    api::log_info!("erased");
     if STEP == 3 {
         return Ok(());
     }
 
     // 4: write.
     store.set(b"probe.a", b"first").map_err(|_| "write")?;
-    api::log_info!("[probe] wrote");
+    api::log_info!("wrote");
     if STEP == 4 {
         return Ok(());
     }
@@ -245,13 +245,13 @@ fn round_trip() -> Result<(), &'static str> {
                 let mut back = [0u8; 16];
                 match st.read(0x100, &mut back) {
                     Ok(()) => {
-                        api::log_info!("[probe] direct wrote {:02x?}", pattern);
-                        api::log_info!("[probe] direct read  {:02x?}", back);
+                        api::log_info!("direct wrote {:02x?}", pattern);
+                        api::log_info!("direct read  {:02x?}", back);
                     }
-                    Err(_) => api::log_error!("[probe] direct read failed"),
+                    Err(_) => api::log_error!("direct read failed"),
                 }
             }
-            Err(_) => api::log_error!("[probe] direct write failed"),
+            Err(_) => api::log_error!("direct write failed"),
         }
     }
 
@@ -261,8 +261,8 @@ fn round_trip() -> Result<(), &'static str> {
         let st = unsafe { FlashStorage::nvs() };
         let mut raw = [0u8; 24];
         match st.read(0, &mut raw) {
-            Ok(()) => api::log_info!("[probe] raw@0 {:02x?}", raw),
-            Err(_) => api::log_error!("[probe] raw read failed"),
+            Ok(()) => api::log_info!("raw@0 {:02x?}", raw),
+            Err(_) => api::log_error!("raw read failed"),
         }
     }
 
@@ -273,7 +273,7 @@ fn round_trip() -> Result<(), &'static str> {
             let a = esp32_flash::REG_SNAPSHOT[i].load(Ordering::Relaxed);
             let z = esp32_flash::REG_SNAPSHOT[8 + i].load(Ordering::Relaxed);
             if a != z {
-                api::log_info!("[probe] DIFF {} first={:#010x} later={:#010x}", names[i], a, z);
+                api::log_info!("DIFF {} first={:#010x} later={:#010x}", names[i], a, z);
             }
         }
     }
@@ -284,20 +284,20 @@ fn round_trip() -> Result<(), &'static str> {
     if &out[..n] != b"first" {
         return Err("value came back wrong");
     }
-    api::log_info!("[probe] read back {} bytes", n);
+    api::log_info!("read back {} bytes", n);
 
     // Give core 1 a few of its milliseconds to prove it survived.
     task::sleep_ms(20);
     let after_core1 = CORE1_TICKS.load(core::sync::atomic::Ordering::Relaxed);
     if after_core1 > before_core1 {
         api::log_info!(
-            "[probe] core 1 ran across the flash writes: {} -> {}",
+            "core 1 ran across the flash writes: {} -> {}",
             before_core1,
             after_core1
         );
     } else {
         api::log_error!(
-            "[probe] core 1 STOPPED at {} -- stall or release is wrong",
+            "core 1 STOPPED at {} -- stall or release is wrong",
             after_core1
         );
         return Err("core 1 did not survive the flash operation");

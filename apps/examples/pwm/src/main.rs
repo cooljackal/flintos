@@ -105,14 +105,14 @@ fn pwm() {
     let ch = match board::pwm(PWM_GPIO, FREQ_HZ, RES_BITS) {
         Ok(ch) => ch,
         Err(e) => {
-            api::log_error!("[pwm] could not configure LEDC: {:?}", e);
+            api::log_error!("could not configure LEDC: {:?}", e);
             task::exit();
         }
     };
 
     let div = board::pwm_divider_for(FREQ_HZ, RES_BITS).unwrap_or(0);
     api::log_info!(
-        "[pwm] LEDC ch0 timer0 on GPIO {}: asked {} Hz, get {} Hz at {}-bit",
+        "LEDC ch0 timer0 on GPIO {}: asked {} Hz, get {} Hz at {}-bit",
         PWM_GPIO,
         FREQ_HZ,
         board::pwm_freq_for(div, RES_BITS),
@@ -124,7 +124,7 @@ fn pwm() {
     loop {
         for pct in [0u8, 10, 25, 50, 75, 90, 100] {
             if ch.set_percent(pct).is_none() {
-                api::log_error!("[pwm] {}% was refused", pct);
+                api::log_error!("{}% was refused", pct);
                 continue;
             }
             // Let the new duty take effect before sampling.
@@ -138,7 +138,7 @@ fn pwm() {
             // disagrees the fault is the encoding, not the wiring.
             if readback != expected {
                 api::log_error!(
-                    "[pwm] {}%: duty register holds {}, expected {}",
+                    "{}%: duty register holds {}, expected {}",
                     pct, readback, expected
                 );
             }
@@ -147,7 +147,7 @@ fn pwm() {
             // shift would be out by 16x, and a wrong timer by far more.
             let ok = measured.abs_diff(pct as u32) <= 6;
             api::log_info!(
-                "[pwm] asked {:>3}%  measured {:>3}%  duty reg {:>5}  {}",
+                "asked {:>3}%  measured {:>3}%  duty reg {:>5}  {}",
                 pct,
                 measured,
                 readback,

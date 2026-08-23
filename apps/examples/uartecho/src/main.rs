@@ -55,7 +55,7 @@ fn run() {
         Ok(uart) => uart,
         Err(e) => {
             api::log_error!(
-                "[uartecho] UART loopback bring-up failed ({:?}); \
+                "UART loopback bring-up failed ({:?}); \
                  build for board-esp32-devkitc",
                 e
             );
@@ -63,7 +63,7 @@ fn run() {
         }
     };
 
-    api::log_info!("[uartecho] UART2 internal loopback");
+    api::log_info!("UART2 internal loopback");
 
     let mut round = 0u8;
     loop {
@@ -95,9 +95,9 @@ fn run() {
         }
 
         if got == rx.len() && rx == tx {
-            api::log_info!("[uartecho] round {}: {:?} echoed OK", round, tx);
+            api::log_info!("round {}: {:?} echoed OK", round, tx);
         } else {
-            api::log_error!("[uartecho] round {}: sent {:?}, got {:?} ({} bytes)", round, tx, rx, got);
+            api::log_error!("round {}: sent {:?}, got {:?} ({} bytes)", round, tx, rx, got);
         }
         round = round.wrapping_add(1);
     }

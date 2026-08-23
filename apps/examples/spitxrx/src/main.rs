@@ -51,14 +51,14 @@ fn run() {
     // declares none cannot run this; say so rather than routing onto something.
     let Some(pads) = board::loopback_pads() else {
         api::log_error!(
-            "[spitxrx] this board declares no free loopback GPIOs; \
+            "this board declares no free loopback GPIOs; \
              build for board-esp32-devkitc"
         );
         task::exit();
     };
 
     api::log_info!(
-        "[spitxrx] SPI2 looped MOSI->MISO on GPIO{}, SCK on GPIO{}",
+        "SPI2 looped MOSI->MISO on GPIO{}, SCK on GPIO{}",
         pads.scratch,
         pads.aux.0
     );
@@ -68,7 +68,7 @@ fn run() {
     let bus = match board::loopback_spi() {
         Ok(bus) => bus,
         Err(e) => {
-            api::log_error!("[spitxrx] SPI bring-up failed: {:?}", e);
+            api::log_error!("SPI bring-up failed: {:?}", e);
             task::exit();
         }
     };
@@ -78,7 +78,7 @@ fn run() {
     // after bring-up. Routing is safe (ownership of the pad is the proof, #111),
     // so the app just asks the board for it.
     if let Err(e) = board::fold_spi_loopback() {
-        api::log_error!("[spitxrx] could not fold MISO onto the MOSI pad: {:?}", e);
+        api::log_error!("could not fold MISO onto the MOSI pad: {:?}", e);
         task::exit();
     }
 
@@ -96,9 +96,9 @@ fn run() {
         let mut rx = [0xA5u8; 8];
 
         match bus.transfer(&mut [Op::exchange(&tx, &mut rx)]) {
-            Ok(()) if rx == tx => api::log_info!("[spitxrx] round {}: {:?} looped back OK", round, tx),
-            Ok(()) => api::log_error!("[spitxrx] round {}: sent {:?}, got {:?}", round, tx, rx),
-            Err(e) => api::log_error!("[spitxrx] round {}: transfer failed: {:?}", round, e),
+            Ok(()) if rx == tx => api::log_info!("round {}: {:?} looped back OK", round, tx),
+            Ok(()) => api::log_error!("round {}: sent {:?}, got {:?}", round, tx, rx),
+            Err(e) => api::log_error!("round {}: transfer failed: {:?}", round, e),
         }
         round = round.wrapping_add(1);
     }

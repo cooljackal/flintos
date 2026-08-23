@@ -62,7 +62,7 @@ fn main() {
 
 fn imu() {
     api::log_info!(
-        "[imu] I2C0 on SDA={} SCL={}, IMU at 0x{:02X}",
+        "I2C0 on SDA={} SCL={}, IMU at 0x{:02X}",
         manifest::IMU_SDA_GPIO,
         manifest::IMU_SCL_GPIO,
         manifest::IMU_I2C_ADDR
@@ -75,7 +75,7 @@ fn imu() {
     let ctrl = match imu_bus() {
         Ok(ctrl) => ctrl,
         Err(e) => {
-            api::log_error!("[imu] I2C controller bring-up failed: {:?}", e);
+            api::log_error!("I2C controller bring-up failed: {:?}", e);
             park();
         }
     };
@@ -94,23 +94,23 @@ fn imu() {
 
     match Bmi270::new(bus).probe() {
         Ok(Identity::Mpu6886) => {
-            api::log_info!("[imu] MPU6886 (who_am_i 0x19)");
+            api::log_info!("MPU6886 (who_am_i 0x19)");
             read_mpu6886(bus)
         }
         Ok(Identity::Bmi270) => {
-            api::log_info!("[imu] BMI270 (chip id 0x24) -- no motion driver for it yet");
+            api::log_info!("BMI270 (chip id 0x24) -- no motion driver for it yet");
             park()
         }
         Ok(Identity::Unknown(id)) => {
             api::log_error!(
-                "[imu] something answered at 0x{:02X}, but its id register said 0x{:02X}",
+                "something answered at 0x{:02X}, but its id register said 0x{:02X}",
                 manifest::IMU_I2C_ADDR,
                 id
             );
             park()
         }
         Err(e) => {
-            api::log_error!("[imu] no answer from 0x{:02X}: {:?}", manifest::IMU_I2C_ADDR, e);
+            api::log_error!("no answer from 0x{:02X}: {:?}", manifest::IMU_I2C_ADDR, e);
             park()
         }
     }
@@ -124,10 +124,10 @@ fn read_mpu6886(bus: BusHandle) -> ! {
     // waits now; we only supply *how* to wait. How long to pause depends on the
     // board, not the part -- the Atom needs no more than the minimum.
     if let Err(e) = dev.bring_up(task::sleep_ms) {
-        api::log_error!("[imu] bring-up failed: {:?}", e);
+        api::log_error!("bring-up failed: {:?}", e);
         park();
     }
-    api::log_info!("[imu] configured: +/-8 g, +/-2000 dps");
+    api::log_info!("configured: +/-8 g, +/-2000 dps");
 
     let mut n = 0u32;
     loop {
@@ -138,11 +138,11 @@ fn read_mpu6886(bus: BusHandle) -> ! {
                 let a = a.to_milli_g();
                 let g = g.to_milli_dps();
                 api::log_info!(
-                    "[imu] {} accel {} {} {} mg | gyro {} {} {} mdps | {} mC",
+                    "{} accel {} {} {} mg | gyro {} {} {} mdps | {} mC",
                     n, a.x, a.y, a.z, g.x, g.y, g.z, t
                 );
             }
-            _ => api::log_error!("[imu] {} read failed", n),
+            _ => api::log_error!("{} read failed", n),
         }
     }
 }
@@ -153,14 +153,14 @@ fn read_mpu6886(bus: BusHandle) -> ! {
 /// present devices ACK, absent ones NAK, no register touched); the app just
 /// logs. This used to open-code the walk against the raw physical driver.
 fn scan<P: api::bus::PhysicalTransfer>(ctrl: &I2cController<P>) {
-    api::log_info!("[imu] scanning 0x08..0x77");
-    let found = ctrl.scan(|addr| api::log_info!("[imu]   0x{:02X} responded", addr));
+    api::log_info!("scanning 0x08..0x77");
+    let found = ctrl.scan(|addr| api::log_info!("  0x{:02X} responded", addr));
     if found == 0 {
         api::log_error!(
-            "[imu] nothing responded. Pins, pull-ups or clock gating -- not the device driver."
+            "nothing responded. Pins, pull-ups or clock gating -- not the device driver."
         );
     } else {
-        api::log_info!("[imu] {} device(s) on the bus", found);
+        api::log_info!("{} device(s) on the bus", found);
     }
 }
 

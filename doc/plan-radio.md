@@ -500,8 +500,8 @@ between them: **five hangs out of five**, every one stopping at the same line
 and the same millisecond.
 
 ```text
-[  218][task:1] INFO  [wifi] nvs: 9988 used, 14588 free, one get = 14114 us
-                                        <- nothing further, no fault
+[  218][wificonnect] INFO  nvs: 9988 used, 14588 free, one get = 14114 us
+                                   <- nothing further, no fault
 ```
 
 That is a much better handle than the soak's "three of five". Three things it
