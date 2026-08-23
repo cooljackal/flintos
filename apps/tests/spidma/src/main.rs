@@ -10,11 +10,21 @@
 //!
 //! So this sends a known pattern and checks it comes back byte for byte.
 //!
+//! # What the app still does, and what the driver now owns
+//!
+//! Since #112 the descriptor build, the interrupt enable, the id bookkeeping
+//! and the engine start all live in [`esp32_spi::Esp32Spi::exchange_async`];
+//! the app is left with claim, open, fill, exchange, await, compare. The one
+//! piece that cannot move into the driver is the interrupt top-half: it names
+//! the kernel's broker (`signal_complete`), which a physical driver may not.
+//! It reads the same `&'static` driver the task built, through [`api::sync::Once`],
+//! rather than fabricating a fresh one in the trap.
+//!
 //! # The loopback needs no wire
 //!
 //! The GPIO matrix can route a peripheral output to a pad *and* route that
-//! same pad's input to a peripheral input. Point SPI2's MOSI at GPIO 16 and
-//! SPI2's MISO at GPIO 16, and every byte clocked out arrives back on the same
+//! same pad's input to a peripheral input. Point SPI2's MOSI at GPIO 22 and
+//! SPI2's MISO at GPIO 22, and every byte clocked out arrives back on the same
 //! transaction. No jumper, nothing to forget to connect, and the data really
 //! does leave the chip's logic and come back through the pad.
 //!
@@ -25,28 +35,22 @@
 //! # The pins
 //!
 //! GPIO 22 (loopback), 23 (SCK), 19 (a placeholder MISO, see below). All three
-//! are free on the Atom's headers.
-//!
-//! **Not GPIO 16 or 17.** `board` used to advertise those as free on the
-//! grounds that the PICO-D4 has no external PSRAM. It has no *external* flash
-//! either — it is a SiP with the flash in the package, and 16/17 are part of
-//! how the die reaches it. Routing SPI onto GPIO 16 killed the running image
-//! mid-instruction: the console garbled halfway through a line and the chip
-//! went silent, with no fault and no reset. That is what `RESERVED_GPIOS`
-//! now says.
-//!
-//! SCK goes to a pad because it must go somewhere; nothing reads it.
+//! are free on the Atom's headers. SCK goes to a pad because it must go
+//! somewhere; nothing reads it.
 
 #![no_std]
 #![no_main]
 
-use core::sync::atomic::{AtomicU32, Ordering};
-
+use api::dma;
+use api::sync::Once;
 use api::task;
-use hal::bus::{BusConfig, BusSpeed, PhysicalBus};
+use hal::bus::{BusSpeed, SpiConfig, SpiMode};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::types::Priority;
-use soc_esp32::{addr, dma, Esp32PinMux};
+use soc_esp32::ctrl::{SpiCtrl, SpiPort};
+use soc_esp32::{addr, Esp32PinMux};
+
+use esp32_spi::Esp32Spi;
 
 kernel::flint_app!(main, abi = 2);
 
@@ -54,9 +58,9 @@ kernel::flint_app!(main, abi = 2);
 const LOOPBACK_GPIO: u8 = 22;
 /// Somewhere for the clock to go.
 const SCK_GPIO: u8 = 23;
-/// A placeholder MISO pad, used only to get through `init`.
+/// A placeholder MISO pad, used only to get through `open`.
 ///
-/// `init` insists on three distinct pins — two signals on one pad is a
+/// `open` insists on three distinct pins — two signals on one pad is a
 /// mistake everywhere except in a loopback — so MISO starts here and is
 /// folded onto [`LOOPBACK_GPIO`] afterwards. Nothing ever drives this pad:
 /// MISO is an input, so GPIO 19 is only ever read.
@@ -69,50 +73,30 @@ const SPI2: u8 = 2;
 /// under, a "DMA" path that quietly fell back to the data buffer would pass.
 const LEN: usize = 512;
 
-/// CPU interrupt the SPI2 source is routed onto.
-///
-/// 13 is external, level 1, and not claimed by the kernel's own timer or
-/// software interrupts. `intr_map::route` refuses anything it could not
-/// service, so a wrong choice here is an error rather than a silence.
-const SPI_CPU_INT: u8 = 13;
-
-/// The transfer in flight, for the top-half to complete.
-static PENDING: AtomicU32 = AtomicU32::new(0);
+/// The driver, built once in the task and read from the interrupt top-half.
+static SPI: Once<Esp32Spi> = Once::new();
 
 /// End-of-frame flags as the top-half saw them.
 ///
 /// Captured there because acknowledging clears them: a task reading
 /// `dma_int_raw` afterwards sees zero and cannot tell a clean transfer from
 /// one that never raised anything.
-static ISR_FLAGS: AtomicU32 = AtomicU32::new(0);
+static ISR_FLAGS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-/// Top-half. Runs in trap context: acknowledge the peripheral and hand the id
-/// to the waiting task. Nothing else belongs here.
+/// Top-half. Runs in trap context: read the flags for the judge, acknowledge
+/// the peripheral, and hand the transfer id to the waiting task. Nothing else
+/// belongs here.
 fn spi_dma_isr() {
+    use core::sync::atomic::Ordering;
+    let Some(spi) = SPI.get() else { return };
+    ISR_FLAGS.store(spi.dma_int_raw(), Ordering::SeqCst);
     // Level-triggered at the peripheral. Returning without clearing re-enters
     // this handler immediately and forever.
-    let spi = unsafe { esp32_spi::Esp32Spi::new(addr::SPI2_BASE) };
-    ISR_FLAGS.store(unsafe { spi.dma_int_raw() }, Ordering::SeqCst);
-    unsafe { spi.ack_interrupts() };
-
-    let id = PENDING.swap(0, Ordering::SeqCst);
-    if id != 0 {
-        kernel::dma_broker::signal_complete(kernel::dma_broker::DmaTransferId::from_raw(id));
+    spi.ack_interrupts();
+    if let Some(id) = spi.take_pending_dma() {
+        kernel::dma_broker::signal_complete(id);
     }
 }
-
-/// Run the 8-byte FIFO loopback before the DMA one.
-///
-/// Off, and not because it fails. It passes — and then costs the DMA transfer
-/// that follows exactly 8 bytes, which arrive at 504 of 512. The SPI's own
-/// data buffer holds what the FIFO transfer left, and the receive DMA takes
-/// that before it takes the wire.
-///
-/// Worth keeping as a switch: turned on, it proves the loopback is connected
-/// before the descriptor chain is implicated at all, which is how the
-/// full-duplex bug below was found. Just do not read the byte count while it
-/// is on.
-const FIFO_PRECHECK: bool = false;
 
 fn main() {
     task::spawn("spidma", run, Priority::Normal(2), 8192);
@@ -132,54 +116,38 @@ fn run() {
 }
 
 fn attempt() -> Result<(), &'static str> {
-    // 1. A channel. Without one the crossbar points the host at nothing and
-    //    every transfer succeeds while moving zero bytes.
-    let channel = unsafe { dma::claim(dma::Host::Spi2) }.map_err(|_| "no DMA channel")?;
-    api::log_info!("[spidma] channel {} claimed", channel.number());
+    // 1. Open SPI2: this claims the controller, gates its clock, routes the
+    //    pads and configures it — everything the old `new` + `init` pair did,
+    //    but proven single-owner. Stored in a `Once` so the interrupt top-half
+    //    reads the very same driver.
+    let port = SpiPort {
+        ctrl: SpiCtrl::Spi2,
+        cfg: SpiConfig {
+            mosi: LOOPBACK_GPIO,
+            miso: MISO_PLACEHOLDER_GPIO,
+            sck: SCK_GPIO,
+            max_speed: BusSpeed::MHz(4),
+            mode: SpiMode::Mode0,
+        },
+    };
+    let spi = SPI.init(Esp32Spi::open(&port).map_err(|_| "SPI open failed")?);
 
-    // 2. The host itself, through the ordinary init path.
-    let mut spi = unsafe { esp32_spi::Esp32Spi::new(addr::SPI2_BASE) };
-    spi.init(&BusConfig::spi_mode0(
-        LOOPBACK_GPIO,
-        MISO_PLACEHOLDER_GPIO,
-        SCK_GPIO,
-        BusSpeed::MHz(4),
-    ))
-    .map_err(|_| "SPI init failed")?;
-
-    // 3. Now fold MISO onto the MOSI pad. `init` rejects that on purpose —
-    //    two signals on one pad is a mistake everywhere except here — so the
-    //    loopback is made by routing directly, after init has done the rest.
+    // 2. Fold MISO onto the MOSI pad. `open` rejects two signals on one pad on
+    //    purpose — it is a mistake everywhere except here — so the loopback is
+    //    made by routing directly afterwards. MOSI (drive) first, then MISO
+    //    (read), so the read side sets the pad's input enable last.
     let mux = Esp32PinMux::new();
     mux.route(Signal::SpiMosi(SPI2), LOOPBACK_GPIO, PinConfig::PUSH_PULL)
         .map_err(|_| "could not route MOSI")?;
     mux.route(Signal::SpiMiso(SPI2), LOOPBACK_GPIO, PinConfig::PUSH_PULL)
         .map_err(|_| "could not route MISO")?;
 
-    // 3b. Prove the loopback itself with the FIFO path before blaming DMA.
-    //     If these 8 bytes do not come back, the problem is SPI or the pin
-    //     routing and the descriptor chain is not implicated at all.
-    if FIFO_PRECHECK {
-        let tx = [0xA5u8, 0x00, 0xFF, 0x5A, 0x01, 0x02, 0x04, 0x08];
-        let mut rx = [0u8; 8];
-        spi.fifo_exchange(&tx, &mut rx).map_err(|_| "FIFO loopback transfer failed")?;
-        api::log_info!("[spidma] fifo sent {:?}", tx);
-        api::log_info!("[spidma] fifo got  {:?}", rx);
-        if rx != tx {
-            return Err("FIFO loopback did not return what it sent");
-        }
-        api::log_info!("[spidma] FIFO loopback verified");
-    }
-
-    // 4. Buffers and descriptor chains, all from the DMA pool. A buffer on the
-    //    stack would be outside internal DRAM as often as not, and the transfer would
-    //    report success having moved nothing.
-    let tx_buf = kernel::dma_broker::alloc(LEN as u32).map_err(|_| "tx buffer")?;
-    let rx_buf = kernel::dma_broker::alloc(LEN as u32).map_err(|_| "rx buffer")?;
-    let descs = dma::descriptors_needed(LEN as u32) as usize;
-    let desc_bytes = (descs * core::mem::size_of::<dma::Descriptor>()) as u32;
-    let tx_desc = kernel::dma_broker::alloc(desc_bytes).map_err(|_| "tx descriptors")?;
-    let rx_desc = kernel::dma_broker::alloc(desc_bytes).map_err(|_| "rx descriptors")?;
+    // 3. Buffers from the DMA pool. A buffer on the stack would be outside
+    //    internal DRAM as often as not, and the transfer would report success
+    //    having moved nothing. The descriptor chains are the driver's problem
+    //    now, not the app's.
+    let tx_buf = dma::alloc(LEN as u32).map_err(|_| "tx buffer")?;
+    let rx_buf = dma::alloc(LEN as u32).map_err(|_| "rx buffer")?;
 
     // A pattern that catches a stuck byte, a repeated byte and a shifted
     // buffer. A constant fill would pass all three.
@@ -191,51 +159,29 @@ fn attempt() -> Result<(), &'static str> {
         core::ptr::write_bytes(rx_buf.addr() as *mut u8, 0, LEN);
     }
 
-    let (tx_head, rx_head) = unsafe {
-        let tx = core::slice::from_raw_parts_mut(tx_desc.addr() as *mut dma::Descriptor, descs);
-        let rx = core::slice::from_raw_parts_mut(rx_desc.addr() as *mut dma::Descriptor, descs);
-        let t = dma::build_chain(tx, tx_buf.addr(), LEN as u32, dma::Direction::Transmit)
-            .map_err(|_| "tx chain")?;
-        let r = dma::build_chain(rx, rx_buf.addr(), LEN as u32, dma::Direction::Receive)
-            .map_err(|_| "rx chain")?;
-        (t, r)
-    };
-
-    // 5. Point SPI2's interrupt at a CPU input and take the handler. Enabling
-    //    the peripheral's interrupt without routing it is a transfer whose
-    //    completion never arrives, which is indistinguishable from one that
-    //    never finished.
-    unsafe { kernel::interrupt::connect_at(addr::IRQ_SPI2, SPI_CPU_INT, spi_dma_isr) }
+    // 4. Point SPI2's interrupt at a free CPU input and take the handler. The
+    //    kernel picks the input — no magic number to collide with anything.
+    //    Enabling the peripheral's interrupt is `exchange_async`'s job; routing
+    //    it to a CPU is the kernel's.
+    unsafe { api::interrupt::connect(addr::IRQ_SPI2, spi_dma_isr) }
         .map_err(|_| "cannot connect the SPI2 interrupt")?;
-    unsafe { spi.dma_int_enable(esp32_spi::SPI_IN_SUC_EOF) };
 
-    // 6. Go, and block. The id is published before the engine starts: the
-    //    transfer can complete before the next instruction retires, and a
-    //    top-half that found no id would drop the completion on the floor.
-    let id = kernel::dma_broker::begin(&rx_buf).map_err(|_| "could not begin")?;
-    PENDING.store(id.raw(), Ordering::SeqCst);
-    unsafe { spi.start_dma(tx_head, rx_head, LEN) }.map_err(|_| "could not start")?;
-
-    kernel::dma_broker::await_transfer(id, 100).map_err(|_| "transfer never completed")?;
+    // 5. Go, and block. Everything between here and completion — descriptor
+    //    build, interrupt enable, id handoff, engine start — is inside the
+    //    driver.
+    let transfer = spi.exchange_async(&tx_buf, &rx_buf, LEN).map_err(|_| "could not start")?;
+    transfer.await_done().map_err(|_| "transfer never completed")?;
     api::log_info!("[spidma] completed by interrupt");
 
-    let raw = ISR_FLAGS.load(Ordering::SeqCst);
-    let received = unsafe {
-        let rx = core::slice::from_raw_parts(rx_desc.addr() as *const dma::Descriptor, descs);
-        dma::received_len(rx)
-    };
-    api::log_info!("[spidma] int_raw {:#x}, {} bytes reported", raw, received);
-
     // 6. Judge it. Every check below has caught a different lie in something.
+    use core::sync::atomic::Ordering;
+    let raw = ISR_FLAGS.load(Ordering::SeqCst);
+    api::log_info!("[spidma] int_raw {:#x}", raw);
     if raw & esp32_spi::SPI_OUT_EOF == 0 {
         return Err("the transmit chain never reached end-of-frame");
     }
     if raw & esp32_spi::SPI_IN_SUC_EOF == 0 {
         return Err("the receive chain never reached end-of-frame");
-    }
-    if received != LEN as u32 {
-        api::log_error!("[spidma] expected {} bytes, engine reported {}", LEN, received);
-        return Err("short transfer");
     }
 
     let (mut mismatches, mut first_bad) = (0u32, usize::MAX);
@@ -270,6 +216,5 @@ fn attempt() -> Result<(), &'static str> {
         return Err("data came back wrong");
     }
 
-    unsafe { dma::release(channel) };
     Ok(())
 }

@@ -35,15 +35,87 @@
 //! full address sets the start and stop bits that share the register, which
 //! starts a transfer nobody asked for — hence `dma::link_addr`.
 
+use core::ptr::addr_of_mut;
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use hal::bus::{BusError, BusResult};
+use hal::{DmaError, DmaHandle, DmaTransferId};
+use soc_esp32::addr;
 use soc_esp32::dma;
 use soc_esp32::reg;
 
 use super::{
-    Esp32Spi, SPI_CK_I_EDGE, SPI_CK_OUT_EDGE, SPI_CMD, SPI_CMD_USR, SPI_DOUTDIN, SPI_MISO_DLEN,
-    SPI_MOSI_DLEN, SPI_SLAVE, SPI_SYNC_RESET, SPI_TIMEOUT_SPINS, SPI_TRANS_DONE, SPI_USER,
-    SPI_USR_MISO, SPI_USR_MOSI,
+    dma_slot, Esp32Spi, MAX_DESCS, SPI_CK_I_EDGE, SPI_CK_OUT_EDGE, SPI_CMD, SPI_CMD_USR,
+    SPI_DMA, SPI_DOUTDIN, SPI_MISO_DLEN, SPI_MOSI_DLEN, SPI_SLAVE, SPI_SYNC_RESET,
+    SPI_TIMEOUT_SPINS, SPI_TRANS_DONE, SPI_USER, SPI_USR_MISO, SPI_USR_MOSI,
 };
+
+// ── The kernel DMA broker, reached over the syscall ABI seam ─────────────────
+//
+// A physical driver may name only `hal` and the soc crates (tools/check-layers.sh),
+// so it cannot depend on `kernel` or `api` to mint a transfer id or block on
+// completion. It reaches the broker the same way `api::dma` does: the `extern
+// "Rust"` symbols the kernel exports (`kernel::syscall`). This is the ABI seam,
+// not a hidden crate dependency -- it is exactly parallel to the raw MMIO this
+// whole driver is built on, which the layer check likewise cannot and does not
+// forbid.
+//
+// The one broker call that stays in the caller is `signal_complete`: it runs in
+// the interrupt top-half, whose handler is the application's (it names the
+// `&'static` driver and the broker), so there is nothing for the driver to own.
+
+/// Mint the completion id for a transfer over `handle`. Backs the id a
+/// [`Transfer`] carries.
+fn broker_begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError> {
+    extern "Rust" {
+        fn _flint_sys_dma_begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError>;
+    }
+    unsafe { _flint_sys_dma_begin(handle) }
+}
+
+/// Block the calling task until `id` completes or `timeout_ms` elapses.
+fn broker_await(id: DmaTransferId, timeout_ms: u32) -> Result<(), DmaError> {
+    extern "Rust" {
+        fn _flint_sys_dma_await(id: DmaTransferId, timeout_ms: u32) -> Result<(), DmaError>;
+    }
+    unsafe { _flint_sys_dma_await(id, timeout_ms) }
+}
+
+/// How long [`Transfer::await_done`] waits before giving up. A full-length DMA
+/// exchange at this bus's clocks completes in well under a millisecond; the
+/// margin absorbs scheduling jitter while still failing a wedged engine.
+const DMA_AWAIT_TIMEOUT_MS: u32 = 100;
+
+/// The transfer in flight on each general-purpose host, for the top-half to
+/// complete. Slot 0 is SPI2, slot 1 is SPI3; zero means "nothing in flight",
+/// as [`DmaTransferId::from_raw`] documents. Set by [`Esp32Spi::exchange_async`]
+/// before the engine starts and taken by the interrupt handler.
+static SPI_DMA_PENDING: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
+/// A DMA transfer started by [`Esp32Spi::exchange_async`], not yet awaited.
+///
+/// The engine is running; [`Transfer::await_done`] blocks the task until the
+/// completion interrupt reports it done. Dropping it without awaiting leaves
+/// the transfer to finish on its own — the interrupt still acknowledges the
+/// peripheral — but the buffers must then stay valid, so awaiting is the norm.
+#[must_use = "a started DMA transfer should be awaited"]
+pub struct Transfer {
+    id: DmaTransferId,
+}
+
+impl Transfer {
+    /// Block until the transfer's completion interrupt fires, or the timeout
+    /// passes.
+    pub fn await_done(self) -> hal::Result<()> {
+        broker_await(self.id, DMA_AWAIT_TIMEOUT_MS).map_err(Into::into)
+    }
+
+    /// The broker id this transfer will complete with, for a caller that stashes
+    /// it elsewhere.
+    pub fn id(&self) -> DmaTransferId {
+        self.id
+    }
+}
 
 const SPI_DMA_CONF: u32 = 0x100;
 const SPI_DMA_OUT_LINK: u32 = 0x104;
@@ -96,6 +168,99 @@ pub const SPI_OUT_EOF: u32 = 1 << 7;
 // re-enters forever, so `poll`/`ack` must clear it too.
 
 impl Esp32Spi {
+    /// Start a full-duplex DMA exchange and return without blocking.
+    ///
+    /// This owns everything a caller used to assemble by hand: it builds the
+    /// transmit and receive descriptor chains in the host's own scratch (no
+    /// caller-allocated descriptors), enables the completion interrupt at the
+    /// peripheral, mints the broker id the interrupt will complete with, and
+    /// fires the engine. [`Transfer::await_done`] then blocks the task until the
+    /// interrupt reports the transfer done.
+    ///
+    /// `tx` and `rx` are broker buffers, so their memory is DMA-reachable by
+    /// construction. Completion still needs an interrupt handler routed to this
+    /// host's source (`interrupt::connect`) that acknowledges the peripheral
+    /// ([`Esp32Spi::ack_interrupts`]) and hands the id from
+    /// [`Esp32Spi::take_pending_dma`] to the broker's `signal_complete` — the
+    /// top-half is the application's, because it names the kernel the driver may
+    /// not.
+    pub fn exchange_async(
+        &self,
+        tx: &DmaHandle,
+        rx: &DmaHandle,
+        len: usize,
+    ) -> hal::Result<Transfer> {
+        let instance = addr::spi_instance(self.base).ok_or(BusError::InvalidConfig)?;
+        let s = dma_slot(instance).ok_or(BusError::InvalidConfig)?;
+
+        if len == 0 || len as u32 > tx.size() || len as u32 > rx.size() {
+            return Err(BusError::InvalidConfig.into());
+        }
+        let ndesc = dma::descriptors_needed(len as u32) as usize;
+        if ndesc > MAX_DESCS {
+            return Err(BusError::InvalidConfig.into());
+        }
+
+        // SAFETY: a bus is single-owner and a host's transfers are serialised,
+        // so nothing else touches this slot while this runs.
+        let slot = unsafe { &mut (*addr_of_mut!(SPI_DMA))[s] };
+        if slot.channel.is_none() {
+            return Err(BusError::DmaError.into());
+        }
+
+        let bank = slot.next_bank;
+        slot.next_bank ^= 1;
+        // SAFETY: descriptors sit in this slot's DMA-reachable scratch; the
+        // broker buffers stay put until the transfer the caller awaits ends.
+        let (tx_head, rx_head) = unsafe {
+            let tx_head = dma::build_chain(
+                &mut slot.tx_descs[bank][..ndesc],
+                tx.addr(),
+                len as u32,
+                dma::Direction::Transmit,
+            )
+            .map_err(|_| BusError::DmaError)?;
+            let rx_head = dma::build_chain(
+                &mut slot.rx_descs[bank][..ndesc],
+                rx.addr(),
+                len as u32,
+                dma::Direction::Receive,
+            )
+            .map_err(|_| BusError::DmaError)?;
+            dma::sync_for_device();
+            // Enable both end-of-frame sources before arming: the transmit
+            // chain draining and the receive chain landing both reach the one
+            // interrupt line, and the top-half acknowledges the pair.
+            self.dma_int_enable(SPI_IN_SUC_EOF | SPI_OUT_EOF);
+            (tx_head, rx_head)
+        };
+
+        // Mint the id and publish it before the engine starts: the transfer can
+        // complete before the next instruction retires, and a top-half that
+        // found no id would drop the completion.
+        let id = broker_begin(rx).map_err(hal::Error::from)?;
+        SPI_DMA_PENDING[s].store(id.raw(), Ordering::SeqCst);
+
+        // SAFETY: the chains and their buffers stay valid until the caller
+        // awaits the returned transfer.
+        if let Err(e) = unsafe { self.start_dma(tx_head, rx_head, len) } {
+            SPI_DMA_PENDING[s].store(0, Ordering::SeqCst);
+            return Err(e.into());
+        }
+        Ok(Transfer { id })
+    }
+
+    /// Take the transfer id in flight on this host, clearing it. For the
+    /// interrupt top-half: it hands the id to the broker's `signal_complete`.
+    /// Returns `None` if nothing is pending.
+    pub fn take_pending_dma(&self) -> Option<DmaTransferId> {
+        let s = addr::spi_instance(self.base).and_then(dma_slot)?;
+        match SPI_DMA_PENDING[s].swap(0, Ordering::SeqCst) {
+            0 => None,
+            raw => Some(DmaTransferId::from_raw(raw)),
+        }
+    }
+
     pub(crate) unsafe fn wait_dma_done(&self) -> BusResult<()> {
         // Completion is SPI_TRANS_DONE, exactly as esp-idf's `spi_hal_usr_is_done`
         // polls it. With SPI_INLINK_AUTO_RET set (as esp-idf leaves it), the
@@ -272,14 +437,19 @@ impl Esp32Spi {
     /// interrupt source. A top-half that clears only the flags it was waiting
     /// for leaves the other asserted and never returns.
     ///
-    /// # Safety
-    /// The host must be clocked.
-    pub unsafe fn ack_interrupts(&self) {
-        self.reg(SPI_DMA_INT_CLR).write_volatile(u32::MAX);
-        // Write-zero-to-clear, and only this bit: the rest of SPI_SLAVE_REG
-        // holds mode configuration that a blind write would flatten.
-        let slave = self.reg(SPI_SLAVE);
-        reg::clear(slave, SPI_TRANS_DONE);
+    /// Safe: it only clears this host's own interrupt flags, which owning the
+    /// driver (`open`/`new`) entitles the caller to. Written to be callable
+    /// straight from an interrupt top-half with no `unsafe` at the call site.
+    pub fn ack_interrupts(&self) {
+        // SAFETY: register writes to this host's own interrupt-clear and slave
+        // registers; single ownership of the driver is what makes that sound.
+        unsafe {
+            self.reg(SPI_DMA_INT_CLR).write_volatile(u32::MAX);
+            // Write-zero-to-clear, and only this bit: the rest of SPI_SLAVE_REG
+            // holds mode configuration that a blind write would flatten.
+            let slave = self.reg(SPI_SLAVE);
+            reg::clear(slave, SPI_TRANS_DONE);
+        }
     }
 
     /// Arm both links and start the transaction, without waiting.
@@ -306,10 +476,12 @@ impl Esp32Spi {
     /// Raw DMA end-of-frame flags, for a caller that wants to know *why* a
     /// transfer looks wrong.
     ///
-    /// # Safety
-    /// The host must be clocked.
-    pub unsafe fn dma_int_raw(&self) -> u32 {
-        self.reg(SPI_DMA_INT_RAW).read_volatile()
+    /// Safe: a read of this host's own status register, which owning the driver
+    /// entitles the caller to. Callable from an interrupt top-half.
+    pub fn dma_int_raw(&self) -> u32 {
+        // SAFETY: a volatile read of this host's own register; single ownership
+        // of the driver is what makes that sound.
+        unsafe { self.reg(SPI_DMA_INT_RAW).read_volatile() }
     }
 
     /// Halt both links.
