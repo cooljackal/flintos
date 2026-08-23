@@ -106,6 +106,30 @@ impl Esp32Gpio {
         Self { base: base_addr }
     }
 
+    /// The chip's one GPIO controller, shared.
+    ///
+    /// Apps and self-tests used to each call `Esp32Gpio::new(GPIO_BASE)`,
+    /// which spelled the address in four places and made every caller take on
+    /// an `unsafe` whose only obligation was "this really is the GPIO block".
+    /// This is that obligation discharged once.
+    ///
+    /// Sharing one instance is sound where several `new` instances were
+    /// not: the struct is only a base address, every method takes `&self`,
+    /// and each operation is a single write to a write-1-to-set /
+    /// write-1-to-clear register or a single read, so two callers working
+    /// different pins never read-modify-write the same word. Two callers
+    /// driving the *same* pin are a wiring-level conflict, not a memory-safety
+    /// one, and are no more possible through this than through two `new`s.
+    /// `PhysicalBus::init` and `set_enabled` take `&mut self` but are no-ops
+    /// here, and are reachable only through a `&mut` the caller cannot get
+    /// from this `&'static`.
+    pub fn instance() -> &'static Self {
+        static GPIO: Esp32Gpio = Esp32Gpio {
+            base: soc_esp32::addr::GPIO_BASE,
+        };
+        &GPIO
+    }
+
     fn reg(&self, offset: u32) -> *mut u32 {
         (self.base + offset) as *mut u32
     }
@@ -192,6 +216,14 @@ impl PhysicalBus for Esp32Gpio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn instance_is_the_gpio_block_and_is_one_object() {
+        let a = Esp32Gpio::instance();
+        let b = Esp32Gpio::instance();
+        assert_eq!(a.base, soc_esp32::addr::GPIO_BASE);
+        assert!(core::ptr::eq(a, b));
+    }
 
     #[test]
     fn pin_bit_selects_base_registers_for_pins_0_to_31() {
