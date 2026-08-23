@@ -9,24 +9,25 @@
 //!
 //! ```text
 //!   Layer 2   spi-bus     the transfer-list Bus (Op lists)
-//!   Layer 1   esp32-spi   the controller's registers
+//!   Layer 1   esp32-spi   the controller's registers (owned by the board)
 //! ```
 //!
 //! # No wire needed
 //!
 //! MOSI and MISO are both routed to one free pad through the GPIO matrix, so
 //! every byte clocked out arrives back on MISO — the same trick
-//! `apps/tests/spidma` and the on-target self-tests use. Order matters: MOSI
-//! first, then MISO, so the second route wins the pad's input. SCK and a
-//! placeholder MISO come from the board's spare loopback pads; `init` wants
-//! three distinct pins before MISO is folded onto the scratch pad.
+//! `apps/tests/spidma` and the on-target self-tests use. The board does both
+//! halves: `board::loopback_spi()` opens SPI2 on three distinct pads (as `init`
+//! wants), and `board::fold_spi_loopback()` then folds MISO onto the MOSI pad.
+//! So this app names no SoC crate and no physical driver, and holds no
+//! mutable statics.
 //!
 //! # Porting to a real device
 //!
 //! Drop the fold, route MOSI/MISO/SCK to the device's pins, add a Layer-3
 //! driver, and hand it a `BusHandle::new(&spi_bus)` exactly as
 //! `apps/examples/imu` hands one to its IMU driver. The Layer-1/Layer-2
-//! bring-up below is unchanged.
+//! bring-up behind `board::loopback_spi()` is unchanged.
 //!
 //! Next: `uartecho` — a UART is a stream, not a bus, and the template differs
 //! accordingly. Or `imu` for the I²C version of this.
@@ -35,19 +36,14 @@
 #![no_main]
 
 use api::bus::{Bus, Op};
-use api::task;
-use hal::pinmux::{PinConfig, PinMux, Signal};
-use hal::types::Priority;
-use soc_esp32::Esp32PinMux;
+use api::task::{self, Task};
 
 kernel::flint_app!(main, abi = 2);
 
-/// SPI2's signal instance number, for the GPIO matrix. `board::loopback_spi`
-/// opens SPI2, and the fold below routes its signals through the matrix.
-const SPI2: u8 = 2;
-
 fn main() {
-    task::spawn("spitxrx", run, Priority::Normal(1), 4096);
+    if Task::new("spitxrx", run).spawn().is_none() {
+        api::log_error!("could not start the spitxrx task");
+    }
 }
 
 fn run() {
@@ -58,7 +54,7 @@ fn run() {
             "[spitxrx] this board declares no free loopback GPIOs; \
              build for board-esp32-devkitc"
         );
-        park();
+        task::exit();
     };
 
     api::log_info!(
@@ -68,21 +64,22 @@ fn run() {
     );
 
     // The board opens SPI2 on the loopback pads (three distinct pins, as `init`
-    // wants). No `new(base)`, no `init`, no `static mut` here any more.
+    // wants). No `new(base)`, no `init`, no mutable statics here any more.
     let bus = match board::loopback_spi() {
         Ok(bus) => bus,
         Err(e) => {
             api::log_error!("[spitxrx] SPI bring-up failed: {:?}", e);
-            park();
+            task::exit();
         }
     };
 
     // Fold MISO onto the MOSI pad through the matrix to make the on-chip
-    // loopback: `init` refuses two signals on one pad, so this is done after
-    // bring-up. MOSI first, then MISO, so the second route wins the pad's input.
-    if fold_loopback(pads.scratch).is_none() {
-        api::log_error!("[spitxrx] could not fold MISO onto the MOSI pad");
-        park();
+    // loopback: `init` refuses two signals on one pad, so the board does this
+    // after bring-up. Routing is safe (ownership of the pad is the proof, #111),
+    // so the app just asks the board for it.
+    if let Err(e) = board::fold_spi_loopback() {
+        api::log_error!("[spitxrx] could not fold MISO onto the MOSI pad: {:?}", e);
+        task::exit();
     }
 
     // Exchange a rolling pattern and check it comes back. A prefill distinct
@@ -104,21 +101,5 @@ fn run() {
             Err(e) => api::log_error!("[spitxrx] round {}: transfer failed: {:?}", round, e),
         }
         round = round.wrapping_add(1);
-    }
-}
-
-/// Fold SPI2's MOSI and MISO onto one pad through the GPIO matrix, making the
-/// on-chip loopback. Routing is safe (ownership of the pad is the proof, #111),
-/// so no `unsafe` and no driver bring-up here — the board did that.
-fn fold_loopback(scratch: u8) -> Option<()> {
-    let mux = Esp32PinMux::new();
-    mux.route(Signal::SpiMosi(SPI2), scratch, PinConfig::PUSH_PULL).ok()?;
-    mux.route(Signal::SpiMiso(SPI2), scratch, PinConfig::PUSH_PULL).ok()?;
-    Some(())
-}
-
-fn park() -> ! {
-    loop {
-        task::sleep_ms(1000);
     }
 }

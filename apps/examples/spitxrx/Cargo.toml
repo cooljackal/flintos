@@ -16,15 +16,14 @@ kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
 hal = { path = "../../../hal" }
 
-# The board opens Layer 1 now: `board::loopback_spi()` hands back a ready
-# `&'static SpiBus`, so this app names no physical driver.
+# The board opens Layer 1 and folds the loopback now: `board::loopback_spi()`
+# hands back a ready `&'static SpiBus` and `board::fold_spi_loopback()` folds
+# MISO onto the MOSI pad, so this app names no physical driver and no SoC crate.
+# The bus is driven through the `api::bus::Bus` trait, so `spi-bus` need not be
+# named either.
 #
-#   board       opens SPI2 on the loopback pads (Layer 1, owned by the board)
-#   spi-bus     Layer 2   the transfer-list Bus (this is what it demonstrates)
-#   soc-esp32   the pin matrix, to fold MISO onto the MOSI pad for the loopback
+#   board       opens SPI2 on the loopback pads and folds MISO (owned by the board)
 board = { path = "../../../board" }
-spi-bus = { path = "../../../drivers/bus/spi-bus" }
-soc-esp32 = { path = "../../../soc/esp32" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }
