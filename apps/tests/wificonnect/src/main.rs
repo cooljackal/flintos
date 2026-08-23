@@ -23,13 +23,16 @@
 #![no_std]
 #![no_main]
 
-use api::task;
+use api::task::{self, Task};
 use hal::types::Priority;
 
 kernel::flint_app!(main, abi = 2);
 
 fn main() {
-    task::spawn("wificonnect", run, Priority::Normal(2), 16384);
+    let _ = Task::new("wificonnect", run)
+        .priority(Priority::Normal(2))
+        .stack(16384)
+        .spawn();
 }
 
 /// The network to join, from the environment at build time. `None` if unset.
@@ -46,9 +49,9 @@ static SCAN_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBoo
 #[cfg(not(feature = "blobs"))]
 fn run() {
     loop {
-        api::log_warn!("[wifi] built without the blobs; nothing to connect with");
-        api::log_warn!("[wifi]   make blobs");
-        api::log_warn!("[wifi]   FLINT_WIFI_SSID=.. FLINT_WIFI_PASS=.. make flash APP=wificonnect BOARD=.. EXTRA_FEATURES=blobs");
+        api::log_warn!("built without the blobs; nothing to connect with");
+        api::log_warn!("  make blobs");
+        api::log_warn!("  FLINT_WIFI_SSID=.. FLINT_WIFI_PASS=.. make flash APP=wificonnect BOARD=.. EXTRA_FEATURES=blobs");
         task::sleep_ms(5000);
     }
 }
@@ -58,42 +61,19 @@ fn run() {
     use hal::wifi::{ConnectRequest, Credentials, Security, Ssid, Station};
 
     task::sleep_ms(200);
-    api::log_info!("[wifi] starting");
+    api::log_info!("starting");
 
-    if !unsafe { radio_esp32::nvs::init() } {
-        api::log_warn!("[wifi] nvs unavailable; calibrating in full each boot");
-    }
-    let heap = unsafe { kernel::heap::init_from_map() };
-    api::log_info!("[wifi] heap: {} bytes", heap);
-
-    // Bring the radio up in station mode, as wifiscan does.
-    let mut station = unsafe { radio_esp32::station::EspStation::new() };
-    station.set_event_handler(Some(on_event));
-
-    let rc = unsafe { radio_esp32::wifi::init() };
-    if rc != 0 {
-        api::log_error!("[wifi] init failed: {:#x}", rc);
-        return idle();
-    }
-    // NULL, start, then STA — the order the driver wants (see wifiscan).
-    for (label, m) in [
-        ("null", radio_esp32::wifi::mode::NULL),
-        ("sta", radio_esp32::wifi::mode::STA),
-    ] {
-        if label == "sta" {
-            let rc = unsafe { radio_esp32::wifi::start() };
-            if rc != 0 {
-                api::log_error!("[wifi] start failed: {:#x}", rc);
-                return idle();
-            }
+    // Bring the radio up in station mode: nvs, heap, init, mode, start — the
+    // sequence the backend now owns, with the event handler installed before
+    // the start. A failed step comes back as `WifiError::Backend(rc)`.
+    let mut station = match radio_esp32::station::EspStation::bring_up(on_event) {
+        Ok(s) => s,
+        Err(e) => {
+            api::log_error!("bring-up failed: {}", e);
+            task::exit();
         }
-        let rc = unsafe { radio_esp32::wifi::set_mode(m) };
-        if rc != 0 {
-            api::log_error!("[wifi] set_mode({}) failed: {:#x}", label, rc);
-            return idle();
-        }
-    }
-    api::log_info!("[wifi] station up");
+    };
+    api::log_info!("station up");
 
     // Scan first and print what the radio sees, so a failed connect can be
     // told apart from a network that simply is not visible — and so the exact
@@ -101,25 +81,23 @@ fn run() {
     {
         let req = hal::wifi::ScanRequest::default();
         if station.scan(&req).is_ok() {
-            let deadline = kernel::clock::now_us() + 6_000_000;
-            while !SCAN_DONE.load(core::sync::atomic::Ordering::SeqCst)
-                && kernel::clock::now_us() < deadline
-            {
-                task::sleep_ms(50);
-            }
+            task::wait_until(
+                || SCAN_DONE.load(core::sync::atomic::Ordering::SeqCst),
+                6000,
+            );
         }
     }
 
     let (Some(ssid), Some(pass)) = (SSID, PASS) else {
-        api::log_warn!("[wifi] no credentials compiled in; set FLINT_WIFI_SSID / FLINT_WIFI_PASS");
-        return idle();
+        api::log_warn!("no credentials compiled in; set FLINT_WIFI_SSID / FLINT_WIFI_PASS");
+        task::exit();
     };
     let Some(ssid_val) = Ssid::new(ssid.as_bytes()) else {
-        api::log_error!("[wifi] SSID too long");
-        return idle();
+        api::log_error!("SSID too long");
+        task::exit();
     };
 
-    api::log_info!("[wifi] connecting to {:?}", ssid);
+    api::log_info!("connecting to {:?}", ssid);
     let req = ConnectRequest {
         ssid: ssid_val,
         security: Security::Wpa2Psk,
@@ -128,8 +106,8 @@ fn run() {
         channel: None,
     };
     match station.connect(&req) {
-        Ok(()) => api::log_info!("[wifi] connect accepted; awaiting handshake"),
-        Err(e) => api::log_error!("[wifi] connect refused: {:?}", e),
+        Ok(()) => api::log_info!("connect accepted; awaiting handshake"),
+        Err(e) => api::log_error!("connect refused: {:?}", e),
     }
 
     // The result arrives at `on_event`. Report the running state each second.
@@ -138,7 +116,7 @@ fn run() {
         task::sleep_ms(1000);
         i += 1;
         if i % 5 == 0 {
-            api::log_info!("[wifi] state: {:?}", station.status().state);
+            api::log_info!("state: {:?}", station.status().state);
         }
     }
 }
@@ -181,12 +159,5 @@ fn on_event(event: hal::wifi::StationEvent) {
         StationEvent::Disconnected { reason } => {
             api::log_warn!("[wifi] DISCONNECTED: {:?}", reason)
         }
-    }
-}
-
-#[cfg(feature = "blobs")]
-fn idle() -> ! {
-    loop {
-        task::sleep_ms(5000);
     }
 }
