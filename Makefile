@@ -393,6 +393,32 @@ apps: ## List the applications in apps/examples/ and apps/tests/
 	@echo "Boards: $(BOARDS)   (first is the default)"
 	@echo "Debug:  debug-level-0 (silent) .. debug-level-3 (everything)"
 
+# ── Scaffolding ───────────────────────────────────────────────────────────────
+#
+# Copy-a-template chores, automated. `new-app` and `add-driver` create a crate;
+# `drivers` is the catalog; `enable-driver`/`disable-driver` toggle a driver
+# dependency in an app (thin wrappers over `cargo add`/`cargo remove`).
+
+.PHONY: new-app
+new-app: ## Scaffold a new app: make new-app NAME=<name> [DESC="..."]
+	@NAME="$(NAME)" DESC="$(DESC)" $(BASH) tools/new-app.sh
+
+.PHONY: drivers
+drivers: ## List drivers: make drivers [CATEGORY=physical|bus|logical] [MATCH=<pat>]
+	@CATEGORY="$(CATEGORY)" MATCH="$(MATCH)" $(BASH) tools/drivers.sh
+
+.PHONY: enable-driver
+enable-driver: ## Depend on a driver in an app: make enable-driver APP=<app> DRIVER=<name>
+	@APP="$(APP)" DRIVER="$(DRIVER)" $(BASH) tools/enable-driver.sh
+
+.PHONY: disable-driver
+disable-driver: ## Drop a driver from an app: make disable-driver APP=<app> DRIVER=<name>
+	@APP="$(APP)" DRIVER="$(DRIVER)" $(BASH) tools/disable-driver.sh
+
+.PHONY: add-driver
+add-driver: ## Scaffold a new driver crate: make add-driver NAME=<name> [CATEGORY=physical|bus|logical]
+	@NAME="$(NAME)" CATEGORY="$(CATEGORY)" SOC="$(SOC)" DESC="$(DESC)" $(BASH) tools/add-driver.sh
+
 # Interpolated rather than spelled out, because the hand-kept copy that used to
 # be here is exactly the list `test-boards` walks: a board in one and not the
 # other is a board whose manifest invariants never run.
@@ -661,3 +687,5 @@ help: ## Show this help message
 	@printf '\n  Quick start:   make env  ->  make check  ->  make build\n'
 	@printf '  Host tests:    make test-host    (no hardware; runs in CI)\n'
 	@printf '  Board tests:   make test-target BOARD=board-m5-atom-matrix PORT=COM5\n\n'
+
+
