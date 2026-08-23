@@ -16,9 +16,10 @@ kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
 hal = { path = "../../../hal" }
 
-soc-esp32 = { path = "../../../soc/esp32" }
-esp32-ledc = { path = "../../../drivers/physical/esp32/ledc" }
-esp32-gpio = { path = "../../../drivers/physical/esp32/gpio" }
+# The board opens Layer 1 now: `board::pwm()` claims an LEDC channel, gates the
+# clock and routes it onto a readable pad, so this app names no physical driver
+# and no SoC crate.
+board = { path = "../../../board" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }

@@ -7,10 +7,16 @@
 //! channel pointed at the wrong timer — all of them look like "the pin is
 //! doing something" from software.
 //!
-//! So this measures. The LEDC output is routed to a pad, the pad's input path
-//! is left enabled, and the app samples the pin thousands of times and counts
-//! how often it reads high. At 25% duty the count should be near a quarter.
-//! That catches every failure above without any instrument attached.
+//! So this measures. The board opens an LEDC channel on a pad and leaves the
+//! pad's input path enabled; the app samples the pin thousands of times and
+//! counts how often it reads high. At 25% duty the count should be near a
+//! quarter. That catches every failure above without any instrument attached.
+//!
+//! The whole Layer-1 bring-up — claim the timer and channel, gate the clock,
+//! route the signal, leave the pad readable — lives behind `board::pwm`, so
+//! this app names no SoC crate and no physical driver, and reaches register
+//! level through none of the escapes the layer guard bans. Dropping to that
+//! level would cost one driver dependency, not a different program.
 //!
 //! # The pin
 //!
@@ -29,15 +35,12 @@
 #![no_std]
 #![no_main]
 
-use api::task;
-use hal::types::Priority;
-use hal::{PinConfig, PinMux, Signal};
+use api::task::{self, Task};
 
-use esp32_gpio::{Esp32Gpio, PinLevel};
-use esp32_ledc::{Channel, Timer};
-use soc_esp32::dport::{self, ClockBit};
-use soc_esp32::pinmux::Esp32PinMux;
-use soc_esp32::{addr, io_mux};
+// The board owns the LEDC bring-up (`board::pwm`) and the pin read-back
+// (`board::read_pwm_pin`). Manifest facts an app reads directly still come from
+// `kernel::board::active`.
+use kernel::board::active as manifest;
 
 // The board is selected with `--features kernel/board-...` now, not an
 // application feature, so this guard keys on a board fact -- the board's own
@@ -53,11 +56,9 @@ const _: () = assert!(
 
 kernel::flint_app!(main, abi = 2);
 
-use kernel::board::active as board;
-
-/// Substring test over `board::BOARD_NAME`, usable in a `const` context.
+/// Substring test over `manifest::BOARD_NAME`, usable in a `const` context.
 const fn board_name_contains(needle: &str) -> bool {
-    let hay = board::BOARD_NAME.as_bytes();
+    let hay = manifest::BOARD_NAME.as_bytes();
     let ndl = needle.as_bytes();
     if ndl.is_empty() {
         return true;
@@ -80,11 +81,7 @@ const fn board_name_contains(needle: &str) -> bool {
 }
 
 /// The pin LEDC drives and the app reads back.
-const PWM_GPIO: u8 = board::GROVE_SDA_GPIO;
-
-/// High-speed channel 0 on timer 0. Nothing else claims either.
-const CHANNEL: u8 = 0;
-const TIMER: u8 = 0;
+const PWM_GPIO: u8 = manifest::GROVE_SDA_GPIO;
 
 /// 5 kHz at 13-bit — the combination every ESP32 PWM example uses, so it is
 /// the one most easily compared against another implementation.
@@ -96,25 +93,29 @@ const RES_BITS: u8 = 13;
 const SAMPLES: u32 = 20_001;
 
 fn main() {
-    task::spawn("pwm", pwm, Priority::Normal(1), 4096);
+    if Task::new("pwm", pwm).spawn().is_none() {
+        api::log_error!("could not start the pwm task");
+    }
 }
 
 fn pwm() {
-    let Some((ch, gpio)) = (unsafe { bring_up() }) else {
-        api::log_error!("[pwm] could not configure LEDC");
-        loop {
-            task::sleep_ms(1000);
+    // The board claims LEDC channel 0 on timer 0, gates the clock, routes the
+    // signal onto the pad, and leaves the pad readable -- everything the app
+    // used to open-code at register level.
+    let ch = match board::pwm(PWM_GPIO, FREQ_HZ, RES_BITS) {
+        Ok(ch) => ch,
+        Err(e) => {
+            api::log_error!("[pwm] could not configure LEDC: {:?}", e);
+            task::exit();
         }
     };
 
-    let div = esp32_ledc::divider_for(FREQ_HZ, RES_BITS).unwrap_or(0);
+    let div = board::pwm_divider_for(FREQ_HZ, RES_BITS).unwrap_or(0);
     api::log_info!(
-        "[pwm] LEDC ch{} timer{} on GPIO {}: asked {} Hz, get {} Hz at {}-bit",
-        CHANNEL,
-        TIMER,
+        "[pwm] LEDC ch0 timer0 on GPIO {}: asked {} Hz, get {} Hz at {}-bit",
         PWM_GPIO,
         FREQ_HZ,
-        esp32_ledc::freq_for(div, RES_BITS),
+        board::pwm_freq_for(div, RES_BITS),
         RES_BITS
     );
 
@@ -129,9 +130,9 @@ fn pwm() {
             // Let the new duty take effect before sampling.
             task::sleep_ms(20);
 
-            let measured = measure_duty_percent(&gpio);
+            let measured = measure_duty_percent();
             let readback = ch.duty();
-            let expected = esp32_ledc::duty_for_percent(pct, RES_BITS);
+            let expected = board::pwm_duty_for_percent(pct, RES_BITS);
 
             // The register must hold what was asked, undoing the <<4. If this
             // disagrees the fault is the encoding, not the wiring.
@@ -158,35 +159,12 @@ fn pwm() {
 }
 
 /// Sample the pad and return the percentage of reads that were high.
-fn measure_duty_percent(gpio: &Esp32Gpio) -> u32 {
+fn measure_duty_percent() -> u32 {
     let mut high = 0u32;
     for _ in 0..SAMPLES {
-        if matches!(gpio.read(PWM_GPIO), Ok(PinLevel::High)) {
+        if board::read_pwm_pin(PWM_GPIO) {
             high += 1;
         }
     }
     (high * 100 + SAMPLES / 2) / SAMPLES
-}
-
-/// Clock LEDC, route it to the pad, and leave the pad readable.
-///
-/// # Safety
-/// Claims LEDC channel 0, timer 0 and `PWM_GPIO` for the life of the program.
-unsafe fn bring_up() -> Option<(Channel, Esp32Gpio)> {
-    dport::enable(ClockBit::LEDC);
-
-    let timer = Timer::new(TIMER, FREQ_HZ, RES_BITS)?;
-    let ch = Channel::new(CHANNEL, &timer, RES_BITS, 0)?;
-
-    Esp32PinMux::new()
-        .route(Signal::LedcHs(CHANNEL), PWM_GPIO, PinConfig::PUSH_PULL)
-        .ok()?;
-
-    // `route` disables the input path for an output-only signal, which is
-    // right in general and wrong here: this app reads back the pin it drives.
-    // Re-enable it. The pad keeps its GPIO function and the matrix connection;
-    // only FUN_IE changes.
-    io_mux::configure(PWM_GPIO, io_mux::gpio_function(PWM_GPIO), true, hal::PinPull::None).ok()?;
-
-    Some((ch, Esp32Gpio::new(addr::GPIO_BASE)))
 }
