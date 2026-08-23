@@ -74,7 +74,7 @@ impl InterruptController for Selected {
         // can only ever land on `cpu_int == source`; `route` is what enforces
         // that. Every existing vector is a candidate here and the route gate
         // rejects the mismatches.
-        (cpu_int as usize) < soc_rp2040::NVIC_IRQ_COUNT
+        (cpu_int as usize) < soc_rp2040::NVIC_IRQ_COUNT as usize
     }
 
     unsafe fn clear_pending(mask: u32) {
