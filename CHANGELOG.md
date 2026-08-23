@@ -143,6 +143,32 @@ A kernel that provides a different one refuses to build and points here.
   every transfer returned `Err`). esp32-spi's inherent 64-byte `transfer` is
   now `fifo_exchange`, returning `Err(InvalidConfig)` past 64 bytes.
 
+- **Layer-2/3 bus surface: by-value wrappers, an I²C controller/device split,
+  `BusHandle<'a>`, and shared-bus locking** (#114, #115, #116). Still ABI 2 —
+  `BusHandle`'s runtime layout is unchanged (a lifetime is zero-cost), and only
+  code that names these types changes; declare `abi = 2`.
+
+  - `SpiBus<P: PhysicalTransfer>` and the new `I2cController<P>` own the
+    physical driver **by value**: `SpiBus::new(phys)` / `I2cController::new(phys)`,
+    not `new(&'static dyn PhysicalBus)`. One `Once<SpiBus<Esp32Spi>>` now holds
+    the whole stack. A `&'static` driver still works — `&T` is a
+    `PhysicalTransfer` — so `SpiBus::new(dev)` compiles unchanged.
+  - `I2cBus` is gone. An `I2cController` hands out an `I2cDevice` per slave
+    (`ctrl.device(addr)` is the `Bus`) and scans the bus (`ctrl.scan(|a| ..)`),
+    so a scan or a second device no longer bypasses Layer 2.
+  - `BusHandle` is now `BusHandle<'a>`, so a driver can borrow a bus off the
+    stack — no more leaking into a `static`. `impl From<&B> for BusHandle`
+    means `Mpu6886::new(&bus)` instead of `Mpu6886::new(BusHandle::new(&bus))`;
+    logical-driver types gained a lifetime (`Mpu6886<'a>`, `Bme280<'a>`, …).
+    `BusHandle::select`/`deselect` (always-`Ok`) are removed — chip-select is
+    per-`Op`.
+  - `SpiBus`/`I2cController` take an `api::mutex` lock around the transfer, so
+    two tasks sharing one `&'static` bus serialize. That lock is a syscall the
+    kernel refuses from interrupt context: **do not call `transfer` from an
+    ISR** — an ISR owns the physical driver directly (`exchange` is `&self`).
+  - `mpu6886` gains `bring_up(delay_ms)`, which owns the reset/wake/configure
+    sequence and its 10 ms waits (the caller passes `api::task::sleep_ms`).
+
 ### Changed
 
 - **The CPU runs at 240 MHz.** The bootloader hands off at its 80 MHz default;

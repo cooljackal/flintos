@@ -34,10 +34,10 @@
 #![no_std]
 #![no_main]
 
-use core::ptr::addr_of;
-
 use api::bus::{Bus, BusConfig, BusSpeed, Op, PhysicalBus};
 use api::task;
+use api::Once;
+use esp32_spi::Esp32Spi;
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::types::Priority;
 use soc_esp32::{addr, Esp32PinMux};
@@ -52,10 +52,11 @@ const SPI_BASE: u32 = addr::SPI2_BASE;
 /// SPI2's signal instance number, for the GPIO matrix.
 const SPI2: u8 = 2;
 
-/// Layers 1 and 2 outlive the setup calls: the `Bus` methods take `&self`, and
-/// the loop below borrows the wrapper for the life of the program.
-static mut PHYS: Option<esp32_spi::Esp32Spi> = None;
-static mut BUS: Option<SpiBus> = None;
+/// The whole stack in one static: the Layer-2 `SpiBus` now owns its Layer-1
+/// `Esp32Spi` by value, so there is no separate driver static for it to borrow.
+/// `Once` outlives the setup call; the loop below borrows the wrapper for the
+/// life of the program.
+static SPI: Once<SpiBus<Esp32Spi>> = Once::new();
 
 fn main() {
     task::spawn("spitxrx", run, Priority::Normal(1), 4096);
@@ -78,12 +79,8 @@ fn run() {
 
     let config = BusConfig::spi_mode0(scratch, miso_placeholder, sck, BusSpeed::MHz(4));
 
-    if unsafe { bring_up(&config, scratch) }.is_none() {
+    let Some(bus) = (unsafe { bring_up(&config, scratch) }) else {
         api::log_error!("[spitxrx] SPI bring-up failed");
-        park();
-    }
-
-    let Some(bus) = (unsafe { (*addr_of!(BUS)).as_ref() }) else {
         park();
     };
 
@@ -112,12 +109,13 @@ fn run() {
 /// Layer 1 + Layer 2 bring-up, then fold MISO onto the MOSI pad.
 ///
 /// # Safety
-/// Claims SPI2 and the loopback pads for the life of the program, and stores
-/// the driver and bus in statics the loop borrows.
-unsafe fn bring_up(config: &BusConfig, scratch: u8) -> Option<()> {
-    let mut phys = esp32_spi::Esp32Spi::new(SPI_BASE);
+/// Claims SPI2 and the loopback pads for the life of the program.
+// TODO(#109): once the board owns its devices, this becomes
+// `board::loopback_spi()`/`Esp32Spi::open(..)` and the hand-rolled `new(base)`
+// + `init` go away.
+unsafe fn bring_up(config: &BusConfig, scratch: u8) -> Option<&'static SpiBus<Esp32Spi>> {
+    let mut phys = Esp32Spi::new(SPI_BASE);
     PhysicalBus::init(&mut phys, config).ok()?;
-    PHYS = Some(phys);
 
     // `init` rejects two signals on one pad on purpose; the loopback is made by
     // routing directly afterwards. MOSI first, then MISO.
@@ -125,9 +123,8 @@ unsafe fn bring_up(config: &BusConfig, scratch: u8) -> Option<()> {
     mux.route(Signal::SpiMosi(SPI2), scratch, PinConfig::PUSH_PULL).ok()?;
     mux.route(Signal::SpiMiso(SPI2), scratch, PinConfig::PUSH_PULL).ok()?;
 
-    let phys_ref: &'static dyn PhysicalBus = (*addr_of!(PHYS)).as_ref()?;
-    BUS = Some(SpiBus::new(phys_ref));
-    Some(())
+    // The bus takes ownership of the driver; one static holds the whole stack.
+    Some(SPI.init(SpiBus::new(phys)))
 }
 
 fn park() -> ! {
