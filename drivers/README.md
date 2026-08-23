@@ -26,7 +26,7 @@ touches registers.
 
 | Convention | What it means | Verify against |
 | --- | --- | --- |
-| One constructor | `open(&Port) -> hal::Result<Self>`, claims the controller once | the template |
+| One constructor | `open(&Port) -> hal::Result<Self>`, claims the controller once | `esp32-i2c`, `esp32-spi`, `esp32-uart` |
 | `unsafe fn new(base)` | kept only so self-tests can skip the claim | `esp32-timg`, `esp32-i2c` |
 | Registers via `soc_esp32::reg` | `reg::at` + `reg::{read,write,modify,set,clear}` — never a private `fn reg` | `soc/esp32/src/reg.rs` |
 | Own error type | a small enum with `impl From<E> for hal::Error` | `esp32-timg`, `hal/src/error.rs` |
@@ -51,11 +51,9 @@ shows the whole of it. A real controller reads its base, clock bit and IRQ
 from its `*Ctrl` enum (`I2cCtrl::base()`, `.clock()`, `.irq()`) rather than
 from a bare `u32`, so an invalid combination cannot be spelled.
 
-> Status: the `*Port`/`*Ctrl` types and the constructor shape are landed
-> (`soc_esp32::ctrl`); the safe `open` on the shipped `Esp32{I2c,Spi,Uart}`
-> drivers is issue #109 and lands separately. Until then the template is the
-> reference implementation of `open`, and the existing drivers still expose the
-> older `unsafe fn new`.
+> `Esp32{I2c,Spi,Uart}` all expose `open` today (#109); `esp32-i2c` is the
+> closest real example to copy. They keep `unsafe fn new(base)` alongside it,
+> used only by the on-target self-test harness.
 
 `unsafe fn new(base)` stays, but only for the on-target self-test harness,
 which points a driver at loopback or scratch addresses without the claim.
