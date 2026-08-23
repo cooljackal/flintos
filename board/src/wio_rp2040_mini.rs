@@ -3,8 +3,15 @@
 //! Seeed Wio RP2040 Mini board manifest.
 //!
 //! GP13 is Seeed's documented user LED. UART0 GP0/GP1 follows the RP2040
-//! function table and the board header pinout. ESP8285 wiring is deliberately
-//! absent until its schematic connection is pinned and measured.
+//! function table and the board header pinout.
+//!
+//! The board's Wi-Fi is an ESP8285 module running its own firmware (Seeed
+//! ships it with an AT-command image), attached to the RP2040 over a UART.
+//! The RP2040 has no radio of its own, so `HAS_WIFI` is false: the kernel's
+//! `radio-wifi` feature brings up a PHY the SoC drives directly, and nothing
+//! of the sort exists here. When the module is used it will be a UART bus
+//! entry plus a device on it, not a radio. Its wiring is deliberately absent
+//! until the schematic connection is pinned and measured.
 //!
 //! Sources: Seeed Wio RP2040 Mini wiki and the Raspberry Pi RP2040 datasheet,
 //! GPIO function table (build 3184e8e, 2025-02-20).
@@ -13,7 +20,7 @@ use hal::bus::*;
 use soc_rp2040 as soc;
 
 pub const BOARD_NAME: &str = "Seeed Wio RP2040 Mini";
-pub const HAS_WIFI: bool = true;
+pub const HAS_WIFI: bool = false; // ESP8285 over UART, not a PHY the RP2040 drives
 pub const HAS_BT: bool = false;
 pub const USER_LED_GPIO: u8 = 13;
 pub const TICK_PERIOD_US: u32 = 1_000;
@@ -71,5 +78,13 @@ mod tests {
         assert_eq!(TARGET_BUSES[0].irq, soc::IRQ_UART0);
         assert_eq!(TARGET_PERIPHERALS[0].base_addr, soc::IO_BANK0_BASE);
         assert_eq!(TARGET_PERIPHERALS[0].irq, soc::IRQ_IO_BANK0);
+    }
+
+    #[test]
+    fn the_soc_drives_no_radio() {
+        // The ESP8285 is a UART-attached module; `radio-wifi` must not be
+        // able to select this board and try to bring up a PHY.
+        assert!(!HAS_WIFI);
+        assert!(!HAS_BT);
     }
 }
