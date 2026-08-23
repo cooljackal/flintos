@@ -2,37 +2,61 @@
 
 //! SPI bus abstraction.
 //!
-//! Wraps a [`PhysicalBus`] impl and exposes the [`Bus`] trait as a list of
-//! [`Op`]s run in order. `MAX_TRANSFER` is the controller's data buffer; a
+//! Wraps a [`PhysicalTransfer`] impl and exposes the [`Bus`] trait as a list
+//! of [`Op`]s run in order. `MAX_TRANSFER` is the controller's data buffer; a
 //! write-only or read-only op longer than that is clocked in buffer-sized
 //! pieces, and an exchange is handed to the physical driver whole (it chunks
 //! through the FIFO or uses DMA). No length is ever silently cut short.
+//!
+//! # Ownership
+//!
+//! The physical driver is held **by value** (`SpiBus<P>`), not behind a
+//! `&'static dyn` — so one `Once<SpiBus<Esp32Spi>>` holds the whole stack
+//! rather than a driver static plus a bus static that borrows it. A caller
+//! that already has a `&'static` driver can still pass it: `&T` is itself a
+//! [`PhysicalTransfer`] (the blanket impl in `hal::bus`), so `SpiBus<&Esp32Spi>`
+//! works unchanged.
+//!
+//! # Locking (#116)
+//!
+//! [`Bus::transfer`] holds an [`api::mutex`] lock for the **whole** op list, so
+//! a multi-op transaction cannot be split by another task once a board hands
+//! the same `&'static SpiBus` to more than one of them. The lock is the
+//! kernel's priority-inheritance mutex, a syscall that the kernel **refuses
+//! from interrupt context** — so `transfer` must not be called from an ISR. An
+//! interrupt that has to touch the peripheral should own the physical driver
+//! directly (`exchange` is `&self`) and coordinate with the task side through a
+//! `CsCell`, not through this wrapper.
 
 #![no_std]
 
-use api::bus::{spin_rough_us, Bus, BusError, BusKind, BusResult, BusSpeed, Op, PhysicalBus};
+use api::bus::{spin_rough_us, Bus, BusError, BusKind, BusResult, BusSpeed, Op, PhysicalTransfer};
+use api::mutex::{lock, Mutex};
 
 /// Largest single-op payload, bounded by the SPI data buffer (16 words).
 const MAX_TRANSFER: usize = 64;
 
-/// SPI bus abstraction.
-pub struct SpiBus {
-    phys: &'static dyn PhysicalBus,
+/// SPI bus abstraction owning its physical driver `P`.
+pub struct SpiBus<P: PhysicalTransfer> {
+    phys: Mutex<P>,
 }
 
-impl SpiBus {
-    /// Create a new SPI bus wrapping a physical driver.
+impl<P: PhysicalTransfer> SpiBus<P> {
+    /// Create a new SPI bus, taking ownership of the physical driver.
     ///
     /// The bus's configuration (pins, mode, speed) is applied to the physical
-    /// driver at `init` time by whoever constructs it; this wrapper holds no
+    /// driver at `init` time before it is handed here; this wrapper holds no
     /// copy of its own, and speed changes go straight through to `phys`.
-    pub fn new(phys: &'static dyn PhysicalBus) -> Self {
-        Self { phys }
+    pub const fn new(phys: P) -> Self {
+        Self { phys: Mutex::new(phys) }
     }
 }
 
-impl Bus for SpiBus {
+impl<P: PhysicalTransfer> Bus for SpiBus<P> {
     fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
+        // Hold the bus for the entire op list, so a multi-op transaction is
+        // not interleaved with another task's (#116).
+        let phys = lock(&self.phys);
         for op in ops.iter_mut() {
             // The FIFO path is byte-oriented; wider words need the DMA path
             // (#80), not yet wired under the Bus.
@@ -40,7 +64,7 @@ impl Bus for SpiBus {
                 return Err(BusError::InvalidConfig);
             }
             match (op.tx, op.rx.as_deref_mut()) {
-                (Some(tx), Some(rx)) => self.phys.exchange(tx, rx)?,
+                (Some(tx), Some(rx)) => phys.exchange(tx, rx)?,
                 (Some(tx), None) => {
                     // A write still clocks a full duplex frame; the reply is
                     // discarded. The physical driver sends only min(tx, rx)
@@ -49,7 +73,7 @@ impl Bus for SpiBus {
                     // buffer's worth and drop the rest of tx (#98).
                     let mut scratch = [0u8; MAX_TRANSFER];
                     for chunk in tx.chunks(MAX_TRANSFER) {
-                        self.phys.exchange(chunk, &mut scratch[..chunk.len()])?;
+                        phys.exchange(chunk, &mut scratch[..chunk.len()])?;
                     }
                 }
                 (None, Some(rx)) => {
@@ -57,7 +81,7 @@ impl Bus for SpiBus {
                     // reply in, one buffer-full at a time.
                     let scratch = [0u8; MAX_TRANSFER];
                     for chunk in rx.chunks_mut(MAX_TRANSFER) {
-                        self.phys.exchange(&scratch[..chunk.len()], chunk)?;
+                        phys.exchange(&scratch[..chunk.len()], chunk)?;
                     }
                 }
                 (None, None) => {}
@@ -80,7 +104,7 @@ impl Bus for SpiBus {
     }
 
     fn set_speed(&self, speed: BusSpeed) -> BusResult<()> {
-        self.phys.set_speed(speed)
+        lock(&self.phys).set_speed(speed)
     }
 }
 
@@ -89,7 +113,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{BusConfig, BusHandle, PhysicalTransfer};
+    use api::bus::{BusConfig, BusHandle, PhysicalBus, PhysicalTransfer};
     use core::sync::atomic::{AtomicU32, Ordering};
     use std::boxed::Box;
     use std::sync::Mutex;
@@ -181,7 +205,7 @@ mod tests {
         }
     }
 
-    fn recording() -> (SpiBus, &'static SendRecorder) {
+    fn recording() -> (SpiBus<&'static SendRecorder>, &'static SendRecorder) {
         let rec: &'static SendRecorder =
             Box::leak(Box::new(SendRecorder { sent: Mutex::new(Vec::new()) }));
         (SpiBus::new(rec), rec)
@@ -223,7 +247,7 @@ mod tests {
     fn logical_drivers_still_reach_it_through_bushandle() {
         // The Layer-3 surface (write/read/transfer/write_read) is unchanged.
         let phys = mock();
-        let bus: &'static SpiBus = std::boxed::Box::leak(std::boxed::Box::new(SpiBus::new(phys)));
+        let bus = std::boxed::Box::leak(std::boxed::Box::new(SpiBus::new(phys)));
         let handle = BusHandle::new(bus);
         let mut rx = [0u8; 4];
         assert!(handle.transfer(b"data", &mut rx).is_ok());
@@ -231,5 +255,53 @@ mod tests {
         assert!(handle.write(b"cmd").is_ok());
         assert!(handle.read(&mut rx).is_ok());
         assert_eq!(handle.max_transfer(), MAX_TRANSFER);
+    }
+}
+
+// Host stand-ins for the kernel syscalls `api::mutex` and `api::debug::panic`
+// bottom out in. On a target the kernel provides these (`#[no_mangle] pub fn`
+// in `kernel::syscall`); a host test binary links no kernel, so without these
+// the linker cannot resolve `_flint_sys_mutex_lock` and friends. The mutex
+// shim is a real per-address spinlock, matching `i2c-bus`'s (whose
+// serialization test exercises the cross-thread blocking directly).
+#[cfg(test)]
+mod host_syscall_shim {
+    extern crate std;
+    use core::ffi::c_void;
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::boxed::Box;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    /// One flag per `api::mutex::Mutex` address, created on first lock and
+    /// leaked so it outlives every lock/unlock of that mutex.
+    fn flag_for(key: usize) -> &'static AtomicBool {
+        static TABLE: OnceLock<Mutex<HashMap<usize, &'static AtomicBool>>> = OnceLock::new();
+        let table = TABLE.get_or_init(|| Mutex::new(HashMap::new()));
+        table.lock().unwrap().entry(key).or_insert_with(|| Box::leak(Box::new(AtomicBool::new(false))))
+    }
+
+    #[no_mangle]
+    extern "Rust" fn _flint_sys_mutex_lock(m: *const c_void) -> bool {
+        let flag = flag_for(m as usize);
+        while flag.swap(true, Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        true
+    }
+
+    #[no_mangle]
+    extern "Rust" fn _flint_sys_mutex_unlock(m: *const c_void) {
+        flag_for(m as usize).store(false, Ordering::Release);
+    }
+
+    #[no_mangle]
+    extern "Rust" fn _flint_sys_yield() {
+        std::thread::yield_now();
+    }
+
+    #[no_mangle]
+    extern "Rust" fn _flint_sys_panic(args: &core::fmt::Arguments<'_>) -> ! {
+        std::panic!("{args}")
     }
 }
