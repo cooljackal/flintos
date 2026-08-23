@@ -9,6 +9,8 @@
 //!
 //! Confirmed against esp-idf `soc/soc.h` and `soc/soc_caps.h`.
 
+use crate::ctrl::{I2cCtrl, SpiCtrl, UartCtrl};
+
 // ── Peripheral register blocks ──────────────────────────────────────────────
 
 pub const UART0_BASE: u32 = 0x3FF4_0000;
@@ -86,23 +88,23 @@ pub const IRQ_TIMG1_T1: u8 = 19;
 // mismatch between a driver's idea of "which I2C am I" and the routing layer's
 // is exactly the kind of bug that produces a peripheral wired to the wrong
 // pins with no diagnostic.
+//
+// They are thin wrappers over the `ctrl` enums now, which hold the one table;
+// a driver built from a `ctrl::SpiCtrl` does not need them at all.
 
 /// Controller instance for a UART base address.
-pub fn uart_instance(base: u32) -> Option<u8> {
-    match base {
-        UART0_BASE => Some(0),
-        UART1_BASE => Some(1),
-        UART2_BASE => Some(2),
-        _ => None,
+pub const fn uart_instance(base: u32) -> Option<u8> {
+    match UartCtrl::from_base(base) {
+        Some(c) => Some(c.instance()),
+        None => None,
     }
 }
 
 /// Controller instance for an I2C base address.
-pub fn i2c_instance(base: u32) -> Option<u8> {
-    match base {
-        I2C0_BASE => Some(0),
-        I2C1_BASE => Some(1),
-        _ => None,
+pub const fn i2c_instance(base: u32) -> Option<u8> {
+    match I2cCtrl::from_base(base) {
+        Some(c) => Some(c.instance()),
+        None => None,
     }
 }
 
@@ -110,11 +112,10 @@ pub fn i2c_instance(base: u32) -> Option<u8> {
 ///
 /// SPI1 is deliberately absent: it drives the boot flash, and handing it to a
 /// general-purpose driver bricks the running image.
-pub fn spi_instance(base: u32) -> Option<u8> {
-    match base {
-        SPI2_BASE => Some(2),
-        SPI3_BASE => Some(3),
-        _ => None,
+pub const fn spi_instance(base: u32) -> Option<u8> {
+    match SpiCtrl::from_base(base) {
+        Some(c) => Some(c.instance()),
+        None => None,
     }
 }
 

@@ -6,6 +6,9 @@
 //! the CPU core:
 //!
 //! - [`addr`] — peripheral base addresses and interrupt source numbers
+//! - [`ctrl`] — the I2C/SPI/UART controllers as enums, each attribute a
+//!   `const fn` of the variant, plus the `*Port` structs that pair one with
+//!   its pin configuration
 //! - [`dport`] — peripheral clock gating and reset
 //! - [`io_mux`] — the pad configuration registers and their non-linear
 //!   offset table
@@ -51,6 +54,7 @@ pub mod addr;
 pub mod appcpu;
 pub mod cpu_clk;
 pub mod crosscore;
+pub mod ctrl;
 pub mod dma;
 pub mod efuse;
 pub mod dport;
@@ -65,6 +69,7 @@ pub mod rtc;
 pub mod sar;
 pub mod sleep;
 
+pub use ctrl::{I2cCtrl, I2cPort, SpiCtrl, SpiPort, UartCtrl, UartPort};
 pub use pinmux::Esp32PinMux;
 
 /// The chip's IO_MUX-capable GPIO count. Pins 0-39 exist; 34-39 are
