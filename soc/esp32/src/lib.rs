@@ -99,6 +99,11 @@ impl hal::soc::SystemOnChip for Esp32 {
         cache_off_execution: true,
         hardware_rng: true,
     };
+    // DPORT peripheral window (0x3FF4_0000..0x3FF8_0000), widened slightly at
+    // both ends so a new base address does not need this updated while a base
+    // copied from an unrelated address space is still caught.
+    const PERIPHERAL_WINDOW: (u32, u32) = (0x3FF0_0000, 0x3FF8_FFFF);
+    const MAX_GPIO: u8 = MAX_GPIO;
 
     unsafe fn configure_cpu_clock() {
         #[cfg(target_arch = "xtensa")]

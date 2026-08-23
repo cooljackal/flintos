@@ -6,6 +6,8 @@
 //! `m5_atom_common.rs`.
 
 use led_matrix::{Axis, Layout, Order, Origin};
+use soc_esp32::{I2cCtrl, I2cPort};
+use hal::bus::{BusSpeed, I2cConfig};
 
 pub use super::m5_atom_common::*;
 
@@ -55,6 +57,26 @@ pub const IMU_SCL_GPIO: u8 = 21;
 /// board with an MPU6886 and later revisions with a BMI270, and both answer
 /// here. Only the chip ID register tells them apart -- see `drivers/logical/bmi270`.
 pub const IMU_I2C_ADDR: u8 = 0x68;
+
+/// The IMU as an [`I2cPort`]: I2C0 at 100 kHz on the private SDA/SCL pins.
+///
+/// This closes what the loose `IMU_SDA_GPIO`/`IMU_SCL_GPIO`/`IMU_I2C_ADDR`
+/// consts left half-declared — *which controller* the two pins belong to. The
+/// pins are private to the IMU (not the Grove port), so I2C0 is free for it.
+pub const IMU_PORT: I2cPort = I2cPort {
+    ctrl: I2cCtrl::I2c0,
+    cfg: I2cConfig { sda: IMU_SDA_GPIO, scl: IMU_SCL_GPIO, speed: BusSpeed::Standard100k },
+};
+
+/// This board as one value; see [`crate::Board`]. A 5×5 panel and an onboard
+/// IMU on a private I2C0 bus.
+pub const BOARD: crate::Board = crate::Board {
+    name: BOARD_NAME,
+    imu: Some(crate::I2cAttachment { port: IMU_PORT, addr: IMU_I2C_ADDR }),
+    rgb_led: Some(crate::RgbLed { gpio: RGB_LED_GPIO, count: RGB_LED_COUNT, layout: RGB_LED_LAYOUT }),
+    selftest: SELFTEST_PADS,
+    console: CONSOLE,
+};
 
 #[cfg(test)]
 mod tests {

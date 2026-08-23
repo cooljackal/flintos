@@ -132,14 +132,27 @@ pub const TARGET_DEVICES: &[BusDevice] = &[
 ];
 
 /// Direct peripheral drivers (not bus-attached).
+///
+/// UART0 is not repeated here: it is a bus in [`TARGET_BUSES`], and listing it
+/// again as a peripheral described one controller twice.
 pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[
     PeripheralMapping { name: "gpio", base_addr: addr::GPIO_BASE, irq: addr::IRQ_GPIO, dma_capable: false, dma_pool_bytes: 0 },
-    PeripheralMapping { name: "uart0", base_addr: addr::UART0_BASE, irq: addr::IRQ_UART0, dma_capable: true, dma_pool_bytes: 512 },
 ];
 
-/// System service tasks.
-pub const TARGET_SERVICES: &[ServiceMapping] = &[
-    ServiceMapping { name: "devfs", always: true },
-    ServiceMapping { name: "procfs", always: false },
-    ServiceMapping { name: "debug", always: false },
-];
+/// This board as one value; see [`crate::Board`]. Never flashed, so no free pad
+/// is confirmed and `selftest` is all `None`.
+pub const BOARD: crate::Board = crate::Board {
+    name: BOARD_NAME,
+    imu: None,
+    rgb_led: None,
+    selftest: crate::SelftestPads {
+        scratch: LOOPBACK_SCRATCH_GPIO,
+        aux: LOOPBACK_AUX_GPIOS,
+        spi_slave: SPI_SLAVE_LOOPBACK_GPIOS,
+        pcnt: PCNT_LOOPBACK_GPIO,
+        touch: TOUCH_SELFTEST_GPIO,
+        mcpwm: MCPWM_SELFTEST_GPIOS,
+        adc_external_high: ADC_EXTERNAL_HIGH_GPIO,
+    },
+    console: crate::ConsolePins { tx: 1, rx: 3, baud: 115_200 },
+};

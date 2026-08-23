@@ -52,6 +52,25 @@ pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[PeripheralMapping {
 
 pub const TARGET_SERVICES: &[ServiceMapping] = &[];
 
+/// This board as one value; see [`crate::Board`]. The user LED is a plain GPIO,
+/// not an addressable strip, so `rgb_led` is `None`; the `imu` field is absent
+/// on this (non-ESP32) board. No loopback pad is confirmed on unflashed
+/// hardware, so `selftest` is all `None`.
+pub const BOARD: crate::Board = crate::Board {
+    name: BOARD_NAME,
+    rgb_led: None,
+    selftest: crate::SelftestPads {
+        scratch: LOOPBACK_SCRATCH_GPIO,
+        aux: LOOPBACK_AUX_GPIOS,
+        spi_slave: None,
+        pcnt: None,
+        touch: None,
+        mcpwm: None,
+        adc_external_high: ADC_EXTERNAL_HIGH_GPIO,
+    },
+    console: crate::ConsolePins { tx: 0, rx: 1, baud: 115_200 },
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

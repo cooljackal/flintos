@@ -41,46 +41,21 @@ use i2c_bus::I2cController;
 use mpu6886::Mpu6886;
 
 // The board is selected with `--features kernel/board-...` now, not an
-// application feature, so this guard keys on a board fact -- the board's own
-// name -- rather than on a feature this crate no longer declares. Only the Atom
-// Matrix reports a name with "Matrix" in it, and it is the only board that fits
-// an IMU. Building for any other board also fails on the `board::IMU_*` consts
-// below, which do not exist there; this assert fires first and says why.
+// application feature, so this guard keys on the *fact* the app needs -- that
+// the board declares an onboard IMU -- rather than on a board name or a feature
+// this crate no longer declares. Only the Atom Matrix sets `BOARD.imu`, and it
+// is the only board that fits one; this fires on any other board and says why.
 const _: () = assert!(
-    board_name_contains("Matrix"),
+    board::BOARD.imu.is_some(),
     "`imu` reads an onboard IMU, and only the M5Stack Atom Matrix declares one.\n\n\
      \tmake flash APP=imu BOARD=board-m5-atom-matrix\n\n\
      The Atom Lite has no IMU. To run this elsewhere, give that board's manifest \
-     an `IMU_SDA_GPIO`, `IMU_SCL_GPIO` and `IMU_I2C_ADDR`."
+     an `imu: Some(I2cAttachment { .. })` in its `BOARD`."
 );
 
 kernel::flint_app!(main, abi = 2);
 
 use kernel::board::active as board;
-
-/// Substring test over `board::BOARD_NAME`, usable in a `const` context.
-const fn board_name_contains(needle: &str) -> bool {
-    let hay = board::BOARD_NAME.as_bytes();
-    let ndl = needle.as_bytes();
-    if ndl.is_empty() {
-        return true;
-    }
-    if ndl.len() > hay.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i + ndl.len() <= hay.len() {
-        let mut j = 0;
-        while j < ndl.len() && hay[i + j] == ndl[j] {
-            j += 1;
-        }
-        if j == ndl.len() {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
 
 /// The controller. I2C0 is otherwise unused in this build.
 const I2C_BASE: u32 = soc_esp32::addr::I2C0_BASE;

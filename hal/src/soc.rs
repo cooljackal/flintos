@@ -22,6 +22,24 @@ pub trait SystemOnChip {
     const APB_HZ: u32;
     const CAPABILITIES: SocCapabilities;
 
+    /// The chip's memory-mapped peripheral register window, as
+    /// `(low, high)` inclusive bounds.
+    ///
+    /// A chip fact, not a board one: every peripheral base address a board
+    /// manifest names must land inside it. The board crate's manifest
+    /// invariant tests check that here instead of hard-coding the window per
+    /// board — the ESP32 family maps its DPORT peripherals into
+    /// `0x3FF4_0000..=0x3FF7_FFFF` (widened slightly at both ends), the RP2040
+    /// its APB peripherals from `0x4000_0000`.
+    const PERIPHERAL_WINDOW: (u32, u32);
+
+    /// The highest GPIO number the chip exposes.
+    ///
+    /// The ESP32 bonds out GPIO0..=39 (34-39 input-only); the RP2040 GP0..=29.
+    /// A pin number in a board manifest above this is a copy-paste error, and
+    /// the manifest invariant tests reject it against this bound.
+    const MAX_GPIO: u8;
+
     /// Put the CPU clock into the operating state expected by the kernel.
     ///
     /// # Safety

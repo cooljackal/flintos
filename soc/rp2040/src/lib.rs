@@ -92,6 +92,10 @@ impl hal::soc::SystemOnChip for Rp2040 {
         cache_off_execution: false,
         hardware_rng: false,
     };
+    // APB peripheral window. The RP2040 maps its peripherals from
+    // 0x4000_0000; SIO at 0xD000_0000 is not a manifest peripheral base.
+    const PERIPHERAL_WINDOW: (u32, u32) = (0x4000_0000, 0x4007_FFFF);
+    const MAX_GPIO: u8 = 29;
 
     unsafe fn configure_cpu_clock() {
         // Establish a deliberately modest but known clock without depending

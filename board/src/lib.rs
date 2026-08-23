@@ -3,10 +3,12 @@
 //! Board manifest for FlintOS.
 //!
 //! Each supported board is a submodule that exports:
+//! - `BOARD` — the board as one [`Board`] value, the facts an application asks
+//!   about gathered with `Option` fields (see [`Board`])
 //! - `TARGET_BUSES` — physical bus definitions
 //! - `TARGET_DEVICES` — logical device attachments
-//! - `TARGET_PERIPHERALS` — direct peripheral mappings
-//! - `TARGET_SERVICES` — system service tasks
+//! - `TARGET_PERIPHERALS` — direct peripheral mappings (bus controllers are not
+//!   repeated here)
 //!
 //! ## What belongs in a manifest
 //!
@@ -145,6 +147,114 @@ pub use m5_atom_matrix as active;
 #[cfg(feature = "board-wio-rp2040-mini")]
 pub use wio_rp2040_mini as active;
 
+// ── The board as one value ──────────────────────────────────────────────────
+//
+// One `pub const BOARD: Board` per board module gathers the manifest facts an
+// application asks about into a single value whose fields are `Option`s. An app
+// then guards on the *fact* -- `board::BOARD.imu.is_some()` -- rather than on a
+// board name or a feature it no longer declares, and a board can be checked for
+// completeness in one place. The loose `TARGET_*`/`*_GPIO` consts stay for the
+// kernel self-tests and drivers that already read them; `BOARD` is the value an
+// application reaches for.
+
+/// A board-owned addressable-LED strip or panel.
+///
+/// `layout` is `None` for a single LED (no geometry to fold) and `Some` for a
+/// panel — the same fact the `RGB_LED_LAYOUT` const carries, gathered here with
+/// the pin and the count so an application takes all three as a unit.
+#[derive(Copy, Clone, Debug)]
+pub struct RgbLed {
+    pub gpio: u8,
+    pub count: usize,
+    pub layout: Option<led_matrix::Layout>,
+}
+
+/// The board's console pins and baud.
+///
+/// Every board FlintOS runs puts its console on UART0, so the controller is
+/// implied; only the pins and baud are a board fact. Held as plain numbers so
+/// the one struct serves both SoC families — each board's `console_init` builds
+/// the SoC-specific port from these.
+#[derive(Copy, Clone, Debug)]
+pub struct ConsolePins {
+    pub tx: u8,
+    pub rx: u8,
+    pub baud: u32,
+}
+
+/// Electrically-free pads a board offers the on-chip loopback self-tests and
+/// the bus/stream porting examples.
+///
+/// Each mirrors a loose `*_GPIO` const; gathered here so `BOARD.selftest` is one
+/// value. `None` on any field means "no free pad for that test on this board",
+/// and the test or example skips and says so. Plain pin numbers, so the struct
+/// is arch-neutral.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct SelftestPads {
+    /// A single free pad for the folded loopbacks (TWAI, I2S) and the
+    /// bus/stream examples' data line.
+    pub scratch: Option<u8>,
+    /// Two more free pads a folded single-pad loopback needs to clear `init`'s
+    /// distinct-pin check.
+    pub aux: Option<(u8, u8)>,
+    /// Four free pads `[sck, mosi, miso, cs]` for the SPI master↔slave loopback.
+    pub spi_slave: Option<[u8; 4]>,
+    /// A free pad for the PCNT self-test.
+    pub pcnt: Option<u8>,
+    /// A free touch-capable pad for the touch-sensor self-test.
+    pub touch: Option<u8>,
+    /// Three free pads `[pwm_a, pwm_b, fault]` for the MCPWM self-test.
+    pub mcpwm: Option<[u8; 3]>,
+    /// A pad the board holds at a hard high for the ADC self-test.
+    pub adc_external_high: Option<u8>,
+}
+
+/// An I2C device wired onto the board: which controller and pins bring it up
+/// (an [`I2cPort`](soc_esp32::I2cPort), so "which controller" is no longer
+/// half-declared), and the 7-bit address it answers at.
+#[cfg(any(
+    feature = "board-esp32-wrover",
+    feature = "board-esp32-devkitc",
+    feature = "board-m5-atom-lite",
+    feature = "board-m5-atom-matrix",
+))]
+#[derive(Copy, Clone, Debug)]
+pub struct I2cAttachment {
+    pub port: soc_esp32::I2cPort,
+    pub addr: u8,
+}
+
+/// Everything an application asks a board manifest about, as one value.
+#[derive(Copy, Clone, Debug)]
+pub struct Board {
+    /// Human-readable board name.
+    pub name: &'static str,
+    /// The onboard IMU, if the board has one on a private I2C bus.
+    #[cfg(any(
+        feature = "board-esp32-wrover",
+        feature = "board-esp32-devkitc",
+        feature = "board-m5-atom-lite",
+        feature = "board-m5-atom-matrix",
+    ))]
+    pub imu: Option<I2cAttachment>,
+    /// The onboard addressable RGB LED or panel, if any.
+    pub rgb_led: Option<RgbLed>,
+    /// Free pads for the self-tests and porting examples.
+    pub selftest: SelftestPads,
+    /// The console pins.
+    pub console: ConsolePins,
+}
+
+/// The active board, as one value. Re-exported from the selected board module.
+#[cfg(any(
+    feature = "board-esp32-wrover",
+    feature = "board-esp32-devkitc",
+    feature = "board-m5-atom-lite",
+    feature = "board-m5-atom-matrix",
+    feature = "board-wio-rp2040-mini",
+))]
+pub use active::BOARD;
+
 // ── Manifest invariant tests ────────────────────────────────────────────────
 //
 // Run against whichever board is currently selected (`crate::active`), so
@@ -160,27 +270,20 @@ mod tests {
 
     use crate::active::*;
     use hal::bus::{BusConfig, I2cConfig, SpiConfig, UartConfig};
+    use hal::soc::SystemOnChip as _;
 
-    // These are family facts, not generic manifest invariants. ESP32
-    // peripheral registers live in the DPORT-mapped bus window
-    // 0x3FF4_0000..0x3FF8_0000. Widened slightly on both sides so this
-    // doesn't need updating for every new base address, while still
-    // catching a base address copy-pasted from an unrelated address space.
+    // The peripheral window and GPIO ceiling are chip facts, so they come from
+    // the selected SoC's `SystemOnChip` impl rather than being keyed on the
+    // board name here. The board type is the one thing that still varies by
+    // family, so it is picked by which soc crate this board pulls in.
+    #[cfg(feature = "board-wio-rp2040-mini")]
+    use soc_rp2040::Rp2040 as SelectedSoc;
     #[cfg(not(feature = "board-wio-rp2040-mini"))]
-    const PERIPH_BASE_LOW: u32 = 0x3FF0_0000;
-    #[cfg(not(feature = "board-wio-rp2040-mini"))]
-    const PERIPH_BASE_HIGH: u32 = 0x3FF8_FFFF;
+    use soc_esp32::Esp32 as SelectedSoc;
 
-    #[cfg(feature = "board-wio-rp2040-mini")]
-    const PERIPH_BASE_LOW: u32 = 0x4000_0000;
-    #[cfg(feature = "board-wio-rp2040-mini")]
-    const PERIPH_BASE_HIGH: u32 = 0x4007_FFFF;
-
-    // ESP32 (and ESP32-PICO-D4) expose GPIO0..=39.
-    #[cfg(not(feature = "board-wio-rp2040-mini"))]
-    const MAX_GPIO: u8 = 39;
-    #[cfg(feature = "board-wio-rp2040-mini")]
-    const MAX_GPIO: u8 = 29;
+    const PERIPH_BASE_LOW: u32 = SelectedSoc::PERIPHERAL_WINDOW.0;
+    const PERIPH_BASE_HIGH: u32 = SelectedSoc::PERIPHERAL_WINDOW.1;
+    const MAX_GPIO: u8 = SelectedSoc::MAX_GPIO;
 
     #[test]
     fn board_name_non_empty() {
@@ -273,19 +376,6 @@ mod tests {
                     p.name, other.name,
                     "duplicate peripheral name '{}' in TARGET_PERIPHERALS",
                     p.name,
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn service_names_are_unique() {
-        for (i, svc) in TARGET_SERVICES.iter().enumerate() {
-            for other in &TARGET_SERVICES[i + 1..] {
-                assert_ne!(
-                    svc.name, other.name,
-                    "duplicate service name '{}' in TARGET_SERVICES",
-                    svc.name,
                 );
             }
         }
