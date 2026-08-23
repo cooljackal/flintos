@@ -237,17 +237,10 @@ pub fn clear_pending(irq: u8) {
 
 // ── Bringing a peripheral's interrupt all the way to a handler ──────────────
 
-/// Why [`connect`] could not deliver a peripheral's interrupt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectError {
-    /// The crossbar refused the pairing — no such source, or a CPU input the
-    /// kernel could not service.
-    Route,
-    /// That CPU input already has a handler. Deliberately not silent: a second
-    /// registration would be unreachable, because `dispatch` stops at the
-    /// first match.
-    AlreadyRegistered,
-}
+/// Why [`connect`] could not deliver a peripheral's interrupt. Lives in `hal`
+/// so drivers can name it without naming the kernel; re-exported here so
+/// existing paths keep working.
+pub use hal::error::ConnectError;
 
 /// Route a peripheral source to a CPU input, take the handler, and unmask it.
 ///

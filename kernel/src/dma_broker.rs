@@ -70,16 +70,9 @@ extern "C" {
     static _dma_pool_end: u32;
 }
 
-/// Error from the DMA broker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DmaError {
-    /// Requested size does not fit the remaining pool.
-    PoolExhausted,
-    /// Caller does not own the handle.
-    NotOwner,
-    /// The transfer did not complete in time.
-    Timeout,
-}
+/// Error from the DMA broker. Lives in `hal` so drivers can name it without
+/// naming the kernel; re-exported here so existing paths keep working.
+pub use hal::dma::DmaError;
 
 static NEXT_TRANSFER_ID: AtomicU32 = AtomicU32::new(1);
 /// Bump allocator offset into the DMA pool.

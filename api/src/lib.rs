@@ -42,6 +42,9 @@ pub mod timer;
 /// Re-export key HAL types for convenient access.
 pub use hal::types::{Priority, TaskId};
 
+/// The one error type an application `?`s into, and its `Result` (#103).
+pub use hal::{Error, Result};
+
 /// Re-export the bus surface so Layer-2/Layer-3 drivers depend only on
 /// `api` (plan W7.1). Logical/bus driver crates must NOT depend on
 /// `hal` or `arch-*` directly — the dependency graph is the layer

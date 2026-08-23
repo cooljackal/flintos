@@ -14,6 +14,30 @@
 //! first of the `hal` seams the second-architecture plan calls for
 //! (`doc/plan-arm32.md`, Phase 1.1).
 
+/// Why the kernel's DMA broker refused or lost a transfer.
+///
+/// Defined here rather than in the kernel so a driver can name it without
+/// naming the kernel; the kernel re-exports it from `dma_broker`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmaError {
+    /// Requested size does not fit the remaining pool.
+    PoolExhausted,
+    /// Caller does not own the handle.
+    NotOwner,
+    /// The transfer did not complete in time.
+    Timeout,
+}
+
+impl core::fmt::Display for DmaError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::PoolExhausted => f.write_str("DMA pool exhausted"),
+            Self::NotOwner => f.write_str("not the owner of this DMA buffer"),
+            Self::Timeout => f.write_str("DMA transfer timed out"),
+        }
+    }
+}
+
 /// Whether a byte range is reachable by this SoC's DMA engines.
 pub trait DmaReach: Send + Sync {
     /// Whether every byte of `[addr, addr + len)` lies in DMA-reachable memory.
