@@ -314,15 +314,68 @@ fn bridge(base: *const c_char, id: i32, data: *mut core::ffi::c_void, len: usize
 /// through the `esp_wifi_*` calls, plus the shared statics above.
 ///
 /// One exists per system — the radio is a singleton — so this is a handle, not
-/// an owner. `init` must have brought the driver up first.
+/// an owner. [`bring_up`](Self::bring_up) is the normal way to get one; it does
+/// the driver bring-up and hands back the handle only if every step succeeded.
 #[derive(Clone, Copy)]
 pub struct EspStation {
     _private: (),
 }
 
 impl EspStation {
-    /// A handle to the station. The caller is asserting the driver has been
-    /// initialised and started in station mode.
+    /// Bring the radio up in station mode and hand back the handle.
+    ///
+    /// The whole sequence three apps used to repeat, in the order esp-idf's own
+    /// station example uses (`examples/wifi/getting_started/station`, v4.4):
+    ///
+    /// 1. `nvs::init` — open the calibration store. Not fatal: without it the
+    ///    PHY recalibrates in full on every boot (~183 ms), so a miss is logged
+    ///    and the bring-up continues, the way the apps did by hand.
+    /// 2. `kernel::heap::init_from_map` — the driver allocates everything
+    ///    through the OSI table, so the pool must exist before it asks.
+    /// 3. `nvs::compact_if_grown` — the calibration log gains one superseded
+    ///    record per boot, and a long log is what the driver's first read pays
+    ///    for. Its scratch comes from the heap, hence after step 2.
+    /// 4. The application's event handler, installed **before** `init`: the
+    ///    driver posts `WIFI_READY` from inside `start`, and a handler
+    ///    registered afterwards misses what already happened.
+    /// 5. `esp_wifi_init`, `esp_wifi_set_mode(STA)`, `esp_wifi_start`. Station
+    ///    mode goes before the start because `esp_wifi_start` is what creates
+    ///    the station control block for whatever mode is set (`esp_wifi.h`).
+    ///
+    /// A non-zero `esp_err_t` from any driver call comes back as
+    /// [`WifiError::Backend`], untranslated: those codes are documented and a
+    /// guess at what one means is worse than the number.
+    ///
+    /// Call once: a second call re-runs `init` against a live driver, which is
+    /// the driver's to refuse, not this function's to detect.
+    #[cfg(target_os = "none")]
+    pub fn bring_up(handler: EventHandler) -> WifiResult<Self> {
+        // SAFETY: these take ownership of the `nvs` partition and of the free
+        // RAM above the static map — both singletons the radio owns, under the
+        // same call-once contract this function carries.
+        if !unsafe { crate::nvs::init() } {
+            api::log_warn!("nvs unavailable; calibrating in full each boot");
+        }
+        let heap = unsafe { kernel::heap::init_from_map() };
+        api::log_info!("heap: {} bytes", heap);
+        if crate::nvs::compact_if_grown() {
+            api::log_info!("nvs log compacted at boot");
+        }
+
+        let mut station = Self { _private: () };
+        station.set_event_handler(Some(handler));
+
+        // SAFETY: the driver's preconditions — a heap, a handler for what it
+        // posts — are met above, and these run in the driver's own order.
+        backend_result(unsafe { wifi::init() })?;
+        backend_result(unsafe { wifi::set_mode(wifi::mode::STA) })?;
+        backend_result(unsafe { wifi::start() })?;
+        Ok(station)
+    }
+
+    /// A handle to the station, asserting rather than performing the bring-up.
+    /// For a probe that steps through the sequence itself; everything else
+    /// wants [`bring_up`](Self::bring_up).
     ///
     /// # Safety
     /// `wifi::init`, `set_mode(STA)` and `start` must have succeeded, and only
