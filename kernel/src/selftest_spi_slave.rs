@@ -57,7 +57,7 @@ pub(crate) fn spi_master_slave_loopback_round_trips(pads: [u8; 4]) -> Check {
     let mux = Esp32PinMux::new();
     mux.route(Signal::SpiCs(2), cs, PinConfig::PUSH_PULL)
         .map_err(|_| "could not route master CS")?;
-    unsafe { master.enable_cs0() };
+    master.enable_cs0();
 
     // ── Slave: SPI3, registers only. The pins are wired below.
     let mut slave = unsafe { Esp32SpiSlave::new(addr::SPI3_BASE) };

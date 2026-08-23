@@ -432,11 +432,16 @@ impl Esp32Spi {
     /// around each transaction automatically, including the configured setup
     /// and hold phases required for a slave to commit its received data.
     ///
-    /// # Safety
-    /// The host must be initialised.
-    pub unsafe fn enable_cs0(&self) {
-        reg::clear(self.reg(SPI_PIN), 1); // clear cs0_dis (SPI_PIN bit 0)
-        reg::set(self.reg(SPI_USER), SPI_CS_SETUP | SPI_CS_HOLD);
+    /// Safe: writes this host's own SPI_PIN and SPI_USER registers, which
+    /// holding the driver (`open`/`new`) — the thing that initialised the host
+    /// — entitles the caller to.
+    pub fn enable_cs0(&self) {
+        // SAFETY: register writes to this host's own registers; single
+        // ownership of the driver is what makes that sound.
+        unsafe {
+            reg::clear(self.reg(SPI_PIN), 1); // clear cs0_dis (SPI_PIN bit 0)
+            reg::set(self.reg(SPI_USER), SPI_CS_SETUP | SPI_CS_HOLD);
+        }
     }
 
     /// Enable or disable the DMA path for transfers past the FIFO cap. On by

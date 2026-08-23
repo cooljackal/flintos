@@ -413,10 +413,12 @@ impl Esp32Spi {
     /// forgetting to route is a transfer whose interrupt never arrives, which
     /// looks exactly like a transfer that never finished.
     ///
-    /// # Safety
-    /// The host must be clocked.
-    pub unsafe fn dma_int_enable(&self, mask: u32) {
-        self.reg(SPI_DMA_INT_ENA).write_volatile(mask);
+    /// Safe: writes this host's own DMA interrupt-enable register, which owning
+    /// the driver (`open`/`new`) entitles the caller to.
+    pub fn dma_int_enable(&self, mask: u32) {
+        // SAFETY: a volatile write to this host's own register; single
+        // ownership of the driver is what makes that sound.
+        unsafe { self.reg(SPI_DMA_INT_ENA).write_volatile(mask) };
     }
 
     /// Acknowledge DMA interrupt flags. **A top-half must call this.**
@@ -425,10 +427,12 @@ impl Esp32Spi {
     /// without clearing them re-enters it immediately and forever, which
     /// presents as a board that boots and then goes silent.
     ///
-    /// # Safety
-    /// The host must be clocked.
-    pub unsafe fn dma_int_clear(&self, mask: u32) {
-        self.reg(SPI_DMA_INT_CLR).write_volatile(mask);
+    /// Safe: writes this host's own DMA interrupt-clear register, which owning
+    /// the driver entitles the caller to. Callable from an interrupt top-half.
+    pub fn dma_int_clear(&self, mask: u32) {
+        // SAFETY: a volatile write to this host's own register; single
+        // ownership of the driver is what makes that sound.
+        unsafe { self.reg(SPI_DMA_INT_CLR).write_volatile(mask) };
     }
 
     /// Acknowledge **everything** this host can be interrupting for.
@@ -486,11 +490,15 @@ impl Esp32Spi {
 
     /// Halt both links.
     ///
-    /// # Safety
-    /// The host must be clocked.
-    pub unsafe fn dma_stop(&self) {
-        self.reg(SPI_DMA_OUT_LINK).write_volatile(SPI_OUTLINK_STOP);
-        self.reg(SPI_DMA_IN_LINK).write_volatile(SPI_INLINK_STOP);
+    /// Safe: writes this host's own DMA link registers, which owning the driver
+    /// entitles the caller to.
+    pub fn dma_stop(&self) {
+        // SAFETY: volatile writes to this host's own registers; single
+        // ownership of the driver is what makes that sound.
+        unsafe {
+            self.reg(SPI_DMA_OUT_LINK).write_volatile(SPI_OUTLINK_STOP);
+            self.reg(SPI_DMA_IN_LINK).write_volatile(SPI_INLINK_STOP);
+        }
     }
 
 }
