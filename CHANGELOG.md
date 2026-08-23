@@ -108,6 +108,14 @@ A kernel that provides a different one refuses to build and points here.
 - **`apps/wificonnect`** joins a WPA2 network. The SSID and passphrase come from
   `FLINT_WIFI_SSID` / `FLINT_WIFI_PASS` in the environment at build time.
 
+- **`BusHandle::write_reg`, `read_regs` and `kind`.** The register-mapped
+  pattern every sensor driver was hand-rolling, done right for the bus
+  underneath: over SPI a burst read is one framed exchange of address plus
+  payload, over I2C it is a write then a repeated-start read. `Bus` gained a
+  required `kind() -> BusKind` so the handle can tell; in-tree bus wrappers
+  and test mocks implement it. Not an ABI bump — no application implements
+  `Bus`, and nothing an application calls changed signature.
+
 ### Changed
 
 - **The CPU runs at 240 MHz.** The bootloader hands off at its 80 MHz default;
@@ -130,6 +138,18 @@ A kernel that provides a different one refuses to build and points here.
   work.
 
 ### Fixed
+
+- **A register read over SPI returned one byte, whatever was asked for**
+  (#97). `BusHandle::read_reg` and the drivers' `transfer(&[reg], buf)`
+  exchanged the 1-byte address against the N-byte buffer, and SPI clocks
+  only as many bytes as the shorter side. Only I2C ever got the burst.
+  `read_reg` now goes through `read_regs`, and bme280 and mpu6886 use the
+  handle's register helpers; bmi270 was already on `read_reg`.
+
+- **An SPI write or read longer than 64 bytes was silently cut to 64**
+  (#98). `SpiBus` now clocks the op in FIFO-sized pieces; `I2cBus`, whose
+  frame cannot be split, refuses an over-long write with `InvalidConfig`
+  instead of clipping it.
 
 - **Every blocking queue send or receive panicked.** `queue::deadline_for`
   read the tick through `scheduler::with` while `block_send`/`block_recv` were

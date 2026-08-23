@@ -256,6 +256,12 @@ pub trait Bus: Send + Sync {
     /// chip-select assertion) has to fit in.
     fn max_transfer(&self) -> usize;
 
+    /// Which wire protocol this bus speaks. [`BusHandle`] dispatches on it:
+    /// a register read is one full-duplex exchange on SPI but a write then a
+    /// repeated-start read on I2C, and only the handle can tell which it
+    /// needs (#97). No default, so a mock cannot quietly claim the wrong one.
+    fn kind(&self) -> BusKind;
+
     /// Set the bus clock / data rate. Default: not dynamically reclockable.
     fn set_speed(&self, _speed: BusSpeed) -> BusResult<()> {
         Err(BusError::InvalidConfig)
@@ -319,6 +325,11 @@ pub struct BusHandle {
     pub(crate) inner: &'static dyn Bus,
 }
 
+/// Longest burst [`BusHandle::read_regs`] reads over SPI. The handle stages
+/// the exchange in a stack buffer one byte longer than this; 64 matches the
+/// SPI controller's data buffer, so a burst under it is one framed transfer.
+pub const REG_BURST_MAX: usize = 64;
+
 impl BusHandle {
     /// Wrap a bus reference into a handle.
     pub fn new(bus: &'static dyn Bus) -> Self {
@@ -327,8 +338,65 @@ impl BusHandle {
 
     /// Full-duplex exchange: send `tx` while receiving `rx`. On I2C this is a
     /// write of `tx` followed by a repeated-start read into `rx`.
+    ///
+    /// On SPI the two buffers are clocked together, so only `min(tx, rx)`
+    /// bytes move: `transfer(&[reg], &mut six_bytes)` reads one byte, not six.
+    /// A register read that has to work on either bus is
+    /// [`BusHandle::read_regs`].
     pub fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
         self.inner.transfer(&mut [Op::exchange(tx, rx)])
+    }
+
+    /// Which wire protocol the bus underneath speaks. See [`Bus::kind`].
+    pub fn kind(&self) -> BusKind {
+        self.inner.kind()
+    }
+
+    /// Write one byte to a register: the address, then the value, in one
+    /// transaction. The same bytes on SPI and I2C.
+    ///
+    /// The address goes out as given. A device that marks a write with a bit
+    /// in the address (Bosch parts clear bit 7 over SPI) has the driver apply
+    /// it; the handle knows the bus, not the part.
+    pub fn write_reg(&self, reg: u8, val: u8) -> BusResult<()> {
+        self.inner.transfer(&mut [Op::write(&[reg, val])])
+    }
+
+    /// Burst-read `buf.len()` bytes starting at register `reg`, the way any
+    /// register-mapped device with an auto-incrementing address does it.
+    ///
+    /// - SPI: one full-duplex exchange of `1 + buf.len()` bytes — the address
+    ///   goes out in the first slot, the device answers in the rest — and the
+    ///   reply is copied into `buf`. One exchange, not a write op then a read
+    ///   op, because the SPI bus may drop chip-select between ops and the
+    ///   device would forget the address. At most [`REG_BURST_MAX`] bytes;
+    ///   longer is refused with `InvalidConfig`.
+    /// - I2C: write the address, repeated-start, read `buf`.
+    ///
+    /// Until #97 `read_reg` did an SPI exchange of the 1-byte address against
+    /// an N-byte buffer, which clocks `min(1, N)` = one byte on SPI and was
+    /// only right on I2C.
+    ///
+    /// The address goes out as given; a read-marker bit (bit 7 on Bosch and
+    /// InvenSense parts over SPI) is the driver's to set.
+    pub fn read_regs(&self, reg: u8, buf: &mut [u8]) -> BusResult<()> {
+        match self.inner.kind() {
+            BusKind::I2c => self.inner.transfer(&mut [Op::exchange(&[reg], buf)]),
+            BusKind::Spi => {
+                if buf.len() > REG_BURST_MAX {
+                    return Err(BusError::InvalidConfig);
+                }
+                let n = 1 + buf.len();
+                let mut tx = [0u8; 1 + REG_BURST_MAX];
+                let mut rx = [0u8; 1 + REG_BURST_MAX];
+                tx[0] = reg;
+                self.inner.transfer(&mut [Op::exchange(&tx[..n], &mut rx[..n])])?;
+                buf.copy_from_slice(&rx[1..n]);
+                Ok(())
+            }
+            // Not a register-mapped bus.
+            _ => Err(BusError::InvalidConfig),
+        }
     }
 
     /// Write `tx`, then read `rx` — two ops with chip-select held across them,
@@ -347,11 +415,10 @@ impl BusHandle {
         self.inner.transfer(&mut [Op::read(buf)])
     }
 
-    /// Read one register: exchange its address for one byte back. The common
-    /// "write the address, read the value" any register-mapped device does.
+    /// Read one register. [`BusHandle::read_regs`] for one byte.
     pub fn read_reg(&self, reg: u8) -> BusResult<u8> {
         let mut buf = [0u8; 1];
-        self.transfer(&[reg], &mut buf)?;
+        self.read_regs(reg, &mut buf)?;
         Ok(buf[0])
     }
 
@@ -481,6 +548,93 @@ mod tests {
         fn max_transfer(&self) -> usize {
             64
         }
+        fn kind(&self) -> BusKind {
+            BusKind::Spi
+        }
+    }
+
+    /// A register-mapped device on a bus of the given kind, modelled at the
+    /// wire: on SPI every byte clocked out is answered by one clocked in, so
+    /// an exchange moves `min(tx, rx)` bytes and the first reply byte is junk;
+    /// on I2C a write of the address then a read returns the bytes from that
+    /// address on. Either way register `r` holds `r + 1`, and auto-increments.
+    struct RegDevice {
+        kind: BusKind,
+        writes: Mutex<Vec<(u8, u8)>>,
+    }
+
+    use std::sync::Mutex;
+    use std::vec::Vec;
+
+    impl Bus for RegDevice {
+        fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
+            for op in ops.iter_mut() {
+                match (self.kind, op.tx, op.rx.as_deref_mut()) {
+                    (BusKind::Spi, Some(tx), Some(rx)) => {
+                        let n = tx.len().min(rx.len());
+                        rx[0] = 0xFF; // whatever was on MISO during the address
+                        for (i, b) in rx[1..n].iter_mut().enumerate() {
+                            *b = tx[0].wrapping_add(1 + i as u8);
+                        }
+                    }
+                    (BusKind::I2c, Some(tx), Some(rx)) => {
+                        for (i, b) in rx.iter_mut().enumerate() {
+                            *b = tx[0].wrapping_add(1 + i as u8);
+                        }
+                    }
+                    (_, Some(tx), None) if tx.len() == 2 => {
+                        self.writes.lock().unwrap().push((tx[0], tx[1]));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(())
+        }
+        fn max_transfer(&self) -> usize {
+            64
+        }
+        fn kind(&self) -> BusKind {
+            self.kind
+        }
+    }
+
+    fn reg_device(kind: BusKind) -> (BusHandle, &'static RegDevice) {
+        let dev: &'static RegDevice =
+            std::boxed::Box::leak(std::boxed::Box::new(RegDevice { kind, writes: Mutex::new(Vec::new()) }));
+        (BusHandle::new(dev), dev)
+    }
+
+    #[test]
+    fn read_regs_bursts_the_right_bytes_on_both_kinds() {
+        // Regression guard (#97): over SPI this used to exchange a 1-byte
+        // address against the N-byte buffer, which clocks one byte.
+        for kind in [BusKind::Spi, BusKind::I2c] {
+            let (h, _) = reg_device(kind);
+            let mut six = [0u8; 6];
+            h.read_regs(0x10, &mut six).unwrap();
+            assert_eq!(six, [0x11, 0x12, 0x13, 0x14, 0x15, 0x16], "{kind:?}");
+            assert_eq!(h.read_reg(0x75).unwrap(), 0x76, "{kind:?}");
+            assert_eq!(h.kind(), kind);
+        }
+    }
+
+    #[test]
+    fn write_reg_sends_address_then_value_on_both_kinds() {
+        for kind in [BusKind::Spi, BusKind::I2c] {
+            let (h, dev) = reg_device(kind);
+            h.write_reg(0xF4, 0x27).unwrap();
+            assert_eq!(&dev.writes.lock().unwrap()[..], &[(0xF4, 0x27)], "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn an_spi_burst_past_the_staging_buffer_is_refused() {
+        let (h, _) = reg_device(BusKind::Spi);
+        let mut big = [0u8; REG_BURST_MAX + 1];
+        assert_eq!(h.read_regs(0, &mut big), Err(BusError::InvalidConfig));
+        let mut max = [0u8; REG_BURST_MAX];
+        h.read_regs(0, &mut max).unwrap();
+        assert_eq!(max[REG_BURST_MAX - 1], REG_BURST_MAX as u8);
     }
 
     #[test]

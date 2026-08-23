@@ -236,14 +236,14 @@ impl Bme280 {
 
     fn write_reg(&self, reg: u8, val: u8) -> BusResult<()> {
         self.bus.select()?;
-        let result = self.bus.write(&[self.write_addr(reg), val]);
+        let result = self.bus.write_reg(self.write_addr(reg), val);
         self.bus.deselect()?;
         result
     }
 
     fn read_regs(&self, reg: u8, buf: &mut [u8]) -> BusResult<()> {
         self.bus.select()?;
-        let result = self.bus.transfer(&[self.read_addr(reg)], buf);
+        let result = self.bus.read_regs(self.read_addr(reg), buf);
         self.bus.deselect()?;
         result
     }
@@ -402,7 +402,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusResult, Op};
+    use api::bus::{Bus, BusKind, BusResult, Op};
     use std::sync::Mutex;
     use std::vec::Vec;
 
@@ -456,6 +456,14 @@ mod tests {
         }
         fn max_transfer(&self) -> usize {
             64
+        }
+        // The mock answers like an addressed I2C device -- the bytes from the
+        // register named in `tx[0]` on -- whichever `Transport` the driver
+        // under test was told, so the transport tests see the address byte
+        // the driver built. The handle's SPI framing (an extra address slot
+        // in the reply) is covered by the tests in `hal::bus`.
+        fn kind(&self) -> BusKind {
+            BusKind::I2c
         }
     }
 

@@ -8,7 +8,7 @@
 
 #![no_std]
 
-use api::bus::{spin_rough_us, Bus, BusError, BusResult, Op, PhysicalBus};
+use api::bus::{spin_rough_us, Bus, BusError, BusKind, BusResult, Op, PhysicalBus};
 
 /// Largest op payload, bounded by the controller's FIFO.
 const MAX_PAYLOAD: usize = 64;
@@ -69,6 +69,10 @@ impl Bus for I2cBus {
 
     fn max_transfer(&self) -> usize {
         MAX_PAYLOAD
+    }
+
+    fn kind(&self) -> BusKind {
+        BusKind::I2c
     }
 
     // I2C clock is fixed at init on this controller; `set_speed` keeps the

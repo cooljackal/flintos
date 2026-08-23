@@ -124,7 +124,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusError, Op};
+    use api::bus::{Bus, BusError, BusKind, Op};
     use std::boxed::Box;
     use std::sync::Mutex;
     use std::vec::Vec;
@@ -153,6 +153,12 @@ mod tests {
         }
         fn max_transfer(&self) -> usize {
             64
+        }
+        // The mock answers like an addressed I2C device: the bytes from the
+        // register named in `tx[0]` on. The handle's SPI framing (an extra
+        // address slot in the reply) is covered by the tests in `hal::bus`.
+        fn kind(&self) -> BusKind {
+            BusKind::I2c
         }
     }
 

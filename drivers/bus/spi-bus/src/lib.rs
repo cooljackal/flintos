@@ -10,7 +10,7 @@
 
 #![no_std]
 
-use api::bus::{spin_rough_us, Bus, BusError, BusResult, BusSpeed, Op, PhysicalBus};
+use api::bus::{spin_rough_us, Bus, BusError, BusKind, BusResult, BusSpeed, Op, PhysicalBus};
 
 /// Largest single-op payload, bounded by the SPI data buffer (16 words).
 const MAX_TRANSFER: usize = 64;
@@ -73,6 +73,10 @@ impl Bus for SpiBus {
 
     fn max_transfer(&self) -> usize {
         MAX_TRANSFER
+    }
+
+    fn kind(&self) -> BusKind {
+        BusKind::Spi
     }
 
     fn set_speed(&self, speed: BusSpeed) -> BusResult<()> {

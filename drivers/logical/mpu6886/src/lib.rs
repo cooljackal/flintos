@@ -137,7 +137,7 @@ impl Mpu6886 {
     }
 
     fn write_reg(&self, reg: u8, val: u8) -> BusResult<()> {
-        self.bus.write(&[reg, val])
+        self.bus.write_reg(reg, val)
     }
 
     /// Read three big-endian 16-bit values starting at `reg`.
@@ -147,7 +147,7 @@ impl Mpu6886 {
     /// and return two axes from one instant and one from the next.
     fn read_axes(&self, reg: u8) -> BusResult<Axes> {
         let mut b = [0u8; 6];
-        self.bus.transfer(&[reg], &mut b)?;
+        self.bus.read_regs(reg, &mut b)?;
         Ok(Axes {
             x: i16::from_be_bytes([b[0], b[1]]),
             y: i16::from_be_bytes([b[2], b[3]]),
@@ -219,7 +219,7 @@ impl Mpu6886 {
     /// reads several degrees high because the part is warming itself.
     pub fn temperature_milli_c(&self) -> BusResult<i32> {
         let mut b = [0u8; 2];
-        self.bus.transfer(&[REG_TEMP_OUT_H], &mut b)?;
+        self.bus.read_regs(REG_TEMP_OUT_H, &mut b)?;
         let raw = i16::from_be_bytes([b[0], b[1]]) as i32;
         Ok(raw * 10_000 / 3268 + 25_000)
     }
@@ -232,7 +232,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusError, Op};
+    use api::bus::{Bus, BusError, BusKind, Op};
     use std::boxed::Box;
     use std::sync::Mutex;
     use std::vec::Vec;
@@ -275,6 +275,12 @@ mod tests {
         }
         fn max_transfer(&self) -> usize {
             64
+        }
+        // The mock answers like an addressed I2C device: the bytes from the
+        // register named in `tx[0]` on. The handle's SPI framing (an extra
+        // address slot in the reply) is covered by the tests in `hal::bus`.
+        fn kind(&self) -> BusKind {
+            BusKind::I2c
         }
     }
 

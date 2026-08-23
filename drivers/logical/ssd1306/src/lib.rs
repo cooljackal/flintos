@@ -294,7 +294,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusResult, Op};
+    use api::bus::{Bus, BusKind, BusResult, Op};
     use std::sync::Mutex;
     use std::vec::Vec;
 
@@ -324,6 +324,9 @@ mod tests {
         }
         fn max_transfer(&self) -> usize {
             64
+        }
+        fn kind(&self) -> BusKind {
+            BusKind::I2c
         }
     }
 
