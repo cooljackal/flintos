@@ -301,6 +301,16 @@ impl Scheduler {
         Tick::now()
     }
 
+    /// Name of the task the calling core is running, or `None` before the
+    /// first task has been switched in (the boot path) or if the slot is
+    /// empty.
+    pub fn current_name(&self) -> Option<&'static str> {
+        self.tasks
+            .get(self.current() as usize)
+            .and_then(|t| t.as_ref())
+            .map(|t| t.name)
+    }
+
     pub fn current_priority(&self) -> u8 {
         self.tasks[self.current() as usize]
             .as_ref()
