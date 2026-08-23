@@ -91,9 +91,7 @@ pub(crate) fn adc1_follows_the_pin_it_is_pointed_at(high_gpio: u8) -> Check {
     }
 
     // Let go of the pad, so nothing that runs later inherits a driven pin.
-    unsafe {
-        let _ = adc.set_pad_pull(ch, Pull::None);
-    }
+    let _ = adc.set_pad_pull(ch, Pull::None);
 
     if high == low {
         return Err("the reading did not change when the pin did");

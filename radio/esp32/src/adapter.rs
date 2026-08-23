@@ -1059,7 +1059,7 @@ unsafe extern "C" fn osi_realloc(p: *mut c_void, size: usize) -> *mut c_void {
 /// in this tree where it is.
 #[cfg(target_os = "none")]
 unsafe extern "C" fn osi_rand() -> u32 {
-    unsafe { kernel::rng::read_u32() }
+    kernel::rng::read_u32()
 }
 
 /// `_get_random(buf, len)`. esp-idf's `esp_fill_random`, which has no failure
@@ -1070,7 +1070,7 @@ unsafe extern "C" fn osi_get_random(buf: *mut u8, len: usize) -> i32 {
         return 0;
     }
     let out = unsafe { core::slice::from_raw_parts_mut(buf, len) };
-    unsafe { kernel::rng::fill(out) };
+    kernel::rng::fill(out);
     0
 }
 
