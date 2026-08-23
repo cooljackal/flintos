@@ -33,7 +33,7 @@ use super::Check;
 #[cfg(target_os = "none")]
 pub(crate) fn spi_master_slave_loopback_round_trips(pads: [u8; 4]) -> Check {
     use esp32_spi::{Esp32Spi, Esp32SpiSlave};
-    use hal::bus::{BusConfig, BusSpeed, PhysicalBus};
+    use hal::bus::{BusConfig, BusSpeed, PhysicalBus, SpiMode};
     use hal::pinmux::PinPull;
     use hal::pinmux::{PinConfig, PinMux, Signal};
     use soc_esp32::{addr, gpio_matrix, io_mux, Esp32PinMux};

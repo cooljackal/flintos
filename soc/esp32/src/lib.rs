@@ -110,7 +110,7 @@ impl hal::soc::SystemOnChip for Esp32 {
     unsafe fn reset_cause() -> u32 {
         #[cfg(target_arch = "xtensa")]
         {
-            return unsafe { reset::cause() };
+            unsafe { reset::cause() }
         }
         #[cfg(not(target_arch = "xtensa"))]
         {
@@ -129,7 +129,7 @@ impl hal::soc::SystemOnChip for Esp32 {
             const MEASURE_TIMEOUT_CYCLES: u32 = 50_000_000;
             const RTC_POLLS: u32 = 10_000;
 
-            return (|| unsafe {
+            (|| unsafe {
                 let rtc0 = rtc::counter(RTC_POLLS)?;
                 let c0 = cycle_count()?;
                 loop {
@@ -144,7 +144,7 @@ impl hal::soc::SystemOnChip for Esp32 {
                         return None;
                     }
                 }
-            })();
+            })()
         }
         #[cfg(not(target_arch = "xtensa"))]
         {
