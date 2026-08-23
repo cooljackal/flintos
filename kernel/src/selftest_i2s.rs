@@ -169,12 +169,12 @@ fn run_stream(i2s: &esp32_i2s::I2sLoopback) -> Check {
     unsafe { stream.stop() };
 
     // Quiescent: no start bit set, and the engine raises no further boundary.
-    if unsafe { i2s.is_running() } {
+    if i2s.is_running() {
         return Err("I2S still running after the stream was stopped");
     }
-    unsafe { i2s.clear_eof() };
+    i2s.clear_eof();
     crate::selftest::spin_cycles(2_000_000);
-    if unsafe { i2s.eof_pending() } {
+    if i2s.eof_pending() {
         return Err("I2S DMA kept cycling buffers after stop — the channel was not released");
     }
     Ok(())

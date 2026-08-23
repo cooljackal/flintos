@@ -316,28 +316,28 @@ impl I2sLoopback {
     /// True while either direction's start bit is set. A stopped stream must
     /// read false here; a self-test uses it to prove `stop` really stopped.
     ///
-    /// # Safety
-    /// Reads the I2S0 CONF register.
-    pub unsafe fn is_running(&self) -> bool {
-        read(CONF) & (CONF_TX_START | CONF_RX_START) != 0
+    /// Safe: reads the I2S0 CONF register a held `I2sLoopback` owns.
+    pub fn is_running(&self) -> bool {
+        // SAFETY: a held `I2sLoopback` owns the I2S0 registers.
+        unsafe { read(CONF) & (CONF_TX_START | CONF_RX_START) != 0 }
     }
 
     /// Clear the buffer-boundary flag, then report whether the engine sets it
     /// again. After a clean stop it must stay clear — proof the DMA is not still
     /// cycling buffers behind a cleared start bit.
     ///
-    /// # Safety
-    /// Reads/writes the I2S0 interrupt registers.
-    pub unsafe fn clear_eof(&self) {
-        write(INT_CLR, INT_IN_SUC_EOF);
+    /// Safe: writes an I2S0 interrupt register a held `I2sLoopback` owns.
+    pub fn clear_eof(&self) {
+        // SAFETY: a held `I2sLoopback` owns the I2S0 registers.
+        unsafe { write(INT_CLR, INT_IN_SUC_EOF) };
     }
 
     /// Whether a buffer-boundary EOF has been raised since [`Self::clear_eof`].
     ///
-    /// # Safety
-    /// Reads the I2S0 INT_RAW register.
-    pub unsafe fn eof_pending(&self) -> bool {
-        read(INT_RAW) & INT_IN_SUC_EOF != 0
+    /// Safe: reads the I2S0 INT_RAW register a held `I2sLoopback` owns.
+    pub fn eof_pending(&self) -> bool {
+        // SAFETY: a held `I2sLoopback` owns the I2S0 registers.
+        unsafe { read(INT_RAW) & INT_IN_SUC_EOF != 0 }
     }
 }
 
