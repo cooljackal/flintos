@@ -17,12 +17,13 @@ api = { path = "../../../api" }
 hal = { path = "../../../hal" }
 
 # A UART is a stream, not a Bus, so there is no Layer-2 wrapper: the driver
-# exposes `ByteStream` directly (see hal::stream). This composes Layer 1 with
-# the stream API the app drives it through.
+# exposes `ByteStream` directly (see hal::stream). The board owns Layer 1 now
+# (`board::uart_loopback()` opens UART2 in loopback and hands back a
+# `&'static dyn ByteStream`), so this app names no physical driver and no SoC
+# crate; it drives the stream through the `api::stream::ByteStream` trait.
 #
-#   esp32-uart   Layer 1   the controller's registers, and its ByteStream
-soc-esp32 = { path = "../../../soc/esp32" }
-esp32-uart = { path = "../../../drivers/physical/esp32/uart" }
+#   board   opens UART2 in internal loopback (Layer 1, owned by the board)
+board = { path = "../../../board" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }

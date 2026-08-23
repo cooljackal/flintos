@@ -10,25 +10,25 @@
 //!
 //! ```text
 //!   stream API   ByteStream    non-blocking write/read counts, line errors
-//!   Layer 1      esp32-uart    the controller's registers
+//!   Layer 1      esp32-uart    the controller's registers (owned by the board)
 //! ```
 //!
 //! # No wire needed
 //!
 //! UART2 (never UART0 — that is the console) is put in its internal loopback
-//! mode (CONF0 bit 14), which routes TX→RX on-chip. The pins are still routed
-//! for real, so bring-up is exercised, but the data does not depend on an
-//! analog pad edge.
-//!
-//! Enabling the receiver latches one spurious byte into the RX FIFO; the bring-
-//! up drains it, and each round drains any residue before echoing, so the read
-//! stays aligned. See `kernel::selftest_uart` for the full story.
+//! mode, which routes TX→RX on-chip. The board does the bring-up
+//! (`board::uart_loopback()`): it opens the port on the loopback pads, switches
+//! on the loopback, and drains the spurious byte the receiver latches on
+//! enable. The pins are still routed for real, so bring-up is exercised, but
+//! the data does not depend on an analog pad edge. So this app names no SoC
+//! crate and no physical driver, and holds no mutable statics.
 //!
 //! # Porting to a real link
 //!
-//! Drop `set_loopback`, route TX/RX to the real pins, and read/write the stream
-//! as below. `write` and `read` are non-blocking and return counts, so a real
-//! peer that is slow or silent never stalls the task — loop over the remainder.
+//! Give the board a real UART accessor (drop the loopback, route TX/RX to the
+//! real pins) and read/write the stream as below. `write` and `read` are
+//! non-blocking and return counts, so a real peer that is slow or silent never
+//! stalls the task — loop over the remainder.
 //!
 //! Next: that is the last example. `apps/tests/` holds the PASS/FAIL
 //! verification apps, and `apps/README.md` says how to start your own.
@@ -36,53 +36,34 @@
 #![no_std]
 #![no_main]
 
-use core::ptr::addr_of;
-
-use api::bus::BusConfig;
-use api::stream::ByteStream;
-use api::task;
-use hal::types::Priority;
-use soc_esp32::addr;
+use api::task::{self, Task};
 
 kernel::flint_app!(main, abi = 2);
 
-use kernel::board::active as board;
-
-/// UART2. UART0 is the console the harness reads; UART1's pads clash with the
-/// SPI flash on many modules, so UART2 is the safe spare.
-const UART_BASE: u32 = addr::UART2_BASE;
-
-/// The driver outlives the setup call: the stream methods take `&self` and the
-/// loop borrows it for the life of the program.
-static mut UART: Option<esp32_uart::Esp32Uart> = None;
-
 fn main() {
-    task::spawn("uartecho", run, Priority::Normal(1), 4096);
+    if Task::new("uartecho", run).spawn().is_none() {
+        api::log_error!("could not start the uartecho task");
+    }
 }
 
 fn run() {
-    // The pins are only routed, not wired; still, a board that declares no free
-    // pads has nothing safe to route onto, so it cannot run this.
-    let (Some(tx_pin), Some((rx_pin, _))) =
-        (board::LOOPBACK_SCRATCH_GPIO, board::LOOPBACK_AUX_GPIOS)
-    else {
-        api::log_error!(
-            "[uartecho] this board declares no free loopback GPIOs; \
-             build for board-esp32-devkitc"
-        );
-        park();
+    // The board opens UART2 in internal loopback on its free pads, drains the
+    // enable-time spurious byte, and hands back a byte stream. A board that
+    // declares no loopback pads returns an error rather than routing onto
+    // something.
+    let uart = match board::uart_loopback() {
+        Ok(uart) => uart,
+        Err(e) => {
+            api::log_error!(
+                "[uartecho] UART loopback bring-up failed ({:?}); \
+                 build for board-esp32-devkitc",
+                e
+            );
+            task::exit();
+        }
     };
 
-    api::log_info!("[uartecho] UART2 internal loopback, TX pad GPIO{}", tx_pin);
-
-    if unsafe { bring_up(tx_pin, rx_pin) }.is_none() {
-        api::log_error!("[uartecho] UART bring-up failed");
-        park();
-    }
-
-    let Some(uart) = (unsafe { (*addr_of!(UART)).as_ref() }) else {
-        park();
-    };
+    api::log_info!("[uartecho] UART2 internal loopback");
 
     let mut round = 0u8;
     loop {
@@ -119,32 +100,5 @@ fn run() {
             api::log_error!("[uartecho] round {}: sent {:?}, got {:?} ({} bytes)", round, tx, rx, got);
         }
         round = round.wrapping_add(1);
-    }
-}
-
-/// Layer 1 bring-up: init the port, loop it internally, drain the enable-time
-/// spurious byte.
-///
-/// # Safety
-/// Claims UART2 and the two pads for the life of the program, and stores the
-/// driver in a static the loop borrows.
-unsafe fn bring_up(tx_pin: u8, rx_pin: u8) -> Option<()> {
-    let mut uart = esp32_uart::Esp32Uart::new(UART_BASE);
-    uart.init(&BusConfig::uart_8n1(tx_pin, rx_pin, 115_200)).ok()?;
-
-    // Route TX→RX internally: a clean digital path, no pad edge to mis-frame.
-    uart.set_loopback(true);
-    UART = Some(uart);
-
-    // Absorb the spurious byte the receiver latches when it comes up.
-    let uart_ref: &'static esp32_uart::Esp32Uart = (*addr_of!(UART)).as_ref()?;
-    let mut sink = [0u8; 8];
-    while uart_ref.read(&mut sink) > 0 {}
-    Some(())
-}
-
-fn park() -> ! {
-    loop {
-        task::sleep_ms(1000);
     }
 }
