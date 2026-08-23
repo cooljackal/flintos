@@ -1,6 +1,6 @@
 # Adding a Board
 
-One file, plus three lines of registration. If your board uses a chip FlintOS
+One file, plus four one-line edits to register it. If your board uses a chip FlintOS
 already supports, that's the whole job — the SoC crate already knows the
 peripheral addresses, the IRQ numbers and how to route pins.
 
@@ -56,7 +56,7 @@ typo in one board file is invisible from every other.
 nobody soldered on is a landmine for whoever wires one up next. An empty
 `TARGET_DEVICES` is the honest answer until there's something to put in it.
 
-Onboard hardware with no driver yet goes in as a plain constant:
+Onboard hardware goes in as plain constants:
 
 ```rust
 pub const RGB_LED_GPIO: u8 = 27;
@@ -69,6 +69,34 @@ pub const RGB_LED_LAYOUT: Option<led_matrix::Layout> = Some(Layout::new(
     5, 5, Origin::BottomRight, Axis::Rows, Order::Progressive,
 ));
 ```
+
+### Gather the facts into `BOARD`
+
+`TARGET_*` and the loose `*_GPIO` consts stay (the kernel self-tests and drivers
+read them), but the value an **application** reaches for is one
+`pub const BOARD: Board` per module, whose fields are `Option`s so an app guards
+on the *fact* — `board::BOARD.imu.is_some()` — not a board name:
+
+```rust
+pub const IMU_PORT: soc_esp32::I2cPort = soc_esp32::I2cPort {
+    ctrl: soc_esp32::I2cCtrl::I2c0,
+    cfg: I2cConfig { sda: 25, scl: 21, speed: BusSpeed::Standard100k },
+};
+
+pub const BOARD: crate::Board = crate::Board {
+    name: BOARD_NAME,
+    imu: Some(crate::I2cAttachment { port: IMU_PORT, addr: 0x68 }),   // or None
+    rgb_led: Some(crate::RgbLed { gpio: RGB_LED_GPIO, count: RGB_LED_COUNT, layout: RGB_LED_LAYOUT }),
+    selftest: SELFTEST_PADS,     // the free loopback pads, as a struct of Options
+    console: CONSOLE,            // ConsolePins { tx, rx, baud }
+};
+```
+
+An application never opens a controller by hand: `board::imu_bus()`,
+`board::led()`, `board::loopback_spi()` and `board::console()` open the device
+once from `BOARD`, cache it in an `api::Once`, and hand back the same
+`&'static`. Fill `BOARD` in and those accessors work; leave a field `None` and
+they return `Error::Other` (or `None`) so the app can say why.
 
 ## 2. Register it
 

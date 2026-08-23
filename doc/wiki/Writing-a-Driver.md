@@ -59,13 +59,15 @@ and `make device-matrix` shows it.
 
 use api::bus::{BusHandle, BusResult};
 
-pub struct Bme280 {
-    bus: BusHandle,
+pub struct Bme280<'a> {
+    bus: BusHandle<'a>,
 }
 
-impl Bme280 {
-    pub fn new(bus: BusHandle) -> Self {
-        Self { bus }
+impl<'a> Bme280<'a> {
+    // Take anything that converts into a handle, so a caller passes a plain
+    // `&bus` — `(&bus).into()` builds the `BusHandle`.
+    pub fn new(bus: impl Into<BusHandle<'a>>) -> Self {
+        Self { bus: bus.into() }
     }
 
     pub fn read_id(&self) -> BusResult<u8> {
@@ -78,13 +80,16 @@ impl Bme280 {
 
 You get a `BusHandle` and never learn what's behind it — `read_reg`,
 `read_regs`, `write_reg`, `read` and `write` all build the transfer and hand
-it to the bus. If you find yourself wanting a register address or a pin number,
-you're in the wrong layer. The shipped `bme280` driver
-(`drivers/logical/bme280/src/lib.rs`) is the fuller worked example.
+it to the bus. `BusHandle<'a>` borrows the bus rather than owning a `'static`,
+so a board can hand you one that lives on the stack; a `new(impl Into<BusHandle>)`
+constructor is then called as `Bme280::new(&bus)`, with no `BusHandle::new` at
+the call site. If you find yourself wanting a register address or a pin number,
+you're in the wrong layer. The shipped `mpu6886` and `bme280` drivers
+(`drivers/logical/*/src/lib.rs`) are the fuller worked examples.
 
 ## Layer 2 — a bus
 
-Turns a `PhysicalBus` into a protocol. Implement `api::bus::Bus`:
+Turns a physical driver into a protocol. Implement `api::bus::Bus`:
 
 ```rust
 fn transfer(&self, ops: &mut [Op]) -> BusResult<()>;   // one transaction
@@ -99,7 +104,21 @@ chip-select hold (`CsHold`) and trailing delay. The old copy-based
 `write`/`read`/`transfer(tx, rx)`/`select`/`deselect` calls live on
 `BusHandle` now, as thin wrappers that build a one- or two-element `[Op]`, so
 logical drivers kept working unchanged. Framing and retries live here.
-Registers don't. `drivers/bus/spi-bus` and `drivers/bus/i2c-bus` are the two
+Registers don't.
+
+The wrapper **owns** its physical driver by value, behind a kernel mutex, so
+one `Once<SpiBus<Esp32Spi>>` holds the whole stack with no `&'static dyn` and
+no `static mut`. It is generic over any `PhysicalTransfer`:
+
+```rust
+let spi = SpiBus::new(esp32_spi);                 // SpiBus<Esp32Spi>
+let i2c = I2cController::new(esp32_i2c);           // I2cController<Esp32I2c>
+let dev = i2c.device(0x68);                        // I2cDevice<'_> — the Bus a driver talks
+```
+
+An `I2cController` addresses the whole bus; `.device(addr)` borrows it for one
+slave and *is* the `Bus` a logical driver is handed (`.scan(..)` walks the
+address space). `drivers/bus/spi-bus` and `drivers/bus/i2c-bus` are the two
 shipped examples.
 
 ## Layer 1 — a peripheral
@@ -125,31 +144,47 @@ trait PhysicalBus: PhysicalTransfer {
 moves bytes: it clocks `tx` out while filling `rx`. **For I2C, `tx[0]` is the
 device's 7-bit address, unshifted** — the physical driver adds the R/W bit.
 Splitting the `&mut self` construction step onto `PhysicalBus` is what lets a
-bus layer hold a shared `&dyn PhysicalBus` and still call `exchange`.
+bus layer own a driver by value and still call `exchange` through a shared `&`.
 
-`init` does three things, in this order:
+**Constructing one.** The safe entry point is `Esp32{I2c,Spi,Uart}::open(&Port)`
+— it wins the controller's claim flag (a second `open` on the same controller
+returns `BusError::Busy`), then does exactly what `init` does from the port's
+config. The claim proves single ownership, so there is no `unsafe` at the call
+site; the `unsafe fn new(base_addr)` stays for the kernel self-tests.
+
+```rust
+use soc_esp32::{I2cCtrl, I2cPort};
+
+let port = I2cPort { ctrl: I2cCtrl::I2c0, cfg: /* I2cConfig */ };
+let driver = Esp32I2c::open(&port)?;               // claimed, clocked, routed
+```
+
+Behind `open`, `init` does three things, in this order:
 
 ```rust
 fn init(&mut self, config: &BusConfig) -> BusResult<()> {
-    let BusConfig::I2c { sda, scl, speed } = config else {
-        return Err(BusError::InvalidConfig);
-    };
-    let instance = addr::i2c_instance(self.base).ok_or(BusError::InvalidConfig)?;
+    match config {
+        BusConfig::I2c(I2cConfig { sda, scl, speed }) => {
+            let instance = addr::i2c_instance(self.base).ok_or(BusError::InvalidConfig)?;
 
-    // 1. Ungate the clock. Without this every register write below lands
-    //    nowhere, with no fault -- it looks exactly like a wrong register map.
-    let clk = dport::clock_bit(self.base).ok_or(BusError::InvalidConfig)?;
-    unsafe { dport::enable(clk) };
+            // 1. Ungate the clock. Without this every register write below
+            //    lands nowhere, with no fault -- it looks exactly like a
+            //    wrong register map.
+            let clk = dport::clock_bit(self.base).ok_or(BusError::InvalidConfig)?;
+            unsafe { dport::enable(clk) };
 
-    // 2. Route the pins, before programming timing. A configured, running
-    //    controller connected to a still-default pad can drive a bus another
-    //    device is holding low.
-    route_pins(instance, *sda, *scl)?;
+            // 2. Route the pins, before programming timing. A configured,
+            //    running controller on a still-default pad can drive a bus
+            //    another device is holding low.
+            route_pins(instance, *sda, *scl)?;
 
-    // 3. Program the peripheral.
-    let half = (APB_HZ / speed.hz() / 2).max(10);
-    unsafe { self.reg(I2C_SCL_LOW).write_volatile(half) };
-    Ok(())
+            // 3. Program the peripheral.
+            self.half = (APB_HZ / speed.hz() / 2).max(10);
+            unsafe { self.program() };
+            Ok(())
+        }
+        _ => Err(BusError::InvalidConfig),
+    }
 }
 ```
 
@@ -222,7 +257,7 @@ fn isr() {
 
 fn driver_task() {
     loop {
-        if let Some(ev) = queue::recv(&EVENTS, u32::MAX) {
+        if let Ok(ev) = queue::recv(&EVENTS, u32::MAX) {
             handle(ev);
         }
     }
