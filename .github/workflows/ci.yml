@@ -89,6 +89,16 @@ jobs:
       - name: Enforce the package naming and layout convention
         run: make check-names
 
+      # The manifest half of the app rule is check-layers' apps tier (an example
+      # names no soc/ or physical driver). This is the source half: an example
+      # must not reach past the board with a `static mut` register cell, an
+      # `addr_of!` into MMIO, or a `soc_*::` path -- none of which needs a
+      # dependency check-layers could see. apps/tests/ is exempt; the guard only
+      # scans apps/examples/. Not yet a `make` target (the Makefile owns that
+      # list); called directly until it grows one.
+      - name: Enforce the application source-hygiene rule
+        run: bash tools/check-apps.sh
+
       # The on-target suite itself needs a board and so cannot run here, but the
       # logic that decides whether a board passed is just text handling, and it
       # is the part that would otherwise go unchecked until it mattered.

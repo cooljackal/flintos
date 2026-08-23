@@ -14,6 +14,9 @@
 #   board                hal, api, soc/*,   the pin map; constructs drivers,
 #                        physical, bus,     never names kernel
 #                        lib/*
+#   apps/examples/*      hal, api, board,   an application: composes ready
+#                        kernel, bus,       drivers, never opens a peripheral
+#                        logical, lib/*     itself
 #   radio/*              hal, api, kernel,  the vendor blobs and their adapter
 #                        soc/*, lib/*
 #
@@ -105,6 +108,11 @@ TIERS = {
     "drivers/logical":  "Layer-3 logical driver",
     "lib":              "portable library",
     "board":            "board manifest",
+    # Only examples are pinned to the app rule. apps/tests/* is deliberately
+    # absent: a probe's job is to exercise the machinery, so it names whatever
+    # soc and physical crate it is testing. An absent prefix matches no tier and
+    # is skipped, which is exactly the exemption we want.
+    "apps/examples":    "example application",
 }
 
 # Membership is read from the workspace, so a new soc or lib crate is usable by
@@ -116,6 +124,7 @@ SOCS = names_in("soc")
 LIBS = names_in("lib")
 PHYSICAL = names_in("drivers/physical")
 BUS = names_in("drivers/bus")
+LOGICAL = names_in("drivers/logical")
 
 ALLOWED = {
     "arch":             {"hal"},
@@ -130,6 +139,14 @@ ALLOWED = {
     # the soc crates and the libs. It may NOT name `kernel`: a board is a pin
     # map, not the scheduler that runs on it.
     "board":            {"hal", "api"} | SOCS | PHYSICAL | BUS | LIBS,
+    # An application composes drivers the board already opened; it never opens a
+    # peripheral itself. So it may name api and board (the ready devices),
+    # kernel (for `flint_app!`), the Layer-2 bus and Layer-3 logical drivers,
+    # and the libs -- but never a soc/ or drivers/physical/ crate, the mark of
+    # an app reaching past the board to touch registers. hal is contracts only
+    # (bus traits, config types) and carries no route to hardware, so it is
+    # allowed as it is everywhere else.
+    "apps/examples":    {"hal", "api", "board", "kernel"} | BUS | LOGICAL | LIBS,
 }
 DESCRIBE = {
     "arch":             "hal",
@@ -140,6 +157,7 @@ DESCRIBE = {
     "lib":              "other lib/ crates only",
     "radio":            "hal, api, kernel, soc/ and lib/ crates",
     "board":            "hal, api, soc/, drivers/physical, drivers/bus and lib/ crates",
+    "apps/examples":    "hal, api, board, kernel, drivers/bus, drivers/logical and lib/ crates",
 }
 
 violations = []
@@ -157,9 +175,12 @@ for pkg in meta["packages"]:
         allowed, rule = ALLOWED[tier], DESCRIBE[tier]
     checked += 1
     for dep in pkg["dependencies"]:
-        # dev-dependencies are test scaffolding; they never ship in the image
-        # and so cannot leak hardware access into a crate's public surface.
-        if dep["kind"] == "dev":
+        # dev- and build-dependencies never ship in the image: dev-deps are test
+        # scaffolding, and a build-dependency (every app's `build` = tools/build,
+        # which emits the linker script) runs on the host at build time. Neither
+        # can leak hardware access into a crate's public surface, so neither is a
+        # layer concern.
+        if dep["kind"] in ("dev", "build"):
             continue
         if dep["name"] not in allowed:
             label = TIERS.get(tier, "hal")
