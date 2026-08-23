@@ -95,7 +95,6 @@ version = "0.1.0"
 dependencies = [
  "api",
  "build",
- "hal",
  "kernel",
 ]
 
@@ -270,7 +269,6 @@ version = "0.1.0"
 dependencies = [
  "api",
  "build",
- "hal",
  "kernel",
 ]
 
@@ -408,7 +406,6 @@ dependencies = [
  "api",
  "arch-xtensa",
  "build",
- "hal",
  "kernel",
  "soc-esp32",
 ]

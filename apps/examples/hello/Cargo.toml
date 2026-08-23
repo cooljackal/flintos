@@ -14,7 +14,6 @@ rust-version.workspace = true
 [dependencies]
 kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
-hal = { path = "../../../hal" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }

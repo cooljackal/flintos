@@ -11,8 +11,7 @@
 #![no_std]
 #![no_main]
 
-use api::task;
-use hal::types::Priority;
+use api::prelude::*;
 
 // Names `main` below as this build's application entry point. The kernel calls
 // it once the console, tick timer and idle task are up, and unmasks interrupts
@@ -20,14 +19,14 @@ use hal::types::Priority;
 kernel::flint_app!(main, abi = 1);
 
 fn main() {
-    task::spawn("hello", hello, Priority::Normal(1), 4096);
+    Task::new("hello", hello).spawn().expect("spawn");
 }
 
 fn hello() {
     let mut n = 0u32;
     loop {
         n += 1;
-        api::log_info!("[hello] n={}", n);
-        task::sleep_ms(1000);
+        log_info!("n={n}");
+        sleep_ms(1000);
     }
 }

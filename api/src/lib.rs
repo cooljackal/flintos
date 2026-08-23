@@ -35,6 +35,7 @@ pub const ABI: u32 = 1;
 
 pub mod debug;
 pub mod mutex;
+pub mod prelude;
 pub mod queue;
 pub mod sync;
 pub mod task;
@@ -61,6 +62,12 @@ pub use hal::bus::{Bus, BusError, BusHandle, BusResult, BusSpeed, CsHold, Op, Ph
 /// `hal::stream`.
 pub use hal::stream;
 pub use hal::stream::{ByteStream, StreamErrors};
+
+/// Pin routing, re-exported so an application that configures a pin depends
+/// on `api` alone (#105). This was the one surface `api` did not carry, and
+/// the only reason application manifests listed `hal`.
+pub use hal::pinmux;
+pub use hal::pinmux::{PinConfig, PinMux, Signal};
 
 /// Wi-Fi station interface, re-exported from `hal::wifi` the same way `bus` is.
 /// A radio backend (blob or pure-Rust) implements `api::wifi::Station`.

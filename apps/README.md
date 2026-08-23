@@ -81,19 +81,20 @@ An application is three files, and `hello` is nothing but those three.
 #![no_std]
 #![no_main]
 
-use api::task;
-use hal::types::Priority;
+use api::prelude::*;
 
 kernel::flint_app!(main, abi = 1);
 
 fn main() {
-    task::spawn("worker", worker, Priority::Normal(1), 4096);
+    Task::new("hello", hello).spawn().expect("spawn");
 }
 
-fn worker() {
+fn hello() {
+    let mut n = 0u32;
     loop {
-        api::log_info!("tick");
-        task::sleep_ms(1000);
+        n += 1;
+        log_info!("n={n}");
+        sleep_ms(1000);
     }
 }
 ```
@@ -119,7 +120,6 @@ choice leaking into everything else that links the kernel:
 [dependencies]
 kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
-hal = { path = "../../../hal" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }
@@ -146,7 +146,8 @@ defaults later cannot quietly change what you built.
 
 ## Stack sizes
 
-`spawn` takes a stack size in bytes, and 4096 is a reasonable default. Traps run
+A task gets 4096 bytes of stack unless `Task::new(..).stack(bytes)` says
+otherwise, and 4096 is a reasonable default. Traps run
 on the interrupted task's own stack, so the budget has to cover your deepest
 call chain *plus* a trap frame and the kernel's trap handler on top — and with
 logging on, `log_info!` → formatting → the UART driver is already several frames

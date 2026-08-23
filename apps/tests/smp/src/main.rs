@@ -17,8 +17,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use api::task;
-use hal::types::Priority;
+use api::prelude::*;
 use kernel::smp::Spinlock;
 
 kernel::flint_app!(main, abi = 1);
@@ -57,13 +56,35 @@ fn main() {
         soc_esp32::appcpu::start(arch_xtensa::appcpu::_flint_appcpu_entry);
     }
 
-    task::spawn_on(0, "dport0", dport_core0, Priority::Background(0), 4096);
-    task::spawn_on(1, "dport1", dport_core1, Priority::Background(0), 4096);
+    Task::new("dport0", dport_core0)
+        .priority(Priority::Background(0))
+        .on_core(0)
+        .spawn()
+        .expect("spawn dport0");
+    Task::new("dport1", dport_core1)
+        .priority(Priority::Background(0))
+        .on_core(1)
+        .spawn()
+        .expect("spawn dport1");
 
-    task::spawn_on(0, "pin0", pinned_0, Priority::Normal(2), 4096);
-    task::spawn_on(1, "pin1", pinned_1, Priority::Normal(2), 4096);
-    task::spawn("float", floating, Priority::Normal(3), 4096);
-    task::spawn("report", report, Priority::Normal(1), 4096);
+    Task::new("pin0", pinned_0)
+        .priority(Priority::Normal(2))
+        .on_core(0)
+        .spawn()
+        .expect("spawn pin0");
+    Task::new("pin1", pinned_1)
+        .priority(Priority::Normal(2))
+        .on_core(1)
+        .spawn()
+        .expect("spawn pin1");
+    Task::new("float", floating)
+        .priority(Priority::Normal(3))
+        .spawn()
+        .expect("spawn float");
+    Task::new("report", report)
+        .priority(Priority::Normal(1))
+        .spawn()
+        .expect("spawn report");
 }
 
 /// The second core's entry. Never returns — it becomes that core's idle task.
@@ -124,58 +145,52 @@ fn record(which: usize) {
 fn pinned_0() {
     loop {
         record(PINNED_0);
-        task::sleep_ms(7);
+        sleep_ms(7);
     }
 }
 
 fn pinned_1() {
     loop {
         record(PINNED_1);
-        task::sleep_ms(7);
+        sleep_ms(7);
     }
 }
 
 fn floating() {
     loop {
         record(FLOATING);
-        task::sleep_ms(5);
+        sleep_ms(5);
     }
 }
 
 /// Report what actually happened, and judge it.
 fn report() {
-    task::sleep_ms(300);
-    api::log_info!(
-        "[smp] second core up: {}",
-        SECOND_CORE_UP.load(Ordering::SeqCst) == 1
-    );
+    sleep_ms(300);
+    log_info!("second core up: {}", SECOND_CORE_UP.load(Ordering::SeqCst) == 1);
 
     for round in 1..=6u32 {
-        task::sleep_ms(1000);
+        sleep_ms(1000);
         let seen = SEEN.with(|s| *s);
 
         for (name, i) in [("pin0", PINNED_0), ("pin1", PINNED_1), ("float", FLOATING)] {
-            api::log_info!(
-                "[smp] {} round {}: core0 {} core1 {}",
-                name, round, seen[i][0], seen[i][1]
-            );
+            log_info!("{name} round {round}: core0 {} core1 {}", seen[i][0], seen[i][1]);
         }
 
         // A pinned task on the wrong core is the failure this whole change is
         // about. Report it as an error rather than leaving it to be read out
         // of the numbers.
         if seen[PINNED_0][1] != 0 {
-            api::log_error!("[smp] pin0 ran on core 1 {} times", seen[PINNED_0][1]);
+            log_error!("pin0 ran on core 1 {} times", seen[PINNED_0][1]);
         }
         if seen[PINNED_1][0] != 0 {
-            api::log_error!("[smp] pin1 ran on core 0 {} times", seen[PINNED_1][0]);
+            log_error!("pin1 ran on core 0 {} times", seen[PINNED_1][0]);
         }
         // And a pinned task that never ran at all is just as wrong, quietly.
         if seen[PINNED_1][1] == 0 {
-            api::log_error!("[smp] pin1 never ran on core 1");
+            log_error!("pin1 never ran on core 1");
         }
         if seen[FLOATING][0] != 0 && seen[FLOATING][1] != 0 {
-            api::log_info!("[smp] float ran on both cores");
+            log_info!("float ran on both cores");
         }
 
         // Issue #56: the same DPORT register, read-modify-written from both
@@ -185,18 +200,15 @@ fn report() {
             DPORT_OPS[1].load(Ordering::Relaxed),
         );
         let lost = DPORT_LOST.load(Ordering::Relaxed);
-        api::log_info!(
-            "[smp] dport round {}: core0 {} ops, core1 {} ops, lost {}",
-            round, ops0, ops1, lost
-        );
+        log_info!("dport round {round}: core0 {ops0} ops, core1 {ops1} ops, lost {lost}");
         if lost != 0 {
-            api::log_error!("[smp] dport lost {} updates — the lock is not holding", lost);
+            log_error!("dport lost {lost} updates — the lock is not holding");
         }
         if ops0 == 0 || ops1 == 0 {
-            api::log_error!("[smp] dport was not hammered from both cores; result means nothing");
+            log_error!("dport was not hammered from both cores; result means nothing");
         }
     }
     loop {
-        task::sleep_ms(1000);
+        sleep_ms(1000);
     }
 }

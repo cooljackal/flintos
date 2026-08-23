@@ -9,8 +9,8 @@
 //! judges its log — so a change here is a change to what "the kernel works"
 //! means.
 //!
-//! Each log line carries the task name, its own priority, and a per-task
-//! counter, and the console prefixes every line with the tick. That makes the
+//! Each log line carries the task's own priority and a per-task counter, and
+//! the console prefixes every line with the tick and the task name. That makes the
 //! interesting failures legible straight from the log:
 //!
 //! - same-priority tasks round-robin against each other
@@ -24,8 +24,7 @@
 #![no_std]
 #![no_main]
 
-use api::task;
-use hal::types::Priority;
+use api::prelude::*;
 
 kernel::flint_app!(main, abi = 1);
 
@@ -50,8 +49,8 @@ const STACK: usize = 4096;
 /// **not** reset within a few seconds means the watchdog is not really armed.
 #[cfg(feature = "watchdog-test-kernel")]
 fn hang_with_interrupts_masked() {
-    task::sleep_ms(3_000); // let a few normal log lines out first
-    api::log_info!("[wdt-test] masking interrupts and hanging -- expect a reset in ~5 s");
+    sleep_ms(3_000); // let a few normal log lines out first
+    log_info!("masking interrupts and hanging -- expect a reset in ~5 s");
     kernel::arch::cs_with(|| loop {
         core::hint::spin_loop();
     });
@@ -65,8 +64,8 @@ fn hang_with_interrupts_masked() {
 /// watching for it.
 #[cfg(feature = "watchdog-test-idle")]
 fn spin_without_yielding() {
-    task::sleep_ms(3_000);
-    api::log_info!("[wdt-test] spinning without yielding -- expect a reset in ~10 s");
+    sleep_ms(3_000);
+    log_info!("spinning without yielding -- expect a reset in ~10 s");
     loop {
         core::hint::spin_loop();
     }
@@ -88,21 +87,41 @@ fn main() {
     // Watchdog verification, off unless asked for. Highest normal priority so
     // it is unambiguously the thing holding the system up.
     #[cfg(feature = "watchdog-test-kernel")]
-    task::spawn("wdt-hang", hang_with_interrupts_masked, Priority::Normal(0), STACK);
+    Task::new("wdt-hang", hang_with_interrupts_masked)
+        .priority(Priority::Normal(0))
+        .stack(STACK)
+        .spawn()
+        .expect("spawn wdt-hang");
     #[cfg(feature = "watchdog-test-idle")]
-    task::spawn("wdt-spin", spin_without_yielding, Priority::Normal(0), STACK);
+    Task::new("wdt-spin", spin_without_yielding)
+        .priority(Priority::Normal(0))
+        .stack(STACK)
+        .spawn()
+        .expect("spawn wdt-spin");
 
-    task::spawn("sensor", task_sensor, SENSOR_PRIORITY, STACK);
-    task::spawn("consumer", task_consumer, CONSUMER_PRIORITY, STACK);
-    task::spawn("housekeep", task_housekeep, HOUSEKEEP_PRIORITY, STACK);
+    Task::new("sensor", task_sensor)
+        .priority(SENSOR_PRIORITY)
+        .stack(STACK)
+        .spawn()
+        .expect("spawn sensor");
+    Task::new("consumer", task_consumer)
+        .priority(CONSUMER_PRIORITY)
+        .stack(STACK)
+        .spawn()
+        .expect("spawn consumer");
+    Task::new("housekeep", task_housekeep)
+        .priority(HOUSEKEEP_PRIORITY)
+        .stack(STACK)
+        .spawn()
+        .expect("spawn housekeep");
 }
 
 fn task_sensor() {
     let mut n = 0u32;
     loop {
         n += 1;
-        api::log_info!("[sensor] prio={:?} n={}", SENSOR_PRIORITY, n);
-        task::sleep_ms(500);
+        log_info!("prio={SENSOR_PRIORITY:?} n={n}");
+        sleep_ms(500);
     }
 }
 
@@ -110,16 +129,16 @@ fn task_consumer() {
     let mut n = 0u32;
     loop {
         n += 1;
-        api::log_info!("[consumer] prio={:?} n={}", CONSUMER_PRIORITY, n);
-        task::sleep_ms(1000);
+        log_info!("prio={CONSUMER_PRIORITY:?} n={n}");
+        sleep_ms(1000);
     }
 }
 
 fn task_housekeep() {
     let mut n = 0u32;
     loop {
-        task::sleep_ms(3000);
+        sleep_ms(3000);
         n += 1;
-        api::log_info!("[housekeep] prio={:?} n={}", HOUSEKEEP_PRIORITY, n);
+        log_info!("prio={HOUSEKEEP_PRIORITY:?} n={n}");
     }
 }
