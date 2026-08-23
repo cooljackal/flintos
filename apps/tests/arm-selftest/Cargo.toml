@@ -17,6 +17,7 @@ api = { path = "../../../api" }
 hal = { path = "../../../hal" }
 portable-atomic = { version = "=1.15.0", features = ["critical-section", "require-cas"] }
 soc-rp2040 = { path = "../../../soc/rp2040" }
+rp2040-uart = { path = "../../../drivers/physical/rp2040/uart" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }

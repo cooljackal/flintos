@@ -10,8 +10,11 @@
 
 pub mod boot2;
 pub mod multicore;
+pub mod pinmux;
 pub mod test_status;
 pub mod watchdog;
+
+pub use pinmux::Rp2040PinMux;
 
 pub const XIP_BASE: u32 = 0x1000_0000;
 pub const XIP_SIZE: u32 = 16 * 1024 * 1024;
@@ -20,10 +23,46 @@ pub const SRAM_SIZE: u32 = 264 * 1024;
 pub const SRAM_END: u32 = SRAM_BASE + SRAM_SIZE;
 
 pub const IO_BANK0_BASE: u32 = 0x4001_4000;
+pub const PADS_BANK0_BASE: u32 = 0x4001_C000;
 pub const UART0_BASE: u32 = 0x4003_4000;
+pub const UART1_BASE: u32 = 0x4003_8000;
 pub const SPI0_BASE: u32 = 0x4003_C000;
 pub const I2C0_BASE: u32 = 0x4004_4000;
 pub const SIO_BASE: u32 = 0xD000_0000;
+pub const RESETS_BASE: u32 = 0x4000_C000;
+
+/// Release peripherals from reset through the atomic clear alias.
+///
+/// # Safety
+/// The caller must ensure each requested peripheral is ready before use.
+pub unsafe fn unreset(mask: u32) {
+    ((RESETS_BASE + 0x3000) as *mut u32).write_volatile(mask);
+    let done = (RESETS_BASE + 0x08) as *const u32;
+    while done.read_volatile() & mask != mask {
+        core::hint::spin_loop();
+    }
+}
+
+pub const RESET_IO_BANK0: u32 = 1 << 5;
+pub const RESET_PADS_BANK0: u32 = 1 << 8;
+pub const RESET_UART0: u32 = 1 << 22;
+pub const RESET_UART1: u32 = 1 << 23;
+
+/// Select clk_sys for clk_peri and enable it.
+pub fn enable_peripheral_clock() {
+    #[cfg(target_arch = "arm")]
+    unsafe {
+        CLK_PERI_CTRL.write_volatile(1 << 11);
+    }
+}
+
+pub fn uart_instance(base: u32) -> Option<u8> {
+    match base {
+        UART0_BASE => Some(0),
+        UART1_BASE => Some(1),
+        _ => None,
+    }
+}
 #[cfg(target_arch = "arm")]
 const TIMER_RAWL: *const u32 = 0x4005_4028 as *const u32;
 #[cfg(target_arch = "arm")]
@@ -36,6 +75,8 @@ const CLK_REF_SELECTED: *const u32 = (CLOCKS_BASE + 0x38) as *const u32;
 const CLK_SYS_CTRL: *mut u32 = (CLOCKS_BASE + 0x3c) as *mut u32;
 #[cfg(target_arch = "arm")]
 const CLK_SYS_SELECTED: *const u32 = (CLOCKS_BASE + 0x44) as *const u32;
+#[cfg(target_arch = "arm")]
+const CLK_PERI_CTRL: *mut u32 = (CLOCKS_BASE + 0x48) as *mut u32;
 #[cfg(target_arch = "arm")]
 const XOSC_BASE: u32 = 0x4002_4000;
 #[cfg(target_arch = "arm")]

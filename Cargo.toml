@@ -66,6 +66,8 @@ members = [
     "drivers/physical/esp32/ledc",
     "drivers/physical/esp32/rmt",
     "drivers/physical/esp32/wdt",
+    "drivers/physical/rp2040/gpio",
+    "drivers/physical/rp2040/uart",
     "drivers/physical/esp32/rng",
     "drivers/physical/esp32/crypto",
     "drivers/physical/esp32/timg",

@@ -12,6 +12,11 @@ use api::task;
 #[cfg(not(feature = "expected-hardfault"))]
 use api::timer;
 use hal::types::Priority;
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+use hal::{
+    bus::{BusConfig, UartDataBits, UartParity, UartStopBits},
+    stream::ByteStream,
+};
 #[cfg(not(feature = "expected-hardfault"))]
 use portable_atomic::{AtomicU32, Ordering};
 
@@ -302,6 +307,7 @@ fn tests() {
 
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 fn run_extended_tests() -> ! {
+    uart_loopback_test();
     let timeout_start = timer::now_ms();
     let timeout_result = api::queue::recv(&ISR_QUEUE, 5);
     let timeout_elapsed = timer::now_ms().wrapping_sub(timeout_start);
@@ -401,6 +407,38 @@ fn run_extended_tests() -> ! {
         fail(18);
     }
     unsafe { soc_rp2040::test_status::pass_to_bootsel() }
+}
+
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+fn uart_loopback_test() {
+    let mut uart = unsafe { rp2040_uart::Rp2040Uart::new(soc_rp2040::UART0_BASE) };
+    if uart
+        .init(&BusConfig::Uart(hal::bus::UartConfig {
+            tx: 0,
+            rx: 1,
+            baud: 115_200,
+            data_bits: UartDataBits::Bits8,
+            parity: UartParity::None,
+            stop_bits: UartStopBits::Stop1,
+        }))
+        .is_err()
+    {
+        fail(19);
+    }
+    uart.set_loopback(true);
+    let tx = [0x00, 0x55, 0xaa, 0xff, 0x13, 0x37, 0xc3, 0x5a];
+    if uart.write(&tx) != tx.len() {
+        fail(19);
+    }
+    let start = hardware_timer_us();
+    let mut rx = [0; 8];
+    let mut received = 0;
+    while received < rx.len() && hardware_timer_us().wrapping_sub(start) < 100_000 {
+        received += uart.read(&mut rx[received..]);
+    }
+    if received != rx.len() || rx != tx || uart.errors().any() {
+        fail(19);
+    }
 }
 
 #[cfg(feature = "expected-hardfault")]
