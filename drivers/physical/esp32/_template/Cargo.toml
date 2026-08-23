@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+# `esp32-_template`, not `esp32-template`: the directory leaf is `_template`
+# (the underscore marks it as scaffolding, never linked into an image), and
+# `tools/check-names.sh` requires the name to end in that exact leaf. See the
+# naming rule at the top of the root Cargo.toml.
+name = "esp32-_template"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Reference skeleton for a Layer-1 esp32 driver (see drivers/README.md)"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# The package name ends in `_template` to match the directory leaf (check-names),
+# but that yields the crate identifier `esp32__template`, which trips the
+# `non_snake_case` lint. Name the library crate explicitly so `use` sites and
+# the compiler see a clean `esp32_template`.
+[lib]
+name = "esp32_template"
+
+# A Layer-1 physical driver may name only `hal` and the chip's `soc` crate --
+# tools/check-layers.sh enforces exactly this whitelist.
+[dependencies]
+hal = { path = "../../../../hal" }
+soc-esp32 = { path = "../../../../soc/esp32" }

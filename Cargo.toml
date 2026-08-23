@@ -77,6 +77,7 @@ members = [
     "drivers/physical/esp32/touch",
     "drivers/physical/esp32/mcpwm",
     "drivers/physical/esp32/flash",
+    "drivers/physical/esp32/_template",
     "drivers/bus/spi-bus",
     "drivers/bus/i2c-bus",
     "drivers/logical/bme280",
