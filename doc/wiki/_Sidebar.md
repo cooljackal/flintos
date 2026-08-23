@@ -7,6 +7,7 @@
 - [Writing a Driver](Writing-a-Driver)
 
 **Reference**
+- [API Overview](API-Overview)
 - [Architecture](Architecture)
 - [Multicore](Multicore)
 - [Debug Levels](Debug-Levels)

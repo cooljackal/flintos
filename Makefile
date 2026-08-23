@@ -406,6 +406,15 @@ monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
 check: ## Check every host-compatible crate
 	cargo check $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 
+# rustdoc for the user-facing API, generated from the doc comments so it cannot
+# drift from the code. Same host-crate set as `check`/`test-host` (HOST_SELECT),
+# so the API reference covers exactly what builds on the host: the `api` system
+# surface, the bus/driver traits in `hal`, the portable `lib/*` crates, and the
+# logical drivers. Output lands in `target/$(HOST_TARGET)/doc`; CI publishes it.
+.PHONY: docs
+docs: ## Generate the API reference (rustdoc) for host-buildable crates
+	cargo doc --no-deps $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
+
 # Applications that refuse to build for the default board, and the board each
 # one wants. `blink`, `imu` and `pwm` need hardware only the Atoms declare, and
 # they say so with a `compile_error!` naming the board -- which is good

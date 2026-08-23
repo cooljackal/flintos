@@ -37,6 +37,7 @@ link drops at the AP's inactivity timeout. See
 
 | Page | What it covers |
 |---|---|
+| [API Overview](API-Overview) | The system + driver API, and the generated rustdoc |
 | [Architecture](Architecture) | How the layers fit |
 | [Multicore](Multicore) | Both cores, one scheduler; pinning tasks |
 | [Debug Levels](Debug-Levels) | What each level costs |

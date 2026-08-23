@@ -32,7 +32,8 @@ handshake in a first-party Rust supplicant, held for minutes on hardware. No IP
 layer yet, so the link drops at the AP's inactivity timeout ([#74]). BLE is
 groundwork only. See [doc/plan-radio.md](doc/plan-radio.md).
 
-Full docs are in the [wiki]. Open work lives in [issues] — the source of truth.
+Full docs are in the [wiki], the API reference is [generated rustdoc][apidocs],
+and open work lives in [issues] — the source of truth.
 
 ✅ verified on hardware · 🧪 host-tested, not yet on silicon · 🚧 partial · ⛔ not started · — n/a
 
@@ -242,6 +243,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) — commits need a DCO sign-off
 [Apache-2.0](LICENSE). Patent grant included — see section 3.
 
 [wiki]: https://github.com/cooljackal/flintos/wiki
+[apidocs]: https://cooljackal.github.io/flintos/api/
 [issues]: https://github.com/cooljackal/flintos/issues
 [boards]: https://github.com/cooljackal/flintos/wiki/Supported-Boards
 [quickstart]: https://github.com/cooljackal/flintos/wiki/Quickstart

@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+name: API docs
+
+# The API reference is rustdoc, generated from the doc comments so it cannot
+# drift from the code, and published to GitHub Pages. Like the wiki, it is built
+# from `main` rather than edited by hand, so there is nothing anyone can forget.
+#
+# One-time setup: enable Pages with the "GitHub Actions" source at
+# Settings -> Pages. Until then the deploy step fails with that instruction.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/src/**'
+      - '**/Cargo.toml'
+      - 'Makefile'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One published site at a time; a later run carries the newer docs and wins.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Same host-crate set as `make check` (HOST_SELECT). rustdoc warnings
+      # (e.g. a stale intra-doc link) are not fatal here: a missing link should
+      # not take the whole reference offline.
+      - name: Generate the API reference
+        run: make docs
+
+      # rustdoc writes one directory per crate and no shared landing page, so
+      # point the site root at the `api` crate -- the system API an application
+      # author reaches for first.
+      - name: Add a landing redirect
+        run: |
+          echo '<!doctype html><meta http-equiv="refresh" content="0; url=api/index.html">' \
+            > target/x86_64-unknown-linux-gnu/doc/index.html
+
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/x86_64-unknown-linux-gnu/doc
+
+  deploy:
+    name: Publish to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
