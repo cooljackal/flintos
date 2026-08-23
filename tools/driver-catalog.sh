@@ -16,7 +16,8 @@ list_driver_dirs() {
 	sed -n '/^[[:space:]]*members = \[/,/^\]/p' Cargo.toml |
 		sed -n 's/^[[:space:]]*"\(drivers\/[^"]*\)".*/\1/p' |
 		while IFS= read -r d; do
-			case "$(basename "$d")" in _*) continue ;; esac
+			# `${d##*/}` not `basename` -- basename forks a process per driver.
+			case "${d##*/}" in _*) continue ;; esac
 			[ -f "$d/Cargo.toml" ] && printf '%s\n' "$d"
 		done
 	# A while-read loop exits non-zero at EOF; without this the function's
@@ -49,7 +50,7 @@ resolve_driver() {
 	all=$(list_driver_dirs)
 	matches=""
 	for d in $all; do
-		if [ "$(driver_pkg "$d")" = "$q" ] || [ "$(basename "$d")" = "$q" ]; then
+		if [ "${d##*/}" = "$q" ] || [ "$(driver_pkg "$d")" = "$q" ]; then
 			matches="${matches}${d}
 "
 		fi
