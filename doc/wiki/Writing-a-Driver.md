@@ -55,6 +55,7 @@ and `make device-matrix` shows it.
 
 ```rust
 #![no_std]
+#![cfg_attr(not(test), forbid(unsafe_code))]
 
 use api::bus::{BusHandle, BusResult};
 
@@ -68,44 +69,63 @@ impl Bme280 {
     }
 
     pub fn read_id(&self) -> BusResult<u8> {
-        let mut rx = [0u8; 1];
-        self.bus.select()?;
-        self.bus.write(&[0xD0])?;
-        self.bus.read(&mut rx)?;
-        self.bus.deselect()?;
-        Ok(rx[0])
+        // Address, then value, in one transaction — the same bytes on SPI
+        // and I2C. `BusHandle` dispatches on the bus kind for you.
+        self.bus.read_reg(0xD0)
     }
 }
 ```
 
-You get a `BusHandle` and never learn what's behind it. If you find yourself
-wanting a register address or a pin number, you're in the wrong layer.
+You get a `BusHandle` and never learn what's behind it — `read_reg`,
+`read_regs`, `write_reg`, `read` and `write` all build the transfer and hand
+it to the bus. If you find yourself wanting a register address or a pin number,
+you're in the wrong layer. The shipped `bme280` driver
+(`drivers/logical/bme280/src/lib.rs`) is the fuller worked example.
 
 ## Layer 2 — a bus
 
 Turns a `PhysicalBus` into a protocol. Implement `api::bus::Bus`:
 
 ```rust
-fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()>;
-fn write(&self, data: &[u8]) -> BusResult<()>;
-fn read(&self, buf: &mut [u8]) -> BusResult<()>;
-fn set_speed(&self, speed: BusSpeed) -> BusResult<()>;
-fn select(&self) -> BusResult<()>;
-fn deselect(&self) -> BusResult<()>;
+fn transfer(&self, ops: &mut [Op]) -> BusResult<()>;   // one transaction
+fn max_transfer(&self) -> usize;                       // FIFO-bounded op size
+fn kind(&self) -> BusKind;                             // Spi / I2c / …
+fn set_speed(&self, speed: BusSpeed) -> BusResult<()>; // default: InvalidConfig
 ```
 
-Chip select, framing, retries live here. Registers don't.
+A `Bus` runs a *list* of `Op`s as one logical transaction — each `Op` is a
+write, a read, or a full-duplex exchange, carrying its own word width,
+chip-select hold (`CsHold`) and trailing delay. The old copy-based
+`write`/`read`/`transfer(tx, rx)`/`select`/`deselect` calls live on
+`BusHandle` now, as thin wrappers that build a one- or two-element `[Op]`, so
+logical drivers kept working unchanged. Framing and retries live here.
+Registers don't. `drivers/bus/spi-bus` and `drivers/bus/i2c-bus` are the two
+shipped examples.
 
 ## Layer 1 — a peripheral
 
-The only layer that touches hardware. Implement
-`hal::bus::PhysicalBus`:
+The only layer that touches hardware. The physical driver is split across two
+traits, both in `hal::bus`:
 
 ```rust
-fn init(&mut self, config: &BusConfig) -> BusResult<()>;
-fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()>;
-fn set_enabled(&mut self, enabled: bool);
+// The run-time half: everything takes &self, so a shared &driver is itself a
+// PhysicalTransfer (there is a blanket impl for &T).
+trait PhysicalTransfer {
+    fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()>;
+    fn set_speed(&self, speed: BusSpeed) -> BusResult<()>;   // default: InvalidConfig
+}
+
+// The construction-time half: the one &mut self method, added on top.
+trait PhysicalBus: PhysicalTransfer {
+    fn init(&mut self, config: &BusConfig) -> BusResult<()>;
+}
 ```
+
+`exchange` (renamed from the old `raw_transfer`) is the one primitive that
+moves bytes: it clocks `tx` out while filling `rx`. **For I2C, `tx[0]` is the
+device's 7-bit address, unshifted** — the physical driver adds the R/W bit.
+Splitting the `&mut self` construction step onto `PhysicalBus` is what lets a
+bus layer hold a shared `&dyn PhysicalBus` and still call `exchange`.
 
 `init` does three things, in this order:
 

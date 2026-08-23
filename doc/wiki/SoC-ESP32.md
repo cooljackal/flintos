@@ -138,7 +138,7 @@ behind each cell.
 | TIMG | ✅ | Four 64-bit timers, 16-bit prescaler, one-shot and periodic alarms firing from the ISR. Microsecond resolution, checked against the scheduler tick. The tick itself stays on the Xtensa CCOMPARE. |
 | ADC, DAC, touch | ⛔ | Not started — see the issue tracker. |
 | I2S, TWAI, SDIO, EMAC | ⛔ | Not started. |
-| Wi-Fi (station) | 🚧 | Scans, associates, and completes a WPA2-PSK connection — held against a WPA2/WPA3-transition AP for minutes on hardware. The 4-way handshake and key derivation are a first-party Rust supplicant (`lib/wpa` over `lib/crypto`), not a vendored C one; the Espressif blob is MAC/PHY only. Partial: no IP layer yet — no DHCP, keepalive or GTK-rekey — so the link drops at the AP's inactivity timeout. `apps/wificonnect` joins a network. |
+| Wi-Fi (station) | 🚧 | Scans, associates, and completes a WPA2-PSK connection — held against a WPA2/WPA3-transition AP for minutes on hardware. The 4-way handshake and key derivation are a first-party Rust supplicant (`lib/wpa` over `lib/crypto`), not a vendored C one; the Espressif blob is MAC/PHY only. Partial: no IP layer yet — no DHCP, keepalive or GTK-rekey — so the link drops at the AP's inactivity timeout. `apps/tests/wificonnect` joins a network. |
 | Bluetooth | ⛔ | Not planned. |
 
 ## Peripheral map

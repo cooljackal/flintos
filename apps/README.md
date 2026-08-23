@@ -83,7 +83,7 @@ An application is three files, and `hello` is nothing but those three.
 
 use api::prelude::*;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 fn main() {
     Task::new("hello", hello).spawn().expect("spawn");

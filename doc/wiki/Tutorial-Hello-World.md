@@ -1,9 +1,9 @@
 # Tutorial: Hello World
 
 The kernel is a library. The thing you flash is an application in `apps/`. This
-walks through the smallest one, `apps/hello` — one task that logs a tick.
+walks through the smallest one, `apps/examples/hello` — one task that logs a tick.
 
-Copy `apps/hello/`, rename it, add it to `members` in the workspace
+Copy `apps/examples/hello/`, rename it, add it to `members` in the workspace
 `Cargo.toml`. That's the setup — `make flash APP=<name>` works from there.
 
 An application is three files.
@@ -14,19 +14,18 @@ An application is three files.
 #![no_std]
 #![no_main]
 
-use api::task;
-use hal::types::Priority;
+use api::prelude::*;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 fn main() {
-    task::spawn("worker", worker, Priority::Normal(1), 4096);
+    Task::new("worker", worker).spawn().expect("spawn");
 }
 
 fn worker() {
     loop {
-        api::log_info!("tick");
-        task::sleep_ms(1000);
+        log_info!("tick");
+        sleep_ms(1000);
     }
 }
 ```
@@ -48,30 +47,32 @@ Supplies the linker script. Cargo won't inherit it from a dependency.
 
 ```toml
 [dependencies]
-kernel = { path = "../../kernel", default-features = false }
-api = { path = "../../api" }
-hal = { path = "../../hal" }
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
 
 [build-dependencies]
-build = { path = "../../tools/build" }
+build = { path = "../../../tools/build" }
 
 [features]
-default = ["debug-level-1"]          # no default board, deliberately
-board-esp32-wrover = ["kernel/board-esp32-wrover"]
-board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
-board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
-board-wio-rp2040-mini = ["kernel/board-wio-rp2040-mini"]
-debug-level-0 = ["kernel/debug-level-0"]
-debug-level-1 = ["kernel/debug-level-1"]
-debug-level-2 = ["kernel/debug-level-2"]
-debug-level-3 = ["kernel/debug-level-3"]
-self-test = ["kernel/self-test"]
+default = ["kernel/debug-level-1"]
 ```
 
-Copy the feature block verbatim. Exactly one `board-*` must reach
-`board`, which is why the app sets `default-features = false` and `make`
-passes `--no-default-features`. Cargo unions features; without that the default
-board stays on alongside the one you asked for.
+An application depends on `api` and `kernel` only — `api` re-exports everything
+it used to reach into `hal` for, so the manifest no longer lists it (#105).
+Paths are three `..` deep because examples live under `apps/examples/`.
+
+Board and debug level are the **kernel's** features, not the application's, and
+`make` forwards them on the command line rather than the app declaring one
+feature per choice (#120):
+
+```
+cargo build -p hello --no-default-features --features kernel/board-esp32-devkitc,kernel/debug-level-1
+```
+
+Exactly one `board-*` must reach `board`, which is why the app sets
+`default-features = false` and `make` passes `--no-default-features`. Cargo
+unions features; without that a default board would stay on alongside the one
+you asked for.
 
 ## Priorities
 
@@ -104,10 +105,16 @@ reports itself by name:
 
 ## API
 
+`use api::prelude::*;` brings all of this in:
+
 ```rust
-task::spawn(name, entry, priority, stack_bytes)           // -> Option<TaskId>
-task::spawn_on(core, name, entry, priority, stack_bytes)  // pinned to a core
-task::sleep_ms(ms)
+Task::new(name, entry)          // builder; nothing runs until .spawn()
+    .priority(Priority::Normal(2))   // optional, defaults to Normal(1)
+    .stack(4096)                     // optional, defaults to 4096
+    .on_core(1)                      // optional, defaults to "either core"
+    .spawn();                   // -> Option<TaskId>; None if the pool is full
+
+sleep_ms(ms)
 task::yield_now()
 
 timer::now_ms()
@@ -119,7 +126,7 @@ log_debug!() log_trace!()                 // feature-gated
 Queues and mutexes: see `api/src/queue.rs` and `api/src/mutex.rs`.
 `Queue::send_isr` is the interrupt-to-task path; it wakes a blocked receiver.
 
-`spawn` leaves the task free to run on any core, which is usually what you
-want. Reach for `spawn_on` when the core matters for correctness — see
+`Task::new` leaves the task free to run on any core, which is usually what you
+want. Reach for `.on_core(n)` when the core matters for correctness — see
 [Multicore](Multicore#when-to-pin). The second core has to be started first,
 or a task pinned to it waits forever.

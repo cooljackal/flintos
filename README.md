@@ -167,23 +167,26 @@ A whole application, `apps/examples/hello/src/main.rs`:
 #![no_std]
 #![no_main]
 
-use api::task;
-use hal::types::Priority;
+use api::prelude::*;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 fn main() {
     // runs once, after the kernel is up but before interrupts unmask
-    task::spawn("blink", blink, Priority::Normal(1), 4096);
+    Task::new("blink", blink).spawn().expect("spawn");
 }
 
 fn blink() {
     loop {
-        api::log_info!("tick at {} ms", api::timer::now_ms());
-        task::sleep_ms(500);
+        log_info!("tick at {} ms", timer::now_ms());
+        sleep_ms(500);
     }
 }
 ```
+
+`Task::new(name, entry)` needs only those two; `.priority(..)`, `.stack(..)` and
+`.on_core(..)` are optional builder steps before `.spawn()`, which returns `None`
+if the task pool is full.
 
 Priorities are banded — `Critical`, `Normal`, `Background`, each `0..15` — so you
 slot a task in without renumbering. Queues (`api::queue`) are typed and bounded,

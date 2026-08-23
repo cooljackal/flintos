@@ -7,7 +7,7 @@ peripheral addresses, the IRQ numbers and how to route pins.
 > **What belongs in a manifest:** every fact an application would otherwise
 > look up in a datasheet — pins, base addresses, IRQs, and the *shape* of
 > whatever is attached. If your board has a panel, measure its layout and
-> declare it here; `apps/blink` walks a chain one LED at a time so you can see
+> declare it here; `apps/examples/blink` walks a chain one LED at a time so you can see
 > which cell lights for which index. Do not guess it — there are 16 plausible
 > layouts and the wrong one lights the wrong pixel, which reads as a broken
 > panel.
@@ -40,15 +40,14 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         irq: addr::IRQ_UART0,
         dma_capable: true,
         dma_pool_bytes: 512,
-        config: BusConfig::Uart {
-            tx: 1, rx: 3, baud: 115200,
-            data_bits: UartDataBits::Bits8,
-            parity: UartParity::None,
-            stop_bits: UartStopBits::Stop1,
-        },
+        config: BusConfig::uart_8n1(1, 3, 115200),
     },
 ];
 ```
+
+`BusConfig` wraps one config struct per bus kind; the `const fn` helpers
+(`uart_8n1`, `spi_mode0`, `i2c`) cover the common shapes. Anything else is
+`BusConfig::Uart(UartConfig { .. ..Default::default() })` with struct syntax.
 
 Base addresses and IRQs come from `soc_esp32::addr`. Don't paste hex — a
 typo in one board file is invisible from every other.
@@ -79,36 +78,52 @@ pub const RGB_LED_LAYOUT: Option<led_matrix::Layout> = Some(Layout::new(
 board-my-board = []
 ```
 
-`board/src/lib.rs` — three edits:
+`board/src/lib.rs` — four one-line edits:
 
 ```rust
+// 1. the module
 #[cfg(feature = "board-my-board")]
 pub mod my_board;
+
+// 2. one more term in the counted assert
+const SELECTED: usize = /* … */ + cfg!(feature = "board-my-board") as usize;
+
+// 3. one line in the "no board selected" compile_error! list
+
+// 4. an arm in the `active` re-export
+#[cfg(feature = "board-my-board")]
+pub use my_board as active;
 ```
 
-Add an arm to the `active` re-export, and extend both `compile_error!` guards.
-The "more than one board" guard is pairwise, so it grows with each board.
+Two guards keep exactly one board on. The "no board selected" case is a
+`compile_error!` that lists the boards. The "more than one" case is a **counted
+assert** — `assert!(SELECTED <= 1, …)` over a `const SELECTED` that sums
+`cfg!(feature = …) as usize` per board — so adding a board is one term, not a
+pairwise line against every existing board.
 
 Registering a board touches more than one file — the manifest, `board/Cargo.toml`,
-three places in `board/src/lib.rs`, `kernel/Cargo.toml`, each app's `Cargo.toml`,
-and the `BOARDS` list in the `Makefile`. That last one matters: `make test-boards`
-runs each manifest's invariant tests, and a board missing from the list is a
-board whose tests never run.
-The "more than one" guard is pairwise across every board feature, so it grows
-by one line per existing board.
+the four places in `board/src/lib.rs` above, `kernel/Cargo.toml`, and the
+`BOARDS` list in the `Makefile`. That last one matters: `make test-boards` runs
+each manifest's invariant tests, and a board missing from the list is a board
+whose tests never run.
 
-## 3. Let apps select it
+## 3. Wire the feature through the kernel
 
-In each app's `Cargo.toml`:
+Apps no longer forward board features (#120). The board is the **kernel's**
+feature and the build passes it on the command line — `make flash BOARD=…`
+turns into `--features kernel/board-my-board`, so nothing goes in the app's
+`Cargo.toml`.
+
+`board/Cargo.toml`:
 
 ```toml
-board-my-board = ["kernel/board-my-board"]
+board-my-board = ["dep:soc-esp32"]   # or dep:soc-rp2040
 ```
 
-And `kernel/Cargo.toml`:
+`kernel/Cargo.toml` — pull in the arch, the SoC and the board manifest:
 
 ```toml
-board-my-board = ["board/board-my-board"]
+board-my-board = ["arch-xtensa", "soc-esp32", "board/board-my-board"]
 ```
 
 ## 4. Build

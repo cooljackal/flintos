@@ -13,10 +13,16 @@ Everything an application calls lives in the [`api`](https://cooljackal.github.i
 
 | Module | What it gives you |
 |---|---|
-| [`api::task`](https://cooljackal.github.io/flintos/api/task/index.html) | `spawn`, `spawn_on` (pin to a core), `sleep_ms`, `yield_now` |
+| [`api::prelude`](https://cooljackal.github.io/flintos/api/prelude/index.html) | `use api::prelude::*;` — one glob for the logging macros, the `Task` builder, `sleep_ms`/`exit`/`wait_until`, `Error`/`Result`, the sync cells and the bus/pin/stream surface |
+| [`api::task`](https://cooljackal.github.io/flintos/api/task/index.html) | The `Task` builder (`Task::new(name, entry).priority(..).stack(..).on_core(..).spawn()`), plus `spawn`/`spawn_on` free fns, `sleep_ms`, `yield_now`, `exit`, `wait_until` |
 | [`api::queue`](https://cooljackal.github.io/flintos/api/queue/index.html) | Typed, bounded queues; `send`/`recv` with timeout, `send_isr` from an interrupt |
 | [`api::mutex`](https://cooljackal.github.io/flintos/api/mutex/index.html) | `Mutex` with priority inheritance; `lock` returns a guard |
+| [`api::sync`](https://cooljackal.github.io/flintos/api/sync/index.html) | `Once` and `CsCell` shared-static cells (also re-exported at the crate root) |
 | [`api::timer`](https://cooljackal.github.io/flintos/api/timer/index.html) | `now_ms` and the monotonic tick |
+| [`api::time`](https://cooljackal.github.io/flintos/api/time/index.html) | `now_us` — microsecond monotonic clock, for timing shorter than a tick |
+| [`api::interrupt`](https://cooljackal.github.io/flintos/api/interrupt/index.html) | `connect(source, handler)` — route a peripheral IRQ to a top-half |
+| [`api::dma`](https://cooljackal.github.io/flintos/api/dma/index.html) | `alloc`/`begin`/`await_transfer` for drivers that move blocks |
+| `api::Error` / `api::Result` | The one error type an application `?`s into (re-exported from `hal`) |
 | [`api::debug`](https://cooljackal.github.io/flintos/api/debug/index.html) | `log_error!`…`log_trace!`, metrics, stack high-water marks, panic capture |
 
 Start with [Tutorial: Hello World](Tutorial-Hello-World).

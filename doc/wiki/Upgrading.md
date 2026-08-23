@@ -47,7 +47,7 @@ is hard to unpick when it goes wrong.
 Every application states what it was written against:
 
 ```rust
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 ```
 
 The kernel checks it at compile time. A mismatch fails the build naming the
@@ -58,7 +58,7 @@ error: FlintOS ABI mismatch: this application declares `abi = 1`, which is not
        the ABI this kernel provides (see `api::ABI`).
        Read the Breaking entries in CHANGELOG.md, apply them, then update the
        declaration in flint_app!.
-  --> apps/hello/src/main.rs:17:1
+  --> apps/examples/hello/src/main.rs:14:1
 ```
 
 The number bumps whenever the surface you compile against changes

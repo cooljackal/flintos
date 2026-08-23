@@ -95,7 +95,7 @@ make flash EXTRA_FEATURES=self-test
 
 ## Verifying the watchdogs
 
-`kernel::watchdog::arm()` is opt-in and `apps/demo` calls it — but a board that
+`kernel::watchdog::arm()` is opt-in and `apps/examples/demo` calls it — but a board that
 runs normally only proves the watchdogs are being *fed*. Proving one *fires*
 means breaking the board on purpose:
 

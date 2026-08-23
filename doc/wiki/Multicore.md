@@ -69,13 +69,13 @@ that stays dark after a partial release gives no diagnostic at all.
 By default, anywhere:
 
 ```rust
-task::spawn("worker", worker, Priority::Normal(2), 4096);
+Task::new("worker", worker).priority(Priority::Normal(2)).spawn();
 ```
 
 Pinned to a core, when it matters:
 
 ```rust
-task::spawn_on(1, "sensor", sensor, Priority::Normal(2), 4096);
+Task::new("sensor", sensor).priority(Priority::Normal(2)).on_core(1).spawn();
 ```
 
 Pinning is a constraint on the scheduler, not a hint. A task pinned to core 1
@@ -209,7 +209,7 @@ invariant esp-idf relies on, reached from FlintOS's own primitives.
 
 The stall survives as a bounded fallback, and `esp32_flash::PARK_FELL_BACK`
 records it if it ever fires. `esp32_flash::PARKS` counts the handshakes, so a
-dead handshake and a working one can be told apart — `apps/flashprobe` prints
+dead handshake and a working one can be told apart — `apps/tests/flashprobe` prints
 both, and is the only application that starts the second core.
 
 ### Interrupts during a flash operation
@@ -286,4 +286,4 @@ test that passes for the wrong reason.
 - `kernel/src/smp.rs` — the lock
 - `kernel/src/scheduler.rs` — affinity and per-core current
 - `soc/esp32/src/dport.rs` — the DPORT erratum workaround and its lock
-- `apps/smp/` — the hardware test
+- `apps/tests/smp/` — the hardware test

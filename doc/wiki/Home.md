@@ -30,7 +30,7 @@ link drops at the AP's inactivity timeout. See
 |---|---|
 | [Quickstart](Quickstart) | Toolchain, first flash, reading the output |
 | [Supported Boards](Supported-Boards) | What runs where, and what "verified" means |
-| [Tutorial: Hello World](Tutorial-Hello-World) | Your own tasks, from `apps/hello` |
+| [Tutorial: Hello World](Tutorial-Hello-World) | Your own tasks, from `apps/examples/hello` |
 | [Writing a Driver](Writing-a-Driver) | Adding a driver, with examples per layer |
 
 ## Reference

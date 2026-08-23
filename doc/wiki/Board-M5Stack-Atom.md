@@ -99,7 +99,7 @@ pins reach nothing else, so there is no bus for another device to share.
 
 ## The IMU
 
-`apps/imu` drives it, and it is the first device in this tree assembled through
+`apps/examples/imu` drives it, and it is the first device in this tree assembled through
 all three driver layers — `esp32-i2c` → `i2c-bus` → `mpu6886`.
 
 ```bash

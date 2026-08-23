@@ -20,7 +20,7 @@ cd flintos
 make flash BOARD=board-esp32-devkitc
 ```
 
-Builds `apps/demo`, flashes over USB serial, opens a monitor.
+Builds `apps/examples/demo`, flashes over USB serial, opens a monitor.
 
 ## 3. Pick something else
 
@@ -50,10 +50,10 @@ like broken hardware.
 [FLINT] PS=0x0006000f WOE=1 (window overflow/underflow enabled)
 [FLINT] SP=0x3ffb41d0 task_stack_pool=[0x3ffc0000, 0x3ffd8000)
 [FLINT] cpu_hz=240000000 (measured: CCOUNT timed against RTC slow clock)
-[    2][task:1] INFO  [sensor] prio=Normal(1) n=1
-[    5][task:2] INFO  [consumer] prio=Normal(5) n=1
-[  505][task:1] INFO  [sensor] prio=Normal(1) n=2
-[ 3010][task:3] INFO  [housekeep] prio=Background(1) n=1
+[    2][sensor] INFO  prio=Normal(1) n=1
+[    5][consumer] INFO  prio=Normal(5) n=1
+[  505][sensor] INFO  prio=Normal(1) n=2
+[ 3010][housekeep] INFO  prio=Background(1) n=1
 ```
 
 The bracketed number is the tick. sensor every 500 ms, consumer every 1000 ms,
