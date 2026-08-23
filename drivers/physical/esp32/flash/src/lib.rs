@@ -182,17 +182,22 @@ pub struct ChipInfo {
 impl ChipInfo {
     /// Read it back.
     ///
-    /// # Safety
-    /// Reads ROM-owned DRAM.
-    pub unsafe fn read() -> Self {
+    /// Safe: a side-effect-free read of a fixed, always-mapped ROM struct in
+    /// DRAM. There is no precondition — [`looks_sane`](Self::looks_sane) is how
+    /// a caller judges whether the bootloader populated it.
+    pub fn read() -> Self {
         let p = ROM_SPIFLASH_CHIP as *const u32;
-        Self {
-            device_id: p.read_volatile(),
-            chip_size: p.add(1).read_volatile(),
-            block_size: p.add(2).read_volatile(),
-            sector_size: p.add(3).read_volatile(),
-            page_size: p.add(4).read_volatile(),
-            status_mask: p.add(5).read_volatile(),
+        // SAFETY: `ROM_SPIFLASH_CHIP` is a fixed, valid, aligned DRAM address
+        // present on every boot; six consecutive `u32`s of it are the struct.
+        unsafe {
+            Self {
+                device_id: p.read_volatile(),
+                chip_size: p.add(1).read_volatile(),
+                block_size: p.add(2).read_volatile(),
+                sector_size: p.add(3).read_volatile(),
+                page_size: p.add(4).read_volatile(),
+                status_mask: p.add(5).read_volatile(),
+            }
         }
     }
 
