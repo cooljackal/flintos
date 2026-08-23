@@ -14,4 +14,5 @@ rust-version.workspace = true
 # A peripheral driver names the chip's infrastructure -- the address map, clock
 # gating, pin routing -- and nothing above it. That is what Layer 1 is allowed.
 [dependencies]
+hal = { path = "../../../../hal" }
 soc-esp32 = { path = "../../../../soc/esp32" }

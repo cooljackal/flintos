@@ -69,11 +69,33 @@
 
 #![no_std]
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use hal::bus::BusError;
+use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr::RMT_BASE;
-use soc_esp32::reg;
+use soc_esp32::dport::{self, ClockBit};
+use soc_esp32::{reg, Esp32PinMux};
 
 /// APB clock feeding the RMT divider.
 pub const APB_HZ: u32 = soc_esp32::APB_HZ;
+
+/// The chip's RMT peripheral interrupt source, for `interrupt::connect`.
+///
+/// One source serves all eight channels (`ETS_RMT_INTR_SOURCE`); the handler
+/// reads the per-channel status to tell them apart. Re-exported so a caller can
+/// wire the channel to a CPU interrupt without naming the SoC's address map.
+pub const IRQ_SOURCE: u8 = soc_esp32::addr::IRQ_RMT;
+
+/// Number of channels this driver can claim.
+const CHANNELS: usize = 8;
+
+/// One claim flag per channel. [`Rmt::on_pin`] wins exactly one — the
+/// `svd2rust` `Peripherals::take` pattern — which discharges the "own the
+/// channel exclusively" invariant [`Rmt::new`] rests on. `core::sync::atomic`,
+/// not `portable_atomic`: a physical driver may not name a crates.io crate (see
+/// `tools/check-layers.sh`) and Xtensa has native atomics.
+static CHANNEL_CLAIMED: [AtomicBool; CHANNELS] = [const { AtomicBool::new(false) }; CHANNELS];
 
 /// Entries in one channel's memory block.
 ///
@@ -256,6 +278,50 @@ impl Rmt {
         reg::set(apb, APB_FIFO_MASK);
 
         Some(Self { ch })
+    }
+
+    /// Claim channel `ch`, gate the RMT clock, route its output to `pin`, and
+    /// configure it to transmit with `div` as the clock divider. The safe
+    /// constructor.
+    ///
+    /// Wins the channel's claim flag (a second `on_pin` for the same channel
+    /// returns [`BusError::Busy`]), gates the RMT peripheral clock — the block
+    /// answers reads with garbage until it is clocked — routes
+    /// `Signal::RmtOut(ch)` to the pad per `config`, and configures the channel
+    /// from [`Rmt::new`]. That is what `Esp32I2c::open` does for its bus
+    /// internally: the driver gates its own clock and owns its own pin, so the
+    /// caller touches neither `dport` nor `PinMux`.
+    ///
+    /// The claim proves single ownership, so no `unsafe` at the call site;
+    /// [`Rmt::new`] stays for callers doing their own clock/route bring-up (the
+    /// kernel self-tests). The pad's *output enable* is left to the caller: on
+    /// this chip the GPIO matrix carries it, but esp-idf also sets the GPIO
+    /// direction, and whether that is load-bearing is the board's call, not this
+    /// driver's.
+    pub fn on_pin(ch: u8, div: u8, pin: u8, config: PinConfig) -> hal::Result<Self> {
+        if ch as usize >= CHANNELS {
+            return Err(BusError::InvalidConfig.into());
+        }
+        CHANNEL_CLAIMED[ch as usize]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+            .map_err(|_| BusError::Busy)?;
+
+        // Clock the peripheral before touching any register.
+        // SAFETY: the RMT is this program's to gate; `enable` is itself safe
+        // against the other core and interrupts.
+        unsafe { dport::enable(ClockBit::RMT) };
+
+        let route = Esp32PinMux::new().route(Signal::RmtOut(ch), pin, config);
+        // SAFETY: the claim above is exclusive, so this is the only live `Rmt`
+        // on channel `ch`, and its output was just routed to the pad.
+        let built = route.ok().and_then(|()| unsafe { Self::new(ch, div) });
+        match built {
+            Some(rmt) => Ok(rmt),
+            None => {
+                CHANNEL_CLAIMED[ch as usize].store(false, Ordering::Release);
+                Err(BusError::InvalidConfig.into())
+            }
+        }
     }
 
     /// Write `entries` and start transmitting. Returns immediately.

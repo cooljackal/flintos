@@ -43,7 +43,26 @@
 
 #![no_std]
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use hal::bus::BusError;
+use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr::LEDC_BASE;
+use soc_esp32::dport::{self, ClockBit};
+use soc_esp32::Esp32PinMux;
+
+/// One claim flag per high-speed timer and per high-speed channel. The safe
+/// constructors ([`Timer::on`], [`Channel::on_pin`]) win exactly one each —
+/// the `svd2rust` `Peripherals::take` pattern — which discharges the "own the
+/// registers exclusively" invariant the `unsafe new`s rest on, so the
+/// constructor carries the proof and the duty methods stay safe.
+/// `core::sync::atomic`, not `portable_atomic`: a physical driver may not name
+/// a crates.io crate (see `tools/check-layers.sh`) and Xtensa has native
+/// atomics.
+static TIMER_CLAIMED: [AtomicBool; TIMERS as usize] =
+    [const { AtomicBool::new(false) }; TIMERS as usize];
+static CHANNEL_CLAIMED: [AtomicBool; CHANNELS as usize] =
+    [const { AtomicBool::new(false) }; CHANNELS as usize];
 
 /// APB clock, the only source this driver uses.
 pub const APB_HZ: u32 = soc_esp32::APB_HZ;
@@ -171,6 +190,39 @@ impl Timer {
         Some(Self { idx })
     }
 
+    /// Claim a timer, gate the LEDC clock, and start it. The safe constructor.
+    ///
+    /// Wins the timer's claim flag (a second `on` for the same timer returns
+    /// [`BusError::Busy`]), gates the LEDC peripheral clock — the block answers
+    /// reads with garbage until it is clocked — and configures the timer from
+    /// [`Timer::new`]. The claim proves single ownership, so no `unsafe` is
+    /// needed at the call site; [`Timer::new`] stays for callers stepping
+    /// through bring-up by hand.
+    pub fn on(idx: u8, freq_hz: u32, res_bits: u8) -> hal::Result<Self> {
+        if idx >= TIMERS {
+            return Err(BusError::InvalidConfig.into());
+        }
+        TIMER_CLAIMED[idx as usize]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+            .map_err(|_| BusError::Busy)?;
+
+        // Clock the peripheral before touching any register. Idempotent, so a
+        // channel opened afterwards gating it again costs nothing.
+        // SAFETY: the LEDC is this program's to gate; `enable` is itself safe
+        // against the other core and interrupts.
+        unsafe { dport::enable(ClockBit::LEDC) };
+
+        // SAFETY: the claim above is exclusive, so this is the only live
+        // `Timer` on timer `idx`.
+        match unsafe { Self::new(idx, freq_hz, res_bits) } {
+            Some(t) => Ok(t),
+            None => {
+                TIMER_CLAIMED[idx as usize].store(false, Ordering::Release);
+                Err(BusError::InvalidConfig.into())
+            }
+        }
+    }
+
     /// The live counter. Advances while the timer runs.
     ///
     /// Safe: a side-effect-free read of a timer this `Timer` owns.
@@ -216,6 +268,50 @@ impl Channel {
             (((timer.idx as u32) & CONF0_TIMER_SEL_MASK) | CONF0_SIG_OUT_EN) & !CONF0_IDLE_LV,
         );
         Some(ch)
+    }
+
+    /// Claim a channel, point it at `timer`, route its output to `pin`, and
+    /// start driving. The safe constructor.
+    ///
+    /// Wins the channel's claim flag (a second `on_pin` for the same channel
+    /// returns [`BusError::Busy`]), routes `Signal::LedcHs(idx)` to the pad per
+    /// `config`, and configures the channel from [`Channel::new`]. The route is
+    /// what `Esp32I2c::open` does for its bus internally: the driver owns its
+    /// own pin, so the caller does not touch `PinMux`. Pass
+    /// [`PinConfig::with_input`] to leave the pad readable for a self-measuring
+    /// caller.
+    ///
+    /// The claim proves single ownership, so no `unsafe` at the call site;
+    /// [`Channel::new`] stays for callers doing their own routing.
+    pub fn on_pin(
+        idx: u8,
+        timer: &Timer,
+        pin: u8,
+        res_bits: u8,
+        duty: u32,
+        config: PinConfig,
+    ) -> hal::Result<Self> {
+        if idx >= CHANNELS {
+            return Err(BusError::InvalidConfig.into());
+        }
+        CHANNEL_CLAIMED[idx as usize]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+            .map_err(|_| BusError::Busy)?;
+
+        let route = Esp32PinMux::new().route(Signal::LedcHs(idx), pin, config);
+        let built = route.ok().and_then(|()| {
+            // SAFETY: the claim above is exclusive, so this is the only live
+            // `Channel` on channel `idx`, and its output was just routed to the
+            // pad.
+            unsafe { Self::new(idx, timer, res_bits, duty) }
+        });
+        match built {
+            Some(ch) => Ok(ch),
+            None => {
+                CHANNEL_CLAIMED[idx as usize].store(false, Ordering::Release);
+                Err(BusError::InvalidConfig.into())
+            }
+        }
     }
 
     /// Set the duty, in steps of `1 / 2^res_bits`.
