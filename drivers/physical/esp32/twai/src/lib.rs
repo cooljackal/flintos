@@ -246,6 +246,16 @@ unsafe fn read8(addr: u32) -> u32 {
     reg::read(addr as *mut u32) & 0xFF
 }
 
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<TwaiError> for hal::Error {
+    fn from(e: TwaiError) -> Self {
+        match e {
+            TwaiError::Timeout => Self::Other("twai: no frame received in time"),
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -318,15 +328,5 @@ mod tests {
         assert_eq!(CMD_RRB, 1 << 2);
         assert_eq!(CMD_CDO, 1 << 3);
         assert_eq!(STATUS_RBS, 1 << 0);
-    }
-}
-
-// ── Into the application's one error type (#103) ────────────────────────────
-
-impl From<TwaiError> for hal::Error {
-    fn from(e: TwaiError) -> Self {
-        match e {
-            TwaiError::Timeout => Self::Other("twai: no frame received in time"),
-        }
     }
 }

@@ -384,6 +384,17 @@ fn encode_config(divider: u32, autoreload: bool, alarm: bool) -> u32 {
     cfg
 }
 
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<TimerError> for hal::Error {
+    fn from(e: TimerError) -> Self {
+        // Both variants say the hardware cannot encode what was asked.
+        match e {
+            TimerError::UnsupportedResolution | TimerError::UnsupportedPeriod => Self::Unsupported,
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -482,16 +493,5 @@ mod tests {
         // Both timers share one INT_ENA/INT_CLR register. The same bit for
         // both would let one timer's handler acknowledge the other's alarm.
         assert_ne!(1u32 << 0, 1u32 << 1);
-    }
-}
-
-// ── Into the application's one error type (#103) ────────────────────────────
-
-impl From<TimerError> for hal::Error {
-    fn from(e: TimerError) -> Self {
-        // Both variants say the hardware cannot encode what was asked.
-        match e {
-            TimerError::UnsupportedResolution | TimerError::UnsupportedPeriod => Self::Unsupported,
-        }
     }
 }

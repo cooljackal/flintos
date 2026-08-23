@@ -294,6 +294,16 @@ impl Touch {
     }
 }
 
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<TouchError> for hal::Error {
+    fn from(e: TouchError) -> Self {
+        match e {
+            TouchError::Timeout => Self::Other("touch: conversion timed out"),
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -372,15 +382,5 @@ mod tests {
         assert_eq!(PAD_DAC_MASK & (PAD_MUX_SEL | PAD_TIE_OPT), 0);
         // The voltage fields are three distinct 2-bit fields.
         assert_eq!(DREF_FIELD_MASK, (0x3 << 29) | (0x3 << 27) | (0x3 << 25));
-    }
-}
-
-// ── Into the application's one error type (#103) ────────────────────────────
-
-impl From<TouchError> for hal::Error {
-    fn from(e: TouchError) -> Self {
-        match e {
-            TouchError::Timeout => Self::Other("touch: conversion timed out"),
-        }
     }
 }

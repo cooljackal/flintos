@@ -103,6 +103,7 @@ dependencies = [
 name = "esp32-adc"
 version = "0.1.0"
 dependencies = [
+ "hal",
  "soc-esp32",
 ]
 
@@ -117,6 +118,7 @@ dependencies = [
 name = "esp32-crypto"
 version = "0.1.0"
 dependencies = [
+ "hal",
  "soc-esp32",
 ]
 
@@ -128,6 +130,7 @@ version = "0.1.0"
 name = "esp32-flash"
 version = "0.1.0"
 dependencies = [
+ "hal",
  "soc-esp32",
 ]
 
@@ -204,6 +207,7 @@ dependencies = [
 name = "esp32-timg"
 version = "0.1.0"
 dependencies = [
+ "hal",
  "soc-esp32",
 ]
 
@@ -211,6 +215,7 @@ dependencies = [
 name = "esp32-touch"
 version = "0.1.0"
 dependencies = [
+ "hal",
  "soc-esp32",
 ]
 

@@ -684,6 +684,21 @@ unsafe fn kernel_interrupt_restore(saved: u32) {
     unsafe { core::mem::transmute::<usize, unsafe fn(u32)>(f)(saved) }
 }
 
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<FlashError> for hal::Error {
+    fn from(e: FlashError) -> Self {
+        match e {
+            FlashError::Timeout => Self::Other("flash: chip timed out"),
+            FlashError::OutOfRange => Self::Other("flash: address outside this region"),
+            FlashError::CacheBusy => Self::Other("flash: cache never went idle"),
+            FlashError::Misaligned => Self::Other("flash: address or length not word-aligned"),
+            // A chip whose status-register layout this driver does not know.
+            FlashError::UnknownChip => Self::Unsupported,
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -769,20 +784,5 @@ mod tests {
         // The default nvs partition is exactly six sectors.
         assert_eq!(LEN % SECTOR_SIZE, 0);
         assert_eq!(LEN / SECTOR_SIZE, 6);
-    }
-}
-
-// ── Into the application's one error type (#103) ────────────────────────────
-
-impl From<FlashError> for hal::Error {
-    fn from(e: FlashError) -> Self {
-        match e {
-            FlashError::Timeout => Self::Other("flash: chip timed out"),
-            FlashError::OutOfRange => Self::Other("flash: address outside this region"),
-            FlashError::CacheBusy => Self::Other("flash: cache never went idle"),
-            FlashError::Misaligned => Self::Other("flash: address or length not word-aligned"),
-            // A chip whose status-register layout this driver does not know.
-            FlashError::UnknownChip => Self::Unsupported,
-        }
     }
 }

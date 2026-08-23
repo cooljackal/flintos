@@ -459,6 +459,17 @@ impl Adc1 {
     }
 }
 
+// ── Into the application's one error type (#103) ────────────────────────────
+
+impl From<AdcError> for hal::Error {
+    fn from(e: AdcError) -> Self {
+        match e {
+            AdcError::Timeout => Self::Other("adc: conversion timed out"),
+            AdcError::NoPullOnThisPad => Self::Unsupported,
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -646,16 +657,5 @@ mod tests {
         // SAR waits on a controller that is not running.
         assert_eq!(base & EN_PAD_FORCE, EN_PAD_FORCE);
         assert_eq!(base & MEAS_START_FORCE, MEAS_START_FORCE);
-    }
-}
-
-// ── Into the application's one error type (#103) ────────────────────────────
-
-impl From<AdcError> for hal::Error {
-    fn from(e: AdcError) -> Self {
-        match e {
-            AdcError::Timeout => Self::Other("adc: conversion timed out"),
-            AdcError::NoPullOnThisPad => Self::Unsupported,
-        }
     }
 }
