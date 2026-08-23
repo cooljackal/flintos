@@ -56,8 +56,8 @@ pub(crate) fn mcpwm_complementary_pair_deadtime_and_fault(pins: [u8; 3]) -> Chec
     };
 
     let pwm = unsafe { Mcpwm::new(&cfg) };
-    unsafe { pwm.route_output_a(pwm_a) }.map_err(|_| "PWM0A output would not route")?;
-    unsafe { pwm.route_output_b(pwm_b) }.map_err(|_| "PWM0B output would not route")?;
+    pwm.route_output_a(pwm_a).map_err(|_| "PWM0A output would not route")?;
+    pwm.route_output_b(pwm_b).map_err(|_| "PWM0B output would not route")?;
 
     // A PCNT unit on each output, counting rising edges upward.
     let pcnt_a = unsafe { PcntUnit::new(0, ChannelMode::UP_DOWN_ON_RISING, Filter::Off) }
@@ -69,7 +69,7 @@ pub(crate) fn mcpwm_complementary_pair_deadtime_and_fault(pins: [u8; 3]) -> Chec
     unsafe { pcnt_a.route_control_level(true) }.map_err(|_| "PCNT A control would not tie high")?;
     unsafe { pcnt_b.route_control_level(true) }.map_err(|_| "PCNT B control would not tie high")?;
 
-    unsafe { pwm.start() };
+    pwm.start();
 
     // ── 1. Complementary pair runs at frequency ──────────────────────────────
     const WINDOW_MS: u32 = 50;
@@ -104,8 +104,8 @@ pub(crate) fn mcpwm_complementary_pair_deadtime_and_fault(pins: [u8; 3]) -> Chec
     // exactly that many, which is what capture reads back.
     const CAP_HZ: u64 = 80_000_000;
     let pwm_hz = esp32_mcpwm::PWM_CLK_HZ as u64;
-    unsafe { pwm.route_capture_input(pwm_a) }.map_err(|_| "capture input would not route")?;
-    unsafe { pwm.enable_capture_both_edges() };
+    pwm.route_capture_input(pwm_a).map_err(|_| "capture input would not route")?;
+    pwm.enable_capture_both_edges();
     let a_high = measure_high_pulse(&pwm)? as u64;
 
     // Raw (no-dead-time) high = COMPARE timer ticks, expressed in capture ticks.
@@ -129,8 +129,8 @@ pub(crate) fn mcpwm_complementary_pair_deadtime_and_fault(pins: [u8; 3]) -> Chec
         gpio_matrix::connect_output(fault, gpio_matrix::SIG_GPIO_OUT, true, false)
             .map_err(|_| "fault pad would not route to GPIO_OUT")?;
     }
-    unsafe { pwm.route_fault_input(fault) }.map_err(|_| "fault input would not route")?;
-    unsafe { pwm.enable_fault_oneshot(true) };
+    pwm.route_fault_input(fault).map_err(|_| "fault input would not route")?;
+    pwm.enable_fault_oneshot(true);
 
     // Outputs are live before the fault.
     pcnt_a.clear();
@@ -157,7 +157,7 @@ pub(crate) fn mcpwm_complementary_pair_deadtime_and_fault(pins: [u8; 3]) -> Chec
 
     // Clear the latch with the source removed: outputs come back.
     gpio.write(fault, PinLevel::Low).map_err(|_| "fault pad would not release")?;
-    unsafe { pwm.clear_fault() };
+    pwm.clear_fault();
     if pwm.fault_tripped() {
         return Err("the fault latch would not clear");
     }
@@ -166,7 +166,7 @@ pub(crate) fn mcpwm_complementary_pair_deadtime_and_fault(pins: [u8; 3]) -> Chec
     super::spin_ticks(5);
     pcnt_a.pause();
     let resumed = pcnt_a.count();
-    unsafe { pwm.stop() };
+    pwm.stop();
     if resumed == 0 {
         return Err("PWM0A did not resume after the fault cleared");
     }
@@ -182,7 +182,7 @@ fn measure_high_pulse(pwm: &esp32_mcpwm::Mcpwm) -> Result<u32, &'static str> {
     // Generous: a 10 kHz pulse is ~100 us; this bounds a dead controller.
     let mut spins = 4_000_000u32;
     loop {
-        if let Some(c) = unsafe { pwm.poll_capture() } {
+        if let Some(c) = pwm.poll_capture() {
             if !c.falling {
                 rise = Some(c.timestamp);
             } else if let Some(r) = rise {

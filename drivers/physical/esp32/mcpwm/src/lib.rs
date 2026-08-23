@@ -214,17 +214,17 @@ impl Mcpwm {
 
     /// Start (or restart) timer 0 counting up. Outputs begin toggling.
     ///
-    /// # Safety
-    /// Drives the outputs; the pads must be routed first.
-    pub unsafe fn start(&self) {
+    /// Safe: writes a timer register a held `Mcpwm` owns. Route the pads
+    /// first, or the outputs toggle nothing — which is a wiring miss, not
+    /// unsafety.
+    pub fn start(&self) {
         unsafe { self.w(TIMER0_CFG1, TIMER_RUN_UP) };
     }
 
     /// Freeze timer 0. The last output levels are held.
     ///
-    /// # Safety
-    /// Writes the timer register.
-    pub unsafe fn stop(&self) {
+    /// Safe: writes a timer register a held `Mcpwm` owns.
+    pub fn stop(&self) {
         unsafe { self.w(TIMER0_CFG1, TIMER_FREEZE) };
     }
 
@@ -232,41 +232,34 @@ impl Mcpwm {
     /// the same pad can be read back through the matrix (by PCNT or capture) for
     /// a wireless self-test.
     ///
-    /// # Safety
-    /// Writes the pad's IO_MUX and the matrix output register.
-    pub unsafe fn route_output_a(&self, pin: u8) -> BusResult<()> {
+    /// Safe: `pin` is validated (a pad this controller does not exist on gives
+    /// [`BusError::InvalidConfig`]), and the signal being routed is this
+    /// controller's own.
+    pub fn route_output_a(&self, pin: u8) -> BusResult<()> {
         unsafe { route_out(pin, PWM0A_OUT_IDX) }
     }
     /// See [`route_output_a`](Self::route_output_a).
-    ///
-    /// # Safety
-    /// As [`route_output_a`](Self::route_output_a).
-    pub unsafe fn route_output_b(&self, pin: u8) -> BusResult<()> {
+    pub fn route_output_b(&self, pin: u8) -> BusResult<()> {
         unsafe { route_out(pin, PWM0B_OUT_IDX) }
     }
 
     /// Read PWM0A / PWM0B from a pad into the fault or capture input — used with
     /// a pad already driven elsewhere.
     ///
-    /// # Safety
-    /// Writes the pad's IO_MUX and the matrix input register.
-    pub unsafe fn route_fault_input(&self, pin: u8) -> BusResult<()> {
+    /// Safe: `pin` is validated as for [`route_output_a`](Self::route_output_a).
+    pub fn route_fault_input(&self, pin: u8) -> BusResult<()> {
         unsafe { route_in(pin, PWM0_F0_IN_IDX) }
     }
     /// See [`route_fault_input`](Self::route_fault_input).
-    ///
-    /// # Safety
-    /// As [`route_fault_input`](Self::route_fault_input).
-    pub unsafe fn route_capture_input(&self, pin: u8) -> BusResult<()> {
+    pub fn route_capture_input(&self, pin: u8) -> BusResult<()> {
         unsafe { route_in(pin, PWM0_CAP0_IN_IDX) }
     }
 
     /// Enable fault F0 as a latched (one-shot) trip that forces both outputs low
     /// in hardware. `active_high` selects the input level that trips.
     ///
-    /// # Safety
-    /// Writes the fault registers.
-    pub unsafe fn enable_fault_oneshot(&self, active_high: bool) {
+    /// Safe: writes fault registers a held `Mcpwm` owns.
+    pub fn enable_fault_oneshot(&self, active_high: bool) {
         unsafe {
             self.w(FH0_CFG0, FH0_F0_OST | FH0_FORCE_AB_LOW);
             self.w(FAULT_DETECT, F0_EN | if active_high { F0_POLE } else { 0 });
@@ -282,9 +275,8 @@ impl Mcpwm {
     /// pulses the bit low then high. The fault source must already be inactive,
     /// or the trip latches again immediately.
     ///
-    /// # Safety
-    /// Writes the fault-handler register.
-    pub unsafe fn clear_fault(&self) {
+    /// Safe: writes a fault-handler register a held `Mcpwm` owns.
+    pub fn clear_fault(&self) {
         unsafe {
             self.w(FH0_CFG1, 0);
             self.w(FH0_CFG1, FH_CLR_OST);
@@ -295,9 +287,8 @@ impl Mcpwm {
     /// input prescale. The capture timer is clocked from the 80 MHz APB (not the
     /// 160 MHz PWM clock), so a timestamp difference is in 12.5 ns ticks.
     ///
-    /// # Safety
-    /// Writes the capture registers.
-    pub unsafe fn enable_capture_both_edges(&self) {
+    /// Safe: writes capture registers a held `Mcpwm` owns.
+    pub fn enable_capture_both_edges(&self) {
         unsafe {
             self.w(CAP_TIMER_CFG, CAP_TIMER_EN);
             self.w(CAP_CH0_CFG, CAP_EN | CAP_MODE_POS | CAP_MODE_NEG);
@@ -309,9 +300,8 @@ impl Mcpwm {
     /// edge has been timestamped, then the timestamp and its polarity, clearing
     /// the event so the next call waits for the following edge.
     ///
-    /// # Safety
-    /// Reads and clears the capture registers.
-    pub unsafe fn poll_capture(&self) -> Option<Capture> {
+    /// Safe: reads and clears capture registers a held `Mcpwm` owns.
+    pub fn poll_capture(&self) -> Option<Capture> {
         unsafe {
             if self.r(INT_RAW) & CAP0_INT == 0 {
                 return None;
