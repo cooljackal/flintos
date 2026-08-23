@@ -457,6 +457,9 @@ check-all: ## Full check including Xtensa and ARM architectures
 			--features "$(ATOM_BOARD),debug-level-1" || exit 1; \
 	done
 	@echo "== arm-selftest (board-wio-rp2040-mini)"
+	@# Plain `cargo`, not $(CARGO): the ARM port builds on the stable toolchain
+	@# with a prebuilt core, so this needs `rustup target add $(ARM_TARGET)`
+	@# on that toolchain rather than build-std. ci.yml installs it.
 	cargo check --target $(ARM_TARGET) -p arm-selftest --no-default-features \
 		--features "board-wio-rp2040-mini,debug-level-1"
 

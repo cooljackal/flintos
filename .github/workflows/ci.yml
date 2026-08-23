@@ -182,14 +182,20 @@ jobs:
   xtensa:
     name: Build for ESP32 (Xtensa)
     runs-on: ubuntu-latest
-    continue-on-error: true   # toolchain install is slow and occasionally flaky
+    # This job used to be `continue-on-error: true` because the toolchain
+    # install was slow and occasionally flaky. The cache below fixed the slow
+    # part, and the flag then hid a real failure for weeks: `make check-all`
+    # was failing on every run with `can't find crate for core` because the
+    # ARM target was never installed, and the app loop was building
+    # arm-selftest for an ESP32 board it does not declare -- both red, both
+    # reported green. A check that cannot fail is not a check. If the install
+    # flakes, re-run the job.
     steps:
       - uses: actions/checkout@v7
 
       # The Xtensa toolchain is ~1 GB of LLVM and rustc. Downloading it on every
-      # push, in a job that is advisory (`continue-on-error` above), was the most
-      # expensive thing in this workflow. Keyed on the espup version, so a bump
-      # below is what invalidates it.
+      # push was the most expensive thing in this workflow. Keyed on the espup
+      # version, so a bump below is what invalidates it.
       - name: Cache the Espressif toolchain
         id: esp-cache
         uses: actions/cache@v4
@@ -211,11 +217,19 @@ jobs:
           chmod +x /tmp/espup
           /tmp/espup install --toolchain-version "${ESP_TOOLCHAIN_VERSION}"
 
+      # `make check-all` ends with `cargo check --target thumbv6m-none-eabi -p
+      # arm-selftest` on the *default* (stable) toolchain, not the esp one --
+      # the ARM port builds with stock Rust and a prebuilt core. That target is
+      # not on the runner by default, and without it the step fails before
+      # compiling a line.
+      - name: Install the ARM target for the stable toolchain
+        run: rustup target add thumbv6m-none-eabi
+
       # Every crate, not just the applications. The kernel names exactly one
       # driver (the console UART), so building an application reaches only that
       # one -- the other eight drivers would be checked for the host and never
       # for Xtensa, and a target-specific break in them would land silently.
-      - name: Check every crate for Xtensa
+      - name: Check every crate for Xtensa and ARM
         run: |
           . "$HOME/export-esp.sh"
           make check-all
@@ -246,20 +260,27 @@ jobs:
           . "$HOME/export-esp.sh"
           # Every application names a board, because none is a default any more.
           # blink, imu and pwm drive hardware only the Atoms declare and refuse
-          # any other manifest; the rest build against the board the on-target
-          # suite is verified on.
+          # any other manifest; arm-selftest is the RP2040 suite and declares
+          # only the Wio, so it builds for thumbv6m on the stable toolchain
+          # (installed above) instead of for Xtensa; the rest build against the
+          # board the on-target suite is verified on.
           status=0
           for app in apps/examples/*/ apps/tests/*/; do
             name=$(basename "$app")
             case "$name" in
               blink|imu|pwm) board=board-m5-atom-matrix ;;
+              arm-selftest)  board=board-wio-rp2040-mini ;;
               *)             board=board-esp32-devkitc ;;
             esac
+            if [ "$name" = arm-selftest ]; then
+              build=(cargo build --target thumbv6m-none-eabi)
+            else
+              build=(cargo +esp build --target xtensa-esp32-none-elf
+                     -Z build-std=core,compiler_builtins)
+            fi
             echo "::group::$name ($board)"
             set -o pipefail
-            cargo +esp build \
-              --target xtensa-esp32-none-elf \
-              -Z build-std=core,compiler_builtins \
+            "${build[@]}" \
               -p "$name" --no-default-features \
               --features "$board,debug-level-1" 2>&1 | tee "build-$name.log" || status=1
             set +o pipefail
