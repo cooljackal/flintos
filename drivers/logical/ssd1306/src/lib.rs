@@ -12,9 +12,8 @@
 //! command stream, 0x40 for a data/GRAM stream — see `Ssd1306::cmd` and
 //! `write_data`); over SPI there is no control byte at all — the host
 //! instead drives a dedicated D/C GPIO pin high or low around each byte.
-//! [`BusHandle`] exposes no GPIO control, only [`BusHandle::select`]/
-//! [`BusHandle::deselect`] and byte transfer, so there is no way
-//! for this crate to toggle a D/C line even if it wanted to. Inlining the
+//! [`BusHandle`] exposes no GPIO control, only byte transfer, so there is no
+//! way for this crate to toggle a D/C line even if it wanted to. Inlining the
 //! I2C control byte into an SPI stream would corrupt every command, so
 //! rather than pretend to support a transport this driver cannot correctly
 //! drive, this doc is explicit: **this driver is I2C-only**. The board
@@ -22,23 +21,21 @@
 //! matching this.
 
 #![no_std]
-#![cfg_attr(not(test), forbid(unsafe_code))]
+#![forbid(unsafe_code)]
 //
 // The layer check reads the dependency graph, and raw MMIO needs no
 // dependency -- a device driver could write 0x3FF44008 with `api` as its only
-// dep and still pass. This is the line that makes "cannot reach hardware" true
-// rather than aspirational.
-//
-// Scoped to non-test builds because the mock buses these crates test against
-// use `unsafe` to extend a stack borrow to 'static (see `extend` below in
-// bme280). That is test scaffolding and never ships; the shipping code in all
-// three crates contains no `unsafe` at all.
+// dep and still pass. This `forbid` is the line that makes "cannot reach
+// hardware" true rather than aspirational. It is unconditional now: the mock
+// bus in the tests below borrows a stack `Bus` through a `BusHandle<'a>`, so it
+// no longer transmutes a borrow to `'static`, and this crate — shipping or
+// test — contains no `unsafe`.
 
 use api::bus::{BusHandle, BusResult};
 
 /// SSD1306 OLED display (128x64, I2C).
-pub struct Ssd1306 {
-    bus: BusHandle,
+pub struct Ssd1306<'a> {
+    bus: BusHandle<'a>,
     width: u8,
     height: u8,
     pages: u8,
@@ -66,10 +63,13 @@ const CMD_SET_VCOM_DETECT: u8 = 0xDB;
 /// separate data byte.
 const CMD_SET_START_LINE_0: u8 = 0x40;
 
-impl Ssd1306 {
+impl<'a> Ssd1306<'a> {
     /// Create a new SSD1306 driver.
-    pub fn new(bus: BusHandle) -> Self {
-        Self { bus, width: 128, height: 64, pages: 8 }
+    ///
+    /// Takes anything that converts into a [`BusHandle`], so a caller passes a
+    /// plain `&bus`: `Ssd1306::new(&bus)`.
+    pub fn new(bus: impl Into<BusHandle<'a>>) -> Self {
+        Self { bus: bus.into(), width: 128, height: 64, pages: 8 }
     }
 
     /// Initialise the display.
@@ -134,10 +134,7 @@ impl Ssd1306 {
     /// control byte — see the module-level docs for why this cannot also
     /// serve SPI.
     fn cmd(&self, byte: u8) -> BusResult<()> {
-        self.bus.select()?;
-        let result = self.bus.write(&[0x00, byte]);
-        self.bus.deselect()?;
-        result
+        self.bus.write(&[0x00, byte])
     }
 
     /// Largest GRAM run this driver packs into one data transaction, over and
@@ -160,10 +157,7 @@ impl Ssd1306 {
         let mut buf = [0x40u8; Self::DATA_CHUNK + 1];
         for run in bytes.chunks(cap) {
             buf[1..1 + run.len()].copy_from_slice(run);
-            self.bus.select()?;
-            let result = self.bus.write(&buf[..1 + run.len()]);
-            self.bus.deselect()?;
-            result?;
+            self.bus.write(&buf[..1 + run.len()])?;
         }
         Ok(())
     }
@@ -177,10 +171,7 @@ impl Ssd1306 {
         let mut remaining = count;
         while remaining > 0 {
             let n = remaining.min(cap);
-            self.bus.select()?;
-            let result = self.bus.write(&buf[..1 + n]);
-            self.bus.deselect()?;
-            result?;
+            self.bus.write(&buf[..1 + n])?;
             remaining -= n;
         }
         Ok(())
@@ -330,19 +321,10 @@ mod tests {
         }
     }
 
-    // Tests run single-threaded on the host and every handle built from
-    // `extend` is dropped by the end of its test body, well within the
-    // lifetime of the local `bus` it points at — this just satisfies
-    // `BusHandle::new`'s `'static` bound without a heavier static-storage
-    // pattern per test.
-    unsafe fn extend<'a>(bus: &'a MockDisplayBus) -> &'static MockDisplayBus {
-        core::mem::transmute::<&'a MockDisplayBus, &'static MockDisplayBus>(bus)
-    }
-
     #[test]
     fn ssd1306_init_ok() {
         let bus = MockDisplayBus::default();
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.init().is_ok());
     }
@@ -350,7 +332,7 @@ mod tests {
     #[test]
     fn ssd1306_init_command_sequence_matches_datasheet() {
         let bus = MockDisplayBus::default();
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.init().is_ok());
 
@@ -388,7 +370,7 @@ mod tests {
     #[test]
     fn ssd1306_clear() {
         let bus = MockDisplayBus::default();
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.clear().is_ok());
     }
@@ -396,7 +378,7 @@ mod tests {
     #[test]
     fn ssd1306_print_temp_positive() {
         let bus = MockDisplayBus::default();
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.print_temp(25.5).is_ok());
     }
@@ -404,7 +386,7 @@ mod tests {
     #[test]
     fn ssd1306_print_temp_negative() {
         let bus = MockDisplayBus::default();
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.print_temp(-12.3).is_ok());
     }

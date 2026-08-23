@@ -28,17 +28,15 @@
 //! has no humidity sensor) fails closed rather than returning zero or noise.
 
 #![no_std]
-#![cfg_attr(not(test), forbid(unsafe_code))]
+#![forbid(unsafe_code)]
 //
 // The layer check reads the dependency graph, and raw MMIO needs no
 // dependency -- a device driver could write 0x3FF44008 with `api` as its only
-// dep and still pass. This is the line that makes "cannot reach hardware" true
-// rather than aspirational.
-//
-// Scoped to non-test builds because the mock buses these crates test against
-// use `unsafe` to extend a stack borrow to 'static (see `extend` below in
-// bme280). That is test scaffolding and never ships; the shipping code in all
-// three crates contains no `unsafe` at all.
+// dep and still pass. This `forbid` is the line that makes "cannot reach
+// hardware" true rather than aspirational. It is unconditional now: the mock
+// buses in the tests below borrow a stack `Bus` through a `BusHandle<'a>`, so
+// they no longer transmute a borrow to `'static`, and nothing in this crate —
+// shipping or test — needs `unsafe`.
 
 use api::bus::{BusError, BusHandle, BusResult};
 
@@ -123,21 +121,23 @@ struct Calibration {
 }
 
 /// BME280 temperature/humidity/pressure sensor.
-pub struct Bme280 {
-    bus: BusHandle,
+pub struct Bme280<'a> {
+    bus: BusHandle<'a>,
     transport: Transport,
     variant: Option<Variant>,
     calib: Option<Calibration>,
 }
 
-impl Bme280 {
-    /// Create a new BME280 driver on the given bus handle.
+impl<'a> Bme280<'a> {
+    /// Create a new BME280 driver on the given bus.
     ///
-    /// `transport` must match how this bus handle is actually wired
-    /// (I2C or SPI) — see the module-level docs for why the driver cannot
-    /// infer this itself.
-    pub fn new(bus: BusHandle, transport: Transport) -> Self {
-        Self { bus, transport, variant: None, calib: None }
+    /// Takes anything that converts into a [`BusHandle`], so a caller passes a
+    /// plain `&bus`: `Bme280::new(&bus, Transport::I2c)`.
+    ///
+    /// `transport` must match how this bus is actually wired (I2C or SPI) —
+    /// see the module-level docs for why the driver cannot infer this itself.
+    pub fn new(bus: impl Into<BusHandle<'a>>, transport: Transport) -> Self {
+        Self { bus: bus.into(), transport, variant: None, calib: None }
     }
 
     /// Which part responded at [`Bme280::init`] time, if any.
@@ -235,17 +235,11 @@ impl Bme280 {
     }
 
     fn write_reg(&self, reg: u8, val: u8) -> BusResult<()> {
-        self.bus.select()?;
-        let result = self.bus.write_reg(self.write_addr(reg), val);
-        self.bus.deselect()?;
-        result
+        self.bus.write_reg(self.write_addr(reg), val)
     }
 
     fn read_regs(&self, reg: u8, buf: &mut [u8]) -> BusResult<()> {
-        self.bus.select()?;
-        let result = self.bus.read_regs(self.read_addr(reg), buf);
-        self.bus.deselect()?;
-        result
+        self.bus.read_regs(self.read_addr(reg), buf)
     }
 
     /// Burst-read the raw ADC counts. Always reads pressure and temperature
@@ -512,7 +506,7 @@ mod tests {
     #[test]
     fn bme280_chip_id_ok() {
         let bus = MockBmeBus { chip_id: CHIP_ID_BME280, ..Default::default() };
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let sensor = Bme280::new(handle, Transport::I2c);
         assert_eq!(sensor.chip_id(), Ok(CHIP_ID_BME280));
     }
@@ -520,7 +514,7 @@ mod tests {
     #[test]
     fn bme280_init_rejects_unknown_chip_id() {
         let bus = MockBmeBus { chip_id: 0xFF, ..Default::default() };
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let mut sensor = Bme280::new(handle, Transport::I2c);
         assert_eq!(sensor.init(), Err(BusError::DeviceNotResponding));
         assert_eq!(sensor.variant(), None);
@@ -533,7 +527,7 @@ mod tests {
             calib_low: worked_example_calib_low(),
             ..Default::default()
         };
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let mut sensor = Bme280::new(handle, Transport::I2c);
         assert!(sensor.init().is_ok());
         assert_eq!(sensor.variant(), Some(Variant::Bmp280));
@@ -544,7 +538,7 @@ mod tests {
     #[test]
     fn bme280_read_before_init_fails_closed() {
         let bus = MockBmeBus::default();
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let sensor = Bme280::new(handle, Transport::I2c);
         assert_eq!(sensor.read_temperature(), Err(BusError::InvalidConfig));
     }
@@ -559,7 +553,7 @@ mod tests {
             ..Default::default()
         };
 
-        let handle_spi = BusHandle::new(unsafe { extend(&bus) });
+        let handle_spi = BusHandle::new(&bus);
         let mut spi_sensor = Bme280::new(handle_spi, Transport::Spi);
         assert!(spi_sensor.init().is_ok());
         // REG_RESET (0xE0) written over SPI must have bit 7 cleared: 0x60.
@@ -569,20 +563,12 @@ mod tests {
         }
         bus.writes.lock().unwrap().clear();
 
-        let handle_i2c = BusHandle::new(unsafe { extend(&bus) });
+        let handle_i2c = BusHandle::new(&bus);
         let mut i2c_sensor = Bme280::new(handle_i2c, Transport::I2c);
         assert!(i2c_sensor.init().is_ok());
         // Over I2C the documented address (0xE0) is used unmodified.
         let writes = bus.writes.lock().unwrap();
         assert_eq!(&writes[0..2], &[0xE0, 0xB6]);
-    }
-
-    // Tests only ever run single-threaded on the host, and the mock bus
-    // outlives every handle built from it within a test body — this local
-    // helper just satisfies `BusHandle::new`'s `'static` bound without
-    // reaching for a heavier static-storage pattern per test.
-    unsafe fn extend<'a>(bus: &'a MockBmeBus) -> &'static MockBmeBus {
-        core::mem::transmute::<&'a MockBmeBus, &'static MockBmeBus>(bus)
     }
 
     // ── compensation math ────────────────────────────────────────────────
@@ -715,7 +701,7 @@ mod tests {
             0x7F, 0xE5, // hum_msb/lsb (arbitrary in-range value)
         ];
 
-        let handle = BusHandle::new(unsafe { extend(&bus) });
+        let handle = BusHandle::new(&bus);
         let mut sensor = Bme280::new(handle, Transport::I2c);
         assert!(sensor.init().is_ok());
 

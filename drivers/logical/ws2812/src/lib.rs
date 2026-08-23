@@ -28,16 +28,13 @@
 //! microseconds, and the LED reads whatever that turns into.
 
 #![no_std]
-#![cfg_attr(not(test), forbid(unsafe_code))]
+#![forbid(unsafe_code)]
 //
 // The layer check reads the dependency graph, and raw MMIO needs no
 // dependency -- a device driver could write 0x3FF44008 with `api` as its only
-// dep and still pass. This is the line that makes "cannot reach hardware" true
-// rather than aspirational.
-//
-// Scoped to non-test builds because the mock buses these crates test against
-// use `unsafe` to extend a stack borrow to 'static. That is test scaffolding
-// and never ships; the shipping code in all three crates has no `unsafe`.
+// dep and still pass. This `forbid` is the line that makes "cannot reach
+// hardware" true rather than aspirational. Unconditional: this crate drives a
+// `PulseEmitter`, not a `Bus`, and neither its code nor its tests use `unsafe`.
 
 /// Colour comes from the device class, not from this chip. Re-exported so
 /// callers need not name two crates to set a pixel red.

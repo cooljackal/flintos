@@ -77,17 +77,20 @@ pub enum Identity {
 }
 
 /// A BMI270 on a bus.
-pub struct Bmi270 {
-    bus: BusHandle,
+pub struct Bmi270<'a> {
+    bus: BusHandle<'a>,
 }
 
-impl Bmi270 {
+impl<'a> Bmi270<'a> {
     /// Wrap a bus already addressed to the device.
     ///
     /// The address is the *bus's* business, not this driver's — a Layer-2 I2C
-    /// bus is constructed for one device. This driver never names 0x68.
-    pub const fn new(bus: BusHandle) -> Self {
-        Self { bus }
+    /// device is constructed for one slave. This driver never names 0x68.
+    ///
+    /// Takes anything that converts into a [`BusHandle`], so a caller passes a
+    /// plain `&bus`: `Bmi270::new(&bus)`.
+    pub fn new(bus: impl Into<BusHandle<'a>>) -> Self {
+        Self { bus: bus.into() }
     }
 
     /// The chip ID register.
@@ -162,7 +165,7 @@ mod tests {
         }
     }
 
-    fn device(regs: &[(u8, u8)]) -> (Bmi270, &'static FakeDevice) {
+    fn device(regs: &[(u8, u8)]) -> (Bmi270<'static>, &'static FakeDevice) {
         let d: &'static FakeDevice = Box::leak(Box::new(FakeDevice {
             regs: regs.to_vec(),
             asked: Mutex::new(Vec::new()),

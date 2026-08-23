@@ -16,23 +16,21 @@
 //! that a context switch has to save. Milli-units carry more precision than
 //! this part's noise floor, so nothing is lost.
 //!
-//! # This driver does not wait
+//! # Waiting
 //!
-//! There is no delay anywhere in it, and no delay callback either. The part
-//! needs pauses during its reset sequence, and how long they should be depends
-//! on the board — supply rise time, bus capacitance, whether the part shares a
-//! rail that is still settling. The driver cannot know any of that.
-//!
-//! So it exposes the steps and the caller sequences them:
+//! The part needs pauses during its reset sequence. How to wait belongs to the
+//! RTOS, not this driver — so [`Mpu6886::bring_up`] takes the wait as a
+//! closure and owns only the *durations* (the datasheet's 10 ms minimums):
 //!
 //! ```ignore
-//! dev.reset()?;      delay(10);
-//! dev.wake()?;       delay(10);
-//! dev.configure()?;
+//! dev.bring_up(api::task::sleep_ms)?;   // reset, wait, wake, wait, configure
 //! ```
 //!
-//! The 10 ms figures below are the datasheet's minimum, not a recommendation
-//! for your board.
+//! The individual steps ([`reset`](Mpu6886::reset), [`wake`](Mpu6886::wake),
+//! [`configure`](Mpu6886::configure)) stay public for a caller that must
+//! interleave something else; each says how long to wait after it. The 10 ms
+//! figures are the datasheet's minimum, not a recommendation for your board —
+//! a board on a slowly-settling rail passes a longer-waiting closure.
 //!
 //! # Register facts
 //!
@@ -126,14 +124,17 @@ const fn scale(raw: i16, num: i32, den: i32) -> i16 {
 }
 
 /// An MPU6886 on a bus.
-pub struct Mpu6886 {
-    bus: BusHandle,
+pub struct Mpu6886<'a> {
+    bus: BusHandle<'a>,
 }
 
-impl Mpu6886 {
+impl<'a> Mpu6886<'a> {
     /// Wrap a bus already addressed to the device.
-    pub const fn new(bus: BusHandle) -> Self {
-        Self { bus }
+    ///
+    /// Takes anything that converts into a [`BusHandle`], so a caller passes a
+    /// plain `&bus`: `Mpu6886::new(&bus)`.
+    pub fn new(bus: impl Into<BusHandle<'a>>) -> Self {
+        Self { bus: bus.into() }
     }
 
     fn write_reg(&self, reg: u8, val: u8) -> BusResult<()> {
@@ -201,6 +202,21 @@ impl Mpu6886 {
         self.write_reg(REG_ACCEL_CONFIG2, 0x00)?;
         self.write_reg(REG_USER_CTRL, 0x00)?;
         self.write_reg(REG_FIFO_EN, 0x00)
+    }
+
+    /// Reset, wake, and configure the part, waiting between the steps.
+    ///
+    /// The full bring-up the caller used to open-code: [`reset`](Self::reset),
+    /// wait, [`wake`](Self::wake), wait, [`configure`](Self::configure). The
+    /// driver owns the sequence and the 10 ms datasheet minimums; `delay_ms`
+    /// supplies *how* to wait, because that is the RTOS's business, not this
+    /// driver's — pass `api::task::sleep_ms`.
+    pub fn bring_up(&self, mut delay_ms: impl FnMut(u32)) -> BusResult<()> {
+        self.reset()?;
+        delay_ms(10);
+        self.wake()?;
+        delay_ms(10);
+        self.configure()
     }
 
     /// Acceleration, raw counts. ±8 g full scale.
@@ -284,7 +300,7 @@ mod tests {
         }
     }
 
-    fn imu(regs: &[(u8, u8)]) -> (Mpu6886, &'static Fake) {
+    fn imu(regs: &[(u8, u8)]) -> (Mpu6886<'static>, &'static Fake) {
         let f: &'static Fake = Box::leak(Box::new(Fake {
             regs: Mutex::new(regs.to_vec()),
             writes: Mutex::new(Vec::new()),
@@ -348,6 +364,25 @@ mod tests {
         let writes = f.writes.lock().unwrap();
         let pwr: Vec<u8> = writes.iter().filter(|(r, _)| *r == REG_PWR_MGMT_1).map(|(_, v)| *v).collect();
         assert_eq!(pwr, [0x00, PWR_DEVICE_RESET, PWR_CLK_PLL], "clear sleep, reset, then PLL");
+    }
+
+    #[test]
+    fn bring_up_runs_reset_wake_configure_with_waits_between() {
+        // The sequence the imu app used to drive by hand. bring_up owns the
+        // order and the two 10 ms waits; the closure supplies how to wait.
+        let (m, f) = imu(&[(REG_WHO_AM_I, WHO_AM_I)]);
+        let mut waits = Vec::new();
+        m.bring_up(|ms| waits.push(ms)).unwrap();
+
+        // Two waits, both 10 ms, one after reset and one after wake.
+        assert_eq!(waits, [10, 10]);
+        // Power register saw clear-sleep, reset, then PLL — reset before the
+        // first wait, wake before the second.
+        let writes = f.writes.lock().unwrap();
+        let pwr: Vec<u8> = writes.iter().filter(|(r, _)| *r == REG_PWR_MGMT_1).map(|(_, v)| *v).collect();
+        assert_eq!(pwr, [0x00, PWR_DEVICE_RESET, PWR_CLK_PLL]);
+        // And configure ran: the full scales are set.
+        assert_eq!(f.get(REG_ACCEL_CONFIG), Some(ACCEL_FS_8G));
     }
 
     #[test]
