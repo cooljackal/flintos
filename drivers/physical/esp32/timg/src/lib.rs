@@ -26,7 +26,7 @@
 //!
 //! | Register | Offset | Notes |
 //! |---|---|---|
-//! | `CONFIG` | `0x00` | `EN` 31, `INCREASE` 30, `AUTORELOAD` 29, `DIVIDER` [28:13], `LEVEL_INT_EN` 11, `ALARM_EN` 10 |
+//! | `CONFIG` | `0x00` | `EN` 31, `INCREASE` 30, `AUTORELOAD` 29, `DIVIDER` `[28:13]`, `LEVEL_INT_EN` 11, `ALARM_EN` 10 |
 //! | `LO` / `HI` | `0x04` / `0x08` | the counter, **only valid after a latch** |
 //! | `UPDATE` | `0x0c` | write anything to latch the counter into LO/HI |
 //! | `ALARMLO` / `ALARMHI` | `0x10` / `0x14` | when to fire |

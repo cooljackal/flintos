@@ -42,9 +42,9 @@
 //!
 //! | Register | Offset | Fields |
 //! |---|---|---|
-//! | `SAR_READ_CTRL` | `0x00` | `SAR1_SAMPLE_BIT` [17:16], `SAR1_DIG_FORCE` 27, `SAR1_DATA_INV` 28 |
+//! | `SAR_READ_CTRL` | `0x00` | `SAR1_SAMPLE_BIT` `[17:16]`, `SAR1_DIG_FORCE` 27, `SAR1_DATA_INV` 28 |
 //! | `SAR_ATTEN1` | `0x34` | two bits per channel |
-//! | `SAR_MEAS_START1` | `0x54` | `EN_PAD_FORCE` 31, `EN_PAD` [30:19], `START_FORCE` 18, `START_SAR` 17, `DONE_SAR` 16 (RO), `DATA_SAR` [15:0] (RO) |
+//! | `SAR_MEAS_START1` | `0x54` | `EN_PAD_FORCE` 31, `EN_PAD` `[30:19]`, `START_FORCE` 18, `START_SAR` 17, `DONE_SAR` 16 (RO), `DATA_SAR` `[15:0]` (RO) |
 
 #![no_std]
 
@@ -82,7 +82,7 @@ const HALL_PHASE_FORCE: u32 = 1 << 27;
 const RTC_HALL_SENS: u32 = 0x3FF4_8400 + 0x78;
 const XPD_HALL: u32 = 1 << 31;
 
-/// `SENS_FORCE_XPD_AMP` [17:16]. 2 powers the amplifier down.
+/// `SENS_FORCE_XPD_AMP` `[17:16]`. 2 powers the amplifier down.
 ///
 /// ADC1 does not use it — it belongs to the LNA — but "not used" and "left in
 /// whatever state reset chose" are different things, and esp-idf powers it
@@ -91,12 +91,12 @@ const FORCE_XPD_AMP_SHIFT: u32 = 16;
 const FORCE_XPD_AMP_OFF: u32 = 2;
 const FORCE_XPD_AMP_MASK: u32 = 0x3;
 
-/// The amplifier's FSM fields in `SAR_MEAS_CTRL`: `AMP_RST_FB_FSM` [7:4],
-/// `AMP_SHORT_REF_FSM` [11:8], `AMP_SHORT_REF_GND_FSM` [15:12]. All cleared
+/// The amplifier's FSM fields in `SAR_MEAS_CTRL`: `AMP_RST_FB_FSM` `[7:4]`,
+/// `AMP_SHORT_REF_FSM` `[11:8]`, `AMP_SHORT_REF_GND_FSM` `[15:12]`. All cleared
 /// with the amplifier, since the FSM only drives it.
 const AMP_FSM_MASK: u32 = 0xFFF0;
 
-/// `SENS_FORCE_XPD_SAR` [19:18]. 3 forces the SAR's analog front end powered
+/// `SENS_FORCE_XPD_SAR` `[19:18]`. 3 forces the SAR's analog front end powered
 /// on; 0 leaves it to a power controller that is not running here.
 ///
 /// Without this, conversions still *complete* — `DONE_SAR` sets and a number
@@ -107,7 +107,7 @@ const FORCE_XPD_SAR_SHIFT: u32 = 18;
 const FORCE_XPD_SAR_ON: u32 = 3;
 const FORCE_XPD_SAR_MASK: u32 = 0x3;
 
-/// `SENS_SAR1_SAMPLE_BIT` [17:16]. 3 selects 12-bit conversions.
+/// `SENS_SAR1_SAMPLE_BIT` `[17:16]`. 3 selects 12-bit conversions.
 const SAMPLE_BIT_SHIFT: u32 = 16;
 const SAMPLE_BIT_12: u32 = 3;
 const SAMPLE_BIT_MASK: u32 = 0x3;
@@ -227,7 +227,7 @@ const RTCIO_BASE: u32 = 0x3FF4_8400;
 const TOUCH_PAD0: u32 = RTCIO_BASE + 0x94;
 
 const PAD_MUX_SEL: u32 = 1 << 19;
-/// `fun_sel` [18:17]. **0 selects the RTC function**; 1, 2 and 3 are reserved.
+/// `fun_sel` `[18:17]`. **0 selects the RTC function**; 1, 2 and 3 are reserved.
 ///
 /// Never written until now, and `mux_sel` alone is not enough:
 /// `rtcio_ll_function_select` sets the mux *and* forces this field to
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn the_data_and_done_fields_do_not_overlap() {
-        // DATA is [15:0] and DONE is bit 16. A 17-bit data mask would make
+        // DATA is `[15:0]` and DONE is bit 16. A 17-bit data mask would make
         // every completed conversion read as 65536 too high.
         assert_eq!(MEAS_DATA_MASK, 0xFFFF);
         assert_eq!(MEAS_DONE_SAR, 1 << 16);
@@ -573,8 +573,8 @@ mod tests {
 
     #[test]
     fn the_amplifier_fsm_mask_covers_its_three_fields_and_nothing_else() {
-        // AMP_RST_FB_FSM [7:4], AMP_SHORT_REF_FSM [11:8],
-        // AMP_SHORT_REF_GND_FSM [15:12]. A mask one nibble wide either way
+        // AMP_RST_FB_FSM `[7:4]`, AMP_SHORT_REF_FSM `[11:8]`,
+        // AMP_SHORT_REF_GND_FSM `[15:12]`. A mask one nibble wide either way
         // would clear a neighbouring field that is not the amplifier's.
         assert_eq!(SAR_MEAS_CTRL, 0x3FF4_8810);
         assert_eq!(AMP_FSM_MASK, 0xFFF0);

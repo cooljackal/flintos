@@ -3,7 +3,7 @@
 //! SPI bus abstraction.
 //!
 //! Wraps a [`PhysicalBus`] impl and exposes the [`Bus`] trait as a list of
-//! [`Op`]s run in order. A single op is capped at [`MAX_TRANSFER`] bytes — the
+//! [`Op`]s run in order. A single op is capped at `MAX_TRANSFER` bytes — the
 //! controller's data buffer — and the caller splits anything longer itself.
 
 #![no_std]

@@ -189,7 +189,7 @@ const STATUS_BP_MASK: u32 = 0x7C;
 /// with QE set.
 const STATUS2_QE: u32 = 1 << 9;
 
-/// JEDEC manufacturer ids whose status-register layout [`unlock`] is correct
+/// JEDEC manufacturer ids whose status-register layout `unlock` is correct
 /// for.
 ///
 /// GigaDevice and Winbond both put QE at bit 1 of status register 2, reached
@@ -370,10 +370,10 @@ unsafe fn snapshot() {
 /// Status register readings taken through one page program, so the step that
 /// changes the chip's state can be identified rather than guessed at.
 ///
-/// **Two writers, and they do not agree.** [`trace`] fills all four slots for
+/// **Two writers, and they do not agree.** `trace` fills all four slots for
 /// the first program: 0 before WREN, 1 after WREN, 2 after the program
 /// command, 3 once the chip reports ready, each `| 0x100` to mark it written.
-/// [`unlock`] runs earlier and uses slot 0 as a progress counter
+/// `unlock` runs earlier and uses slot 0 as a progress counter
 /// (`0x1000..=0x1006`), its own status readings in slots 1 and 2, and the
 /// JEDEC manufacturer byte in slot 3. Whichever ran last is what
 /// `apps/flashprobe` prints, so read a `0x1nnn` in slot 0 as unlock progress
@@ -645,7 +645,7 @@ unsafe fn status_user_cmd() -> Result<u32, FlashError> {
 /// A user transaction, built exactly as [`status_user_cmd`] builds its own,
 /// including the dummy cycle — this part needs one on every user transaction,
 /// and a wrong dummy here reads rubbish rather than misbehaving, which
-/// [`unlock`] then treats as an unknown chip. Failing closed is the point.
+/// `unlock` then treats as an unknown chip. Failing closed is the point.
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 pub(crate) unsafe fn jedec_id() -> Result<u32, FlashError> {

@@ -33,7 +33,7 @@ use crate::addr::RTC_CNTL_BASE;
 // Named rather than spelled at each use, because a wrong one here is silent:
 // the read returns a plausible number from a neighbouring register.
 
-/// `RTC_CNTL_OPTIONS0_REG`. Holds `SW_STALL_APPCPU_C0` in bits [1:0].
+/// `RTC_CNTL_OPTIONS0_REG`. Holds `SW_STALL_APPCPU_C0` in bits `[1:0]`.
 pub const OPTIONS0: u32 = RTC_CNTL_BASE;
 /// `RTC_CNTL_TIME_UPDATE_REG`. Bit 31 requests a sample, bit 30 says it landed.
 pub const TIME_UPDATE: u32 = RTC_CNTL_BASE + 0x0C;
@@ -51,7 +51,7 @@ pub const WDTCONFIG1: u32 = RTC_CNTL_BASE + 0x90;
 pub const WDTFEED: u32 = RTC_CNTL_BASE + 0xA0;
 /// `RTC_CNTL_WDTWPROTECT_REG` — the write-protect key register.
 pub const WDTWPROTECT: u32 = RTC_CNTL_BASE + 0xA4;
-/// `RTC_CNTL_SW_CPU_STALL_REG`. Holds `SW_STALL_APPCPU_C1` in bits [25:20].
+/// `RTC_CNTL_SW_CPU_STALL_REG`. Holds `SW_STALL_APPCPU_C1` in bits `[25:20]`.
 pub const SW_CPU_STALL: u32 = RTC_CNTL_BASE + 0xAC;
 /// `RTC_XTAL_FREQ_REG`, which is `RTC_CNTL_STORE4_REG`.
 ///

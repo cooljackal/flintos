@@ -17,7 +17,7 @@
 //! is talking to, and a board manifest cannot express any of them. So the SoC
 //! layer implements [`PinMux`], the driver calls [`PinMux::route`], and a
 //! request the silicon cannot satisfy comes back as
-//! [`BusError::InvalidConfig`] rather than as a peripheral quietly wired to
+//! `BusError::InvalidConfig` rather than as a peripheral quietly wired to
 //! nothing.
 
 use crate::bus::BusResult;
@@ -193,12 +193,12 @@ pub trait PinMux {
     /// tested off-target.
     ///
     /// # Errors
-    /// [`BusError::InvalidConfig`] if the silicon cannot connect that signal to
+    /// `BusError::InvalidConfig` if the silicon cannot connect that signal to
     /// that pin — an unknown or unbonded pin, a controller instance the chip
     /// does not have, an output signal on an input-only pad, or a pad whose
     /// function list does not include the signal.
     ///
-    /// [`BusError::InvalidConfig`]: crate::bus::BusError::InvalidConfig
+    /// `BusError::InvalidConfig`: crate::bus::BusError::InvalidConfig
     fn can_route(&self, signal: Signal, pin: u8) -> BusResult<()>;
 
     /// Route `signal` to `pin`, configuring the pad per `config`.

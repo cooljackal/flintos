@@ -25,7 +25,7 @@
 //! # Deferred
 //!
 //! - **Deep sleep** returns nothing to reconcile — it wakes as a reset, so the
-//!   tick restarts from zero with the rest of the system. [`deep_sleep`] is
+//!   tick restarts from zero with the rest of the system. `deep_sleep` is
 //!   here for completeness and is exercised by construction, not by the
 //!   self-test (it would reset the board mid-run).
 //! - **Auto light sleep from the idle task** (the `waiti` hook) is a follow-up;

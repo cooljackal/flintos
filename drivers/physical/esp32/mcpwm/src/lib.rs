@@ -29,20 +29,20 @@
 //!
 //! | Register | Offset | Fields |
 //! |---|---|---|
-//! | `CLK_CFG` | `0x00` | `CLK_PRESCALE` [7:0] |
-//! | `TIMER0_CFG0` | `0x04` | `PRESCALE` [7:0], `PERIOD` [23:8] |
-//! | `TIMER0_CFG1` | `0x08` | `START` [2:0], `MOD` [4:3] |
-//! | `OPERATOR_TIMERSEL` | `0x38` | `OP0_SEL` [1:0] |
-//! | `GEN0_TSTMP_A` | `0x40` | compare A [15:0] |
-//! | `GEN0_A` | `0x50` | `UTEZ` [1:0], `UTEA` [5:4] (up: zero/compareA actions) |
+//! | `CLK_CFG` | `0x00` | `CLK_PRESCALE` `[7:0]` |
+//! | `TIMER0_CFG0` | `0x04` | `PRESCALE` `[7:0]`, `PERIOD` `[23:8]` |
+//! | `TIMER0_CFG1` | `0x08` | `START` `[2:0]`, `MOD` `[4:3]` |
+//! | `OPERATOR_TIMERSEL` | `0x38` | `OP0_SEL` `[1:0]` |
+//! | `GEN0_TSTMP_A` | `0x40` | compare A `[15:0]` |
+//! | `GEN0_A` | `0x50` | `UTEZ` `[1:0]`, `UTEA` `[5:4]` (up: zero/compareA actions) |
 //! | `DT0_CFG` | `0x58` | dead-time mode bits (active-high complementary) |
-//! | `DT0_FED_CFG`/`DT0_RED_CFG` | `0x5C`/`0x60` | falling/rising edge delay [15:0] |
+//! | `DT0_FED_CFG`/`DT0_RED_CFG` | `0x5C`/`0x60` | falling/rising edge delay `[15:0]` |
 //! | `FH0_CFG0` | `0x68` | `F0_OST` 7, A/B one-shot forced-low actions |
 //! | `FH0_CFG1` | `0x6C` | `CLR_OST` 0 (rising edge re-arms) |
 //! | `FH0_STATUS` | `0x70` | `OST_ON` 1 |
 //! | `FAULT_DETECT` | `0xE4` | `F0_EN` 0, `F0_POLE` 3 |
 //! | `CAP_TIMER_CFG` | `0xE8` | `TIMER_EN` 0 |
-//! | `CAP_CH0_CFG` | `0xF0` | `EN` 0, `MODE` [2:1], `PRESCALE` [10:3] |
+//! | `CAP_CH0_CFG` | `0xF0` | `EN` 0, `MODE` `[2:1]`, `PRESCALE` `[10:3]` |
 //! | `CAP_CH0` | `0xFC` | 32-bit timestamp |
 //! | `CAP_STATUS` | `0x108` | `CAP0_EDGE` 0 (1 = negedge) |
 //! | `INT_RAW`/`INT_CLR` | `0x114`/`0x11C` | `CAP0` bit 27 |
@@ -106,7 +106,7 @@ const F0_POLE: u32 = 1 << 3;
 
 /// `FH0_CFG0`: enable F0 one-shot (`bit 7`) and force both A and B low on trip
 /// in both count directions. Forced-action fields are 2 bits, value 1 = low:
-/// A-ost-down [13:12], A-ost-up [15:14], B-ost-down [21:20], B-ost-up [23:22].
+/// A-ost-down `[13:12]`, A-ost-up `[15:14]`, B-ost-down `[21:20]`, B-ost-up `[23:22]`.
 const FH0_F0_OST: u32 = 1 << 7;
 const FH0_FORCE_AB_LOW: u32 = (1 << 12) | (1 << 14) | (1 << 20) | (1 << 22);
 
@@ -370,8 +370,8 @@ mod tests {
 
     #[test]
     fn generator_makes_an_active_high_pulse() {
-        // A high at zero (UTEZ=high=2, bits [1:0]) and low at compareA
-        // (UTEA=low=1, bits [5:4]).
+        // A high at zero (UTEZ=high=2, bits `[1:0]`) and low at compareA
+        // (UTEA=low=1, bits `[5:4]`).
         assert_eq!(GEN_A_COMPLEMENTARY, (2 << 0) | (1 << 4));
         assert_eq!(GEN_A_COMPLEMENTARY, 0x12);
     }
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     fn the_fault_forces_both_outputs_low_in_both_directions() {
         // One-shot enable for F0, plus force-low (action 1) on A and B for the
-        // up and down halves: A [15:14]/[13:12], B [23:22]/[21:20].
+        // up and down halves: A `[15:14]`/`[13:12]`, B `[23:22]`/`[21:20]`.
         assert_eq!(FH0_F0_OST, 1 << 7);
         assert_eq!(FH0_FORCE_AB_LOW, 0x0050_5000);
         assert_eq!(FH0_F0_OST | FH0_FORCE_AB_LOW, 0x0050_5080);
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn the_timer_runs_up_and_freezes() {
-        // mod=1 (up) at [4:3], start=2 (run) at [2:0].
+        // mod=1 (up) at `[4:3]`, start=2 (run) at `[2:0]`.
         assert_eq!(TIMER_RUN_UP, 0x0A);
         assert_eq!(TIMER_FREEZE, 0);
     }

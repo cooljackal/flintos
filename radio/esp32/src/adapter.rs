@@ -687,7 +687,7 @@ unsafe extern "C" fn osi_mutex_unlock(handle: *mut c_void) -> i32 {
 /// presents as `esp_wifi_*` never returning, on whatever task calls it next.
 static MUTEX_UNLOCK_FAILED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-/// How many unlocks have been refused. See [`MUTEX_UNLOCK_FAILED`].
+/// How many unlocks have been refused. See `MUTEX_UNLOCK_FAILED`.
 pub fn mutex_unlock_failures() -> u32 {
     MUTEX_UNLOCK_FAILED.load(core::sync::atomic::Ordering::Relaxed)
 }

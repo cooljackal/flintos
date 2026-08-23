@@ -15,7 +15,7 @@
 //! # The one encoding that is not obvious
 //!
 //! `LEDC_HSCHn_DUTY_REG` does **not** hold the duty. It holds `duty << 4`:
-//! bits [24:4] are the integer part and the low four bits are a fraction the
+//! bits `[24:4]` are the integer part and the low four bits are a fraction the
 //! hardware uses to dither between two `lpoint` values. Writing a duty
 //! directly gives one sixteenth of the intended output — a signal that looks
 //! plausible on a scope and is wrong everywhere.

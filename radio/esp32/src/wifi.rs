@@ -466,7 +466,7 @@ static OSI_TABLE: OsiTable = OsiTable(core::cell::UnsafeCell::new(WifiOsiFuncs::
 ///
 /// # Safety
 /// Calls into the blob, which will call back out through the OSI table on the
-/// same thread. **Call once**, and not from two cores: it writes [`OSI_TABLE`],
+/// same thread. **Call once**, and not from two cores: it writes `OSI_TABLE`,
 /// whose soundness rests on there being exactly one writer before any reader.
 pub unsafe fn init() -> i32 {
     // Before the table is handed over, because the blob arms a timer during

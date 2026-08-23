@@ -60,7 +60,7 @@ const ALARM_CPU_INT: u8 = 9;
 #[cfg(target_os = "none")]
 const APB_MHZ: u32 = soc_esp32::APB_HZ / 1_000_000;
 
-/// The timer, once [`init`] has run.
+/// The timer, once `init` has run.
 ///
 /// A `static mut` on the same argument [`crate::clock`] makes: written exactly
 /// once during boot on the first core, before anything can bring up a second,
@@ -199,7 +199,7 @@ pub fn cancel() {
     }
 }
 
-/// Whether [`init`] succeeded.
+/// Whether `init` succeeded.
 pub fn is_available() -> bool {
     #[cfg(target_os = "none")]
     {

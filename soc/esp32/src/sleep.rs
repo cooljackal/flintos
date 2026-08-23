@@ -24,7 +24,7 @@
 //! more current than a tuned sleep would. This cut takes reliable wake over
 //! minimum current; that power-domain tuning is a documented follow-up.
 //!
-//! What it does *not* skip is [`light_init`] — the power-up/wait counters and
+//! What it does *not* skip is `light_init` — the power-up/wait counters and
 //! analog bias of `rtc_sleep_init` / `rtc_sleep_low_init`. Those are not a
 //! current optimisation: without them the FSM gates the CPU and the wake
 //! transition never completes, a silent hang (this was the #31 bug).

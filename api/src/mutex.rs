@@ -114,7 +114,7 @@ const MAX_LOCK_RETRIES: u32 = 100_000;
 /// (mutex/waiter table full, interrupt-context misuse, or re-entrant-lock
 /// misuse — all logged on the kernel side). In that case we yield and retry
 /// rather than silently handing out a guard we don't own (plan W3.5), up to
-/// [`MAX_LOCK_RETRIES`]; exceeding that means the mutex/waiter tables are
+/// `MAX_LOCK_RETRIES`; exceeding that means the mutex/waiter tables are
 /// permanently exhausted (item 12), and we panic loudly rather than hang the
 /// task forever with no diagnostic.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

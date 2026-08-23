@@ -9,11 +9,11 @@
 //!
 //! The SSD1306 supports both I2C and SPI, but they are wired differently:
 //! over I2C every payload byte is prefixed with a control byte (0x00 for a
-//! command stream, 0x40 for a data/GRAM stream — see [`Ssd1306::cmd`] and
-//! [`Ssd1306::data`]); over SPI there is no control byte at all — the host
+//! command stream, 0x40 for a data/GRAM stream — see `Ssd1306::cmd` and
+//! `write_data`); over SPI there is no control byte at all — the host
 //! instead drives a dedicated D/C GPIO pin high or low around each byte.
-//! [`BusHandle`] exposes no GPIO control, only [`api::bus::Bus::select`]/
-//! [`api::bus::Bus::deselect`] and byte transfer, so there is no way
+//! [`BusHandle`] exposes no GPIO control, only [`BusHandle::select`]/
+//! [`BusHandle::deselect`] and byte transfer, so there is no way
 //! for this crate to toggle a D/C line even if it wanted to. Inlining the
 //! I2C control byte into an SPI stream would corrupt every command, so
 //! rather than pretend to support a transport this driver cannot correctly

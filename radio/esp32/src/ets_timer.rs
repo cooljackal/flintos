@@ -70,7 +70,7 @@ use kernel::smp::Spinlock;
 /// stand-in, not a value the reference fixes. 16 covered scanning — but a
 /// connect arms more (auth and association timeouts on top of the scan and
 /// connection-management timers), and overran 16 by two at the association
-/// step, failing with `AssocFailed`. 32 is headroom over that; [`note_peak`]
+/// step, failing with `AssocFailed`. 32 is headroom over that; `note_peak`
 /// logs the real high-water mark so the number stays honest, and running out
 /// is still reported rather than silently dropping a timer.
 pub const MAX_TIMERS: usize = 32;
@@ -98,7 +98,7 @@ impl Slot {
 
 static TIMERS: Spinlock<[Slot; MAX_TIMERS]> = Spinlock::new([Slot::FREE; MAX_TIMERS]);
 
-/// The most timers seen live at once, for [`note_peak`].
+/// The most timers seen live at once, for `note_peak`.
 static HIGH_WATER: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// Report a new high-water mark of live timers, once, when it is set.

@@ -239,7 +239,7 @@ fn put<S: Storage>(store: &mut Store<S>, ns: &[u8], key: &[u8], tag: u8, bytes: 
 pub struct Probe {
     /// `set` returned `Full`, so the compact-and-retry arm was entered.
     pub set_full: u32,
-    /// The heap would not give up [`COMPACT_SCRATCH`] bytes.
+    /// The heap would not give up `COMPACT_SCRATCH` bytes.
     pub no_heap: u32,
     /// `Store::compact` returned, and what it reclaimed in total.
     pub compacted: u32,

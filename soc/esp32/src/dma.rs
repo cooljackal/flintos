@@ -37,9 +37,9 @@
 //!
 //! | Host | Field |
 //! |---|---|
-//! | SPI1 | bits [1:0] |
-//! | SPI2 | bits [3:2] |
-//! | SPI3 | bits [5:4] |
+//! | SPI1 | bits `[1:0]` |
+//! | SPI2 | bits `[3:2]` |
+//! | SPI3 | bits `[5:4]` |
 //!
 //! A field of 0 means "no channel"; 1, 2 and 3 select the channel of that
 //! number. There is no channel 0, which is why [`Channel`] starts at 1.

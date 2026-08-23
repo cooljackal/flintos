@@ -14,7 +14,7 @@
 //! entry is `void (*)(void *param)`; `kernel::dynobj::spawn_task` takes a
 //! plain `fn()`, which carries no environment, and a closure cannot bridge
 //! that. What can is a *distinct function per slot*, each knowing its own slot
-//! number at compile time — [`TRAMPOLINES`] is [`SLOTS`] different `fn()`
+//! number at compile time — `TRAMPOLINES` is [`SLOTS`] different `fn()`
 //! values, each of which looks up its slot and calls what the blob asked for
 //! with the argument the blob supplied.
 //!
@@ -291,7 +291,7 @@ pub fn slot_counts(n: usize) -> (u32, u32) {
 /// anyone ships. The application sets it and says so in its output.
 static START_DELAY_MS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-/// Set the injected delay. See [`START_DELAY_MS`].
+/// Set the injected delay. See `START_DELAY_MS`.
 pub fn set_start_delay_ms(ms: u32) {
     START_DELAY_MS.store(ms, core::sync::atomic::Ordering::Relaxed);
 }

@@ -204,7 +204,7 @@ impl<S: Storage> Store<S> {
     /// bytes moved: reading 168 bytes once beats reading 8 bytes four times by
     /// most of a factor of four.
     ///
-    /// It reads a fixed [`MAX_ENTRY`] rather than the entry's own length,
+    /// It reads a fixed `MAX_ENTRY` rather than the entry's own length,
     /// because the length is in the header and the header is what is being
     /// read. Overshooting into the next entry, or into erased flash, costs
     /// nothing; it is clamped to the region so it cannot overshoot into
@@ -348,7 +348,7 @@ impl<S: Storage> Store<S> {
     /// # Scratch
     ///
     /// Must hold every *live* entry, not the whole log: distinct keys times
-    /// [`MAX_ENTRY`]. Returns [`Error::Full`] without touching the store if it
+    /// `MAX_ENTRY`. Returns [`Error::Full`] without touching the store if it
     /// does not fit, so a caller that guessed too small loses nothing.
     ///
     /// Returns the number of bytes reclaimed.

@@ -233,10 +233,8 @@ impl WifiOsiFuncs {
 /// Generated from the struct definition rather than retyped, for the reason
 /// the module docs give about the field list itself: a transposition here
 /// would name the wrong entry in a diagnostic, which is worse than no
-/// diagnostic. [`the_names_line_up_with_the_fields`] checks the ends and the
-/// count against the struct.
-///
-/// [`the_names_line_up_with_the_fields`]: tests::the_names_line_up_with_the_fields
+/// diagnostic. The `the_names_line_up_with_the_fields` test checks the ends and
+/// the count against the struct.
 pub const FIELD_NAMES: [&str; FUNCTION_COUNT] = [
     "_env_is_chip", "_set_intr", "_clear_intr",
     "_set_isr", "_ints_on", "_ints_off",

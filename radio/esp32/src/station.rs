@@ -314,7 +314,7 @@ fn bridge(base: *const c_char, id: i32, data: *mut core::ffi::c_void, len: usize
 /// through the `esp_wifi_*` calls, plus the shared statics above.
 ///
 /// One exists per system — the radio is a singleton — so this is a handle, not
-/// an owner. [`init`](Self::init) must have brought the driver up first.
+/// an owner. `init` must have brought the driver up first.
 #[derive(Clone, Copy)]
 pub struct EspStation {
     _private: (),

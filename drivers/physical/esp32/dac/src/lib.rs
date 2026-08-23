@@ -37,7 +37,7 @@
 //!
 //! | Register | Address | Fields used |
 //! |---|---|---|
-//! | `RTC_IO_PAD_DAC1` | `0x3FF48484` | `DAC` [26:19], `XPD_DAC` 18, `MUX_SEL` 17, `FUN_SEL` [16:15], `FUN_IE` 11, `DAC_XPD_FORCE` 10, `RUE` 27, `RDE` 28 |
+//! | `RTC_IO_PAD_DAC1` | `0x3FF48484` | `DAC` `[26:19]`, `XPD_DAC` 18, `MUX_SEL` 17, `FUN_SEL` `[16:15]`, `FUN_IE` 11, `DAC_XPD_FORCE` 10, `RUE` 27, `RDE` 28 |
 //! | `RTC_IO_PAD_DAC2` | `0x3FF48488` | same layout |
 //! | `RTC_GPIO_ENABLE` | `0x3FF4840C` | output-enable bits, from bit 14 by RTC GPIO number |
 //! | `SENS_SAR_DAC_CTRL1` | `0x3FF48898` | `SW_TONE_EN` 16 |
@@ -71,7 +71,7 @@ const PDAC_DAC_SHIFT: u32 = 19;
 const PDAC_DAC_MASK: u32 = 0xFF;
 const PDAC_XPD_DAC: u32 = 1 << 18;
 const PDAC_MUX_SEL: u32 = 1 << 17;
-/// `FUN_SEL` [16:15]. 0 selects the RTC function; the others are reserved.
+/// `FUN_SEL` `[16:15]`. 0 selects the RTC function; the others are reserved.
 const PDAC_FUN_SEL_MASK: u32 = 0x3 << 15;
 /// `FUN_IE` (11), the digital input buffer — off for an analog pad.
 const PDAC_FUN_IE: u32 = 1 << 11;
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn the_value_field_is_eight_bits_at_nineteen() {
-        // `PDAC_DAC` [26:19]. A shift of one either way puts half the range
+        // `PDAC_DAC` `[26:19]`. A shift of one either way puts half the range
         // into a neighbouring field and the DAC never reaches full scale.
         assert_eq!(PDAC_DAC_SHIFT, 19);
         assert_eq!(PDAC_DAC_MASK, 0xFF);
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn the_pad_control_bits_do_not_collide() {
-        // MUX_SEL (17) hands the pad to analog; FUN_SEL [16:15] must sit just
+        // MUX_SEL (17) hands the pad to analog; FUN_SEL `[16:15]` must sit just
         // below it and not be cleared by MUX_SEL's mask.
         assert_eq!(PDAC_MUX_SEL, 1 << 17);
         assert_eq!(PDAC_FUN_SEL_MASK, 0x3 << 15);

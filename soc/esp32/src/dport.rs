@@ -27,7 +27,7 @@
 //!
 //! > Write value to DPORT register (does not require protecting)
 //!
-//! So [`write`] is a plain store. Only reads need the dance.
+//! So [`write`](fn@write) is a plain store. Only reads need the dance.
 //!
 //! **2. An ordinary read-modify-write race.** Two cores each setting a
 //! different bit in `PERIP_CLK_EN` can lose one of them — the second read
@@ -226,7 +226,7 @@ unsafe fn restore_interrupts(saved: u32) {
 /// on the same core, have the handler want the lock.
 ///
 /// Not reentrant, and does not detect reentry. Nothing inside `f` may call
-/// [`modify`], [`enable`] or [`disable`]; use [`read`] and [`write`] directly.
+/// [`modify`], [`enable`] or [`disable`]; use [`read`] and [`write`](fn@write) directly.
 /// The critical sections here are a handful of instructions, so the plain
 /// test-and-set cannot spin long: the only possible contender is the other
 /// core, which has its own interrupts masked and so must finish.
@@ -415,7 +415,7 @@ pub const RADIO_CLK_BT: u32 = 0x61 << 11;
 
 /// Turn on the radio clocks in `mask`.
 ///
-/// Read-modify-write through [`read`]/[`write`], so it inherits the DPORT
+/// Read-modify-write through [`read`]/[`write`](fn@write), so it inherits the DPORT
 /// erratum workaround and the lock: the PHY is brought up from a task while
 /// the other core may be doing anything at all, and a lost bit here is a
 /// radio block that never gets a clock.

@@ -20,7 +20,7 @@
 //! A closure cannot bridge that — `fn()` has no environment. What can is a
 //! *distinct function per CPU interrupt*, each knowing its own number at
 //! compile time. `trampoline::<N>` is a separate function item for every `N`,
-//! so [`TRAMPOLINES`] is 32 different `fn()` values, each of which looks up
+//! so `TRAMPOLINES` is 32 different `fn()` values, each of which looks up
 //! slot `N` and calls what the blob installed there.
 //!
 //! That costs one static array and no allocation, and it keeps the kernel's

@@ -40,10 +40,10 @@
 //! | `CMD` | `0x04` | `TR` 0, `AT` 1, `RRB` 2, `CDO` 3, `SRR` 4 |
 //! | `STATUS` | `0x08` | `RBS` 0, `DOS` 1, `TBS` 2, `TCS` 3, `RS` 4, `TS` 5, `ES` 6, `BS` 7 |
 //! | `INT_ENA` | `0x10` | interrupt enables, all cleared |
-//! | `BUS_TIMING_0` | `0x18` | `BRP` [5:0], `SJW` [7:6] |
-//! | `BUS_TIMING_1` | `0x1C` | `TSEG1` [3:0], `TSEG2` [6:4], `SAM` 7 |
+//! | `BUS_TIMING_0` | `0x18` | `BRP` `[5:0]`, `SJW` `[7:6]` |
+//! | `BUS_TIMING_1` | `0x1C` | `TSEG1` `[3:0]`, `TSEG2` `[6:4]`, `SAM` 7 |
 //! | `DATA[0..13]` | `0x40..0x74` | TX/RX buffer; ACR/AMR in reset mode |
-//! | `CLOCK_DIVIDER` | `0x7C` | `CD` [2:0], `CO` 3, `CM` 7 (PeliCAN) |
+//! | `CLOCK_DIVIDER` | `0x7C` | `CD` `[2:0]`, `CO` 3, `CM` 7 (PeliCAN) |
 
 #![no_std]
 
@@ -133,9 +133,9 @@ pub enum TwaiError {
 /// Encode a standard frame into the eleven TX-buffer bytes: frame info, the two
 /// identifier bytes, then up to eight data bytes.
 ///
-/// Frame info is DLC in [3:0], RTR at 6, and the extended-frame flag at 7 — 0
+/// Frame info is DLC in `[3:0]`, RTR at 6, and the extended-frame flag at 7 — 0
 /// here, this is standard-format only. The 11-bit ID is left-justified: its top
-/// eight bits in byte 1, its low three in bits [7:5] of byte 2.
+/// eight bits in byte 1, its low three in bits `[7:5]` of byte 2.
 fn encode(frame: &Frame) -> ([u8; 11], usize) {
     let len = core::cmp::min(frame.len as usize, 8);
     let mut buf = [0u8; 11];
@@ -265,9 +265,9 @@ mod tests {
 
     #[test]
     fn the_125k_timing_encodes_value_minus_one() {
-        // brp 32 -> 32/2-1 = 15; sjw 3 -> 2 at [7:6]; so 0x8F.
+        // brp 32 -> 32/2-1 = 15; sjw 3 -> 2 at `[7:6]`; so 0x8F.
         assert_eq!(BTR0_125K, 0x8F);
-        // tseg1 15 -> 14; tseg2 4 -> 3 at [6:4]; sam 0; so 0x3E.
+        // tseg1 15 -> 14; tseg2 4 -> 3 at `[6:4]`; sam 0; so 0x3E.
         assert_eq!(BTR1_125K, 0x3E);
     }
 
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn a_standard_frame_round_trips_through_the_buffer_format() {
         // The identifier is left-justified: top eight bits in byte 1, low three
-        // in bits [7:5] of byte 2. A right-justified encoding would move every
+        // in bits `[7:5]` of byte 2. A right-justified encoding would move every
         // ID by three bits and still look like a valid frame.
         let f = Frame { id: 0x2AB, len: 5, data: [0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 0] };
         let (buf, n) = encode(&f);

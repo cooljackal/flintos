@@ -25,7 +25,7 @@
 //!
 //! # Raw counts, not volts; attenuation as on ADC1
 //!
-//! Same as [`esp32_adc`]: readings are raw 12-bit SAR counts, not millivolts,
+//! Same as `esp32-adc`: readings are raw 12-bit SAR counts, not millivolts,
 //! and the input range depends on the per-channel attenuation. See that crate's
 //! docs for the attenuation table.
 //!
@@ -37,11 +37,11 @@
 //!
 //! | Register | Address | Fields |
 //! |---|---|---|
-//! | `SAR_MEAS_WAIT2` | `0x3FF4880C` | `FORCE_XPD_SAR` [19:18], `FORCE_XPD_AMP` [17:16] |
-//! | `SAR_MEAS_CTRL` | `0x3FF48810` | amplifier FSM [15:4] |
+//! | `SAR_MEAS_WAIT2` | `0x3FF4880C` | `FORCE_XPD_SAR` `[19:18]`, `FORCE_XPD_AMP` `[17:16]` |
+//! | `SAR_MEAS_CTRL` | `0x3FF48810` | amplifier FSM `[15:4]` |
 //! | `SAR_ATTEN2` | `0x3FF48838` | two bits per channel |
-//! | `SAR_READ_CTRL2` | `0x3FF48890` | `SAR2_SAMPLE_BIT` [17:16], `SAR2_PWDET_FORCE` 27, `SAR2_DIG_FORCE` 28, `SAR2_DATA_INV` 29 |
-//! | `SAR_MEAS_START2` | `0x3FF48894` | `EN_PAD_FORCE` 31, `EN_PAD` [30:19], `START_FORCE` 18, `START_SAR` 17, `DONE_SAR` 16, `DATA_SAR` [15:0] |
+//! | `SAR_READ_CTRL2` | `0x3FF48890` | `SAR2_SAMPLE_BIT` `[17:16]`, `SAR2_PWDET_FORCE` 27, `SAR2_DIG_FORCE` 28, `SAR2_DATA_INV` 29 |
+//! | `SAR_MEAS_START2` | `0x3FF48894` | `EN_PAD_FORCE` 31, `EN_PAD` `[30:19]`, `START_FORCE` 18, `START_SAR` 17, `DONE_SAR` 16, `DATA_SAR` `[15:0]` |
 //! | `SYSCON_SARADC_CTRL` | `0x3FF66010` | `SAR2_MUX` 2 |
 
 #![no_std]
@@ -59,20 +59,20 @@ const SAR_READ_CTRL2: u32 = SENS_BASE + 0x90;
 const SAR_MEAS_START2: u32 = SENS_BASE + 0x94;
 const SYSCON_SARADC_CTRL: u32 = SYSCON_BASE + 0x10;
 
-/// `FORCE_XPD_SAR` [19:18]. 3 forces the SAR analog front end on; 0 leaves it
+/// `FORCE_XPD_SAR` `[19:18]`. 3 forces the SAR analog front end on; 0 leaves it
 /// to a power controller that is not running. Shared with ADC1's SAR power —
 /// this field powers both SARs' front end.
 const FORCE_XPD_SAR_SHIFT: u32 = 18;
 const FORCE_XPD_SAR_ON: u32 = 3;
 const FORCE_XPD_SAR_MASK: u32 = 0x3;
-/// `FORCE_XPD_AMP` [17:16]. 2 powers the LNA down; ADC2 does not use it.
+/// `FORCE_XPD_AMP` `[17:16]`. 2 powers the LNA down; ADC2 does not use it.
 const FORCE_XPD_AMP_SHIFT: u32 = 16;
 const FORCE_XPD_AMP_OFF: u32 = 2;
 const FORCE_XPD_AMP_MASK: u32 = 0x3;
-/// The amplifier's FSM fields [15:4] in `SAR_MEAS_CTRL`, cleared with it.
+/// The amplifier's FSM fields `[15:4]` in `SAR_MEAS_CTRL`, cleared with it.
 const AMP_FSM_MASK: u32 = 0xFFF0;
 
-/// `SAR2_SAMPLE_BIT` [17:16]. 3 selects 12-bit conversions.
+/// `SAR2_SAMPLE_BIT` `[17:16]`. 3 selects 12-bit conversions.
 const SAR2_SAMPLE_BIT_SHIFT: u32 = 16;
 const SAR2_SAMPLE_BIT_12: u32 = 3;
 const SAR2_SAMPLE_BIT_MASK: u32 = 0x3;
@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(MEAS_DATA_MASK, 0xFFFF);
         assert_eq!(MEAS_DONE_SAR, 1 << 16);
         assert_eq!(MEAS_DATA_MASK & MEAS_DONE_SAR, 0);
-        // EN_PAD is [30:19]: twelve channels, one-hot. Channel 9 must land on
+        // EN_PAD is `[30:19]`: twelve channels, one-hot. Channel 9 must land on
         // bit 28, inside the field and clear of START_FORCE at 18.
         assert_eq!(EN_PAD_SHIFT, 19);
         assert_eq!((1u32 << 9) << EN_PAD_SHIFT, 1 << 28);
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn the_shared_sar_power_field_matches_adc1() {
-        // FORCE_XPD_SAR [19:18] is the same field ADC1 sets — powering the SAR
+        // FORCE_XPD_SAR `[19:18]` is the same field ADC1 sets — powering the SAR
         // front end. Getting its position wrong leaves conversions returning a
         // constant whatever the pin does.
         assert_eq!(FORCE_XPD_SAR_SHIFT, 18);

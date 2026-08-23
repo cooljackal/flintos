@@ -37,15 +37,15 @@
 //!
 //! | Register | Offset | Fields used |
 //! |---|---|---|
-//! | `CONF` | `0x08` | resets [3:0], starts [5:4], slave [7:6], `MSB_SHIFT` [11:10], `SIG_LOOPBACK` 18 |
+//! | `CONF` | `0x08` | resets `[3:0]`, starts `[5:4]`, slave `[7:6]`, `MSB_SHIFT` `[11:10]`, `SIG_LOOPBACK` 18 |
 //! | `INT_RAW`/`INT_CLR` | `0x0C`/`0x18` | `IN_SUC_EOF` 9 |
-//! | `FIFO_CONF` | `0x20` | `DSCR_EN` 12, `TX_FIFO_MOD` [15:13], `RX_FIFO_MOD` [18:16], data-num [11:0] |
+//! | `FIFO_CONF` | `0x20` | `DSCR_EN` 12, `TX_FIFO_MOD` `[15:13]`, `RX_FIFO_MOD` `[18:16]`, data-num `[11:0]` |
 //! | `RXEOF_NUM` | `0x24` | words to receive before EOF |
-//! | `CONF_CHAN` | `0x2C` | `TX_CHAN_MOD` [2:0], `RX_CHAN_MOD` [4:3] |
-//! | `OUT_LINK`/`IN_LINK` | `0x30`/`0x34` | `ADDR` [19:0], `START` 29 |
-//! | `LC_CONF` | `0x60` | in/out/AHBM resets [3:0] |
-//! | `CLKM_CONF` | `0xAC` | `CLKM_DIV_NUM` [7:0], `_B` [13:8], `_A` [19:14], `CLKA_ENA` 21 |
-//! | `SAMPLE_RATE_CONF` | `0xB0` | bck-div [11:0], bits-mod [23:12] |
+//! | `CONF_CHAN` | `0x2C` | `TX_CHAN_MOD` `[2:0]`, `RX_CHAN_MOD` `[4:3]` |
+//! | `OUT_LINK`/`IN_LINK` | `0x30`/`0x34` | `ADDR` `[19:0]`, `START` 29 |
+//! | `LC_CONF` | `0x60` | in/out/AHBM resets `[3:0]` |
+//! | `CLKM_CONF` | `0xAC` | `CLKM_DIV_NUM` `[7:0]`, `_B` `[13:8]`, `_A` `[19:14]`, `CLKA_ENA` 21 |
+//! | `SAMPLE_RATE_CONF` | `0xB0` | bck-div `[11:0]`, bits-mod `[23:12]` |
 
 #![no_std]
 
@@ -500,7 +500,7 @@ mod tests {
         // loopback DMA never completes — this was the first-silicon bug.
         assert_eq!(CLKM_CLK_EN, 1 << 20);
         assert_eq!(CLKM_CONF_INT_DIV8 & CLKM_CLK_EN, CLKM_CLK_EN);
-        // div_num 8 in [7:0], div_a 1 in [19:14], div_b 0.
+        // div_num 8 in `[7:0]`, div_a 1 in `[19:14]`, div_b 0.
         assert_eq!(CLKM_CONF_INT_DIV8 & 0xFF, 8);
         assert_eq!((CLKM_CONF_INT_DIV8 >> 14) & 0x3F, 1);
         assert_eq!((CLKM_CONF_INT_DIV8 >> 8) & 0x3F, 0, "div_b must be zero for integer divide");

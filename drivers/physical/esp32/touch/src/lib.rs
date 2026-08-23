@@ -19,7 +19,7 @@
 //! # Two hardware quirks, both load-bearing
 //!
 //! - **Channels 8 and 9 are swapped** in the enable mask, the status bits, and
-//!   the readout — but *not* in the per-pad slope register. [`Channel::swapped`]
+//!   the readout — but *not* in the per-pad slope register. `Channel::swapped`
 //!   applies the swap where the hardware wants it; getting it wrong reads the
 //!   wrong pad for T8/T9 and is silent on T0–T7.
 //! - **Even channel → high half-word, odd channel → low half-word** of the
@@ -35,12 +35,12 @@
 //!
 //! | Register | Address | Fields used |
 //! |---|---|---|
-//! | `SENS_SAR_TOUCH_CTRL1` | `0x3FF48858` | `MEAS_DELAY` [15:0], `XPD_WAIT` [23:16] |
+//! | `SENS_SAR_TOUCH_CTRL1` | `0x3FF48858` | `MEAS_DELAY` `[15:0]`, `XPD_WAIT` `[23:16]` |
 //! | `SENS_SAR_TOUCH_CTRL2` | `0x3FF48884` | `MEAS_DONE` 10, `START_FSM_EN` 11, `START_EN` 12, `START_FORCE` 13 |
-//! | `SENS_SAR_TOUCH_ENABLE` | `0x3FF4888C` | `PAD_WORKEN` [9:0] |
+//! | `SENS_SAR_TOUCH_ENABLE` | `0x3FF4888C` | `PAD_WORKEN` `[9:0]` |
 //! | `SENS_SAR_TOUCH_OUT1..5` | `0x3FF48870`+4k | 16-bit count per channel, hi/lo half |
-//! | `RTC_IO_TOUCH_CFG` | `0x3FF48490` | `DREFL` [28:27], `DRANGE` [26:25], `DREFH` [30:29] |
-//! | `RTC_IO_TOUCH_PAD0..9` | `0x3FF48494`+4N | `DAC` [25:23], `TIE_OPT` 21, `MUX_SEL` 19, `FUN_IE` 13, `RUE` 27, `RDE` 28 |
+//! | `RTC_IO_TOUCH_CFG` | `0x3FF48490` | `DREFL` `[28:27]`, `DRANGE` `[26:25]`, `DREFH` `[30:29]` |
+//! | `RTC_IO_TOUCH_PAD0..9` | `0x3FF48494`+4N | `DAC` `[25:23]`, `TIE_OPT` 21, `MUX_SEL` 19, `FUN_IE` 13, `RUE` 27, `RDE` 28 |
 
 #![no_std]
 
@@ -53,9 +53,9 @@ const SENS_BASE: u32 = 0x3FF4_8800;
 
 /// `SENS_SAR_TOUCH_CTRL1_REG`: measurement window and XPD wait.
 const SAR_TOUCH_CTRL1: u32 = SENS_BASE + 0x58;
-const MEAS_DELAY_MASK: u32 = 0xFFFF; // [15:0]
+const MEAS_DELAY_MASK: u32 = 0xFFFF; // `[15:0]`
 const XPD_WAIT_SHIFT: u32 = 16;
-const XPD_WAIT_MASK: u32 = 0xFF << XPD_WAIT_SHIFT; // [23:16]
+const XPD_WAIT_MASK: u32 = 0xFF << XPD_WAIT_SHIFT; // `[23:16]`
 
 /// `SENS_SAR_TOUCH_CTRL2_REG`: the SW trigger and its done flag.
 const SAR_TOUCH_CTRL2: u32 = SENS_BASE + 0x84;
@@ -64,7 +64,7 @@ const START_FSM_EN: u32 = 1 << 11;
 const START_EN: u32 = 1 << 12; // 0->1 edge triggers one measurement
 const START_FORCE: u32 = 1 << 13; // 1 = software mode
 
-/// `SENS_SAR_TOUCH_ENABLE_REG`: per-channel measurement-enable mask, bits [9:0].
+/// `SENS_SAR_TOUCH_ENABLE_REG`: per-channel measurement-enable mask, bits `[9:0]`.
 const SAR_TOUCH_ENABLE: u32 = SENS_BASE + 0x8C;
 
 /// `SENS_SAR_TOUCH_OUT1_REG`: first of five count-pair registers, 4 bytes apart.
@@ -76,9 +76,9 @@ const SAR_TOUCH_OUT1: u32 = SENS_BASE + 0x70;
 
 /// `RTC_IO_TOUCH_CFG_REG`: the reference voltages the count is measured against.
 const RTC_IO_TOUCH_CFG: u32 = RTCIO_BASE + 0x90;
-const DRANGE_SHIFT: u32 = 25; // atten, [26:25]
-const DREFL_SHIFT: u32 = 27; // low voltage, [28:27]
-const DREFH_SHIFT: u32 = 29; // high voltage, [30:29]
+const DRANGE_SHIFT: u32 = 25; // atten, `[26:25]`
+const DREFL_SHIFT: u32 = 27; // low voltage, `[28:27]`
+const DREFH_SHIFT: u32 = 29; // high voltage, `[30:29]`
 const DREF_FIELD_MASK: u32 = (0x3 << DREFH_SHIFT) | (0x3 << DREFL_SHIFT) | (0x3 << DRANGE_SHIFT);
 
 /// `RTC_IO_TOUCH_PAD0_REG`: first per-pad register; pad N is `+ 4*N`.
@@ -87,7 +87,7 @@ const PAD_FUN_IE: u32 = 1 << 13;
 const PAD_FUN_SEL_MASK: u32 = 0x3 << 17;
 const PAD_MUX_SEL: u32 = 1 << 19; // 0 = RTC/touch function; must be 0 to sense
 const PAD_TIE_OPT: u32 = 1 << 21; // initial charge level; 0 = TIE_OPT_LOW
-const PAD_DAC_SHIFT: u32 = 23; // slope, [25:23]
+const PAD_DAC_SHIFT: u32 = 23; // slope, `[25:23]`
 const PAD_DAC_MASK: u32 = 0x7 << PAD_DAC_SHIFT;
 const PAD_RUE: u32 = 1 << 27;
 const PAD_RDE: u32 = 1 << 28;
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(START_EN, 1 << 12);
         assert_eq!(START_FORCE, 1 << 13);
         assert_eq!(XPD_WAIT_MASK, 0xFF << 16);
-        // Pad fields must not collide: slope [25:23] clear of mux_sel(19)/tie(21).
+        // Pad fields must not collide: slope `[25:23]` clear of mux_sel(19)/tie(21).
         assert_eq!(PAD_DAC_MASK, 0x7 << 23);
         assert_eq!(PAD_DAC_MASK & (PAD_MUX_SEL | PAD_TIE_OPT), 0);
         // The voltage fields are three distinct 2-bit fields.

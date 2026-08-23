@@ -4,7 +4,7 @@
 //!
 //! The hardware hashes 512-bit blocks and nothing else. It does **not** pad
 //! the message and it does **not** length-append — those are the caller's job,
-//! and [`pad_tail`] does them here, in software, where they can be tested. The
+//! and `pad_tail` does them here, in software, where they can be tested. The
 //! block engine only ever sees whole 64-byte blocks.
 //!
 //! # Sequence (esp-idf `sha_hal.c` / `sha_ll.h`)
@@ -116,7 +116,7 @@ unsafe fn digest(kind: ShaKind, data: &[u8], out: &mut [u8]) -> Result<(), Crypt
 
     // Padding: 0x80, zero fill, then the 64-bit big-endian bit length. This is
     // the part hand-rolled SHA drivers get wrong, so it is a pure function
-    // ([`pad_tail`]) with its own host tests.
+    // (`pad_tail`) with its own host tests.
     let mut tail = [0u8; 2 * BLOCK_BYTES];
     let tail_blocks = pad_tail(chunks.remainder(), data.len() as u64, &mut tail);
     for i in 0..tail_blocks {

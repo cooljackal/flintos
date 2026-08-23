@@ -20,7 +20,7 @@
 //! calling the ROM, for the same reason: there is no supported way to call it
 //! directly.
 //!
-//! So [`spi1`] sends the commands itself. See its module docs for the part
+//! So `spi1` sends the commands itself. See its module docs for the part
 //! that is genuinely surprising -- this chip needs two different transaction
 //! conventions, and using the wrong one for a read is silent rather than
 //! loud.
@@ -106,7 +106,7 @@ pub enum FlashError {
     /// bits set — so unlocking it would mean writing a status register blind.
     ///
     /// Refusing loses the ability to write flash on that board. Guessing can
-    /// lose the ability to boot it: see [`spi1::unlock`].
+    /// lose the ability to boot it: see `spi1::unlock`.
     UnknownChip,
 }
 
@@ -139,7 +139,7 @@ const PRO_CACHE_ENABLE: u32 = 1 << 3;
 /// assumed.
 const PRO_CACHE_CTRL1: u32 = DPORT_BASE + 0x044;
 const PRO_CACHE_MASK: u32 = 0x3F;
-/// `DPORT_PRO_DCACHE_DBUG0_REG`, `PRO_CACHE_STATE` at [18:7]. A value of 1
+/// `DPORT_PRO_DCACHE_DBUG0_REG`, `PRO_CACHE_STATE` at `[18:7]`. A value of 1
 /// means idle.
 const PRO_DCACHE_DBUG0: u32 = DPORT_BASE + 0x3F0;
 const PRO_CACHE_STATE_SHIFT: u32 = 7;
@@ -472,10 +472,10 @@ use core::sync::atomic::AtomicUsize;
 static MASK_HOOK: AtomicUsize = AtomicUsize::new(0);
 static RESTORE_HOOK: AtomicUsize = AtomicUsize::new(0);
 
-/// The chip's JEDEC id, straight from the chip: manufacturer in bits [7:0],
-/// memory type in [15:8], capacity in [23:16].
+/// The chip's JEDEC id, straight from the chip: manufacturer in bits `[7:0]`,
+/// memory type in `[15:8]`, capacity in `[23:16]`.
 ///
-/// This is what [`spi1::unlock`] gates on, so it is the number to look at when
+/// This is what `spi1::unlock` gates on, so it is the number to look at when
 /// a board reports `UnknownChip` — and the reason it exists separately from
 /// [`ChipInfo::read`], which returns the *ROM's cached* view in a different
 /// byte order (`(mfr << 16) | (type << 8) | capacity`). Two representations of
@@ -720,7 +720,7 @@ mod tests {
         assert_eq!(PRO_DCACHE_DBUG0, 0x3FF0_03F0);
         assert_eq!(PRO_CACHE_ENABLE, 1 << 3);
         assert_eq!(PRO_CACHE_STATE_SHIFT, 7);
-        // The state field is [18:7], twelve bits. A mask that ran into bit 19
+        // The state field is `[18:7]`, twelve bits. A mask that ran into bit 19
         // would take `PRO_WR_BAK_TO_READ` with it and the idle test would
         // never come true.
         assert_eq!(PRO_CACHE_STATE_MASK, 0xFFF);

@@ -16,13 +16,13 @@
 //! must respect and neither is optional:
 //!
 //! - **Reads** of these registers — the digest, the AES output, the busy
-//!   flag — take the erratum-safe [`dport::read`], not a plain volatile load.
+//!   flag — take the erratum-safe `dport::read`, not a plain volatile load.
 //!   A raw read can return an unrelated APB value when the other core touches
 //!   the bus (soc-esp32 `dport` docs, bug #56). Writes are plain, exactly as
 //!   esp-idf's `DPORT_REG_WRITE`/`esp_dport_access_read_buffer` split says.
 //! - The block's **clock** is gated by `DPORT_PERI_CLK_EN`, a *different*
 //!   register from the `PERIP_CLK_EN` the rest of the chip uses. That is why
-//!   this calls [`dport::enable_crypto`], not `dport::enable`.
+//!   this calls `dport::enable_crypto`, not `dport::enable`.
 //!
 //! # Byte order is the classic gotcha
 //!

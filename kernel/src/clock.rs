@@ -36,7 +36,7 @@ use esp32_timg::{Group, Timer, Timg};
 #[cfg(target_os = "none")]
 const RESOLUTION_HZ: u32 = 1_000_000;
 
-/// The clock, once [`init`] has run.
+/// The clock, once `init` has run.
 ///
 /// A `static mut` rather than a lock, and the argument is the same one
 /// `startup::CONSOLE_UART` makes: it is written exactly once, during boot on
@@ -73,7 +73,7 @@ pub unsafe fn init() -> bool {
     }
 }
 
-/// Microseconds since [`init`].
+/// Microseconds since `init`.
 ///
 /// Zero if `init` has not run or failed. Monotonic: it counts up and never
 /// goes back, including across a task switch on either core, because it is

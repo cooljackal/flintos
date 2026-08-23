@@ -40,7 +40,7 @@ pub const NVS_LEN: u32 = 0x6000;
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const SCRATCH_WORDS: usize = 64;
 
-/// A [`FlashRegion`](esp32_flash::FlashRegion) that speaks [`Storage`].
+/// A `FlashRegion` that speaks [`Storage`].
 pub struct FlashStorage {
     #[cfg(target_os = "none")]
     region: esp32_flash::FlashRegion,

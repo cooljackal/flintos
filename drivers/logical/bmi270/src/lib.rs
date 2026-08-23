@@ -33,7 +33,7 @@
 //!
 //! M5Stack shipped the ATOM Matrix with an MPU6886 and later revisions with a
 //! BMI270. **Both answer at 0x68**, so the address identifies nothing — only
-//! the ID register does, and the two put it in different places. [`probe`]
+//! the ID register does, and the two put it in different places. [`probe`](Bmi270::probe)
 //! reads both and says which is actually on the board, rather than picking a
 //! side and reporting a confusing failure when wrong.
 
@@ -59,7 +59,7 @@ pub const REG_INTERNAL_STATUS: u8 = 0x21;
 ///
 /// Not this part, and deliberately here anyway: the two chips share an address
 /// and a socket, so "which one is this" is a question this driver is the
-/// natural place to answer. See [`probe`].
+/// natural place to answer. See [`probe`](Bmi270::probe).
 pub const MPU6886_REG_WHO_AM_I: u8 = 0x75;
 /// `MPU6886 WHO_AM_I` value.
 pub const MPU6886_WHO_AM_I: u8 = 0x19;

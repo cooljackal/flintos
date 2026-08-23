@@ -19,7 +19,7 @@
 //!
 //! | Hold | Register | Released by |
 //! |---|---|---|
-//! | RTC stall | `RTC_CNTL_OPTIONS0` bits [1:0], `RTC_CNTL_SW_CPU_STALL` bits [25:20] | clearing both fields |
+//! | RTC stall | `RTC_CNTL_OPTIONS0` bits `[1:0]`, `RTC_CNTL_SW_CPU_STALL` bits `[25:20]` | clearing both fields |
 //! | Clock gate | `DPORT_APPCPU_CTRL_B` bit 0 | setting it |
 //! | Reset | `DPORT_APPCPU_CTRL_A` bit 0 | pulsing it |
 //!
@@ -47,7 +47,7 @@ const APPCPU_RUNSTALL: u32 = 1 << 0;
 /// `DPORT_APPCPU_CTRL_D_REG`. The address the core fetches from on release.
 const APPCPU_CTRL_D: u32 = DPORT_BASE + 0x038;
 
-/// `SW_STALL_APPCPU_C0` lives in bits [1:0] of `rtc::OPTIONS0`.
+/// `SW_STALL_APPCPU_C0` lives in bits `[1:0]` of `rtc::OPTIONS0`.
 use rtc::OPTIONS0 as RTC_OPTIONS0;
 const SW_STALL_C0_SHIFT: u32 = 0;
 const SW_STALL_C0_MASK: u32 = 0x3;
@@ -57,7 +57,7 @@ const CACHE_FLUSH_ROM: usize = 0x4000_9A14;
 /// ROM `Cache_Read_Enable(int cpu)`, from `esp32.rom.ld`.
 const CACHE_READ_ENABLE_ROM: usize = 0x4000_9A84;
 
-/// `SW_STALL_APPCPU_C1` lives in bits [25:20] of `rtc::SW_CPU_STALL`.
+/// `SW_STALL_APPCPU_C1` lives in bits `[25:20]` of `rtc::SW_CPU_STALL`.
 use rtc::SW_CPU_STALL as RTC_SW_CPU_STALL;
 const SW_STALL_C1_SHIFT: u32 = 20;
 const SW_STALL_C1_MASK: u32 = 0x3F;
@@ -91,7 +91,7 @@ unsafe fn unstall() {
 
 /// Hold the APP CPU stalled.
 ///
-/// The inverse of [`unstall`], and the pair encodes a magic value rather than
+/// The inverse of `unstall`, and the pair encodes a magic value rather than
 /// a flag: `0x21` in the C1 field and `0x2` in C0 is what the hardware reads
 /// as stalled. Writing anything else leaves the core running.
 ///

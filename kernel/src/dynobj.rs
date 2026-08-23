@@ -1457,7 +1457,7 @@ mod task_tests {
 /// here — leave the ready set, stop being a queue waiter — and hands the rest
 /// to [`reap_deleted`], which runs on the idle task's stack.
 ///
-/// The task stays in [`TaskState::Deleting`] with its stack intact until then.
+/// The task stays in `TaskState::Deleting` with its stack intact until then.
 /// Nothing schedules it: every transition back into the ready set matches on
 /// the blocked states by name, and this is not one of them.
 ///
@@ -1503,7 +1503,7 @@ pub fn delete_self() -> ! {
 ///
 /// # The check that makes this safe
 ///
-/// A task is only freed once it is [`TaskState::Deleting`] *and* is not any
+/// A task is only freed once it is `TaskState::Deleting` *and* is not any
 /// core's current task. The second condition is what covers the other core:
 /// while it is still executing the dying task — or saving its context on the
 /// way out — `current_per_core` still names it, and this skips it for now.
