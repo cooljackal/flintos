@@ -42,31 +42,28 @@ catalog=$(
 	'
 )
 
-echo "Driver catalog (enable in an app with: make enable-driver APP=<app> DRIVER=<name>)"
-[ -n "$CATEGORY$MATCH" ] && echo "filter: ${CATEGORY:+category=$CATEGORY }${MATCH:+match=$MATCH}"
+# One flat, aligned row per driver -- CATEGORY first so `make drivers | grep
+# physical` (or by name/description) just works. The banner, filter note and
+# column header go to stderr, so a pipe on stdout sees only data rows.
+echo "Driver catalog -- enable in an app with: make enable-driver APP=<app> DRIVER=<name>" >&2
+[ -n "$CATEGORY$MATCH" ] && echo "filter: ${CATEGORY:+category=$CATEGORY }${MATCH:+match=$MATCH}" >&2
+printf '%-9s %-16s %s\n' "CATEGORY" "PACKAGE" "DESCRIPTION" >&2
 
 shown=0
+# physical, bus, logical order; alphabetical within, so the flat list is stable.
 for cat in physical bus logical; do
 	[ -n "$CATEGORY" ] && [ "$CATEGORY" != "$cat" ] && continue
-	header_done=0
-	# Iterate the pre-built catalog; no subshells per driver.
 	while IFS="	" read -r c pkg desc; do
 		[ "$c" = "$cat" ] || continue
 		if [ -n "$MATCH" ]; then
-			printf '%s\n' "$pkg $desc" | grep -iqF -- "$MATCH" || continue
+			printf '%s\n' "$c $pkg $desc" | grep -iqF -- "$MATCH" || continue
 		fi
-		if [ "$header_done" = 0 ]; then
-			printf '\n%s/\n' "$cat"
-			header_done=1
-		fi
-		printf '  %-16s %s\n' "$pkg" "$desc"
+		printf '%-9s %-16s %s\n' "$c" "$pkg" "$desc"
 		shown=$((shown + 1))
 	done <<EOF
-$catalog
+$(printf '%s\n' "$catalog" | sort -t'	' -k2)
 EOF
 done
 
-if [ "$shown" = 0 ]; then
-	echo ""
-	echo "(no drivers match)"
-fi
+[ "$shown" = 0 ] && echo "(no drivers match)" >&2
+exit 0
