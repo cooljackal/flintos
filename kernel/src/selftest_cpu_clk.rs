@@ -71,12 +71,12 @@ pub(crate) fn cpu_and_apb_agree_on_an_interval() -> Check {
         Ok(t) => t,
         Err(_) => return Err("could not configure TIMG0 T0 for 1 MHz"),
     };
-    unsafe { t.start_free_running() };
+    t.start_free_running();
 
-    let t0 = unsafe { t.now() };
+    let t0 = t.now();
     super::spin_cycles(SPIN_CYCLES);
-    let elapsed_us = unsafe { t.now() }.saturating_sub(t0);
-    unsafe { t.stop() };
+    let elapsed_us = t.now().saturating_sub(t0);
+    t.stop();
 
     if elapsed_us == 0 {
         return Err("TIMG counter never advanced");

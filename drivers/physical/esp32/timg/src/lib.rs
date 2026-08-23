@@ -171,22 +171,27 @@ impl Timg {
     /// value that does not change looks exactly like a timer that never
     /// started.
     ///
-    /// # Safety
-    /// Reads this timer's registers.
-    pub unsafe fn now(&self) -> u64 {
-        self.write(UPDATE, 1);
-        let lo = self.read(LO) as u64;
-        let hi = self.read(HI) as u64;
-        (hi << 32) | lo
+    /// Safe: latches and reads registers a held `Timg` owns.
+    pub fn now(&self) -> u64 {
+        // SAFETY: a `Timg` is ownership of its timer's registers (established
+        // by the unsafe `new`); this latches and reads them.
+        unsafe {
+            self.write(UPDATE, 1);
+            let lo = self.read(LO) as u64;
+            let hi = self.read(HI) as u64;
+            (hi << 32) | lo
+        }
     }
 
     /// Start counting up from zero, with no alarm.
     ///
-    /// # Safety
-    /// Writes this timer's registers.
-    pub unsafe fn start_free_running(&self) {
-        self.load(0);
-        self.write(CONFIG, encode_config(self.divider, false, false) | CONFIG_EN);
+    /// Safe: writes registers a held `Timg` owns.
+    pub fn start_free_running(&self) {
+        // SAFETY: a held `Timg` owns this timer's registers.
+        unsafe {
+            self.load(0);
+            self.write(CONFIG, encode_config(self.divider, false, false) | CONFIG_EN);
+        }
     }
 
     /// Start counting and fire the alarm after `period` counts.
@@ -196,26 +201,28 @@ impl Timg {
     /// depend on `hal` and `soc/*` only. An alarm enabled but not routed fires
     /// into nothing, which is indistinguishable from a timer that never ran.
     ///
-    /// # Safety
-    /// Writes this timer's registers.
-    pub unsafe fn start_alarm(&self, period: u64, mode: Mode) -> Result<(), TimerError> {
+    /// Safe: writes registers a held `Timg` owns.
+    pub fn start_alarm(&self, period: u64, mode: Mode) -> Result<(), TimerError> {
         if period == 0 {
             return Err(TimerError::UnsupportedPeriod);
         }
         self.stop();
-        self.load(0);
-        self.write(ALARMLO, period as u32);
-        self.write(ALARMHI, (period >> 32) as u32);
-        // Reload target for the periodic case: back to zero, so the next alarm
-        // is a full period away rather than immediate.
-        self.write(LOADLO, 0);
-        self.write(LOADHI, 0);
-        self.enable_interrupt();
-        let autoreload = matches!(mode, Mode::Periodic);
-        self.write(
-            CONFIG,
-            encode_config(self.divider, autoreload, true) | CONFIG_EN,
-        );
+        // SAFETY: a held `Timg` owns this timer's registers.
+        unsafe {
+            self.load(0);
+            self.write(ALARMLO, period as u32);
+            self.write(ALARMHI, (period >> 32) as u32);
+            // Reload target for the periodic case: back to zero, so the next
+            // alarm is a full period away rather than immediate.
+            self.write(LOADLO, 0);
+            self.write(LOADHI, 0);
+            self.enable_interrupt();
+            let autoreload = matches!(mode, Mode::Periodic);
+            self.write(
+                CONFIG,
+                encode_config(self.divider, autoreload, true) | CONFIG_EN,
+            );
+        }
         Ok(())
     }
 
@@ -229,47 +236,58 @@ impl Timg {
     /// test gives one alarm and then silence, which is what that test's
     /// "fired once and stopped" failure exists to name.
     ///
-    /// # Safety
-    /// Writes this timer's config register.
-    pub unsafe fn rearm(&self) {
-        let cfg = self.read(CONFIG);
-        self.write(CONFIG, cfg | CONFIG_ALARM_EN);
+    /// Safe: writes the config register a held `Timg` owns.
+    pub fn rearm(&self) {
+        // SAFETY: a held `Timg` owns this timer's config register.
+        unsafe {
+            let cfg = self.read(CONFIG);
+            self.write(CONFIG, cfg | CONFIG_ALARM_EN);
+        }
     }
 
     /// Install `value` into the counter.
     ///
-    /// # Safety
-    /// Writes this timer's registers.
-    pub unsafe fn load(&self, value: u64) {
-        self.write(LOADLO, value as u32);
-        self.write(LOADHI, (value >> 32) as u32);
-        self.write(LOAD, 1);
+    /// Safe: writes registers a held `Timg` owns.
+    pub fn load(&self, value: u64) {
+        // SAFETY: a held `Timg` owns this timer's registers.
+        unsafe {
+            self.write(LOADLO, value as u32);
+            self.write(LOADHI, (value >> 32) as u32);
+            self.write(LOAD, 1);
+        }
     }
 
     /// Halt the counter. It keeps its value.
     ///
-    /// # Safety
-    /// Writes this timer's config register.
-    pub unsafe fn stop(&self) {
-        let cfg = self.read(CONFIG);
-        self.write(CONFIG, cfg & !CONFIG_EN);
+    /// Safe: writes the config register a held `Timg` owns.
+    pub fn stop(&self) {
+        // SAFETY: a held `Timg` owns this timer's config register.
+        unsafe {
+            let cfg = self.read(CONFIG);
+            self.write(CONFIG, cfg & !CONFIG_EN);
+        }
     }
 
     /// Allow this timer to raise the group's interrupt.
     ///
-    /// # Safety
-    /// Read-modify-writes a register shared with the group's other timer.
-    pub unsafe fn enable_interrupt(&self) {
+    /// Safe: sets only this timer's own enable bit. The register is shared
+    /// with the group's other timer, so the read-modify-write can race a
+    /// concurrent [`enable_interrupt`](Self::enable_interrupt) on the sibling
+    /// timer — but that is a lost interrupt-enable, not memory unsafety, and
+    /// bring-up enables both alarms from one thread.
+    pub fn enable_interrupt(&self) {
         let r = (self.group + INT_ENA) as *mut u32;
-        reg::set(r, self.int_bit);
+        // SAFETY: `r` is this group's valid, aligned INT_ENA register; a held
+        // `Timg` owns this timer's bit within it.
+        unsafe { reg::set(r, self.int_bit) };
     }
 
     /// Has this timer's alarm fired?
     ///
-    /// # Safety
-    /// Reads a group register.
-    pub unsafe fn fired(&self) -> bool {
-        ((self.group + INT_RAW) as *const u32).read_volatile() & self.int_bit != 0
+    /// Safe: reads the group's raw-interrupt register.
+    pub fn fired(&self) -> bool {
+        // SAFETY: valid, aligned group register; a side-effect-free read.
+        unsafe { ((self.group + INT_RAW) as *const u32).read_volatile() & self.int_bit != 0 }
     }
 
     /// Acknowledge the alarm. **A top-half must call this.**
@@ -277,10 +295,11 @@ impl Timg {
     /// Level-triggered: returning from a handler without clearing re-enters it
     /// forever.
     ///
-    /// # Safety
-    /// Writes a group register.
-    pub unsafe fn clear_interrupt(&self) {
-        ((self.group + INT_CLR) as *mut u32).write_volatile(self.int_bit);
+    /// Safe: writes only this timer's own bit in the group's clear register.
+    pub fn clear_interrupt(&self) {
+        // SAFETY: valid, aligned group register; the write is idempotent and
+        // touches only this timer's bit.
+        unsafe { ((self.group + INT_CLR) as *mut u32).write_volatile(self.int_bit) };
     }
 
     /// The prescaler in force.

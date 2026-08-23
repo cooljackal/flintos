@@ -148,11 +148,10 @@ impl Lact {
     /// without writing `LACTUPDATE` returns the previous snapshot — which
     /// looks like a clock that has stopped.
     ///
-    /// # Safety
-    /// Reads hardware registers.
+    /// Safe: latches and reads registers a held `Lact` owns.
     #[inline]
     #[cfg_attr(target_os = "none", link_section = ".iram1.lact")]
-    pub unsafe fn now_ticks(&self) -> u64 {
+    pub fn now_ticks(&self) -> u64 {
         unsafe {
             self.write(LACTUPDATE, 1);
             let lo = self.read(LACTLO);
@@ -170,10 +169,9 @@ impl Lact {
     /// here for the same reason and this follows it, including the two-tick
     /// margin, with the loop bounded rather than open.
     ///
-    /// # Safety
-    /// Writes hardware registers.
+    /// Safe: writes registers a held `Lact` owns.
     #[cfg_attr(target_os = "none", link_section = ".iram1.lact")]
-    pub unsafe fn set_alarm(&self, ticks: u64) {
+    pub fn set_alarm(&self, ticks: u64) {
         // Enough attempts to cover a handful of interrupts landing in the
         // window, and few enough to be a bounded poll like every other in this
         // tree. esp-idf's is unbounded.
@@ -200,10 +198,9 @@ impl Lact {
 
     /// Stop the alarm firing. The counter keeps running.
     ///
-    /// # Safety
-    /// Writes a hardware register.
+    /// Safe: writes a register a held `Lact` owns.
     #[cfg_attr(target_os = "none", link_section = ".iram1.lact")]
-    pub unsafe fn clear_alarm(&self) {
+    pub fn clear_alarm(&self) {
         unsafe {
             let cfg = self.read(LACTCONFIG);
             self.write(LACTCONFIG, cfg & !LACT_ALARM_EN);
@@ -212,11 +209,10 @@ impl Lact {
 
     /// Whether the alarm interrupt is asserted.
     ///
-    /// # Safety
-    /// Reads a hardware register.
+    /// Safe: a side-effect-free read of a register a held `Lact` owns.
     #[inline]
     #[cfg_attr(target_os = "none", link_section = ".iram1.lact")]
-    pub unsafe fn fired(&self) -> bool {
+    pub fn fired(&self) -> bool {
         unsafe { self.read(INT_ST_TIMERS) & LACT_INT != 0 }
     }
 
@@ -225,19 +221,17 @@ impl Lact {
     /// A level interrupt stays asserted until this is called, so a handler
     /// that returns without it is re-entered immediately and forever.
     ///
-    /// # Safety
-    /// Writes a hardware register.
+    /// Safe: writes only the LAC bit of a register a held `Lact` owns.
     #[inline]
     #[cfg_attr(target_os = "none", link_section = ".iram1.lact")]
-    pub unsafe fn clear_interrupt(&self) {
+    pub fn clear_interrupt(&self) {
         unsafe { self.write(INT_CLR_TIMERS, LACT_INT) }
     }
 
     /// Let the alarm reach the interrupt crossbar.
     ///
-    /// # Safety
-    /// Writes a hardware register.
-    pub unsafe fn enable_interrupt(&self) {
+    /// Safe: sets only the LAC bit of a register a held `Lact` owns.
+    pub fn enable_interrupt(&self) {
         unsafe {
             let ena = self.read(INT_ENA_TIMERS);
             self.write(INT_ENA_TIMERS, ena | LACT_INT);

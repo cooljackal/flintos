@@ -87,7 +87,7 @@ pub unsafe fn init() -> bool {
     let Some(lact) = (unsafe { Lact::new(Group::Timg0, APB_MHZ) }) else {
         return false;
     };
-    unsafe { lact.enable_interrupt() };
+    lact.enable_interrupt();
     unsafe { ALARM = Some(lact) };
 
     // IRAM-safe: `on_alarm` and everything it calls is in IRAM, so the alarm
@@ -115,12 +115,10 @@ fn on_alarm() {
     // Acknowledge first. The LAC raises a *level* interrupt, so a handler that
     // returns without clearing it is re-entered immediately and forever.
     if let Some(t) = unsafe { (*core::ptr::addr_of!(ALARM)).as_ref() } {
-        unsafe {
-            t.clear_interrupt();
-            // One-shot: the deadline has passed, and leaving the compare
-            // armed would re-fire the moment the counter is reloaded.
-            t.clear_alarm();
-        }
+        t.clear_interrupt();
+        // One-shot: the deadline has passed, and leaving the compare armed
+        // would re-fire the moment the counter is reloaded.
+        t.clear_alarm();
     }
     // `try_with`, not `with`: a top-half that spins on a lock held by the task
     // it interrupted deadlocks that core. Losing one alarm to a concurrent
@@ -182,10 +180,8 @@ pub fn set_handler(f: Option<fn()>) -> Option<fn()> {
 pub fn set_after_us(after_us: u64) {
     #[cfg(target_os = "none")]
     if let Some(t) = unsafe { (*core::ptr::addr_of!(ALARM)).as_ref() } {
-        unsafe {
-            let now = t.now_ticks();
-            t.set_alarm(now + after_us * esp32_timg::lact::TICKS_PER_US);
-        }
+        let now = t.now_ticks();
+        t.set_alarm(now + after_us * esp32_timg::lact::TICKS_PER_US);
     }
     #[cfg(not(target_os = "none"))]
     let _ = after_us;
@@ -195,7 +191,7 @@ pub fn set_after_us(after_us: u64) {
 pub fn cancel() {
     #[cfg(target_os = "none")]
     if let Some(t) = unsafe { (*core::ptr::addr_of!(ALARM)).as_ref() } {
-        unsafe { t.clear_alarm() };
+        t.clear_alarm();
     }
 }
 

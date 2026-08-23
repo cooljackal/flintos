@@ -48,16 +48,16 @@ pub(crate) fn timg_counts_at_the_rate_it_was_given() -> Check {
         return Err("1 MHz off an 80 MHz APB clock is not a divider of 80");
     }
 
-    unsafe { t.start_free_running() };
+    t.start_free_running();
 
-    let t0 = unsafe { t.now() };
+    let t0 = t.now();
     let tick0 = Tick::now();
     while Tick::now().saturating_sub(tick0) < MEASURE_TICKS {
         core::hint::spin_loop();
     }
     let elapsed_ticks = Tick::now().saturating_sub(tick0);
-    let elapsed_us = unsafe { t.now() }.saturating_sub(t0);
-    unsafe { t.stop() };
+    let elapsed_us = t.now().saturating_sub(t0);
+    t.stop();
 
     if elapsed_us == 0 {
         // The most likely single failure: reading LO/HI without latching
@@ -110,14 +110,14 @@ pub(crate) fn a_timg_alarm_fires_once_from_the_isr() -> Check {
     }
 
     // 5 ms, well inside the window below.
-    if unsafe { t.start_alarm(5_000, Mode::OneShot) }.is_err() {
+    if t.start_alarm(5_000, Mode::OneShot).is_err() {
         return Err("could not arm the alarm");
     }
 
     let start = Tick::now();
     while ALARM_HITS.load(Ordering::SeqCst) == 0 {
         if Tick::now().saturating_sub(start) > 100 {
-            unsafe { t.stop() };
+            t.stop();
             return Err("the alarm never fired");
         }
         core::hint::spin_loop();
@@ -127,7 +127,7 @@ pub(crate) fn a_timg_alarm_fires_once_from_the_isr() -> Check {
     // stays at one; an unacknowledged one climbs without limit.
     super::spin_ticks(20);
     let hits = ALARM_HITS.load(Ordering::SeqCst);
-    unsafe { t.stop() };
+    t.stop();
 
     if hits != 1 {
         return Err("a one-shot alarm fired more than once — it was not acknowledged");
@@ -187,7 +187,7 @@ pub(crate) fn a_periodic_alarm_keeps_firing_at_its_rate() -> Check {
         return Err("could not connect the periodic timer interrupt");
     }
 
-    if unsafe { t.start_alarm(PERIODIC_US, Mode::Periodic) }.is_err() {
+    if t.start_alarm(PERIODIC_US, Mode::Periodic).is_err() {
         return Err("could not arm the periodic alarm");
     }
 
@@ -197,7 +197,7 @@ pub(crate) fn a_periodic_alarm_keeps_firing_at_its_rate() -> Check {
     }
     let watched = Tick::now().saturating_sub(start);
     let hits = PERIODIC_HITS.load(Ordering::SeqCst);
-    unsafe { t.stop() };
+    t.stop();
 
     if hits == 0 {
         return Err("the periodic alarm never fired");

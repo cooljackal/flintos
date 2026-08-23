@@ -65,7 +65,7 @@ static mut CLOCK: Option<Timg> = None;
 pub unsafe fn init() -> bool {
     match unsafe { Timg::new(Group::Timg1, Timer::T1, RESOLUTION_HZ) } {
         Ok(t) => {
-            unsafe { t.start_free_running() };
+            t.start_free_running();
             unsafe { CLOCK = Some(t) };
             true
         }
@@ -83,7 +83,7 @@ pub fn now_us() -> u64 {
     {
         // Safe: written once before the second core exists, read-only after.
         match unsafe { (*core::ptr::addr_of!(CLOCK)).as_ref() } {
-            Some(t) => unsafe { t.now() },
+            Some(t) => t.now(),
             None => 0,
         }
     }

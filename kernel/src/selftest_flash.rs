@@ -119,7 +119,7 @@ pub(crate) fn an_erase_does_not_stop_an_iram_safe_interrupt() -> Check {
     {
         return Err("could not connect the alarm as IRAM-safe");
     }
-    if unsafe { t.start_alarm(ALARM_US, Mode::Periodic) }.is_err() {
+    if t.start_alarm(ALARM_US, Mode::Periodic).is_err() {
         return Err("could not arm the alarm");
     }
 
@@ -129,7 +129,7 @@ pub(crate) fn an_erase_does_not_stop_an_iram_safe_interrupt() -> Check {
     // failure it had nothing to do with.
     super::spin_ticks(5);
     if ALARM_HITS.load(Ordering::SeqCst) == 0 {
-        unsafe { t.stop() };
+        t.stop();
         return Err("the alarm never fired, before any flash was touched");
     }
 
@@ -162,7 +162,7 @@ pub(crate) fn an_erase_does_not_stop_an_iram_safe_interrupt() -> Check {
             let hits_after = ALARM_HITS.load(Ordering::SeqCst);
 
             if erased.is_err() {
-                unsafe { t.stop() };
+                t.stop();
                 return Err("the scratch sector would not erase");
             }
 
@@ -176,12 +176,12 @@ pub(crate) fn an_erase_does_not_stop_an_iram_safe_interrupt() -> Check {
             }
             attempt += 1;
             if attempt >= 3 {
-                unsafe { t.stop() };
+                t.stop();
                 return Err("the erase repeatedly measured too short to judge the mask");
             }
         }
     };
-    unsafe { t.stop() };
+    t.stop();
 
     // The claim. Allow for the alarm being re-armed by the handler rather than
     // free-running, and for the handler itself costing time: half the ideal
