@@ -73,6 +73,27 @@ pub fn _flint_sys_current_id() -> TaskId {
     TaskId(scheduler::with(|s| s.current()))
 }
 
+/// Enter the kernel's critical section; returns the state `_flint_sys_cs_exit`
+/// needs to leave it. Backs `api::sync::CsCell`, so `api` stays ignorant of
+/// which architecture's interrupt mask this is.
+///
+/// Raw enter/exit rather than a closure-taking `with`, because a closure
+/// cannot cross an `extern "Rust"` boundary generically.
+#[no_mangle]
+pub fn _flint_sys_cs_enter() -> u32 {
+    // SAFETY: the caller (`api::sync::CriticalSection`) pairs every enter
+    // with exactly one exit, in a `Drop` so a panicking closure still
+    // balances.
+    unsafe { crate::arch::cs_enter() }
+}
+
+/// Leave a critical section entered with `_flint_sys_cs_enter`.
+#[no_mangle]
+pub fn _flint_sys_cs_exit(saved: u32) {
+    // SAFETY: `saved` came from the matching `_flint_sys_cs_enter`; see above.
+    unsafe { crate::arch::cs_exit(saved) }
+}
+
 #[no_mangle]
 pub fn _flint_sys_current_name() -> &'static str {
     scheduler::with(|s| {

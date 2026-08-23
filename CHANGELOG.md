@@ -21,6 +21,12 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Added
 
+- **`api::sync::Once<T>` and `api::sync::CsCell<T>`** (#104). `Once` is a
+  write-once static: `init` returns a `&'static T` and panics on a second
+  init; `get` and `get_or_try_init` for the other shapes. `CsCell::with`
+  masks interrupts around a closure for a value a task and an ISR share.
+  Both replace `static mut X: Option<T>` + `addr_of!`. The state word is a
+  `portable_atomic` atomic, so it works on the Cortex-M0+ too.
 - **DAC, ADC2, CAN (TWAI) and I2S drivers, each with an on-chip loopback
   self-test, verified on a DevKitC.** Every one proves itself with no external
   hardware: the DAC drives GPIO25/26 and ADC2 reads it back on the same pad,

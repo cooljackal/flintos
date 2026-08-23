@@ -36,6 +36,7 @@ pub const ABI: u32 = 1;
 pub mod debug;
 pub mod mutex;
 pub mod queue;
+pub mod sync;
 pub mod task;
 pub mod timer;
 
@@ -44,6 +45,9 @@ pub use hal::types::{Priority, TaskId};
 
 /// The one error type an application `?`s into, and its `Result` (#103).
 pub use hal::{Error, Result};
+
+/// Re-export the shared-static cells at crate root.
+pub use sync::{CsCell, Once};
 
 /// Re-export the bus surface so Layer-2/Layer-3 drivers depend only on
 /// `api` (plan W7.1). Logical/bus driver crates must NOT depend on
