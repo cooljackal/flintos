@@ -10,8 +10,9 @@ use hal::bus::{
 use hal::pinmux::{PinConfig, PinMux, PinPull, Signal};
 use hal::stream::{ByteStream, StreamErrors};
 use soc_rp2040::{
-    enable_peripheral_clock, uart_instance, unreset, Rp2040PinMux, RESET_UART0, RESET_UART1,
-    XOSC_HZ,
+    RESET_UART0, RESET_UART1, Rp2040PinMux, XOSC_HZ,
+    ctrl::{self, UartPort},
+    enable_peripheral_clock, uart_instance, unreset,
 };
 
 const DR: u32 = 0x00;
@@ -52,12 +53,31 @@ impl Rp2040Uart {
     pub unsafe fn new(base: u32) -> Self {
         Self { base }
     }
+
+    pub fn open(port: &UartPort) -> hal::Result<Self> {
+        if !ctrl::claim_uart(port.ctrl) {
+            return Err(BusError::Busy.into());
+        }
+        let mut uart = unsafe { Self::new(port.ctrl.base()) };
+        if let Err(error) = uart.init(&BusConfig::Uart(port.cfg)) {
+            ctrl::release_uart(port.ctrl);
+            return Err(error.into());
+        }
+        Ok(uart)
+    }
     fn reg(&self, offset: u32) -> *mut u32 {
         (self.base + offset) as *mut u32
     }
 
     pub fn init(&mut self, config: &BusConfig) -> BusResult<()> {
-        let BusConfig::Uart(UartConfig { tx, rx, baud, data_bits, parity, stop_bits }) = config
+        let BusConfig::Uart(UartConfig {
+            tx,
+            rx,
+            baud,
+            data_bits,
+            parity,
+            stop_bits,
+        }) = config
         else {
             return Err(BusError::InvalidConfig);
         };

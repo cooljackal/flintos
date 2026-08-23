@@ -34,6 +34,29 @@ pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = None;
 pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = None;
 pub const LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = None;
 pub const PHY_MAX_TX_POWER_DBM: i32 = 0;
+pub const CONSOLE_UART: soc::ctrl::UartPort = soc::ctrl::UartPort {
+    ctrl: soc::ctrl::UartCtrl::Uart0,
+    cfg: UartConfig {
+        tx: 0,
+        rx: 1,
+        baud: 115_200,
+        data_bits: UartDataBits::Bits8,
+        parity: UartParity::None,
+        stop_bits: UartStopBits::Stop1,
+    },
+};
+pub const SELFTEST_UART: soc::ctrl::UartPort = soc::ctrl::UartPort {
+    ctrl: soc::ctrl::UartCtrl::Uart1,
+    cfg: UartConfig {
+        tx: 4,
+        rx: 5,
+        baud: 115_200,
+        data_bits: UartDataBits::Bits8,
+        parity: UartParity::None,
+        stop_bits: UartStopBits::Stop1,
+    },
+};
+pub const USER_LED: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: USER_LED_GPIO };
 
 pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
     name: "uart0",
@@ -74,7 +97,11 @@ pub const BOARD: crate::Board = crate::Board {
         mcpwm: None,
         adc_external_high: ADC_EXTERNAL_HIGH_GPIO,
     },
-    console: crate::ConsolePins { tx: 0, rx: 1, baud: 115_200 },
+    console: crate::ConsolePins {
+        tx: 0,
+        rx: 1,
+        baud: 115_200,
+    },
 };
 
 #[cfg(test)]

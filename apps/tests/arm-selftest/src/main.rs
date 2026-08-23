@@ -7,18 +7,16 @@
 #![cfg_attr(feature = "watchdog-reset", allow(dead_code))]
 
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
-use api::mutex::{lock, Mutex};
+use api::mutex::{Mutex, lock};
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 use api::queue::{Queue, RecvError};
 use api::task;
 #[cfg(not(feature = "expected-hardfault"))]
 use api::timer;
-use hal::types::Priority;
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
-use hal::{
-    bus::{BusConfig, UartDataBits, UartParity, UartStopBits},
-    stream::ByteStream,
-};
+#[cfg(target_arch = "arm")]
+use hal::stream::ByteStream;
+use hal::types::Priority;
 #[cfg(not(feature = "expected-hardfault"))]
 use portable_atomic::{AtomicU32, Ordering};
 
@@ -495,7 +493,9 @@ fn run_extended_tests() -> ! {
         core::hint::spin_loop();
     }
     let effective = kernel::scheduler::with(|sched| {
-        sched.tasks[owner as usize].as_ref().map_or(u8::MAX, |task| task.priority)
+        sched.tasks[owner as usize]
+            .as_ref()
+            .map_or(u8::MAX, |task| task.priority)
     });
     if effective == Priority::Critical(0).numeric() {
         PI_BOOST_SEEN.store(1, Ordering::Release);
@@ -610,19 +610,25 @@ fn run_extended_tests() -> ! {
 }
 
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[cfg(target_arch = "arm")]
 fn uart_loopback_test() {
-    let mut uart = unsafe { rp2040_uart::Rp2040Uart::new(soc_rp2040::UART0_BASE) };
-    if uart
-        .init(&BusConfig::Uart(hal::bus::UartConfig {
-            tx: 0,
-            rx: 1,
-            baud: 115_200,
-            data_bits: UartDataBits::Bits8,
-            parity: UartParity::None,
-            stop_bits: UartStopBits::Stop1,
-        }))
-        .is_err()
+    let Ok(led) = rp2040_gpio::Rp2040Pin::open(&kernel::board::active::USER_LED) else {
+        fail(19);
+    };
+    if rp2040_gpio::Rp2040Pin::open(&kernel::board::active::USER_LED).is_ok() {
+        fail(19);
+    }
+    if led.set_mode(rp2040_gpio::PinMode::Output).is_err()
+        || led.write(rp2040_gpio::PinLevel::High).is_err()
+        || led.read() != Ok(rp2040_gpio::PinLevel::High)
+        || led.write(rp2040_gpio::PinLevel::Low).is_err()
     {
+        fail(19);
+    }
+    let Ok(uart) = rp2040_uart::Rp2040Uart::open(&kernel::board::active::SELFTEST_UART) else {
+        fail(19);
+    };
+    if rp2040_uart::Rp2040Uart::open(&kernel::board::active::SELFTEST_UART).is_ok() {
         fail(19);
     }
     uart.set_loopback(true);
@@ -640,6 +646,10 @@ fn uart_loopback_test() {
         fail(19);
     }
 }
+
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[cfg(not(target_arch = "arm"))]
+fn uart_loopback_test() {}
 
 #[cfg(feature = "expected-hardfault")]
 fn inject_hardfault() {

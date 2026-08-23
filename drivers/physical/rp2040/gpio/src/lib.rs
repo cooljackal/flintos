@@ -2,9 +2,10 @@
 
 #![no_std]
 
-use hal::bus::{BusError, BusResult};
 use soc_rp2040::{
-    unreset, IO_BANK0_BASE, PADS_BANK0_BASE, RESET_IO_BANK0, RESET_PADS_BANK0, SIO_BASE,
+    IO_BANK0_BASE, PADS_BANK0_BASE, RESET_IO_BANK0, RESET_PADS_BANK0, SIO_BASE,
+    ctrl::{self, GpioPort},
+    unreset,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,22 +22,29 @@ pub enum PinLevel {
     High,
 }
 
-pub struct Rp2040Gpio;
+pub struct Rp2040Pin {
+    pin: u8,
+}
 
-fn bit(pin: u8) -> BusResult<u32> {
+fn bit(pin: u8) -> hal::Result<u32> {
     if pin < 30 {
         Ok(1 << pin)
     } else {
-        Err(BusError::InvalidConfig)
+        Err(hal::Error::Unsupported)
     }
 }
 
-impl Rp2040Gpio {
-    pub const fn new() -> Self {
-        Self
+impl Rp2040Pin {
+    pub fn open(port: &GpioPort) -> hal::Result<Self> {
+        bit(port.pin)?;
+        if !ctrl::claim_gpio(port.pin) {
+            return Err(hal::Error::Other("RP2040 GPIO pin already in use"));
+        }
+        Ok(Self { pin: port.pin })
     }
 
-    pub fn set_mode(&self, pin: u8, mode: PinMode) -> BusResult<()> {
+    pub fn set_mode(&self, mode: PinMode) -> hal::Result<()> {
+        let pin = self.pin;
         let mask = bit(pin)?;
         unsafe {
             unreset(RESET_IO_BANK0 | RESET_PADS_BANK0);
@@ -56,25 +64,19 @@ impl Rp2040Gpio {
         Ok(())
     }
 
-    pub fn write(&self, pin: u8, level: PinLevel) -> BusResult<()> {
+    pub fn write(&self, level: PinLevel) -> hal::Result<()> {
         let offset = if level == PinLevel::High { 0x14 } else { 0x18 };
-        unsafe { ((SIO_BASE + offset) as *mut u32).write_volatile(bit(pin)?) };
+        unsafe { ((SIO_BASE + offset) as *mut u32).write_volatile(bit(self.pin)?) };
         Ok(())
     }
 
-    pub fn read(&self, pin: u8) -> BusResult<PinLevel> {
+    pub fn read(&self) -> hal::Result<PinLevel> {
         let value = unsafe { ((SIO_BASE + 0x04) as *const u32).read_volatile() };
-        Ok(if value & bit(pin)? != 0 {
+        Ok(if value & bit(self.pin)? != 0 {
             PinLevel::High
         } else {
             PinLevel::Low
         })
-    }
-}
-
-impl Default for Rp2040Gpio {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

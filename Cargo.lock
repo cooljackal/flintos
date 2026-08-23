@@ -42,6 +42,7 @@ dependencies = [
  "hal",
  "kernel",
  "portable-atomic",
+ "rp2040-gpio",
  "rp2040-uart",
  "soc-rp2040",
 ]

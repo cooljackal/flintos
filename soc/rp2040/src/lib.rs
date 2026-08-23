@@ -9,6 +9,7 @@
 #![no_std]
 
 pub mod boot2;
+pub mod ctrl;
 pub mod multicore;
 pub mod pinmux;
 pub mod test_status;
@@ -103,6 +104,7 @@ pub const XOSC_HZ: u32 = 12_000_000;
 pub const IRQ_IO_BANK0: u8 = 13;
 pub const IRQ_SPI0: u8 = 18;
 pub const IRQ_UART0: u8 = 20;
+pub const IRQ_UART1: u8 = 21;
 pub const IRQ_I2C0: u8 = 23;
 pub const NVIC_IRQ_COUNT: u8 = 26;
 
