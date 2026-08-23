@@ -44,18 +44,16 @@
 #![no_std]
 #![no_main]
 
-use core::ptr::{addr_of, addr_of_mut};
-
-use api::task;
-use hal::types::Priority;
+use api::task::{self, Task};
+use api::CsCell;
 use hal::{PinConfig, PinMux, Signal};
 
 use esp32_gpio::{Esp32Gpio, PinMode};
+use esp32_rmt::{self as rmt, Entry, Refill, Rmt};
+use led_matrix::Layout;
+use soc_esp32::addr;
 use soc_esp32::dport::{self, ClockBit};
 use soc_esp32::pinmux::Esp32PinMux;
-use esp32_rmt::{self as rmt, Entry, Refill, Rmt};
-use soc_esp32::addr;
-use led_matrix::Layout;
 use ws2812::{LedStrip, PulseEmitter, Rgb, StripError, Ws2812};
 
 // Only the Atom boards declare an addressable LED. Say which board is missing
@@ -108,29 +106,55 @@ type Strip = Ws2812<RmtEmitter, LED_COUNT>;
 /// RMT entries in a full frame: one per bit, 24 bits per LED.
 const FRAME_ENTRIES: usize = LED_COUNT * 24;
 
-/// The frame being transmitted.
+/// Everything the interrupt shares with the task. `None` until the channel is
+/// claimed.
 ///
-/// Static rather than on the stack: 25 LEDs is 2400 bytes and the task stack is
-/// 4 KiB, which the trap handler also runs on. It has to outlive the call that
-/// starts the stream in any case — the interrupt reads it long afterwards.
-static mut FRAME: [Entry; FRAME_ENTRIES] = [Entry::END; FRAME_ENTRIES];
+/// One cell, not several statics: the interrupt reads the frame while it feeds
+/// the channel, and the task writes the frame while it stages the next one, so
+/// the two must be excluded from each other as a unit. Every access goes
+/// through `with`, which masks interrupts for the closure, so neither side can
+/// hold a reference while the other runs — which is the fix for the two live
+/// `&mut` to one static this app used to have (#99). Each closure is short:
+/// one LED's 24 entries, one half-block refill, or one register read, never a
+/// whole frame encode.
+///
+/// The frame lives in here rather than on the stack for two reasons: 25 LEDs
+/// is 2400 bytes against a 4 KiB task stack the trap handler also runs on, and
+/// the interrupt reads it long after the call that started the stream has
+/// returned.
+static LINK: CsCell<Option<Link>> = CsCell::new(None);
 
-/// Everything the interrupt needs. `None` until the channel is claimed.
-static mut STREAM: Option<Stream> = None;
-
-/// Whether the "it streamed" line has been printed. Once is enough; a stall
-/// reports every time.
-static mut REPORTED: bool = false;
-
-/// How many entries the emitter has staged into `FRAME` for this frame.
-static mut STAGED: usize = 0;
+/// The channel, its refill cursor, and the frame it is being fed.
+struct Link {
+    rmt: Rmt,
+    refill: Refill,
+    /// Set by the interrupt when there is nothing left to feed; cleared by the
+    /// task when it starts a frame.
+    done: bool,
+    frame: [Entry; FRAME_ENTRIES],
+}
 
 /// Bridges `ws2812` to this board's RMT channel.
 ///
-/// Zero-sized on purpose: the channel and the refill state have to be
-/// reachable from the interrupt, so they stay in `STREAM` rather than being
-/// owned by the strip. This type is just the name the driver calls them by.
-struct RmtEmitter;
+/// Owned by the strip and touched only by the task. What the interrupt needs
+/// lives in `LINK`; this holds the task's own bookkeeping — how far into the
+/// frame staging has reached, and whether the "it streamed" line has printed.
+struct RmtEmitter {
+    /// How many entries of the current frame have been staged into `LINK`.
+    staged: usize,
+    /// Whether the "it streamed" line has been printed. Once is enough; a
+    /// stall reports every time.
+    reported: bool,
+}
+
+impl RmtEmitter {
+    const fn new() -> Self {
+        Self {
+            staged: 0,
+            reported: false,
+        }
+    }
+}
 
 impl PulseEmitter for RmtEmitter {
     fn ns_per_tick(&self) -> u32 {
@@ -138,62 +162,125 @@ impl PulseEmitter for RmtEmitter {
     }
 
     fn begin(&mut self) -> Result<(), StripError> {
-        unsafe { STAGED = 0 };
+        self.staged = 0;
         Ok(())
     }
 
     fn emit(&mut self, pulses: &[(u16, u16)]) -> Result<(), StripError> {
-        unsafe {
-            let frame = &mut *addr_of_mut!(FRAME);
+        // Refusing beats overwriting: a truncated frame lights some pixels and
+        // leaves the rest as they were, which reads as a broken wire.
+        if self.staged + pulses.len() > FRAME_ENTRIES {
+            return Err(StripError::OutOfRange);
+        }
+        // One LED's worth under the mask, not the whole frame: `ws2812` calls
+        // this once per pixel with 24 pairs.
+        LINK.with(|link| {
+            let link = link.as_mut().ok_or(StripError::Transport)?;
             for (high, low) in pulses {
-                if STAGED >= FRAME_ENTRIES {
-                    // Refusing beats overwriting: a truncated frame lights some
-                    // pixels and leaves the rest as they were, which reads as a
-                    // broken wire.
-                    return Err(StripError::OutOfRange);
-                }
                 // Both pulses of a bit in one entry, so a bit is never split
                 // across a refill boundary and cannot be half-sent.
-                frame[STAGED] = Entry::new(true, *high, false, *low);
-                STAGED += 1;
+                link.frame[self.staged] = Entry::new(true, *high, false, *low);
+                self.staged += 1;
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn finish(&mut self) -> Result<(), StripError> {
-        send_staged_frame().map_err(|()| StripError::Transport)
+        self.send_staged_frame().map_err(|()| StripError::Transport)
     }
 }
 
-struct Stream {
-    rmt: Rmt,
-    refill: Refill,
-    done: bool,
+impl RmtEmitter {
+    /// Stream whatever `emit` staged into `LINK`, and wait for it to finish.
+    ///
+    /// Unchanged in sequence from the version verified on hardware -- only the
+    /// way it reaches the channel moved.
+    fn send_staged_frame(&mut self) -> Result<(), ()> {
+        LINK.with(|link| {
+            let link = link.as_mut().ok_or(())?;
+            link.done = false;
+            // SAFETY: the channel's registers are this program's alone (see
+            // `led_init`), and `frame` is kept alive and unchanged until the
+            // stream finishes: it lives in `LINK`, its only writer is `emit`,
+            // and the strip does not call `emit` again until `finish` returns.
+            // `rmt_isr` is connected and services every threshold.
+            link.refill = unsafe { link.rmt.start_stream(&link.frame) };
+            Ok(())
+        })?;
+
+        // Completion is TX_END, which the channel sets when it stops. The
+        // interrupt's own "nothing left to feed" is a weaker statement: it needs
+        // one more threshold after the terminator is written, and the channel
+        // stops at the terminator, so that threshold often never comes.
+        let mut waited = 0;
+        let mut finished = false;
+        for _ in 0..10 {
+            task::sleep_ms(1);
+            waited += 1;
+            // SAFETY: reads one interrupt status register of a channel this
+            // program owns.
+            if LINK.with(|l| l.as_ref().is_some_and(|l| unsafe { l.rmt.stream_done() })) {
+                finished = true;
+                break;
+            }
+        }
+
+        // Whether the interrupt actually fed the whole frame. Without it the
+        // channel emits its first 64 entries and stops, and on a panel that is
+        // two lit LEDs and 23 dark ones -- which looks like a wiring fault, not
+        // a missed refill.
+        let fed = LINK.with(|l| l.as_ref().map_or(0, |l| l.refill.written()));
+        if !finished || fed != FRAME_ENTRIES {
+            api::log_error!(
+                "stream stalled: {} of {} entries fed, TX_END {} after {} ms",
+                fed,
+                FRAME_ENTRIES,
+                if finished { "set" } else { "NOT set" },
+                waited
+            );
+            return Err(());
+        }
+        if !self.reported {
+            self.reported = true;
+            api::log_info!(
+                "streamed {} entries via {} refills in {} ms",
+                fed,
+                fed.div_ceil(rmt::HALF_BLOCK),
+                waited
+            );
+        }
+
+        // Latch. The datasheet wants the line idle at least 50 us; a tick is
+        // far more, and costs nothing here.
+        task::sleep_ms(1);
+        Ok(())
+    }
 }
 
 fn main() {
-    task::spawn("blink", blink, Priority::Normal(1), 4096);
+    if Task::new("blink", blink).spawn().is_none() {
+        api::log_error!("could not start the blink task");
+    }
 }
 
 fn blink() {
-    if unsafe { led_init() }.is_none() {
-        // Returning would leave a board that looks alive and does nothing.
-        api::log_error!("[blink] could not claim RMT channel {} on GPIO {}", LED_CHANNEL, LED_PIN);
-        loop {
-            task::sleep_ms(1000);
-        }
+    if led_init().is_none() {
+        // Nothing to do without a channel; say so and stop, rather than leave a
+        // board that looks alive and does nothing.
+        api::log_error!("could not claim RMT channel {} on GPIO {}", LED_CHANNEL, LED_PIN);
+        task::exit();
     }
 
     api::log_info!(
-        "[blink] {} LED(s) on GPIO {} via RMT channel {}, {} entries per frame",
+        "{} LED(s) on GPIO {} via RMT channel {}, {} entries per frame",
         LED_COUNT,
         LED_PIN,
         LED_CHANNEL,
         FRAME_ENTRIES
     );
 
-    let mut strip: Strip = Ws2812::new(RmtEmitter);
+    let mut strip: Strip = Ws2812::new(RmtEmitter::new());
     match PANEL {
         Some(panel) => panel_demo(&mut strip, panel),
         None => colour_cycle(&mut strip),
@@ -213,7 +300,7 @@ fn colour_cycle(strip: &mut Strip) -> ! {
             let _ = strip.clear();
             let _ = strip.set(0, colour);
             show(strip);
-            api::log_info!("[blink] {}", name);
+            api::log_info!("{}", name);
             task::sleep_ms(1000);
         }
     }
@@ -237,7 +324,7 @@ fn panel_demo(strip: &mut Strip, panel: Layout) -> ! {
             // a washed-out photo is harder to read the position off.
             let _ = strip.set(i, Rgb::new(0, 0, 255).dim(8));
             show(strip);
-            api::log_info!("[blink] index {}", i);
+            api::log_info!("index {}", i);
             task::sleep_ms(600);
         }
     }
@@ -253,16 +340,16 @@ fn draw_by_coordinates(strip: &mut Strip, panel: Layout) {
     let (w, h) = (panel.width, panel.height);
 
     for x in 0..w {
-        api::log_info!("[blink] column x={} (expect a vertical line, moving right)", x);
+        api::log_info!("column x={} (expect a vertical line, moving right)", x);
         paint(strip, panel, |cx, cy| cx == x && cy < h);
         task::sleep_ms(500);
     }
     for y in 0..h {
-        api::log_info!("[blink] row y={} (expect a horizontal line, moving down)", y);
+        api::log_info!("row y={} (expect a horizontal line, moving down)", y);
         paint(strip, panel, |cx, cy| cy == y && cx < w);
         task::sleep_ms(500);
     }
-    api::log_info!("[blink] diagonal (expect top-left to bottom-right)");
+    api::log_info!("diagonal (expect top-left to bottom-right)");
     paint(strip, panel, |cx, cy| cx == cy);
     task::sleep_ms(1500);
 }
@@ -281,112 +368,57 @@ fn paint(strip: &mut Strip, panel: Layout, lit: impl Fn(usize, usize) -> bool) {
                 Some(i) => {
                     let _ = strip.set(i, Rgb::new(0, 255, 0).dim(8));
                 }
-                None => api::log_error!("[blink] ({}, {}) is off the panel", x, y),
+                None => api::log_error!("({}, {}) is off the panel", x, y),
             }
         }
     }
     show(strip);
 }
 
-/// Stream whatever the emitter staged into `FRAME`, and wait for it to finish.
-///
-/// Unchanged from the version verified on hardware -- only its caller moved.
-fn send_staged_frame() -> Result<(), ()> {
-    unsafe {
-        let Some(stream) = &mut *addr_of_mut!(STREAM) else {
-            return Err(());
-        };
-        stream.done = false;
-        stream.refill = stream.rmt.start_stream(&*addr_of!(FRAME));
-    }
-
-    // Completion is TX_END, which the channel sets when it stops. The
-    // interrupt's own "nothing left to feed" is a weaker statement: it needs
-    // one more threshold after the terminator is written, and the channel
-    // stops at the terminator, so that threshold often never comes.
-    let mut waited = 0;
-    let mut finished = false;
-    for _ in 0..10 {
-        task::sleep_ms(1);
-        waited += 1;
-        if unsafe { (*addr_of!(STREAM)).as_ref().is_some_and(|s| s.rmt.stream_done()) } {
-            finished = true;
-            break;
-        }
-    }
-
-    // Whether the interrupt actually fed the whole frame. Without it the
-    // channel emits its first 64 entries and stops, and on a panel that is two
-    // lit LEDs and 23 dark ones -- which looks like a wiring fault, not a
-    // missed refill.
-    unsafe {
-        if let Some(s) = (*addr_of!(STREAM)).as_ref() {
-            let fed = s.refill.written();
-            if !finished || fed != FRAME_ENTRIES {
-                api::log_error!(
-                    "[blink] stream stalled: {} of {} entries fed, TX_END {} after {} ms",
-                    fed,
-                    FRAME_ENTRIES,
-                    if finished { "set" } else { "NOT set" },
-                    waited
-                );
-                return Err(());
-            }
-            if !REPORTED {
-                REPORTED = true;
-                api::log_info!(
-                    "[blink] streamed {} entries via {} refills in {} ms",
-                    fed,
-                    fed.div_ceil(rmt::HALF_BLOCK),
-                    waited
-                );
-            }
-        }
-    }
-
-    // Latch. The datasheet wants the line idle at least 50 us; a tick is far
-    // more, and costs nothing here.
-    task::sleep_ms(1);
-    Ok(())
-}
-
 /// Push a frame, logging rather than swallowing a failure.
 fn show(strip: &mut Strip) {
     if let Err(e) = strip.show() {
-        api::log_error!("[blink] show failed: {:?}", e);
+        api::log_error!("show failed: {:?}", e);
     }
 }
 
 /// Called from the trap handler when the channel wants its next half block.
 ///
 /// Deliberately tiny. The deadline is about 40 µs and it runs with the
-/// scheduler's own interrupt masked.
+/// scheduler's own interrupt masked; the critical section `with` takes is the
+/// same mask the trap handler already holds, so it costs a register write and
+/// nothing else.
 fn rmt_isr() {
-    unsafe {
-        if let Some(stream) = &mut *addr_of_mut!(STREAM) {
-            if !stream.done {
-                stream.done = stream.rmt.service(&*addr_of!(FRAME), &mut stream.refill);
+    LINK.with(|link| {
+        if let Some(link) = link {
+            if !link.done {
+                // SAFETY: this is the channel's threshold interrupt, `frame` is
+                // the sequence `start_stream` was given, and nothing else can
+                // be inside `LINK` while this closure runs.
+                link.done = unsafe { link.rmt.service(&link.frame, &mut link.refill) };
             }
         }
-    }
+    });
 }
 
 /// Bring up the clock, the pad, the channel and the interrupt.
 ///
-/// # Safety
-/// Claims RMT channel 0, GPIO `LED_PIN` and CPU interrupt `LED_CPU_INT` for
-/// the life of the program.
-unsafe fn led_init() -> Option<()> {
+/// Claims RMT channel 0, GPIO `LED_PIN` and CPU interrupt `LED_CPU_INT` for the
+/// life of the program. `None` means one of them was refused, and the log says
+/// which.
+fn led_init() -> Option<()> {
     // The peripheral answers reads with plausible garbage while its clock is
     // gated, so this has to come before anything else touches its registers.
-    dport::enable(ClockBit::RMT);
+    // SAFETY: the RMT is this program's to gate -- nothing else in the build
+    // claims it -- and `enable` is itself safe against the other core and
+    // interrupts.
+    unsafe { dport::enable(ClockBit::RMT) };
 
     // Output enable for the pad. The matrix leaves output enable with the
     // peripheral, but esp-idf sets the direction here too and this is not the
     // place to find out whether that is load-bearing -- an unenabled pad is a
     // dark LED with nothing to say about why.
-    let gpio = Esp32Gpio::new(addr::GPIO_BASE);
-    gpio.set_mode(LED_PIN, PinMode::Output).ok()?;
+    Esp32Gpio::instance().set_mode(LED_PIN, PinMode::Output).ok()?;
 
     // Push-pull: one driver, one LED, no bus to share. `route` handles IO_MUX
     // function select and the matrix entry, and refuses a pin that cannot
@@ -399,20 +431,29 @@ unsafe fn led_init() -> Option<()> {
     // If the divider could not deliver the tick asked for, every pulse below is
     // scaled by the difference and the LED shows something arbitrary.
     debug_assert_eq!(actual_ns, NS_PER_TICK);
-    let rmt = Rmt::new(LED_CHANNEL, divider)?;
+    // SAFETY: nothing else in this build claims `LED_CHANNEL`, and its output
+    // signal was routed to `LED_PIN` just above.
+    let rmt = unsafe { Rmt::new(LED_CHANNEL, divider)? };
 
     // Point the peripheral at a CPU interrupt. Without this the RMT's own
     // interrupt enables set happily and nothing is ever delivered -- there was
     // no crossbar routing in this kernel at all before streaming needed one.
-    if let Err(e) = kernel::interrupt::connect(addr::IRQ_RMT, LED_CPU_INT, rmt_isr) {
-        api::log_error!("[blink] cannot connect RMT to CPU interrupt {}: {:?}", LED_CPU_INT, e);
+    //
+    // SAFETY: `rmt_isr` runs as one masked closure that acknowledges the
+    // threshold (inside `Rmt::service`) and copies at most half a block; it
+    // never blocks.
+    if let Err(e) = unsafe { kernel::interrupt::connect(addr::IRQ_RMT, LED_CPU_INT, rmt_isr) } {
+        api::log_error!("cannot connect RMT to CPU interrupt {}: {:?}", LED_CPU_INT, e);
         return None;
     }
 
-    STREAM = Some(Stream {
-        rmt,
-        refill: Refill::new(0),
-        done: true,
+    LINK.with(|link| {
+        *link = Some(Link {
+            rmt,
+            refill: Refill::new(0),
+            done: true,
+            frame: [Entry::END; FRAME_ENTRIES],
+        });
     });
     Some(())
 }
