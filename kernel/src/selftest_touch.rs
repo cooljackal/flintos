@@ -33,7 +33,7 @@ pub(crate) fn touch_reads_a_stable_capacitance_count(gpio: u8) -> Check {
 
     // A first conversion. Zero means the pad never charged or the readout is
     // wrong; all-ones means the conversion never terminated within its window.
-    let first = unsafe { touch.read(ch) }
+    let first = touch.read(ch)
         .map_err(|_| "the touch FSM never signalled done -- the conversion did not run")?;
     if first == 0 {
         return Err("touch count is zero -- the controller measured nothing");
@@ -51,7 +51,7 @@ pub(crate) fn touch_reads_a_stable_capacitance_count(gpio: u8) -> Check {
     let mut min = first;
     let mut max = first;
     for _ in 0..4 {
-        let c = unsafe { touch.read(ch) }
+        let c = touch.read(ch)
             .map_err(|_| "a repeat touch conversion timed out")?;
         if c == 0 || c == u16::MAX {
             return Err("a repeat touch conversion returned an out-of-range count");

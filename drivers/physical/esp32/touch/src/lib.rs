@@ -252,13 +252,16 @@ impl Touch {
     /// A finger lowers the count; an untouched pad returns its steady parasitic
     /// value. `0` is the controller's own "not ready / error" sentinel.
     ///
-    /// # Safety
-    /// Drives the touch measurement registers and the channel's pad.
-    pub unsafe fn read(&self, ch: Channel) -> Result<u16, TouchError> {
+    /// Safe: drives the touch measurement registers a held `Touch` owns; `ch`
+    /// is a validated channel.
+    pub fn read(&self, ch: Channel) -> Result<u16, TouchError> {
         // Route the pad to the touch/RTC function and set its charge slope. The
         // slope register is indexed by the raw number; the tie-option by the
         // swapped one (the 8/9 quirk), so they are written separately.
         let pad = RTC_IO_TOUCH_PAD0 + ch.num() * 4;
+        // SAFETY: a held `Touch` owns the SENS/RTCIO touch registers; `ch`
+        // indexes only this controller's own pads.
+        unsafe {
         modify(
             pad,
             PAD_FUN_IE | PAD_FUN_SEL_MASK | PAD_MUX_SEL | PAD_RUE | PAD_RDE | PAD_DAC_MASK,
@@ -291,6 +294,7 @@ impl Touch {
         let count = ((read(out_reg) >> shift) & 0xFFFF) as u16;
         modify(SAR_TOUCH_ENABLE, mask, 0);
         Ok(count)
+        }
     }
 }
 

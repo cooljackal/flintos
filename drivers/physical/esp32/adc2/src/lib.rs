@@ -233,13 +233,16 @@ impl Adc2 {
 
     /// Set a channel's input attenuation.
     ///
-    /// # Safety
-    /// Read-modify-writes a register shared by all ten channels.
-    pub unsafe fn set_attenuation(&self, ch: Channel, atten: Attenuation) {
+    /// Safe: read-modify-writes an ADC2 register a held `Adc2` owns. The
+    /// register is shared by all ten channels, but one `Adc2` owns them all.
+    pub fn set_attenuation(&self, ch: Channel, atten: Attenuation) {
         let r = SAR_ATTEN2 as *mut u32;
         let shift = ch.index() * 2;
-        let v = (r.read_volatile() & !(0x3 << shift)) | ((atten as u32) << shift);
-        r.write_volatile(v);
+        // SAFETY: a held `Adc2` owns the SAR2 registers.
+        unsafe {
+            let v = (r.read_volatile() & !(0x3 << shift)) | ((atten as u32) << shift);
+            r.write_volatile(v);
+        }
     }
 
     /// Convert one sample from `ch`, unless the radio holds SAR2.
@@ -248,34 +251,36 @@ impl Adc2 {
     /// running. Passing `true` returns [`Adc2Error::RadioBusy`] without touching
     /// the converter, because the reading would be garbage.
     ///
-    /// # Safety
-    /// Drives the SAR2 registers. Requires that this pad be routed to the RTC
-    /// analog domain first — for GPIO 25/26 the DAC does that; for the others
-    /// the caller must.
-    pub unsafe fn read(&self, ch: Channel, radio_up: bool) -> Result<u16, Adc2Error> {
+    /// Safe: drives SAR2 registers a held `Adc2` owns. Route the pad to the RTC
+    /// analog domain first (for GPIO 25/26 the DAC does that, otherwise the
+    /// caller must), or the conversion reads a disconnected pin — a wrong
+    /// reading, not unsafety.
+    pub fn read(&self, ch: Channel, radio_up: bool) -> Result<u16, Adc2Error> {
         guard(radio_up)?;
 
         let start = SAR_MEAS_START2 as *mut u32;
 
-        // Select the pad, and clear the start strobe so the write below is a
-        // genuine rising edge.
-        let base = (start.read_volatile() & !(EN_PAD_MASK << EN_PAD_SHIFT)) & !MEAS_START_SAR;
-        start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT));
-        start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT) | MEAS_START_SAR);
+        // SAFETY: a held `Adc2` owns the SAR2 registers.
+        unsafe {
+            // Select the pad, and clear the start strobe so the write below is a
+            // genuine rising edge.
+            let base = (start.read_volatile() & !(EN_PAD_MASK << EN_PAD_SHIFT)) & !MEAS_START_SAR;
+            start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT));
+            start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT) | MEAS_START_SAR);
 
-        poll::until(
-            || unsafe { start.read_volatile() & MEAS_DONE_SAR != 0 },
-            poll::DEFAULT_SPINS,
-        )
-        .map_err(|_| Adc2Error::Timeout)?;
-        Ok((start.read_volatile() & MEAS_DATA_MASK) as u16)
+            poll::until(
+                || start.read_volatile() & MEAS_DONE_SAR != 0,
+                poll::DEFAULT_SPINS,
+            )
+            .map_err(|_| Adc2Error::Timeout)?;
+            Ok((start.read_volatile() & MEAS_DATA_MASK) as u16)
+        }
     }
 
     /// Average `n` conversions.
     ///
-    /// # Safety
-    /// Same as [`Adc2::read`].
-    pub unsafe fn read_averaged(
+    /// Safe: as [`Adc2::read`].
+    pub fn read_averaged(
         &self,
         ch: Channel,
         n: u16,

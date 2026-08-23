@@ -42,7 +42,7 @@ pub(crate) fn adc1_follows_the_pin_it_is_pointed_at(high_gpio: u8) -> Check {
     let adc = unsafe { Adc1::new() };
     // 11 dB: the widest range, so a pulled-up pad sits inside it rather than
     // pinned at full scale where a stuck reading would look the same.
-    unsafe { adc.set_attenuation(ch, Attenuation::Db11) };
+    adc.set_attenuation(ch, Attenuation::Db11);
 
     // The board supplies the signal, because the chip cannot.
     //
@@ -72,13 +72,13 @@ pub(crate) fn adc1_follows_the_pin_it_is_pointed_at(high_gpio: u8) -> Check {
         Some(c) => c,
         None => return Err("the board's ADC_EXTERNAL_HIGH_GPIO is not an ADC1 channel"),
     };
-    unsafe { adc.set_attenuation(button, Attenuation::Db11) };
+    adc.set_attenuation(button, Attenuation::Db11);
 
-    unsafe { adc.set_pad_pull(ch, Pull::Down) }.map_err(|_| "GPIO33 is not an RTC pad")?;
+    adc.set_pad_pull(ch, Pull::Down).map_err(|_| "GPIO33 is not an RTC pad")?;
     settle();
-    let low = unsafe { adc.read_averaged(ch, SAMPLES) }
+    let low = adc.read_averaged(ch, SAMPLES)
         .map_err(|_| "the conversion never completed")?;
-    let high = unsafe { adc.read_averaged(button, SAMPLES) }
+    let high = adc.read_averaged(button, SAMPLES)
         .map_err(|_| "the conversion never completed")?;
     {
         use crate::debug::fault::{raw_dec, raw_print};
@@ -145,8 +145,8 @@ pub(crate) fn every_adc1_channel_converts() -> Check {
         Channel::Gpio35,
     ];
     for ch in channels {
-        unsafe { adc.set_attenuation(ch, Attenuation::Db11) };
-        if unsafe { adc.read(ch) }.is_err() {
+        adc.set_attenuation(ch, Attenuation::Db11);
+        if adc.read(ch).is_err() {
             return Err("a channel never finished its conversion");
         }
     }

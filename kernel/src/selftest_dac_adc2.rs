@@ -37,16 +37,16 @@ pub(crate) fn dac_drives_and_adc2_reads_it_back() -> Check {
     for (dch, ach, label) in [(D::Gpio25, A::Gpio25, "gpio25"), (D::Gpio26, A::Gpio26, "gpio26")] {
         // 11 dB: the widest range, so 3.3 V of DAC output sits inside it rather
         // than pinned at full scale where a stuck reading would look the same.
-        unsafe { adc.set_attenuation(ach, Attenuation::Db11) };
+        adc.set_attenuation(ach, Attenuation::Db11);
 
-        unsafe { dac.output(dch, 0) };
+        dac.output(dch, 0);
         settle();
-        let low = unsafe { adc.read_averaged(ach, SAMPLES, false) }
+        let low = adc.read_averaged(ach, SAMPLES, false)
             .map_err(|_| "the ADC2 conversion never completed")?;
 
-        unsafe { dac.output(dch, 255) };
+        dac.output(dch, 255);
         settle();
-        let high = unsafe { adc.read_averaged(ach, SAMPLES, false) }
+        let high = adc.read_averaged(ach, SAMPLES, false)
             .map_err(|_| "the ADC2 conversion never completed")?;
 
         {
@@ -61,7 +61,7 @@ pub(crate) fn dac_drives_and_adc2_reads_it_back() -> Check {
         }
 
         // Leave the pin quiet for anything that runs after.
-        unsafe { dac.power_down(dch) };
+        dac.power_down(dch);
 
         if high <= low {
             return Err("the ADC2 reading did not rise when the DAC did");
@@ -90,7 +90,7 @@ pub(crate) fn adc2_refuses_a_read_while_the_radio_is_up() -> Check {
     use esp32_adc2::{Adc2, Adc2Error, Channel as A};
 
     let adc = unsafe { Adc2::new() };
-    match unsafe { adc.read(A::Gpio27, true) } {
+    match adc.read(A::Gpio27, true) {
         Err(Adc2Error::RadioBusy) => Ok(()),
         Err(_) => Err("ADC2 read failed, but not for the radio"),
         Ok(_) => Err("ADC2 read the SAR while the radio was said to own it"),

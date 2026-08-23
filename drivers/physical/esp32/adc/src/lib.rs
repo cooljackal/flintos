@@ -354,13 +354,16 @@ impl Adc1 {
 
     /// Set a channel's input attenuation.
     ///
-    /// # Safety
-    /// Read-modify-writes a register shared by all eight channels.
-    pub unsafe fn set_attenuation(&self, ch: Channel, atten: Attenuation) {
+    /// Safe: read-modify-writes an ADC1 register a held `Adc1` owns. The
+    /// register is shared by all eight channels, but one `Adc1` owns them all.
+    pub fn set_attenuation(&self, ch: Channel, atten: Attenuation) {
         let r = SAR_ATTEN1 as *mut u32;
         let shift = ch.index() * 2;
-        let v = (r.read_volatile() & !(0x3 << shift)) | ((atten as u32) << shift);
-        r.write_volatile(v);
+        // SAFETY: a held `Adc1` owns the ADC1 registers.
+        unsafe {
+            let v = (r.read_volatile() & !(0x3 << shift)) | ((atten as u32) << shift);
+            r.write_volatile(v);
+        }
     }
 
     /// Hand the pad to the RTC domain and set its pull.
@@ -369,11 +372,13 @@ impl Adc1 {
     /// sensor pads with no resistors, and asking gets
     /// [`AdcError::NoPullOnThisPad`] rather than a silent no-op.
     ///
-    /// # Safety
-    /// Writes an RTCIO pad register.
-    pub unsafe fn set_pad_pull(&self, ch: Channel, pull: Pull) -> Result<(), AdcError> {
+    /// Safe: writes an RTCIO pad register for a validated channel; a held
+    /// `Adc1` owns the ADC1/RTCIO pads it measures.
+    pub fn set_pad_pull(&self, ch: Channel, pull: Pull) -> Result<(), AdcError> {
         let pad = touch_pad_of(ch).ok_or(AdcError::NoPullOnThisPad)?;
         let r = (TOUCH_PAD0 + pad * 4) as *mut u32;
+        // SAFETY: `pad` is a validated RTCIO pad index; a held `Adc1` owns it.
+        unsafe {
         let mut v = r.read_volatile();
         // `mux_sel` **set** hands the pad to the RTC domain, despite
         // `rtc_io_struct.h` commenting it the other way round -- esp-idf's
@@ -394,6 +399,7 @@ impl Adc1 {
             Pull::Down => v |= PAD_RDE,
         }
         r.write_volatile(v);
+        }
         Ok(())
     }
 
@@ -406,48 +412,49 @@ impl Adc1 {
     /// pin floats and `RTC_GPIO_IN` reads zero whatever you do. Two sessions
     /// went into readings taken from a pad nothing was holding.
     ///
-    /// # Safety
-    /// Reads RTCIO registers.
-    pub unsafe fn pad_debug(&self, ch: Channel) -> PadDebug {
+    /// Safe: side-effect-free reads of RTCIO registers a held `Adc1` owns.
+    pub fn pad_debug(&self, ch: Channel) -> PadDebug {
         let pad = touch_pad_of(ch).unwrap_or(0);
         let bit = rtc_gpio_of(ch).map(|n| 1u32 << (RTC_GPIO_SHIFT + n)).unwrap_or(0);
-        PadDebug {
-            pad: ((TOUCH_PAD0 + pad * 4) as *const u32).read_volatile(),
-            enable: (RTC_GPIO_ENABLE as *const u32).read_volatile(),
-            out: (RTC_GPIO_OUT as *const u32).read_volatile(),
-            input: (RTC_GPIO_IN as *const u32).read_volatile(),
-            bit,
+        // SAFETY: a held `Adc1` owns the ADC1/RTCIO registers.
+        unsafe {
+            PadDebug {
+                pad: ((TOUCH_PAD0 + pad * 4) as *const u32).read_volatile(),
+                enable: (RTC_GPIO_ENABLE as *const u32).read_volatile(),
+                out: (RTC_GPIO_OUT as *const u32).read_volatile(),
+                input: (RTC_GPIO_IN as *const u32).read_volatile(),
+                bit,
+            }
         }
     }
 
     /// Convert one sample from `ch`.
     ///
-    /// # Safety
-    /// Drives the ADC1 registers.
-    pub unsafe fn read(&self, ch: Channel) -> Result<u16, AdcError> {
+    /// Safe: drives ADC1 registers a held `Adc1` owns.
+    pub fn read(&self, ch: Channel) -> Result<u16, AdcError> {
         let start = SAR_MEAS_START1 as *mut u32;
 
-        // Select the pad, and clear the start strobe so the rising edge below
-        // is a real edge rather than a level that was already high.
-        let base = (start.read_volatile() & !(EN_PAD_MASK << EN_PAD_SHIFT)) & !MEAS_START_SAR;
-        start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT));
-        start.write_volatile(
-            base | ((1u32 << ch.index()) << EN_PAD_SHIFT) | MEAS_START_SAR,
-        );
+        // SAFETY: a held `Adc1` owns the ADC1 registers.
+        unsafe {
+            // Select the pad, and clear the start strobe so the rising edge
+            // below is a real edge rather than a level that was already high.
+            let base = (start.read_volatile() & !(EN_PAD_MASK << EN_PAD_SHIFT)) & !MEAS_START_SAR;
+            start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT));
+            start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT) | MEAS_START_SAR);
 
-        poll::until(
-            || unsafe { start.read_volatile() & MEAS_DONE_SAR != 0 },
-            poll::DEFAULT_SPINS,
-        )
-        .map_err(|_| AdcError::Timeout)?;
-        Ok((start.read_volatile() & MEAS_DATA_MASK) as u16)
+            poll::until(
+                || start.read_volatile() & MEAS_DONE_SAR != 0,
+                poll::DEFAULT_SPINS,
+            )
+            .map_err(|_| AdcError::Timeout)?;
+            Ok((start.read_volatile() & MEAS_DATA_MASK) as u16)
+        }
     }
 
     /// Average `n` conversions, for a reading that is not one sample of noise.
     ///
-    /// # Safety
-    /// Same as [`Adc1::read`].
-    pub unsafe fn read_averaged(&self, ch: Channel, n: u16) -> Result<u16, AdcError> {
+    /// Safe: as [`Adc1::read`].
+    pub fn read_averaged(&self, ch: Channel, n: u16) -> Result<u16, AdcError> {
         if n == 0 {
             return self.read(ch);
         }

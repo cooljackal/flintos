@@ -153,13 +153,16 @@ impl Dac {
     /// Routes the pad to the RTC domain, powers the channel, disconnects it
     /// from the cosine generator, and writes the value.
     ///
-    /// # Safety
-    /// Writes the pad register and the shared cosine-generator register.
-    pub unsafe fn output(&self, ch: Channel, value: u8) {
+    /// Safe: writes the pad register and the shared cosine-generator register,
+    /// which a held `Dac` owns; `ch` is a validated channel.
+    pub fn output(&self, ch: Channel, value: u8) {
         // Route the pad to the analog domain and float it: input buffer off,
         // pulls off, RTC function. Otherwise the digital GPIO peripheral and
         // the DAC drive the same pin.
         let pad = ch.pad_reg() as *mut u32;
+        // SAFETY: a held `Dac` owns the DAC/RTCIO registers; `ch.pad_reg()` is
+        // one of the two valid DAC pad registers.
+        unsafe {
         let mut p = pad.read_volatile();
         p |= PDAC_MUX_SEL;
         p &= !PDAC_FUN_SEL_MASK;
@@ -184,15 +187,16 @@ impl Dac {
         p &= !(PDAC_DAC_MASK << PDAC_DAC_SHIFT);
         p |= (value as u32) << PDAC_DAC_SHIFT;
         pad.write_volatile(p);
+        }
     }
 
     /// Power `ch` down and stop driving the pin.
     ///
-    /// # Safety
-    /// Writes the pad register.
-    pub unsafe fn power_down(&self, ch: Channel) {
+    /// Safe: writes a DAC pad register a held `Dac` owns; `ch` is validated.
+    pub fn power_down(&self, ch: Channel) {
         let pad = ch.pad_reg() as *mut u32;
-        pad.write_volatile(pad.read_volatile() & !(PDAC_DAC_XPD_FORCE | PDAC_XPD_DAC));
+        // SAFETY: a held `Dac` owns the DAC pad registers.
+        unsafe { pad.write_volatile(pad.read_volatile() & !(PDAC_DAC_XPD_FORCE | PDAC_XPD_DAC)) };
     }
 }
 
