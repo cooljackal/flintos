@@ -79,11 +79,14 @@ I2S DMA through a one-pad loop. Not claimed: analog accuracy, a real CAN bus.
 
 Parts you attach, not blocks on the chip.
 
-| Device | Status | | Device | Status |
-|---|---|---|---|---|
-| MPU6886 IMU | ✅ | | BMI270 IMU | 🧪 |
-| WS2812 / SK6812 LED | ✅ | | BME280 | 🧪 |
-| LED panel geometry | ✅ | | SSD1306 | 🧪 |
+| Device | What it is | Status |
+|---|---|---|
+| MPU6886 | 6-axis IMU (accelerometer + gyro) | ✅ |
+| WS2812 / SK6812 | Addressable RGB LED | ✅ |
+| LED panel geometry | `(x, y)` → LED-chain index mapper | ✅ |
+| BMI270 | 6-axis IMU | 🧪 |
+| BME280 | Temperature / humidity / pressure sensor | 🧪 |
+| SSD1306 | 128×64 monochrome OLED display | 🧪 |
 
 ### Build and test
 
