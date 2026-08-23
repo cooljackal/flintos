@@ -232,7 +232,7 @@ impl RmtEmitter {
             // stream finishes: it lives in `LINK`, its only writer is `emit`,
             // and the strip does not call `emit` again until `finish` returns.
             // `rmt_isr` is connected and services every threshold.
-            link.refill = unsafe { link.rmt.start_stream(&link.frame) };
+            link.refill = link.rmt.start_stream(&link.frame);
             Ok(())
         })?;
 
@@ -247,7 +247,7 @@ impl RmtEmitter {
             waited += 1;
             // SAFETY: reads one interrupt status register of a channel this
             // program owns.
-            if LINK.with(|l| l.as_ref().is_some_and(|l| unsafe { l.rmt.stream_done() })) {
+            if LINK.with(|l| l.as_ref().is_some_and(|l| l.rmt.stream_done())) {
                 finished = true;
                 break;
             }
@@ -422,7 +422,7 @@ fn rmt_isr() {
                 // SAFETY: this is the channel's threshold interrupt, `frame` is
                 // the sequence `start_stream` was given, and nothing else can
                 // be inside `LINK` while this closure runs.
-                link.done = unsafe { link.rmt.service(&link.frame, &mut link.refill) };
+                link.done = link.rmt.service(&link.frame, &mut link.refill);
             }
         }
     });

@@ -122,7 +122,7 @@ fn pwm() {
     // sequence catches a stuck duty that a single reading would not.
     loop {
         for pct in [0u8, 10, 25, 50, 75, 90, 100] {
-            if unsafe { ch.set_percent(pct) }.is_none() {
+            if ch.set_percent(pct).is_none() {
                 api::log_error!("[pwm] {}% was refused", pct);
                 continue;
             }
@@ -130,7 +130,7 @@ fn pwm() {
             task::sleep_ms(20);
 
             let measured = measure_duty_percent(&gpio);
-            let readback = unsafe { ch.duty() };
+            let readback = ch.duty();
             let expected = esp32_ledc::duty_for_percent(pct, RES_BITS);
 
             // The register must hold what was asked, undoing the <<4. If this
