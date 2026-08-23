@@ -356,6 +356,165 @@ pub fn led() -> Option<RgbLed> {
     active::BOARD.rgb_led
 }
 
+// ── PWM ────────────────────────────────────────────────────────────────────────
+//
+// `pwm` drives one LEDC channel onto a pad it can read back. The board owns the
+// bring-up — claim the timer and channel, gate the clock, route the signal —
+// and hands back the channel; the app names no physical driver.
+
+/// The LEDC channel type, and the pure duty/frequency helpers, re-exported so
+/// the `pwm` example can name them through `board` without depending on the
+/// physical driver.
+#[cfg(feature = "esp32-drivers")]
+pub use esp32_ledc::{
+    divider_for as pwm_divider_for, duty_for_percent as pwm_duty_for_percent,
+    freq_for as pwm_freq_for, Channel as PwmChannel,
+};
+
+/// Open LEDC high-speed channel 0 on `pin` at `freq_hz`/`res_bits`, with the
+/// pad left readable so the caller can measure its own output.
+///
+/// The claim inside the constructors proves single ownership, so there is no
+/// `unsafe` and no `static mut`. `pin` is passed in rather than read from the
+/// manifest so this serves any board's free pad; `pwm` supplies its Grove-port
+/// SDA pin.
+#[cfg(feature = "esp32-drivers")]
+pub fn pwm(pin: u8, freq_hz: u32, res_bits: u8) -> hal::Result<PwmChannel> {
+    use esp32_ledc::{Channel, Timer};
+    use hal::pinmux::PinConfig;
+
+    // High-speed channel 0 on timer 0. Nothing else in a `pwm` build claims
+    // either. The pad is left readable (`with_input`) so the app can sample it.
+    let timer = Timer::on(0, freq_hz, res_bits)?;
+    Channel::on_pin(0, &timer, pin, res_bits, 0, PinConfig::PUSH_PULL.with_input())
+}
+
+/// Read the level of `pin` back through the GPIO controller. `true` is high.
+///
+/// The counterpart to [`pwm`]: sampling the pad LEDC drives is how the example
+/// measures its own duty cycle with no instrument attached.
+#[cfg(feature = "esp32-drivers")]
+pub fn read_pwm_pin(pin: u8) -> bool {
+    matches!(
+        esp32_gpio::Esp32Gpio::instance().read(pin),
+        Ok(esp32_gpio::PinLevel::High)
+    )
+}
+
+// ── Addressable LED over RMT ────────────────────────────────────────────────────
+//
+// `blink` drives a WS2812 chain, which needs an interrupt handler and a frame
+// buffer sized to the LED count the app owns. The board cannot hand back a
+// live strip without moving that ISR into itself, so it hands back the RMT
+// channel — brought up on the LED's pin — and re-exports the RMT types the app
+// threads through. See `led()` for the LED's identity (pin, count, fold).
+
+/// The RMT driver, re-exported so `blink` can name its entry/refill/channel
+/// types through `board` without depending on the physical driver.
+#[cfg(feature = "esp32-drivers")]
+pub use esp32_rmt as rmt;
+
+/// The chip's RMT interrupt source, for wiring the channel to a CPU interrupt
+/// with `api::interrupt::connect`.
+#[cfg(feature = "esp32-drivers")]
+pub const LED_RMT_IRQ: u8 = esp32_rmt::IRQ_SOURCE;
+
+/// Open RMT channel 0 on the board's addressable-LED pin, with `divider` as the
+/// clock divider (the caller sizes it from the LED's pulse timing). `Error` if
+/// this board declares no addressable LED.
+///
+/// The board gates the clock, routes the signal and enables the pad's output;
+/// the app keeps the frame buffer and the interrupt handler. The claim inside
+/// [`rmt::Rmt::on_pin`] proves single ownership, so there is no `static mut`.
+#[cfg(feature = "esp32-drivers")]
+pub fn led_rmt(divider: u8) -> hal::Result<rmt::Rmt> {
+    use esp32_gpio::{Esp32Gpio, PinMode};
+    use hal::pinmux::PinConfig;
+
+    let led = active::BOARD
+        .rgb_led
+        .ok_or(hal::Error::Other("this board declares no addressable LED"))?;
+
+    // Output enable for the pad. The GPIO matrix carries OE too, but esp-idf
+    // sets the direction here and the hardware-validated bring-up did both.
+    Esp32Gpio::instance().set_mode(led.gpio, PinMode::Output)?;
+
+    // RMT channel 0. Nothing else in a `blink` build claims one.
+    rmt::Rmt::on_pin(0, divider, led.gpio, PinConfig::PUSH_PULL)
+}
+
+// ── UART loopback ───────────────────────────────────────────────────────────────
+//
+// `uartecho` drives UART2 in internal loopback. The board opens it on the
+// loopback pads, switches on the on-chip TX→RX path, and drains the byte the
+// receiver latches on enable — so the app names no physical driver and keeps no
+// `static mut`.
+
+/// Open UART2 in internal loopback on the board's free pads and return it as a
+/// byte stream. `Error` if this board declares no loopback pads.
+///
+/// The port is cached in an `api::Once`, so repeated calls hand back the same
+/// stream. The pins are routed for real (bring-up is exercised) but the data
+/// travels the on-chip TX→RX path, so no pad edge can mis-frame it.
+#[cfg(feature = "esp32-drivers")]
+pub fn uart_loopback() -> hal::Result<&'static dyn hal::stream::ByteStream> {
+    use hal::bus::{UartConfig, UartDataBits, UartParity, UartStopBits};
+    use hal::stream::ByteStream;
+    use soc_esp32::{UartCtrl, UartPort};
+
+    static UART: api::Once<esp32_uart::Esp32Uart> = api::Once::new();
+
+    let pads = loopback_pads().ok_or(hal::Error::Other("this board declares no loopback pads"))?;
+    // UART0 is the console; UART1's pads clash with the SPI flash on many
+    // modules; UART2 is the safe spare. tx on the scratch pad, rx on a spare.
+    let port = UartPort {
+        ctrl: UartCtrl::Uart2,
+        cfg: UartConfig {
+            tx: pads.scratch,
+            rx: pads.aux.0,
+            baud: 115_200,
+            data_bits: UartDataBits::Bits8,
+            parity: UartParity::None,
+            stop_bits: UartStopBits::Stop1,
+        },
+    };
+
+    let uart = UART.get_or_try_init(|| {
+        let uart = esp32_uart::Esp32Uart::open(&port)?;
+        uart.set_loopback(true);
+        // Absorb the spurious byte the receiver latches when it comes up, so the
+        // first echo the app reads is the byte it sent.
+        let mut sink = [0u8; 8];
+        while uart.read(&mut sink) > 0 {}
+        Ok::<_, hal::Error>(uart)
+    })?;
+    Ok(uart as &dyn ByteStream)
+}
+
+// ── SPI loopback fold ───────────────────────────────────────────────────────────
+
+/// Fold SPI2's MOSI and MISO onto the loopback scratch pad, making the on-chip
+/// loopback the `spitxrx` example runs on. `Error` if this board declares no
+/// loopback pads.
+///
+/// Kept separate from [`loopback_spi`] because `init` refuses two signals on
+/// one pad: the bus is brought up on three distinct pins first, then this folds
+/// MISO onto the MOSI pad. Routing is safe — ownership of the pad is the proof
+/// — so the app calls this instead of reaching for `Esp32PinMux`.
+#[cfg(feature = "esp32-drivers")]
+pub fn fold_spi_loopback() -> hal::Result<()> {
+    use hal::pinmux::{PinConfig, PinMux, Signal};
+    use soc_esp32::{Esp32PinMux, SpiCtrl};
+
+    let pads = loopback_pads().ok_or(hal::Error::Other("this board declares no loopback pads"))?;
+    let instance = SpiCtrl::Spi2.instance();
+    let mux = Esp32PinMux::new();
+    // MOSI first, then MISO, so the second route wins the pad's input.
+    mux.route(Signal::SpiMosi(instance), pads.scratch, PinConfig::PUSH_PULL)?;
+    mux.route(Signal::SpiMiso(instance), pads.scratch, PinConfig::PUSH_PULL)?;
+    Ok(())
+}
+
 // ── Console ──────────────────────────────────────────────────────────────────
 //
 // The console is a board-owned device, moved out of the kernel: the board
