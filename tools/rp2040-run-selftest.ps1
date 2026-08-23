@@ -70,6 +70,7 @@ if (-not $passed) {
         @(
             'sleep-timeout', 'queue-timeout',
             'nested-critical-sections', 'stack-guard', 'heap-allocation',
+            'mutex-priority-inheritance', 'task-isr-queue-race', 'mutex-under-tick-interruption',
             'dual-core-affinity', 'cross-core-wakeup-soak', 'cross-core-spinlock-contention',
             'duplicate-execution-detection'
         )

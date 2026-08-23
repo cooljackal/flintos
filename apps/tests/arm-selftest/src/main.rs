@@ -7,6 +7,8 @@
 #![cfg_attr(feature = "watchdog-reset", allow(dead_code))]
 
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+use api::mutex::{lock, Mutex};
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 use api::queue::{Queue, RecvError};
 use api::task;
 #[cfg(not(feature = "expected-hardfault"))]
@@ -31,10 +33,43 @@ static WRONG_CORE_RUNS: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 static ISR_QUEUE: Queue<u32, 4> = Queue::new();
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static ISR_NEXT: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static ISR_PRODUCING: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static ISR_SENT: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_MUTEX: Mutex<u32> = Mutex::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[no_mangle]
+static MUTEX_SOAK_PROGRESS: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_PHASE: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_BOOST_SEEN: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_OWNER_ID: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_MEDIUM_ID: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_HIGH_ID: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_HIGH_PARKED: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_MEDIUM_PARKED: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_RESTORE_SEEN: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_MEDIUM_READY: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_MEDIUM_RAN_DURING_INVERSION: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+static PI_MEDIUM_FINISHED: AtomicU32 = AtomicU32::new(0);
+#[cfg(not(feature = "expected-hardfault"))]
 static SMP_LOCK: kernel::smp::Spinlock<u32> = kernel::smp::Spinlock::new(0);
 #[cfg(not(feature = "expected-hardfault"))]
 static CORE0_ACTIVE: AtomicU32 = AtomicU32::new(0);
-#[cfg(not(feature = "expected-hardfault"))]
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 static CORE1_ACTIVE: AtomicU32 = AtomicU32::new(0);
 #[cfg(not(feature = "expected-hardfault"))]
 static DUPLICATE_RUNS: AtomicU32 = AtomicU32::new(0);
@@ -188,6 +223,15 @@ fn main() {
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
         task::spawn_on(1, "core1", core1_peer, Priority::Normal(2), 2048).expect("core-1 task");
+        #[cfg(not(feature = "minimal"))]
+        {
+            let medium = task::spawn_on(0, "pi-medium", pi_medium, Priority::Normal(1), 2048)
+                .expect("priority-inheritance medium task");
+            let high = task::spawn_on(0, "pi-high", pi_high, Priority::Critical(0), 2048)
+                .expect("priority-inheritance high task");
+            PI_MEDIUM_ID.store(medium.0 + 1, Ordering::Release);
+            PI_HIGH_ID.store(high.0 + 1, Ordering::Release);
+        }
         task::spawn_on(0, "tests", tests, Priority::Normal(2), 4096).expect("test task");
     }
 }
@@ -245,8 +289,16 @@ fn core1_peer() {
         {
             let request = REMOTE_REQUEST.load(Ordering::Acquire);
             if request != 0 {
-                kernel::scheduler::with(|sched| sched.unblock(request - 1));
-                REMOTE_REQUEST.store(0, Ordering::Release);
+                kernel::scheduler::with(|sched| {
+                    let id = request - 1;
+                    let blocked = sched.tasks[id as usize].as_ref().is_some_and(|task| {
+                        task.state == kernel::scheduler::TaskState::BlockedSleep
+                    });
+                    if blocked {
+                        REMOTE_REQUEST.store(0, Ordering::Release);
+                        sched.unblock(id);
+                    }
+                });
             }
         }
         CORE1_ACTIVE.store(0, Ordering::Release);
@@ -256,6 +308,69 @@ fn core1_peer() {
         }
         task::yield_now();
     }
+}
+
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+fn pi_medium() {
+    PI_MEDIUM_PARKED.store(1, Ordering::Release);
+    task::sleep_ms(u32::MAX);
+    PI_MEDIUM_READY.store(1, Ordering::Release);
+    while PI_PHASE.load(Ordering::Acquire) == 2 {
+        core::hint::spin_loop();
+    }
+    if PI_PHASE.load(Ordering::Acquire) == 3 {
+        PI_MEDIUM_RAN_DURING_INVERSION.store(1, Ordering::Release);
+    }
+    PI_MEDIUM_FINISHED.store(1, Ordering::Release);
+    loop {
+        task::sleep_ms(1_000);
+    }
+}
+
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+fn pi_high() {
+    PI_HIGH_PARKED.store(1, Ordering::Release);
+    task::sleep_ms(u32::MAX);
+    while PI_MEDIUM_READY.load(Ordering::Acquire) == 0 {
+        task::sleep_ms(10);
+    }
+    PI_PHASE.store(3, Ordering::Release);
+    let mut guard = lock(&PI_MUTEX);
+    if PI_BOOST_SEEN.load(Ordering::Acquire) == 1 && *guard == 1 {
+        let owner = PI_OWNER_ID.load(Ordering::Acquire).wrapping_sub(1);
+        let restored = kernel::scheduler::with(|sched| {
+            sched.tasks[owner as usize]
+                .as_ref()
+                .is_some_and(|task| task.priority == Priority::Normal(2).numeric())
+        });
+        if restored {
+            PI_RESTORE_SEEN.store(1, Ordering::Release);
+        }
+        *guard = guard.wrapping_add(1);
+        drop(guard);
+        PI_PHASE.store(4, Ordering::Release);
+    } else {
+        drop(guard);
+        PI_PHASE.store(5, Ordering::Release);
+    }
+    loop {
+        task::sleep_ms(1_000);
+    }
+}
+
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+fn isr_queue_producer() {
+    if ISR_PRODUCING
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    let value = ISR_NEXT.fetch_add(1, Ordering::Relaxed);
+    if ISR_QUEUE.send_isr(value).is_ok() {
+        ISR_SENT.fetch_add(1, Ordering::Relaxed);
+    }
+    ISR_PRODUCING.store(0, Ordering::Release);
 }
 
 #[cfg(all(
@@ -359,6 +474,91 @@ fn run_extended_tests() -> ! {
     }
     if kernel::heap::free_bytes(kernel::heap::Caps::Internal) != before {
         fail(8);
+    }
+
+    if PI_MEDIUM_PARKED.load(Ordering::Acquire) != 1 || PI_HIGH_PARKED.load(Ordering::Acquire) != 1
+    {
+        fail(20);
+    }
+    let mut pi_guard = lock(&PI_MUTEX);
+    let owner = task::current_id().0;
+    PI_OWNER_ID.store(owner + 1, Ordering::Release);
+    PI_PHASE.store(2, Ordering::Release);
+    let medium = PI_MEDIUM_ID.load(Ordering::Acquire).wrapping_sub(1);
+    let high = PI_HIGH_ID.load(Ordering::Acquire).wrapping_sub(1);
+    kernel::scheduler::with(|sched| {
+        sched.unblock(medium);
+        sched.unblock(high);
+    });
+    task::yield_now();
+    while PI_PHASE.load(Ordering::Acquire) != 3 {
+        core::hint::spin_loop();
+    }
+    let effective = kernel::scheduler::with(|sched| {
+        sched.tasks[owner as usize].as_ref().map_or(u8::MAX, |task| task.priority)
+    });
+    if effective == Priority::Critical(0).numeric() {
+        PI_BOOST_SEEN.store(1, Ordering::Release);
+    }
+    *pi_guard = pi_guard.wrapping_add(1);
+    drop(pi_guard);
+    let pi_deadline = hardware_timer_us().wrapping_add(2_000_000);
+    while PI_PHASE.load(Ordering::Acquire) < 4 {
+        if hardware_timer_us().wrapping_sub(pi_deadline) < u32::MAX / 2 {
+            fail(20);
+        }
+        task::sleep_ms(10);
+    }
+    if PI_PHASE.load(Ordering::Acquire) != 4
+        || PI_BOOST_SEEN.load(Ordering::Acquire) != 1
+        || PI_RESTORE_SEEN.load(Ordering::Acquire) != 1
+        || PI_MEDIUM_RAN_DURING_INVERSION.load(Ordering::Acquire) != 0
+    {
+        fail(21);
+    }
+    let medium_deadline = hardware_timer_us().wrapping_add(500_000);
+    while PI_MEDIUM_FINISHED.load(Ordering::Acquire) == 0 {
+        if hardware_timer_us().wrapping_sub(medium_deadline) < u32::MAX / 2 {
+            fail(22);
+        }
+        task::sleep_ms(10);
+    }
+
+    ISR_NEXT.store(0, Ordering::Relaxed);
+    ISR_PRODUCING.store(0, Ordering::Relaxed);
+    ISR_SENT.store(0, Ordering::Relaxed);
+    while ISR_QUEUE.try_recv().is_ok() {}
+    let producer = timer::every_ms(1, isr_queue_producer);
+    const ISR_ATTEMPTS: u32 = 256;
+    let mut received = 0u32;
+    let mut last = None;
+    while ISR_NEXT.load(Ordering::Relaxed) < ISR_ATTEMPTS {
+        if let Ok(value) = ISR_QUEUE.try_recv() {
+            if last.is_some_and(|previous| value <= previous) {
+                timer::cancel(producer);
+                fail(23);
+            }
+            last = Some(value);
+            received += 1;
+        }
+    }
+    timer::cancel(producer);
+    while let Ok(value) = ISR_QUEUE.try_recv() {
+        if last.is_some_and(|previous| value <= previous) {
+            fail(23);
+        }
+        last = Some(value);
+        received += 1;
+    }
+    if received == 0 || received != ISR_SENT.load(Ordering::Relaxed) {
+        fail(24);
+    }
+    for iteration in 0..1_000 {
+        MUTEX_SOAK_PROGRESS.store(iteration * 2 + 1, Ordering::Release);
+        let mut guard = lock(&PI_MUTEX);
+        *guard = guard.wrapping_add(1);
+        drop(guard);
+        MUTEX_SOAK_PROGRESS.store(iteration * 2 + 2, Ordering::Release);
     }
 
     // Repeatedly block core 0 and require a task pinned to core 1 to wake it.
