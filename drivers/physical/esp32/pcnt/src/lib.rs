@@ -247,20 +247,22 @@ impl PcntUnit {
 
     /// Route this unit's channel-0 *signal* input to read from `pin`.
     ///
-    /// # Safety
-    /// Writes the pad's IO_MUX and the matrix input register for this unit.
-    pub unsafe fn route_signal(&self, pin: u8) -> BusResult<()> {
+    /// Safe: `pin` is validated (a nonexistent pad gives
+    /// [`BusError::InvalidConfig`]) and the matrix input is this unit's own.
+    pub fn route_signal(&self, pin: u8) -> BusResult<()> {
         let idx = sig_ch0_index(self.unit).ok_or(BusError::InvalidConfig)?;
-        self.route_input(idx, pin)
+        // SAFETY: `pin` is validated inside `route_input` and `idx` is this
+        // unit's own channel-0 signal index.
+        unsafe { self.route_input(idx, pin) }
     }
 
     /// Route this unit's channel-0 *control* input to read from `pin`.
     ///
-    /// # Safety
-    /// As [`route_signal`](Self::route_signal).
-    pub unsafe fn route_control(&self, pin: u8) -> BusResult<()> {
+    /// Safe: as [`route_signal`](Self::route_signal).
+    pub fn route_control(&self, pin: u8) -> BusResult<()> {
         let idx = ctrl_ch0_index(self.unit).ok_or(BusError::InvalidConfig)?;
-        self.route_input(idx, pin)
+        // SAFETY: as `route_signal`; `idx` is this unit's control index.
+        unsafe { self.route_input(idx, pin) }
     }
 
     /// Tie this unit's channel-0 control input to a constant level, with no pad.
@@ -269,18 +271,19 @@ impl PcntUnit {
     /// pin — which is how a fixed-direction counter selects its direction, and
     /// how the self-test picks up-then-down without a second wire.
     ///
-    /// # Safety
-    /// Writes the matrix input register for this unit's control signal.
-    pub unsafe fn route_control_level(&self, high: bool) -> BusResult<()> {
+    /// Safe: writes the matrix input register for this unit's own control
+    /// signal, feeding it a constant source (no pad).
+    pub fn route_control_level(&self, high: bool) -> BusResult<()> {
         let idx = ctrl_ch0_index(self.unit).ok_or(BusError::InvalidConfig)?;
         let src = if high {
             gpio_matrix::IN_CONST_ONE
         } else {
             gpio_matrix::IN_CONST_ZERO
         };
-        // The matrix constant sources are not GPIO numbers; they fit the same
-        // six-bit field, which is why `connect_input` accepts them.
-        gpio_matrix::connect_input(idx, src as u8, false)
+        // SAFETY: `idx` is this unit's control index; the matrix constant
+        // sources are not GPIO numbers but fit the same six-bit field, which is
+        // why `connect_input` accepts them.
+        unsafe { gpio_matrix::connect_input(idx, src as u8, false) }
     }
 
     unsafe fn route_input(&self, idx: u32, pin: u8) -> BusResult<()> {

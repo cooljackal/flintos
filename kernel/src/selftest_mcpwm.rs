@@ -64,10 +64,10 @@ pub(crate) fn mcpwm_complementary_pair_deadtime_and_fault(pins: [u8; 3]) -> Chec
         .map_err(|_| "PCNT unit for A would not configure")?;
     let pcnt_b = unsafe { PcntUnit::new(1, ChannelMode::UP_DOWN_ON_RISING, Filter::Off) }
         .map_err(|_| "PCNT unit for B would not configure")?;
-    unsafe { pcnt_a.route_signal(pwm_a) }.map_err(|_| "PCNT A signal would not route")?;
-    unsafe { pcnt_b.route_signal(pwm_b) }.map_err(|_| "PCNT B signal would not route")?;
-    unsafe { pcnt_a.route_control_level(true) }.map_err(|_| "PCNT A control would not tie high")?;
-    unsafe { pcnt_b.route_control_level(true) }.map_err(|_| "PCNT B control would not tie high")?;
+    pcnt_a.route_signal(pwm_a).map_err(|_| "PCNT A signal would not route")?;
+    pcnt_b.route_signal(pwm_b).map_err(|_| "PCNT B signal would not route")?;
+    pcnt_a.route_control_level(true).map_err(|_| "PCNT A control would not tie high")?;
+    pcnt_b.route_control_level(true).map_err(|_| "PCNT B control would not tie high")?;
 
     pwm.start();
 

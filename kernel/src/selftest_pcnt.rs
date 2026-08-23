@@ -53,7 +53,7 @@ pub(crate) fn pcnt_counts_edges_with_direction_and_filter(pin: u8) -> Check {
     }
 
     // ── Up ──────────────────────────────────────────────────────────────────
-    unsafe { pcnt.route_control_level(true) }.map_err(|_| "the PCNT control input would not tie high")?;
+    pcnt.route_control_level(true).map_err(|_| "the PCNT control input would not tie high")?;
     pcnt.clear();
     pcnt.resume();
     toggle(&gpio, pin, EDGES, WIDE);
@@ -62,7 +62,7 @@ pub(crate) fn pcnt_counts_edges_with_direction_and_filter(pin: u8) -> Check {
     // ── Down ────────────────────────────────────────────────────────────────
     pcnt.pause();
     pcnt.clear();
-    unsafe { pcnt.route_control_level(false) }.map_err(|_| "the PCNT control input would not tie low")?;
+    pcnt.route_control_level(false).map_err(|_| "the PCNT control input would not tie low")?;
     pcnt.resume();
     toggle(&gpio, pin, EDGES, WIDE);
     let down = pcnt.count();
