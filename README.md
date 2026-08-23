@@ -78,16 +78,25 @@ I2S DMA through a one-pad loop. Not claimed: analog accuracy, a real CAN bus.
 
 ### Device drivers
 
-Parts you attach, not blocks on the chip.
+Real parts you attach — one part number each, MCU-agnostic (`drivers/logical/`).
 
 | Device | What it is | Status |
 |---|---|---|
 | MPU6886 | 6-axis IMU (accelerometer + gyro) | ✅ |
 | WS2812 / SK6812 | Addressable RGB LED | ✅ |
-| LED panel geometry | `(x, y)` → LED-chain index mapper | ✅ |
 | BMI270 | 6-axis IMU | 🧪 |
 | BME280 | Temperature / humidity / pressure sensor | 🧪 |
 | SSD1306 | 128×64 monochrome OLED display | 🧪 |
+
+### Logical drivers
+
+No hardware of their own — pure code over a device contract (`lib/`), portable to
+any part that keeps the contract. See [Libraries](https://github.com/cooljackal/flintos/wiki/Libraries).
+
+| Driver | What it is | Status |
+|---|---|---|
+| LED panel geometry | `(x, y)` → LED-chain index mapper (`led-matrix`) | ✅ |
+| LED strip effects | Effects over the `LedStrip` contract (`led-strip`) | ✅ |
 
 ### Build and test
 
