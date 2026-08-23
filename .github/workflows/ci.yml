@@ -22,6 +22,12 @@ env:
   # Pinned rather than "latest": this is the Xtensa toolchain cache key, so an
   # unpinned version would silently re-download ~1 GB whenever espup released.
   ESPUP_VERSION: "0.17.1"
+  # The esp Rust toolchain espup installs. Pinned to the version the workspace
+  # is developed and tested against, not espup's default: the default resolved
+  # to a toolchain that could not build `portable-atomic 1.15.0` (the ARM port's
+  # atomics dep), failing the xtensa check with a spurious `can't find crate for
+  # core`. Bump this and the local toolchain together.
+  ESP_TOOLCHAIN_VERSION: "1.95.0.0"
 
 jobs:
   check:
@@ -192,7 +198,7 @@ jobs:
             ~/.rustup/toolchains/esp
             ~/.espressif
             ~/export-esp.sh
-          key: esp-${{ runner.os }}-espup-${{ env.ESPUP_VERSION }}
+          key: esp-${{ runner.os }}-espup-${{ env.ESPUP_VERSION }}-rust-${{ env.ESP_TOOLCHAIN_VERSION }}
 
       # espup publishes prebuilt binaries. `cargo install espup --locked`
       # compiled it from source on every run -- minutes of CPU to produce a
@@ -203,7 +209,7 @@ jobs:
           curl -fsSL -o /tmp/espup \
             "https://github.com/esp-rs/espup/releases/download/v${ESPUP_VERSION}/espup-x86_64-unknown-linux-gnu"
           chmod +x /tmp/espup
-          /tmp/espup install
+          /tmp/espup install --toolchain-version "${ESP_TOOLCHAIN_VERSION}"
 
       # Every crate, not just the applications. The kernel names exactly one
       # driver (the console UART), so building an application reaches only that
