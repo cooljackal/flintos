@@ -4,6 +4,7 @@
 
 #![no_std]
 #![no_main]
+#![cfg_attr(feature = "watchdog-reset", allow(dead_code))]
 
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 use api::queue::{Queue, RecvError};
@@ -174,13 +175,31 @@ unsafe extern "C" {
 }
 
 fn main() {
+    #[cfg(feature = "watchdog-reset")]
+    task::spawn("watchdog", watchdog_reset_test, Priority::Normal(0), 2048).expect("watchdog task");
     #[cfg(feature = "expected-hardfault")]
     task::spawn("fault", inject_hardfault, Priority::Normal(1), 2048).expect("fault task");
-    #[cfg(not(feature = "expected-hardfault"))]
+    #[cfg(all(not(feature = "expected-hardfault"), not(feature = "watchdog-reset")))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
         task::spawn_on(1, "core1", core1_peer, Priority::Normal(2), 2048).expect("core-1 task");
         task::spawn_on(0, "tests", tests, Priority::Normal(2), 4096).expect("test task");
+    }
+}
+
+#[cfg(feature = "watchdog-reset")]
+fn watchdog_reset_test() {
+    task::sleep_ms(500);
+    if unsafe { soc_rp2040::watchdog::flint_watchdog_caused_reset() } {
+        if unsafe { soc_rp2040::watchdog::reset_reason() } != 1 {
+            fail(19);
+        }
+        unsafe { soc_rp2040::watchdog::clear_flint_watchdog_marker() };
+        unsafe { soc_rp2040::test_status::pass_to_bootsel() }
+    }
+    unsafe { kernel::watchdog::arm() };
+    loop {
+        core::hint::spin_loop();
     }
 }
 

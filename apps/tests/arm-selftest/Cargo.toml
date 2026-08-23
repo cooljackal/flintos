@@ -32,3 +32,4 @@ default = []
 expected-hardfault = ["kernel/arm-expected-hardfault"]
 # The minimal variant: fewer tests, for bring-up.
 minimal = []
+watchdog-reset = []

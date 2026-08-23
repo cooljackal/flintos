@@ -676,6 +676,15 @@ test-arm-target: ## Build, flash, and judge ARM tests through Debug Probe
 		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
 		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL)
 
+.PHONY: test-arm-watchdog
+test-arm-watchdog: ## Prove RP2040 watchdog reset and retained cause through Debug Probe
+	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "kernel/board-wio-rp2040-mini,kernel/debug-level-1,arm-selftest/watchdog-reset"
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
+		-Suite watchdog-reset
+
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
 #

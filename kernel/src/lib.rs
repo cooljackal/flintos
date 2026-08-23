@@ -68,6 +68,9 @@ pub mod boot;
 pub mod switch;
 #[cfg(all(target_os = "none", feature = "soc-esp32"))]
 pub mod watchdog;
+#[cfg(feature = "soc-rp2040")]
+#[path = "watchdog_rp2040.rs"]
+pub mod watchdog;
 #[cfg(all(target_os = "none", feature = "soc-esp32"))]
 mod xtensa;
 

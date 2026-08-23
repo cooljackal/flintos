@@ -10,6 +10,8 @@ param(
     [string]$ProbeSerial,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
+    [ValidateSet('acceptance', 'watchdog-reset')]
+    [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
     [string]$ProbeRsPath = 'probe-rs'
@@ -62,11 +64,15 @@ if (-not $passed) {
     evidence = 'target-left-and-returned-to-expected-bootsel'
     probe_serial = $ProbeSerial
     target_bootsel_serial = $BootselSerial
-    measured = @(
-        'sleep-timeout', 'queue-timeout',
-        'nested-critical-sections', 'stack-guard', 'heap-allocation',
-        'dual-core-affinity', 'cross-core-wakeup-soak', 'cross-core-spinlock-contention',
-        'duplicate-execution-detection'
-    )
+    measured = if ($Suite -eq 'watchdog-reset') {
+        @('watchdog-timeout-reset', 'retained-watchdog-reset-cause')
+    } else {
+        @(
+            'sleep-timeout', 'queue-timeout',
+            'nested-critical-sections', 'stack-guard', 'heap-allocation',
+            'dual-core-affinity', 'cross-core-wakeup-soak', 'cross-core-spinlock-contention',
+            'duplicate-execution-detection'
+        )
+    }
     compile_only = @()
 } | ConvertTo-Json -Compress

@@ -11,6 +11,7 @@
 pub mod boot2;
 pub mod multicore;
 pub mod test_status;
+pub mod watchdog;
 
 pub const XIP_BASE: u32 = 0x1000_0000;
 pub const XIP_SIZE: u32 = 16 * 1024 * 1024;
@@ -127,11 +128,11 @@ impl hal::soc::SystemOnChip for Rp2040 {
     }
 
     unsafe fn reset_cause() -> u32 {
-        0
+        unsafe { watchdog::reset_reason() }
     }
 
-    fn reset_cause_name(_cause: u32) -> &'static str {
-        "unknown"
+    fn reset_cause_name(cause: u32) -> &'static str {
+        watchdog::reset_reason_name(cause)
     }
 
     fn measure_cpu_hz(_cycle_count: fn() -> Option<u32>) -> Option<u32> {
@@ -170,6 +171,13 @@ mod tests {
         use hal::soc::SystemOnChip;
         assert_eq!(Rp2040::DEFAULT_CPU_HZ, XOSC_HZ);
         assert_eq!(Rp2040::APB_HZ, XOSC_HZ);
+    }
+
+    #[test]
+    fn reset_cause_names_follow_the_watchdog_reason_register() {
+        assert_eq!(Rp2040::reset_cause_name(0), "hardware reset");
+        assert_eq!(Rp2040::reset_cause_name(1), "watchdog timer");
+        assert_eq!(Rp2040::reset_cause_name(2), "watchdog force");
     }
 }
 
