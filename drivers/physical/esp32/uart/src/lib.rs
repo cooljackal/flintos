@@ -2,13 +2,34 @@
 
 #![no_std]
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use hal::bus::{
     BusConfig, BusError, BusResult, BusSpeed, UartConfig, UartDataBits, UartParity, UartStopBits,
 };
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::stream::{ByteStream, StreamErrors};
 use soc_esp32::addr;
+use soc_esp32::ctrl::{UartCtrl, UartPort};
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
+
+/// One claim flag per UART controller (UART0, UART1, UART2). `open` wins
+/// exactly one per boot — the `svd2rust` `Peripherals::take` pattern — which
+/// discharges the "own the peripheral exclusively" invariant `new`'s `# Safety`
+/// rests on. `core::sync::atomic`, not `portable_atomic`: a physical driver may
+/// not name a crates.io crate (see `tools/check-layers.sh`) and Xtensa has
+/// native atomics.
+static UART_CLAIMED: [AtomicBool; 3] =
+    [AtomicBool::new(false), AtomicBool::new(false), AtomicBool::new(false)];
+
+/// Index into [`UART_CLAIMED`] for a controller.
+const fn claim_index(ctrl: UartCtrl) -> usize {
+    match ctrl {
+        UartCtrl::Uart0 => 0,
+        UartCtrl::Uart1 => 1,
+        UartCtrl::Uart2 => 2,
+    }
+}
 
 /// ESP32 UART physical driver.
 /// Registers at `base_addr` (0x3FF40000 for UART0).
@@ -120,6 +141,30 @@ impl Esp32Uart {
     /// race on the same registers with no synchronisation between them.
     pub unsafe fn new(base_addr: u32) -> Self {
         Self { base: base_addr }
+    }
+
+    /// Claim a UART controller once and bring it up.
+    ///
+    /// The safe constructor: it wins the controller's claim flag (a second
+    /// `open` returns [`BusError::Busy`]), then does exactly what
+    /// [`Esp32Uart::init`] does — clock-gate, pad-route, framing and baud —
+    /// from the [`UartPort`]. The claim proves exclusive ownership, so no
+    /// `unsafe` is needed at the call site; [`Esp32Uart::new`] stays for the
+    /// kernel self-tests and the boot console in `startup`.
+    pub fn open(port: &UartPort) -> hal::Result<Self> {
+        let idx = claim_index(port.ctrl);
+        UART_CLAIMED[idx]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+            .map_err(|_| BusError::Busy)?;
+
+        // SAFETY: the claim above is exclusive, so this is the only live driver
+        // on this controller's base address.
+        let mut uart = unsafe { Self::new(port.ctrl.base()) };
+        if let Err(e) = uart.init(&BusConfig::Uart(port.cfg)) {
+            UART_CLAIMED[idx].store(false, Ordering::Release);
+            return Err(e.into());
+        }
+        Ok(uart)
     }
 
     fn reg(&self, offset: u32) -> *mut u32 {

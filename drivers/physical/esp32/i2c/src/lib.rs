@@ -2,11 +2,30 @@
 
 #![no_std]
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use hal::bus::{BusConfig, BusError, BusResult, I2cConfig, PhysicalBus, PhysicalTransfer};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
+use soc_esp32::ctrl::{I2cCtrl, I2cPort};
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 use soc_esp32::reg;
+
+/// One claim flag per I2C controller (I2C0, I2C1). `open` wins exactly one per
+/// boot — the `svd2rust` `Peripherals::take` pattern — which discharges the
+/// "not concurrently owned" invariant that `new`'s `# Safety` rests on.
+/// `core::sync::atomic`, not `portable_atomic`: a physical driver may not name
+/// a crates.io crate (see `tools/check-layers.sh`) and Xtensa has native
+/// atomics.
+static I2C_CLAIMED: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+
+/// Index into [`I2C_CLAIMED`] for a controller.
+const fn claim_index(ctrl: I2cCtrl) -> usize {
+    match ctrl {
+        I2cCtrl::I2c0 => 0,
+        I2cCtrl::I2c1 => 1,
+    }
+}
 
 /// ESP32 I2C master driver (polled mode).
 ///
@@ -240,6 +259,30 @@ impl Esp32I2c {
     /// further validation of the address itself.
     pub unsafe fn new(base_addr: u32) -> Self {
         Self { base: base_addr, half: 0 }
+    }
+
+    /// Claim an I2C controller once and bring it up.
+    ///
+    /// The safe constructor: it wins the controller's claim flag (a second
+    /// `open` returns [`BusError::Busy`]), then does exactly what
+    /// [`PhysicalBus::init`] does — clock-gate, pad-route and configure — from
+    /// the [`I2cPort`]. The claim proves single ownership, so no `unsafe` is
+    /// needed at the call site; [`Esp32I2c::new`] stays for the kernel
+    /// self-tests.
+    pub fn open(port: &I2cPort) -> hal::Result<Self> {
+        let idx = claim_index(port.ctrl);
+        I2C_CLAIMED[idx]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+            .map_err(|_| BusError::Busy)?;
+
+        // SAFETY: the claim above is exclusive, so this is the only live driver
+        // on this controller's base address.
+        let mut i2c = unsafe { Self::new(port.ctrl.base()) };
+        if let Err(e) = i2c.init(&BusConfig::I2c(port.cfg)) {
+            I2C_CLAIMED[idx].store(false, Ordering::Release);
+            return Err(e.into());
+        }
+        Ok(i2c)
     }
 
     /// Program every timing and mode register from the stored half-period.

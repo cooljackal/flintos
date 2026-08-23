@@ -3,14 +3,32 @@
 #![no_std]
 
 use core::ptr::addr_of_mut;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, PhysicalBus, PhysicalTransfer, SpiMode};
 use hal::dma::DmaReach as _;
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
+use soc_esp32::ctrl::{SpiCtrl, SpiPort};
 use soc_esp32::dma::{self, build_chain, descriptors_needed, Channel, Descriptor, Direction, Host};
 use soc_esp32::reg;
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
+
+/// One claim flag per general-purpose SPI controller (SPI2, SPI3). `open`
+/// wins exactly one of these per boot, which is what discharges the
+/// "not concurrently owned" invariant that `new`'s `# Safety` rests on — the
+/// `svd2rust` `Peripherals::take` pattern, with `core::sync::atomic` rather
+/// than `portable_atomic` because a physical driver may not name a crates.io
+/// crate (see `tools/check-layers.sh`) and the Xtensa core has native atomics.
+static SPI_CLAIMED: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+
+/// Index into [`SPI_CLAIMED`] for a controller.
+const fn claim_index(ctrl: SpiCtrl) -> usize {
+    match ctrl {
+        SpiCtrl::Spi2 => 0,
+        SpiCtrl::Spi3 => 1,
+    }
+}
 
 /// ESP32 SPI2 (HSPI) / SPI3 (VSPI) physical driver (polled mode).
 ///
@@ -293,6 +311,32 @@ impl Esp32Spi {
     /// further validation of the address itself.
     pub unsafe fn new(base_addr: u32) -> Self {
         Self { base: base_addr, cpha: false }
+    }
+
+    /// Claim a SPI controller once and bring it up.
+    ///
+    /// This is the safe constructor. It wins the controller's claim flag (a
+    /// second `open` of the same controller returns [`BusError::Busy`]), then
+    /// does exactly what [`PhysicalBus::init`] does — clock-gate, pad-route and
+    /// configure — from the [`SpiPort`]'s controller and config. Because the
+    /// claim proves single ownership, no `unsafe` is needed at the call site;
+    /// [`Esp32Spi::new`] stays for the kernel self-tests, which step through
+    /// bring-up deliberately.
+    pub fn open(port: &SpiPort) -> hal::Result<Self> {
+        let idx = claim_index(port.ctrl);
+        SPI_CLAIMED[idx]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+            .map_err(|_| BusError::Busy)?;
+
+        // SAFETY: the claim above is exclusive, so this is the only live driver
+        // on this controller's base address.
+        let mut spi = unsafe { Self::new(port.ctrl.base()) };
+        if let Err(e) = spi.init(&BusConfig::Spi(port.cfg)) {
+            // Give the claim back so a corrected config can be tried.
+            SPI_CLAIMED[idx].store(false, Ordering::Release);
+            return Err(e.into());
+        }
+        Ok(spi)
     }
 
     pub(crate) fn reg(&self, offset: u32) -> *mut u32 {
