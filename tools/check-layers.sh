@@ -11,6 +11,9 @@
 #   drivers/bus/*        api, lib/*         transport
 #   drivers/logical/*    api, lib/*         one part number
 #   lib/*                lib/*              no hardware at all
+#   board                hal, api, soc/*,   the pin map; constructs drivers,
+#                        physical, bus,     never names kernel
+#                        lib/*
 #   radio/*              hal, api, kernel,  the vendor blobs and their adapter
 #                        soc/*, lib/*
 #
@@ -101,6 +104,7 @@ TIERS = {
     "drivers/bus":      "Layer-2 bus abstraction",
     "drivers/logical":  "Layer-3 logical driver",
     "lib":              "portable library",
+    "board":            "board manifest",
 }
 
 # Membership is read from the workspace, so a new soc or lib crate is usable by
@@ -110,6 +114,8 @@ def names_in(d):
 
 SOCS = names_in("soc")
 LIBS = names_in("lib")
+PHYSICAL = names_in("drivers/physical")
+BUS = names_in("drivers/bus")
 
 ALLOWED = {
     "arch":             {"hal"},
@@ -119,6 +125,11 @@ ALLOWED = {
     "drivers/logical":  {"api"} | LIBS,
     "lib":              LIBS,
     "radio":            {"hal", "api", "kernel"} | SOCS | LIBS,
+    # The board crate constructs drivers -- it opens a controller and wraps it
+    # in a bus -- so it may name the physical and bus drivers, plus hal, api,
+    # the soc crates and the libs. It may NOT name `kernel`: a board is a pin
+    # map, not the scheduler that runs on it.
+    "board":            {"hal", "api"} | SOCS | PHYSICAL | BUS | LIBS,
 }
 DESCRIBE = {
     "arch":             "hal",
@@ -128,6 +139,7 @@ DESCRIBE = {
     "drivers/logical":  "api and lib/ crates",
     "lib":              "other lib/ crates only",
     "radio":            "hal, api, kernel, soc/ and lib/ crates",
+    "board":            "hal, api, soc/, drivers/physical, drivers/bus and lib/ crates",
 }
 
 violations = []

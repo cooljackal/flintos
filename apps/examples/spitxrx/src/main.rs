@@ -34,29 +34,17 @@
 #![no_std]
 #![no_main]
 
-use api::bus::{Bus, BusConfig, BusSpeed, Op, PhysicalBus};
+use api::bus::{Bus, Op};
 use api::task;
-use api::Once;
-use esp32_spi::Esp32Spi;
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::types::Priority;
-use soc_esp32::{addr, Esp32PinMux};
-use spi_bus::SpiBus;
+use soc_esp32::Esp32PinMux;
 
 kernel::flint_app!(main, abi = 2);
 
-use kernel::board::active as board;
-
-/// SPI2 (HSPI). SPI1 drives the boot flash; SPI2/SPI3 are the general ones.
-const SPI_BASE: u32 = addr::SPI2_BASE;
-/// SPI2's signal instance number, for the GPIO matrix.
+/// SPI2's signal instance number, for the GPIO matrix. `board::loopback_spi`
+/// opens SPI2, and the fold below routes its signals through the matrix.
 const SPI2: u8 = 2;
-
-/// The whole stack in one static: the Layer-2 `SpiBus` now owns its Layer-1
-/// `Esp32Spi` by value, so there is no separate driver static for it to borrow.
-/// `Once` outlives the setup call; the loop below borrows the wrapper for the
-/// life of the program.
-static SPI: Once<SpiBus<Esp32Spi>> = Once::new();
 
 fn main() {
     task::spawn("spitxrx", run, Priority::Normal(1), 4096);
@@ -65,9 +53,7 @@ fn main() {
 fn run() {
     // The loopback needs a free pad for the data plus two spares. A board that
     // declares none cannot run this; say so rather than routing onto something.
-    let (Some(scratch), Some((sck, miso_placeholder))) =
-        (board::LOOPBACK_SCRATCH_GPIO, board::LOOPBACK_AUX_GPIOS)
-    else {
+    let Some(pads) = board::loopback_pads() else {
         api::log_error!(
             "[spitxrx] this board declares no free loopback GPIOs; \
              build for board-esp32-devkitc"
@@ -75,14 +61,29 @@ fn run() {
         park();
     };
 
-    api::log_info!("[spitxrx] SPI2 looped MOSI->MISO on GPIO{}, SCK on GPIO{}", scratch, sck);
+    api::log_info!(
+        "[spitxrx] SPI2 looped MOSI->MISO on GPIO{}, SCK on GPIO{}",
+        pads.scratch,
+        pads.aux.0
+    );
 
-    let config = BusConfig::spi_mode0(scratch, miso_placeholder, sck, BusSpeed::MHz(4));
-
-    let Some(bus) = (unsafe { bring_up(&config, scratch) }) else {
-        api::log_error!("[spitxrx] SPI bring-up failed");
-        park();
+    // The board opens SPI2 on the loopback pads (three distinct pins, as `init`
+    // wants). No `new(base)`, no `init`, no `static mut` here any more.
+    let bus = match board::loopback_spi() {
+        Ok(bus) => bus,
+        Err(e) => {
+            api::log_error!("[spitxrx] SPI bring-up failed: {:?}", e);
+            park();
+        }
     };
+
+    // Fold MISO onto the MOSI pad through the matrix to make the on-chip
+    // loopback: `init` refuses two signals on one pad, so this is done after
+    // bring-up. MOSI first, then MISO, so the second route wins the pad's input.
+    if fold_loopback(pads.scratch).is_none() {
+        api::log_error!("[spitxrx] could not fold MISO onto the MOSI pad");
+        park();
+    }
 
     // Exchange a rolling pattern and check it comes back. A prefill distinct
     // from the pattern means a transfer that moves nothing cannot look like a
@@ -106,25 +107,14 @@ fn run() {
     }
 }
 
-/// Layer 1 + Layer 2 bring-up, then fold MISO onto the MOSI pad.
-///
-/// # Safety
-/// Claims SPI2 and the loopback pads for the life of the program.
-// TODO(#109): once the board owns its devices, this becomes
-// `board::loopback_spi()`/`Esp32Spi::open(..)` and the hand-rolled `new(base)`
-// + `init` go away.
-unsafe fn bring_up(config: &BusConfig, scratch: u8) -> Option<&'static SpiBus<Esp32Spi>> {
-    let mut phys = Esp32Spi::new(SPI_BASE);
-    PhysicalBus::init(&mut phys, config).ok()?;
-
-    // `init` rejects two signals on one pad on purpose; the loopback is made by
-    // routing directly afterwards. MOSI first, then MISO.
+/// Fold SPI2's MOSI and MISO onto one pad through the GPIO matrix, making the
+/// on-chip loopback. Routing is safe (ownership of the pad is the proof, #111),
+/// so no `unsafe` and no driver bring-up here — the board did that.
+fn fold_loopback(scratch: u8) -> Option<()> {
     let mux = Esp32PinMux::new();
     mux.route(Signal::SpiMosi(SPI2), scratch, PinConfig::PUSH_PULL).ok()?;
     mux.route(Signal::SpiMiso(SPI2), scratch, PinConfig::PUSH_PULL).ok()?;
-
-    // The bus takes ownership of the driver; one static holds the whole stack.
-    Some(SPI.init(SpiBus::new(phys)))
+    Some(())
 }
 
 fn park() -> ! {

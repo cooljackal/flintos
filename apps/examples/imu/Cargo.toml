@@ -16,13 +16,14 @@ kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
 hal = { path = "../../../hal" }
 
-# All three layers, named here because composing them is the point.
+# The board owns Layer 1 now: `board::imu_bus()` opens the controller and hands
+# back a ready `&'static I2cController`, so this app names no physical driver
+# and no SoC crate -- only the Layer-2 bus type it threads and the Layer-3 parts.
 #
-#   esp32-i2c   Layer 1   the controller's registers
+#   board       opens I2C0 on the IMU pins (Layer 1, owned by the board)
 #   i2c-bus     Layer 2   addressing and framing
 #   bmi270      Layer 3   the part number
-soc-esp32 = { path = "../../../soc/esp32" }
-esp32-i2c = { path = "../../../drivers/physical/esp32/i2c" }
+board = { path = "../../../board" }
 i2c-bus = { path = "../../../drivers/bus/i2c-bus" }
 bmi270 = { path = "../../../drivers/logical/bmi270" }
 mpu6886 = { path = "../../../drivers/logical/mpu6886" }

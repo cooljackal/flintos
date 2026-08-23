@@ -16,13 +16,15 @@ kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
 hal = { path = "../../../hal" }
 
-# The two layers this example composes:
+# The board opens Layer 1 now: `board::loopback_spi()` hands back a ready
+# `&'static SpiBus`, so this app names no physical driver.
 #
-#   esp32-spi   Layer 1   the controller's registers
+#   board       opens SPI2 on the loopback pads (Layer 1, owned by the board)
 #   spi-bus     Layer 2   the transfer-list Bus (this is what it demonstrates)
-soc-esp32 = { path = "../../../soc/esp32" }
-esp32-spi = { path = "../../../drivers/physical/esp32/spi" }
+#   soc-esp32   the pin matrix, to fold MISO onto the MOSI pad for the loopback
+board = { path = "../../../board" }
 spi-bus = { path = "../../../drivers/bus/spi-bus" }
+soc-esp32 = { path = "../../../soc/esp32" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }

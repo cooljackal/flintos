@@ -255,6 +255,107 @@ pub struct Board {
 ))]
 pub use active::BOARD;
 
+// ── Device accessors ─────────────────────────────────────────────────────────
+//
+// The board owns its devices now. Each accessor opens a controller once (the
+// `open` claims it, so a second call would return `BusError::Busy`), wraps it
+// in its Layer-2 bus, and caches the whole stack in an `api::sync::Once` so
+// later calls hand back the same `&'static`. An application asks the board for
+// a ready bus instead of open-coding `new(base) + init + static mut`. Gated on
+// `esp32-drivers`: only the ESP32 boards pull the drivers these construct.
+
+/// The onboard IMU's I2C bus: opens I2C0 on the board's private IMU pins and
+/// returns the shared controller. `Error::Other` if this board declares no IMU
+/// (`BOARD.imu` is `None`).
+///
+/// The returned [`I2cController`](i2c_bus::I2cController) owns its
+/// [`Esp32I2c`](esp32_i2c::Esp32I2c) by value; take a device handle with
+/// `.device(addr)` for the address to talk to.
+#[cfg(feature = "esp32-drivers")]
+pub fn imu_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32I2c>> {
+    static IMU_BUS: api::Once<i2c_bus::I2cController<esp32_i2c::Esp32I2c>> = api::Once::new();
+    if let Some(bus) = IMU_BUS.get() {
+        return Ok(bus);
+    }
+    let imu = active::BOARD
+        .imu
+        .ok_or(hal::Error::Other("this board declares no onboard IMU"))?;
+    IMU_BUS.get_or_try_init(|| {
+        Ok(i2c_bus::I2cController::new(esp32_i2c::Esp32I2c::open(&imu.port)?))
+    })
+}
+
+/// The free pads for the loopback bus/stream porting examples, or `None` if
+/// this board declares none.
+///
+/// `scratch` is the single data pad the fold routes onto; `aux` are the two
+/// spare pads `init` needs to see distinct pins before the fold. See the
+/// DevKitC manifest for the electrical story.
+#[cfg(feature = "esp32-drivers")]
+pub fn loopback_pads() -> Option<LoopbackPads> {
+    Some(LoopbackPads {
+        scratch: active::BOARD.selftest.scratch?,
+        aux: active::BOARD.selftest.aux?,
+    })
+}
+
+/// The two spare pads a folded single-pad loopback needs, plus the pad the fold
+/// routes onto. See [`loopback_pads`].
+#[cfg(feature = "esp32-drivers")]
+#[derive(Copy, Clone, Debug)]
+pub struct LoopbackPads {
+    /// The single data pad MOSI/MISO (SPI) or TX (UART) folds onto.
+    pub scratch: u8,
+    /// `(a, b)`: SCK and a placeholder MISO for SPI, or a placeholder RX for
+    /// UART — the spare pins `init` wants distinct before the fold.
+    pub aux: (u8, u8),
+}
+
+/// A SPI bus opened on the board's loopback pads (SPI2, mode 0, 4 MHz), for the
+/// `spitxrx` porting example. `Error::Other` if this board declares no loopback
+/// pads.
+///
+/// The bus is brought up on three distinct pads; the caller then folds MISO
+/// onto the MOSI pad to make the on-chip loopback (`init` refuses two signals
+/// on one pad, so the fold cannot be part of bring-up).
+#[cfg(feature = "esp32-drivers")]
+pub fn loopback_spi() -> hal::Result<&'static spi_bus::SpiBus<esp32_spi::Esp32Spi>> {
+    use hal::bus::{SpiConfig, SpiMode};
+    use soc_esp32::{SpiCtrl, SpiPort};
+
+    static LOOPBACK_SPI: api::Once<spi_bus::SpiBus<esp32_spi::Esp32Spi>> = api::Once::new();
+    if let Some(bus) = LOOPBACK_SPI.get() {
+        return Ok(bus);
+    }
+    let pads = loopback_pads().ok_or(hal::Error::Other("this board declares no loopback pads"))?;
+    // mosi = scratch, sck = aux.0, miso = aux.1 (a placeholder pad until the
+    // caller folds MISO onto the scratch pad).
+    let port = SpiPort {
+        ctrl: SpiCtrl::Spi2,
+        cfg: SpiConfig {
+            mosi: pads.scratch,
+            miso: pads.aux.1,
+            sck: pads.aux.0,
+            max_speed: hal::bus::BusSpeed::MHz(4),
+            mode: SpiMode::Mode0,
+        },
+    };
+    LOOPBACK_SPI.get_or_try_init(|| Ok(spi_bus::SpiBus::new(esp32_spi::Esp32Spi::open(&port)?)))
+}
+
+/// The board's addressable LED, if it has one.
+///
+/// This returns the LED's *identity* — its pin, count and fold — not a driven
+/// strip. Driving a WS2812 over the RMT needs an interrupt handler and a frame
+/// buffer sized to the LED count, which an application owns (see
+/// `apps/examples/blink`); the board's job is to say which LED is there. An
+/// accessor that returned a live strip would have to move that ISR into the
+/// board crate, which no board consumer wants today.
+#[cfg(feature = "esp32-drivers")]
+pub fn led() -> Option<RgbLed> {
+    active::BOARD.rgb_led
+}
+
 // ── Manifest invariant tests ────────────────────────────────────────────────
 //
 // Run against whichever board is currently selected (`crate::active`), so

@@ -69,10 +69,16 @@ dependencies = [
 name = "board"
 version = "0.1.0"
 dependencies = [
+ "api",
+ "esp32-i2c",
+ "esp32-spi",
+ "esp32-uart",
  "hal",
+ "i2c-bus",
  "led-matrix",
  "soc-esp32",
  "soc-rp2040",
+ "spi-bus",
 ]
 
 [[package]]
@@ -293,13 +299,12 @@ version = "0.1.0"
 dependencies = [
  "api",
  "bmi270",
+ "board",
  "build",
- "esp32-i2c",
  "hal",
  "i2c-bus",
  "kernel",
  "mpu6886",
- "soc-esp32",
 ]
 
 [[package]]
@@ -456,8 +461,8 @@ name = "spitxrx"
 version = "0.1.0"
 dependencies = [
  "api",
+ "board",
  "build",
- "esp32-spi",
  "hal",
  "kernel",
  "soc-esp32",

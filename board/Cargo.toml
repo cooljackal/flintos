@@ -14,6 +14,18 @@ hal = { path = "../hal" }
 soc-esp32 = { path = "../soc/esp32", optional = true }
 soc-rp2040 = { path = "../soc/rp2040", optional = true }
 
+# A board constructs its own devices now: it opens a controller (Layer 1) and
+# wraps it in a bus (Layer 2), handing an application a ready `&'static`
+# controller instead of a pin map to bring up by hand. `api` carries the
+# `Once` these accessors cache into. All optional and pulled in by the ESP32
+# board features -- the RP2040 board needs none of them yet.
+api = { path = "../api", optional = true }
+esp32-i2c = { path = "../drivers/physical/esp32/i2c", optional = true }
+esp32-spi = { path = "../drivers/physical/esp32/spi", optional = true }
+esp32-uart = { path = "../drivers/physical/esp32/uart", optional = true }
+i2c-bus = { path = "../drivers/bus/i2c-bus", optional = true }
+spi-bus = { path = "../drivers/bus/spi-bus", optional = true }
+
 # Panel geometry, so a board with an LED panel can declare its shape the same
 # way it declares a pin. `led-matrix` is a portable library, not a driver: it
 # touches no register and its output is an integer.
@@ -32,10 +44,13 @@ led-matrix = { path = "../lib/led-matrix" }
 # Selecting a board is one word on the command line; getting it silently wrong
 # costs a debugging session against the wrong pin map.
 default = []
-board-esp32-wrover = ["dep:soc-esp32"]
-board-esp32-devkitc = ["dep:soc-esp32"]
-board-m5-atom-lite = ["dep:soc-esp32"]
-board-m5-atom-matrix = ["dep:soc-esp32"]
+# The ESP32 boards pull in the drivers their device accessors construct. Named
+# once as `esp32-drivers` so a new ESP32 board is still a one-line feature.
+esp32-drivers = ["dep:api", "dep:esp32-i2c", "dep:esp32-spi", "dep:esp32-uart", "dep:i2c-bus", "dep:spi-bus"]
+board-esp32-wrover = ["dep:soc-esp32", "esp32-drivers"]
+board-esp32-devkitc = ["dep:soc-esp32", "esp32-drivers"]
+board-m5-atom-lite = ["dep:soc-esp32", "esp32-drivers"]
+board-m5-atom-matrix = ["dep:soc-esp32", "esp32-drivers"]
 board-wio-rp2040-mini = ["dep:soc-rp2040"]
 
 # Retired. Accepted only so `src/lib.rs` can explain which of the two Atoms to
