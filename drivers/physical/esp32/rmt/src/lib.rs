@@ -271,36 +271,43 @@ impl Rmt {
     /// Do not call again until the previous frame has finished. A WS2812 reads
     /// a restart mid-frame as data and latches whatever it has.
     ///
-    /// # Safety
-    /// Writes the channel's registers.
-    pub unsafe fn transmit(&mut self, entries: &[Entry]) -> bool {
+    /// Safe: writes only the registers and memory block of the channel this
+    /// `Rmt` owns (the unsafe `new` established that ownership). The "wait for
+    /// the previous frame" note is a timing contract, not a memory-safety one.
+    pub fn transmit(&mut self, entries: &[Entry]) -> bool {
         // One slot reserved for the terminator.
         if entries.len() >= ENTRIES_PER_BLOCK {
             return false;
         }
 
-        // Write the block by index. There is no pointer to advance and so none
-        // to get out of step between frames, which is the whole reason this
-        // driver does not use the FIFO.
-        let mem = ch_mem(self.ch) as *mut u32;
-        for (i, e) in entries.iter().enumerate() {
-            mem.add(i).write_volatile(e.0);
+        // SAFETY: every write below targets this channel's own memory block and
+        // registers, which owning the `Rmt` entitles.
+        unsafe {
+            // Write the block by index. There is no pointer to advance and so
+            // none to get out of step between frames, which is the whole reason
+            // this driver does not use the FIFO.
+            let mem = ch_mem(self.ch) as *mut u32;
+            for (i, e) in entries.iter().enumerate() {
+                mem.add(i).write_volatile(e.0);
+            }
+            mem.add(entries.len()).write_volatile(Entry::END.0);
+
+            let c1 = ch_conf1(self.ch) as *mut u32;
+            // Drop the one-shot bits before the read-modify-write, so a TX_START
+            // left set by the previous frame cannot be re-asserted here.
+            let base =
+                c1.read_volatile() & !(CONF1_TX_START | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
+
+            // Rewind the read pointer and the divider phase, both pulsed rather
+            // than left set -- held in reset, the channel emits nothing.
+            // Resetting the divider is what makes the first pulse a full one; at
+            // a 350 ns pulse and a +/-150 ns budget, a partial first tick is a
+            // wrong bit.
+            c1.write_volatile(base | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
+            c1.write_volatile(base);
+
+            c1.write_volatile(base | CONF1_TX_START);
         }
-        mem.add(entries.len()).write_volatile(Entry::END.0);
-
-        let c1 = ch_conf1(self.ch) as *mut u32;
-        // Drop the one-shot bits before the read-modify-write, so a TX_START
-        // left set by the previous frame cannot be re-asserted here.
-        let base = c1.read_volatile() & !(CONF1_TX_START | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
-
-        // Rewind the read pointer and the divider phase, both pulsed rather
-        // than left set -- held in reset, the channel emits nothing. Resetting
-        // the divider is what makes the first pulse a full one; at a 350 ns
-        // pulse and a +/-150 ns budget, a partial first tick is a wrong bit.
-        c1.write_volatile(base | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
-        c1.write_volatile(base);
-
-        c1.write_volatile(base | CONF1_TX_START);
         true
     }
 }
@@ -412,42 +419,49 @@ impl Rmt {
     /// colours partway along. There is no hardware underrun flag to notice it
     /// with, so a late refill is silent.
     ///
-    /// # Safety
-    /// Writes the channel's registers and the global `APB_CONF`.
-    pub unsafe fn start_stream(&mut self, entries: &[Entry]) -> Refill {
-        // Wrap at the end of the block rather than stopping. Global, like
-        // FIFO_MASK; harmless for one-shot users because a terminator stops
-        // them before the end of the block is ever reached.
-        let apb = APB_CONF as *mut u32;
-        reg::set(apb, APB_MEM_TX_WRAP_EN);
-
-        // Fire the threshold once per half consumed.
-        (ch_tx_lim(self.ch) as *mut u32).write_volatile(HALF_BLOCK as u32);
-
+    /// Safe: writes this channel's registers and memory block, plus the global
+    /// `APB_CONF` bit RMT shares (as `new` already does). Owning the `Rmt` is
+    /// the proof; the "keep `entries` alive until it finishes" note is a timing
+    /// contract, not a memory-safety one.
+    pub fn start_stream(&mut self, entries: &[Entry]) -> Refill {
         let mut refill = Refill::new(entries.len());
-        // Prime both halves before starting: the first threshold does not
-        // arrive until half the block is already gone.
-        let mem = ch_mem(self.ch) as *mut u32;
-        for _ in 0..2 {
-            match refill.next_chunk() {
-                Some(c) => self.write_chunk(mem, entries, c),
-                None => break,
+        // SAFETY: every access below is to this channel's own registers and
+        // block, or the global APB_CONF bit RMT owns.
+        unsafe {
+            // Wrap at the end of the block rather than stopping. Global, like
+            // FIFO_MASK; harmless for one-shot users because a terminator stops
+            // them before the end of the block is ever reached.
+            let apb = APB_CONF as *mut u32;
+            reg::set(apb, APB_MEM_TX_WRAP_EN);
+
+            // Fire the threshold once per half consumed.
+            (ch_tx_lim(self.ch) as *mut u32).write_volatile(HALF_BLOCK as u32);
+
+            // Prime both halves before starting: the first threshold does not
+            // arrive until half the block is already gone.
+            let mem = ch_mem(self.ch) as *mut u32;
+            for _ in 0..2 {
+                match refill.next_chunk() {
+                    Some(c) => self.write_chunk(mem, entries, c),
+                    None => break,
+                }
             }
+
+            let c1 = ch_conf1(self.ch) as *mut u32;
+            let base =
+                c1.read_volatile() & !(CONF1_TX_START | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
+            c1.write_volatile(base | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
+            c1.write_volatile(base);
+
+            // Clear a stale threshold from the previous frame before enabling,
+            // or the first interrupt arrives immediately and refills a half the
+            // transmitter has not reached.
+            (INT_CLR as *mut u32).write_volatile(tx_thr_bit(self.ch) | tx_end_bit(self.ch));
+            let ena = INT_ENA as *mut u32;
+            reg::set(ena, tx_thr_bit(self.ch));
+
+            c1.write_volatile(base | CONF1_TX_START);
         }
-
-        let c1 = ch_conf1(self.ch) as *mut u32;
-        let base = c1.read_volatile() & !(CONF1_TX_START | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
-        c1.write_volatile(base | CONF1_MEM_RD_RST | CONF1_REF_CNT_RST);
-        c1.write_volatile(base);
-
-        // Clear a stale threshold from the previous frame before enabling, or
-        // the first interrupt arrives immediately and refills a half the
-        // transmitter has not reached.
-        (INT_CLR as *mut u32).write_volatile(tx_thr_bit(self.ch) | tx_end_bit(self.ch));
-        let ena = INT_ENA as *mut u32;
-        reg::set(ena, tx_thr_bit(self.ch));
-
-        c1.write_volatile(base | CONF1_TX_START);
         refill
     }
 
@@ -468,26 +482,30 @@ impl Rmt {
     /// Call from the channel's interrupt handler. Clearing the threshold flag
     /// happens here, so the handler does not have to know which bit that is.
     ///
-    /// # Safety
-    /// Writes the channel's block and interrupt registers. `entries` must be
-    /// the same sequence passed to [`Rmt::start_stream`].
-    pub unsafe fn service(&mut self, entries: &[Entry], refill: &mut Refill) -> bool {
-        // Clear before refilling. The other order loses an event that arrives
-        // while the copy is in progress, and a lost threshold stalls the
-        // stream permanently.
-        (INT_CLR as *mut u32).write_volatile(tx_thr_bit(self.ch));
+    /// Safe: writes this channel's block and interrupt registers, which owning
+    /// the `Rmt` entitles. `entries` being the same sequence passed to
+    /// [`Rmt::start_stream`] is a correctness contract (a mismatched slice only
+    /// plays wrong data, bounds-checked), not a memory-safety one.
+    pub fn service(&mut self, entries: &[Entry], refill: &mut Refill) -> bool {
+        // SAFETY: writes this channel's own interrupt and block registers.
+        unsafe {
+            // Clear before refilling. The other order loses an event that
+            // arrives while the copy is in progress, and a lost threshold
+            // stalls the stream permanently.
+            (INT_CLR as *mut u32).write_volatile(tx_thr_bit(self.ch));
 
-        match refill.next_chunk() {
-            Some(c) => {
-                self.write_chunk(ch_mem(self.ch) as *mut u32, entries, c);
-                false
-            }
-            None => {
-                // Nothing left to feed. Stop the interrupt, or it repeats for
-                // as long as the tail plays out.
-                let ena = INT_ENA as *mut u32;
-                reg::clear(ena, tx_thr_bit(self.ch));
-                true
+            match refill.next_chunk() {
+                Some(c) => {
+                    self.write_chunk(ch_mem(self.ch) as *mut u32, entries, c);
+                    false
+                }
+                None => {
+                    // Nothing left to feed. Stop the interrupt, or it repeats
+                    // for as long as the tail plays out.
+                    let ena = INT_ENA as *mut u32;
+                    reg::clear(ena, tx_thr_bit(self.ch));
+                    true
+                }
             }
         }
     }
@@ -498,10 +516,11 @@ impl Rmt {
     /// channel stops, and [`Rmt::start_stream`] clears it, so a set bit always
     /// refers to the frame in progress.
     ///
-    /// # Safety
-    /// Reads an interrupt status register.
-    pub unsafe fn stream_done(&self) -> bool {
-        (INT_RAW as *const u32).read_volatile() & tx_end_bit(self.ch) != 0
+    /// Safe: a side-effect-free read of the interrupt status register for the
+    /// channel this `Rmt` owns.
+    pub fn stream_done(&self) -> bool {
+        // SAFETY: a volatile read of a status register.
+        unsafe { (INT_RAW as *const u32).read_volatile() & tx_end_bit(self.ch) != 0 }
     }
 
     /// Copy one chunk into the block.

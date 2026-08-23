@@ -173,10 +173,11 @@ impl Timer {
 
     /// The live counter. Advances while the timer runs.
     ///
-    /// # Safety
-    /// Reads a timer register. No side effects.
-    pub unsafe fn counter(&self) -> u32 {
-        (timer_value(self.idx) as *const u32).read_volatile()
+    /// Safe: a side-effect-free read of a timer this `Timer` owns.
+    pub fn counter(&self) -> u32 {
+        // SAFETY: holding a `Timer` is ownership of timer `idx`'s registers
+        // (established by the unsafe `new`); this reads one of them.
+        unsafe { (timer_value(self.idx) as *const u32).read_volatile() }
     }
 }
 
@@ -222,34 +223,37 @@ impl Channel {
     /// Returns `None` if `duty` exceeds full scale — a wrapped duty is a bright
     /// LED reading as a dim one.
     ///
-    /// # Safety
-    /// Writes the channel's duty registers.
-    pub unsafe fn set_duty(&self, duty: u32) -> Option<()> {
+    /// Safe: writes only the duty registers of a channel this `Channel` owns.
+    pub fn set_duty(&self, duty: u32) -> Option<()> {
         if duty > max_duty(self.res_bits) {
             return None;
         }
-        // The register's low four bits are fractional; the duty starts at bit
-        // 4. See the module header.
-        (ch_duty(self.idx) as *mut u32).write_volatile(duty << 4);
-        // Latch it. Without this the new value sits in the register unused.
-        (ch_conf1(self.idx) as *mut u32).write_volatile(CONF1_DUTY_START);
+        // SAFETY: holding a `Channel` is ownership of channel `idx`'s registers
+        // (established by the unsafe `new`); this writes two of them.
+        unsafe {
+            // The register's low four bits are fractional; the duty starts at
+            // bit 4. See the module header.
+            (ch_duty(self.idx) as *mut u32).write_volatile(duty << 4);
+            // Latch it. Without this the new value sits in the register unused.
+            (ch_conf1(self.idx) as *mut u32).write_volatile(CONF1_DUTY_START);
+        }
         Some(())
     }
 
     /// Duty as a percentage of full scale, rounded to the nearest step.
     ///
-    /// # Safety
-    /// Writes the channel's duty registers.
-    pub unsafe fn set_percent(&self, pct: u8) -> Option<()> {
+    /// Safe: see [`Channel::set_duty`].
+    pub fn set_percent(&self, pct: u8) -> Option<()> {
         self.set_duty(duty_for_percent(pct, self.res_bits))
     }
 
     /// Read back the duty the hardware holds, undoing the shift.
     ///
-    /// # Safety
-    /// Reads a channel register. No side effects.
-    pub unsafe fn duty(&self) -> u32 {
-        (ch_duty(self.idx) as *const u32).read_volatile() >> 4
+    /// Safe: a side-effect-free read of a channel this `Channel` owns.
+    pub fn duty(&self) -> u32 {
+        // SAFETY: holding a `Channel` is ownership of channel `idx`'s registers;
+        // this reads one of them.
+        unsafe { (ch_duty(self.idx) as *const u32).read_volatile() >> 4 }
     }
 }
 
