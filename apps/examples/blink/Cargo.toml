@@ -16,16 +16,15 @@ kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
 hal = { path = "../../../hal" }
 
-# The three layers this application composes, named explicitly because
-# composing them is the point of it. The kernel deliberately depends on no
-# driver but the console UART, so an application that wants one says so.
+# The board opens Layer 1 now: `board::led_rmt()` claims the RMT channel, gates
+# the clock, routes the signal and enables the pad, and re-exports the RMT types
+# this app threads through it. So this app names no SoC crate and no physical
+# driver -- only the board and the portable layers above it.
 #
-#   soc-esp32   layer 1  the RMT registers, and the pin routing
-#   esp32-gpio  layer 1  the pad's output enable
-#   ws2812      layer 3  the wire protocol, which knows about no chip at all
-soc-esp32 = { path = "../../../soc/esp32" }
-esp32-gpio = { path = "../../../drivers/physical/esp32/gpio" }
-esp32-rmt = { path = "../../../drivers/physical/esp32/rmt" }
+#   board        opens the RMT channel on the LED pin (Layer 1, owned by the board)
+#   ws2812       layer 3  the wire protocol, which knows about no chip at all
+#   led-matrix   the panel geometry, a portable library
+board = { path = "../../../board" }
 ws2812 = { path = "../../../drivers/logical/ws2812" }
 led-matrix = { path = "../../../lib/led-matrix" }
 

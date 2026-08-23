@@ -46,14 +46,12 @@
 
 use api::task::{self, Task};
 use api::CsCell;
-use hal::{PinConfig, PinMux, Signal};
 
-use esp32_gpio::{Esp32Gpio, PinMode};
-use esp32_rmt::{self as rmt, Entry, Refill, Rmt};
+// The board owns the RMT bring-up (`board::led_rmt`) and re-exports the RMT
+// types this app threads through the channel it hands back, so this app names
+// no SoC crate and no physical driver.
+use board::rmt::{self, Entry, Refill, Rmt};
 use led_matrix::Layout;
-use soc_esp32::addr;
-use soc_esp32::dport::{self, ClockBit};
-use soc_esp32::pinmux::Esp32PinMux;
 use ws2812::{LedStrip, PulseEmitter, Rgb, StripError, Ws2812};
 
 // Only the Atom boards declare an addressable LED. Say which board is missing
@@ -102,15 +100,9 @@ kernel::flint_app!(main, abi = 2);
 /// read at coding time — that is what the manifest is for.
 const LED_PIN: u8 = kernel::board::active::RGB_LED_GPIO;
 
-/// RMT channel 0. Nothing else in this build claims one.
+/// RMT channel 0. Nothing else in this build claims one. The board opens the
+/// channel; this is only for the log line.
 const LED_CHANNEL: u8 = 0;
-
-/// CPU interrupt for the RMT source.
-///
-/// 13 is external, level 1 and otherwise unused. `intr_map::route` rejects
-/// anything the kernel could not service, so a bad choice here is a build-time
-/// `Result`, not a board that dies at its first interrupt.
-const LED_CPU_INT: u8 = 13;
 
 /// 125 ns per tick. The WS2812's pulse widths are near-multiples of it, and it
 /// divides the 80 MHz APB exactly (divider 10), so no timing error accumulates
@@ -428,49 +420,37 @@ fn rmt_isr() {
     });
 }
 
-/// Bring up the clock, the pad, the channel and the interrupt.
+/// Bring up the channel and the interrupt.
 ///
-/// Claims RMT channel 0, GPIO `LED_PIN` and CPU interrupt `LED_CPU_INT` for the
-/// life of the program. `None` means one of them was refused, and the log says
-/// which.
+/// The board claims RMT channel 0, gates the clock, routes `Signal::RmtOut` to
+/// the LED pin and enables the pad; this app connects the channel's interrupt
+/// and stages the shared `LINK`. `None` means one of those was refused, and the
+/// log says which.
 fn led_init() -> Option<()> {
-    // The peripheral answers reads with plausible garbage while its clock is
-    // gated, so this has to come before anything else touches its registers.
-    // SAFETY: the RMT is this program's to gate -- nothing else in the build
-    // claims it -- and `enable` is itself safe against the other core and
-    // interrupts.
-    unsafe { dport::enable(ClockBit::RMT) };
-
-    // Output enable for the pad. The matrix leaves output enable with the
-    // peripheral, but esp-idf sets the direction here too and this is not the
-    // place to find out whether that is load-bearing -- an unenabled pad is a
-    // dark LED with nothing to say about why.
-    Esp32Gpio::instance().set_mode(LED_PIN, PinMode::Output).ok()?;
-
-    // Push-pull: one driver, one LED, no bus to share. `route` handles IO_MUX
-    // function select and the matrix entry, and refuses a pin that cannot
-    // drive an output.
-    Esp32PinMux::new()
-        .route(Signal::RmtOut(LED_CHANNEL), LED_PIN, PinConfig::PUSH_PULL)
-        .ok()?;
-
     let (divider, actual_ns) = rmt::divider_for_ns(NS_PER_TICK);
     // If the divider could not deliver the tick asked for, every pulse below is
     // scaled by the difference and the LED shows something arbitrary.
     debug_assert_eq!(actual_ns, NS_PER_TICK);
-    // SAFETY: nothing else in this build claims `LED_CHANNEL`, and its output
-    // signal was routed to `LED_PIN` just above.
-    let rmt = unsafe { Rmt::new(LED_CHANNEL, divider)? };
+
+    // The board gates the clock, routes the signal and enables the pad, then
+    // hands back the channel. No register-level bring-up in the app any more.
+    let rmt = match board::led_rmt(divider) {
+        Ok(rmt) => rmt,
+        Err(e) => {
+            api::log_error!("could not open the LED's RMT channel: {:?}", e);
+            return None;
+        }
+    };
 
     // Point the peripheral at a CPU interrupt. Without this the RMT's own
-    // interrupt enables set happily and nothing is ever delivered -- there was
-    // no crossbar routing in this kernel at all before streaming needed one.
+    // interrupt enables set happily and nothing is ever delivered. `connect`
+    // allocates the CPU input itself, so there is no magic slot number to pick.
     //
     // SAFETY: `rmt_isr` runs as one masked closure that acknowledges the
     // threshold (inside `Rmt::service`) and copies at most half a block; it
     // never blocks.
-    if let Err(e) = unsafe { kernel::interrupt::connect_at(addr::IRQ_RMT, LED_CPU_INT, rmt_isr) } {
-        api::log_error!("cannot connect RMT to CPU interrupt {}: {:?}", LED_CPU_INT, e);
+    if let Err(e) = unsafe { api::interrupt::connect(board::LED_RMT_IRQ, rmt_isr) } {
+        api::log_error!("cannot connect the RMT to a CPU interrupt: {:?}", e);
         return None;
     }
 
