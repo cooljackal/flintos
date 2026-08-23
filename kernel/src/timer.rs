@@ -53,11 +53,10 @@ const MAX_TIMERS: usize = 16;
 /// tasks that call `once`/`every`, so core 0 firing a timer raced core 1
 /// registering one.
 ///
-/// **The lock is not held across a callback.** `process_timers` snapshots a
-/// due entry, releases, calls back, then re-acquires and re-checks the id —
-/// the shape the old code already had for a different reason (a callback may
-/// cancel its own timer and free the slot). Holding the lock across `cb()`
-/// would also deadlock outright the moment a callback called `once`.
+/// **The lock is not held across a callback.** `process_timers` snapshots all
+/// due callbacks and advances or removes their entries in one pass, then
+/// releases the lock before invoking any of them. Holding the lock across
+/// `cb()` would deadlock outright the moment a callback called `once`.
 struct Timers {
     entries: [Option<TimerEntry>; MAX_TIMERS],
     next_id: u32,
@@ -116,59 +115,34 @@ pub fn cancel(id: u32) {
 /// lock, taking the timer lock itself for each table access.
 ///
 /// No `&mut` into the static `TIMERS` array is ever held across a callback
-/// invocation (item 6). The original code kept `entry`/`slot` borrowed for
-/// the callback's entire duration and used them again afterward — but the
-/// callback runs arbitrary code, including `once`/`cancel`/`every`, which
-/// take their own `&mut` into the same static. That's an aliasing violation
-/// on its own, and worse: if the callback frees *its own* slot (`cancel`)
-/// and a subsequent `once()` reuses that index for an unrelated timer, the
-/// stale post-call `entry`/`slot` reference would then corrupt that
-/// unrelated timer's `fire_at`/interval. Instead we snapshot the small bit
-/// of Copy data we need, drop the borrow, invoke the callback, then
-/// re-acquire the slot by index and verify the id still matches before
-/// mutating it.
+/// invocation (item 6). A callback can therefore call `once`, `cancel`, or
+/// `every` without aliasing the table or re-entering its lock.
 pub fn process_timers(now: u64) {
-    for i in 0..MAX_TIMERS {
-        // Snapshot (id, callback, interval) for a due entry, if any, then let
-        // the borrow end here — nothing below holds a live reference into
-        // `TIMERS` while `cb()` runs.
-        let due = TIMERS.with(|t| {
-            t.entries[i].as_ref().and_then(|e| {
-                if e.fire_at <= now {
-                    Some((e.id, e.callback, e.interval))
-                } else {
-                    None
-                }
-            })
-        });
-        let (id, callback, interval) = match due {
-            Some(d) => d,
-            None => continue,
-        };
-
-        if let Some(cb) = callback {
-            // Trap-context marker so the callback's own attempts to block
-            // (mutex lock, queue send/recv, sleep) refuse instead of
-            // wedging the interrupted task (item 11).
-            let _guard = crate::interrupt::InterruptGuard::enter();
-            cb();
-        }
-
-        // Re-acquire by index and verify identity: the callback may have
-        // canceled this very timer (freeing slot `i`) and a fresh `once()`/
-        // `every()` may have already reused it for something else. Only
-        // mutate if slot `i` still holds *this* timer.
-        TIMERS.with(|t| {
-            let still_same = matches!(&t.entries[i], Some(e) if e.id == id);
-            if still_same {
-                if interval > 0 {
-                    if let Some(entry) = &mut t.entries[i] {
-                        entry.fire_at = now.wrapping_add(interval as u64);
-                    }
-                } else {
-                    t.entries[i] = None;
-                }
+    // One global critical section per tick, not one per table slot. On
+    // RP2040 every critical section takes a chip-wide hardware spinlock; the
+    // old 16-acquisition scan let core 0's SysTick repeatedly beat core 1 to
+    // that lock and starve ordinary scheduler/mutex work.
+    let mut callbacks = [None; MAX_TIMERS];
+    TIMERS.with(|t| {
+        for (i, slot) in t.entries.iter_mut().enumerate() {
+            let Some(entry) = slot.as_mut() else { continue };
+            if entry.fire_at > now {
+                continue;
             }
-        });
+            callbacks[i] = entry.callback;
+            if entry.interval > 0 {
+                entry.fire_at = now.wrapping_add(entry.interval as u64);
+            } else {
+                *slot = None;
+            }
+        }
+    });
+
+    for cb in callbacks.into_iter().flatten() {
+        // Trap-context marker so the callback's own attempts to block
+        // (mutex lock, queue send/recv, sleep) refuse instead of
+        // wedging the interrupted task (item 11).
+        let _guard = crate::interrupt::InterruptGuard::enter();
+        cb();
     }
 }
