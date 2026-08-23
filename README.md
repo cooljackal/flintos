@@ -100,7 +100,7 @@ any part that keeps the contract. See [Libraries](https://github.com/cooljackal/
 
 ### Build and test
 
-| | |
+| Check | Status |
 |---|---|
 | Host unit tests | ✅ 552 passing, kernel included — `make test-host` |
 | On-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
