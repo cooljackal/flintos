@@ -35,20 +35,22 @@ pub const RNG_DATA_REG: u32 = 0x3FF7_5144;
 
 /// One 32-bit value from the hardware generator.
 ///
-/// # Safety
-/// Reads a hardware register. Safe in the sense that it cannot corrupt
-/// anything, but see the module docs before trusting the value with a secret.
+/// Safe: a side-effect-free read of a fixed, always-mapped register that needs
+/// nothing enabled or owned. See the module docs before trusting the value with
+/// a secret — that is a quality concern, not a soundness one.
 #[inline]
-pub unsafe fn read_u32() -> u32 {
-    (RNG_DATA_REG as *const u32).read_volatile()
+pub fn read_u32() -> u32 {
+    // SAFETY: `RNG_DATA_REG` is a fixed, valid, aligned hardware register; the
+    // read has no precondition and cannot corrupt anything.
+    unsafe { (RNG_DATA_REG as *const u32).read_volatile() }
 }
 
 /// Fill `buf` with random bytes.
 ///
-/// # Safety
-/// Reads a hardware register. See the module docs on entropy quality.
-pub unsafe fn fill(buf: &mut [u8]) {
-    fill_from(|| read_u32(), buf)
+/// Safe: reads the generator as [`read_u32`] does. See the module docs on
+/// entropy quality.
+pub fn fill(buf: &mut [u8]) {
+    fill_from(read_u32, buf)
 }
 
 /// Fill `buf` from an arbitrary 32-bit source.
