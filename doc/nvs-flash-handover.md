@@ -2,7 +2,7 @@
 
 # SPI flash on ESP32 from bare-metal Rust — resolved
 
-**This is solved.** `apps/flashprobe` erases, programs and reads the `nvs`
+**This is solved.** `apps/tests/flashprobe` erases, programs and reads the `nvs`
 partition, and a value written one boot is read back the next. The rest of the
 document is kept as the record of how it was found, because most of it was
 wrong in instructive ways.
@@ -104,7 +104,7 @@ about a copy the optimiser folded into a caller. It must be paired with
 `#[inline(never)]`. Without that, every function here was inlined into `.text`
 and the attribute did nothing.
 
-**4. The ROM's chip description is valid.** `apps/flashprobe` prints it off a
+**4. The ROM's chip description is valid.** `apps/tests/flashprobe` prints it off a
 running board: device `0x00C84016`, size `0x400000`, block `0x10000`, sector
 `0x1000`, page `0x100`, status mask `0xFFFF`. The bootloader populated it
 correctly, so theories about missing `esp_rom_spiflash_attach` / `config_param`
@@ -112,7 +112,7 @@ are wrong.
 
 **5. The self-test harness is the wrong venue.** It runs in boot context before
 the scheduler, and a read that works fine from a task killed the board there
-mid-`raw_print`. All flash work now happens in `apps/flashprobe`. This cost a
+mid-`raw_print`. All flash work now happens in `apps/tests/flashprobe`. This cost a
 whole session of confusing results and is worth knowing before reproducing
 anything.
 
@@ -188,7 +188,7 @@ All on `main`. This section used to say "Branch `wip/nvs-flash`. Nothing is on
 - `drivers/physical/esp32/flash/src/spi1.rs` — the SPI-NOR commands
 - `drivers/physical/esp32/flash/src/lib.rs` — region bounds, cache window
 - `kernel/src/nvs.rs` — the `Storage` impl (a newtype: orphan rules)
-- `apps/flashprobe/` — still the venue for exercising this
+- `apps/tests/flashprobe/` — still the venue for exercising this
 - `lib/kvstore/` — 16 host tests
 
 Exercise it with `make flash APP=flashprobe`. Recover a boot-looping board with

@@ -4,7 +4,7 @@
 # Pull the latest FlintOS and report which applications it broke.
 #
 # The layout already protects application code: applications are separate
-# crates and a pull never touches `apps/<yours>/`. What it does not do is tell
+# crates and a pull never touches `apps/*/<yours>/`. What it does not do is tell
 # you what the pull changed underneath them, and "it still compiles" is the
 # only question that matters at that moment.
 #
@@ -34,17 +34,20 @@ mkdir -p "$WORK_ROOT"
 
 # ── Find the applications ───────────────────────────────────────────────────
 #
-# Whatever is in apps/, rather than a list kept here. A list would go stale the
-# first time someone adds an application and forgets, and this reporting a
-# clean upgrade because it never looked is the one outcome to avoid.
+# Whatever is in apps/examples/ and apps/tests/, rather than a list kept here.
+# A list would go stale the first time someone adds an application and forgets,
+# and this reporting a clean upgrade because it never looked is the one outcome
+# to avoid. The glob is two levels deep because that is where the crates are;
+# one level would match only the two group directories, find no Cargo.toml,
+# and exit 0 with "No applications" -- a quiet pass, the very thing above.
 APPS=()
-for d in apps/*/; do
+for d in apps/*/*/; do
     [ -f "$d/Cargo.toml" ] || continue
     APPS+=("$(basename "$d")")
 done
 
 if [ "${#APPS[@]}" -eq 0 ]; then
-    echo "No applications in apps/ -- nothing to check." >&2
+    echo "No applications in apps/examples/ or apps/tests/ -- nothing to check." >&2
     exit 0
 fi
 

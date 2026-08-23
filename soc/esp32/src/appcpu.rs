@@ -104,7 +104,7 @@ unsafe fn unstall() {
 ///
 /// FlintOS can stall, but the reason is narrower than it first looks, and the
 /// obvious justification is wrong: the APP CPU *does* run kernel tasks and
-/// *does* take the scheduler spinlock — `apps/smp` calls `join_scheduler` on
+/// *does* take the scheduler spinlock — `apps/tests/smp` calls `join_scheduler` on
 /// it. [`start`]'s doc comment still says otherwise and predates that.
 ///
 /// What makes it safe is the caller, not the core: the flash driver takes no
@@ -234,7 +234,7 @@ pub unsafe fn is_running() -> bool {
 ///
 /// **Historically not the kernel**, and this paragraph is now out of date:
 /// `kernel::boot::join_scheduler` brings the APP CPU into the scheduler, and
-/// `apps/smp` does exactly that. What follows described the state before that
+/// `apps/tests/smp` does exactly that. What follows described the state before that
 /// existed and is kept because the constraints it lists still apply to a core
 /// started *without* joining.
 ///

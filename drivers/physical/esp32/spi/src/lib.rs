@@ -43,7 +43,7 @@ pub struct Esp32Spi {
 // A transfer past the FIFO cap runs over a DMA descriptor chain instead,
 // decided in `raw_transfer` and invisible to the caller. The channel, the
 // descriptor scratch, and the enable flag cannot live in `Esp32Spi` — it is a
-// lightweight handle, reconstructed freely (see the ISR in `apps/spidma`) — so
+// lightweight handle, reconstructed freely (see the ISR in `apps/tests/spidma`) — so
 // they live here, one slot per general-purpose host (SPI2, SPI3), claimed once
 // at `init` and held for the driver's life. The descriptor scratch is a static,
 // which puts it in internal DRAM and therefore in DMA-reachable memory.

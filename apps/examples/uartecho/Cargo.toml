@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "uartecho"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "UART loopback through the Layer-2 Bus — the UART porting template"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+hal = { path = "../../../hal" }
+
+# A UART is a stream, not a Bus, so there is no Layer-2 wrapper: the driver
+# exposes `ByteStream` directly (see hal::stream). This composes Layer 1 with
+# the stream API the app drives it through.
+#
+#   esp32-uart   Layer 1   the controller's registers, and its ByteStream
+soc-esp32 = { path = "../../../soc/esp32" }
+esp32-uart = { path = "../../../drivers/physical/esp32/uart" }
+
+[build-dependencies]
+build = { path = "../../../tools/build" }
+
+[features]
+default = ["debug-level-1"]
+
+board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
+board-esp32-wrover = ["kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
+
+debug-level-0 = ["kernel/debug-level-0"]
+debug-level-1 = ["kernel/debug-level-1"]
+debug-level-2 = ["kernel/debug-level-2"]
+debug-level-3 = ["kernel/debug-level-3"]
+
+# Declared here as well as in the kernel because `build::link()` runs in this
+# crate's build script and reads CARGO_FEATURE_* to size the memory map.
+radio-wifi = ["kernel/radio-wifi"]
+radio-bt = []
+radio-ble = ["radio-bt", "kernel/radio-ble"]
+radio-bt-classic = ["radio-bt", "kernel/radio-bt-classic"]

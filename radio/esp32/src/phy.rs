@@ -31,7 +31,7 @@
 //!
 //! # What the hardware said
 //!
-//! `apps/radioprobe` runs this on a board. On an ESP32-WROOM:
+//! `apps/tests/radioprobe` runs this on a board. On an ESP32-WROOM:
 //! `register_chipv7_phy` returns 0 with our init data and our eFuse MAC, a
 //! full calibration takes ~183 ms, and a re-enable takes ~250 µs.
 //!

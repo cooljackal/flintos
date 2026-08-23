@@ -10,7 +10,7 @@
 //! one line:
 //!
 //! ```ignore
-//! // apps/<name>/build.rs
+//! // apps/examples/<name>/build.rs
 //! fn main() {
 //!     build::link();
 //! }
@@ -156,7 +156,7 @@ fn workspace_root(script: &Path) -> Option<PathBuf> {
 /// Walk up from the calling crate's directory looking for the linker script.
 ///
 /// Searching rather than hardcoding `../../arch/...` means an application can
-/// sit at any depth — `apps/hello/`, `apps/vendor/thing/`, or a directory of
+/// sit at any depth — `apps/examples/hello/`, `apps/vendor/thing/`, or a directory of
 /// the user's own — without its build script needing to know how deep it is.
 fn find_ld_script() -> Option<PathBuf> {
     find_script(LD_SCRIPT)

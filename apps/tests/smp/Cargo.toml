@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "smp"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Starts the APP CPU and proves it is running"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+hal = { path = "../../../hal" }
+soc-esp32 = { path = "../../../soc/esp32" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+arch-xtensa = { path = "../../../arch/xtensa" }
+
+[build-dependencies]
+build = { path = "../../../tools/build" }
+
+[features]
+default = ["debug-level-1"]
+
+board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
+board-esp32-wrover = ["kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
+
+debug-level-0 = ["kernel/debug-level-0"]
+debug-level-1 = ["kernel/debug-level-1"]
+debug-level-2 = ["kernel/debug-level-2"]
+debug-level-3 = ["kernel/debug-level-3"]
+
+# `radio-bt` is declared here as well as in the kernel because
+# `build::link()` runs in *this* crate's build script and reads
+# CARGO_FEATURE_*, so the memory map keys off the application's own view of
+# whether Bluetooth is on. A mode that forwarded only to the kernel would
+# reserve nothing.
+radio-wifi = ["kernel/radio-wifi"]
+radio-bt = []
+radio-ble = ["radio-bt", "kernel/radio-ble"]
+radio-bt-classic = ["radio-bt", "kernel/radio-bt-classic"]
+

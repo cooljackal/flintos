@@ -307,7 +307,7 @@ longer blocked on either:
   — the mechanism is in place, the first caller is not.
 - **Cross-core.** `with_cache_off` detects a running APP CPU, stalls it,
   disables its cache too, and restores both in reverse order. Proven on
-  hardware by `apps/flashprobe`, which starts core 1, joins it to the
+  hardware by `apps/tests/flashprobe`, which starts core 1, joins it to the
   scheduler, and fails the run if it stopped counting across the writes.
 
 FlintOS's stall is a **hardware** stall rather than NuttX's voluntary park, and
@@ -642,11 +642,11 @@ it caps one window at **64 bytes** (`SPI_FLASH_READ_BUF_SIZE`,
 `esp32_spiflash.c:64`, loop at 2107-2125) against this tree's 256. Untested
 whether that matters.
 
-Reproducing it: set `NVS_FILL_PROBE` in `apps/wifiscan` to `true`, boot once to
+Reproducing it: set `NVS_FILL_PROBE` in `apps/tests/wifiscan` to `true`, boot once to
 fill the partition, set it back, and reboot without erasing.
 
 The counters behind those log lines live in `radio_esp32::nvs::probe()`, and
-the fill loop is `NVS_FILL_PROBE` in `apps/wifiscan`, off by default because it
+the fill loop is `NVS_FILL_PROBE` in `apps/tests/wifiscan`, off by default because it
 writes junk that only `make erase` clears. They exist because the run before
 them was read as "compaction ran and the retry failed" on the strength of a
 log line that was *missing*, which turned out to say nothing at all.
@@ -910,7 +910,7 @@ Two smaller things, still open:
 Checked, with real numbers, before writing any of the above. It closes — but
 only one way.
 
-`make size` on `apps/smp` today:
+`make size` on `apps/tests/smp` today:
 
 | Region | Used | Capacity |
 |---|---|---|
@@ -1021,7 +1021,7 @@ unrelated.
   `esp_wifi_set_appie_internal` (flag=0, copy path); the AKM list is masked to
   PSK so the blob does not select SAE; keys install through
   `esp_wifi_set_sta_key_internal` after message 4.
-- **New app.** `apps/wificonnect` joins a WPA2 network, with credentials
+- **New app.** `apps/tests/wificonnect` joins a WPA2 network, with credentials
   supplied from the environment at build.
 - **What is not done (#74).** Staying connected past the AP's inactivity
   timeout: there is no DHCP or IP stack yet, no keepalive, and no GTK-rekey

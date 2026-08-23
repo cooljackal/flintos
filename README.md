@@ -137,10 +137,11 @@ cd flintos
 make flash BOARD=board-esp32-devkitc
 ```
 
-That builds `apps/demo`, flashes over USB, and opens a monitor. Xtensa needs
-Espressif's Rust fork first — `cargo install espup espflash && espup install`,
-then `. $HOME/export-esp.sh` (`export-esp.ps1` on Windows). Full setup and the
-"what a healthy boot looks like" walkthrough: [Quickstart][quickstart].
+That builds `apps/examples/demo`, flashes over USB, and opens a monitor.
+Xtensa needs Espressif's Rust fork first — `cargo install espup espflash &&
+espup install`, then `. $HOME/export-esp.sh` (`export-esp.ps1` on Windows).
+Full setup and the "what a healthy boot looks like" walkthrough:
+[Quickstart][quickstart].
 
 **`BOARD` is required, no default.** A wrong pin map looks like a broken board,
 not a build error, so `make flash` with no board lists them and stops.
@@ -160,7 +161,7 @@ entirely. Board features: `board-esp32-devkitc`, `board-m5-atom-lite`,
 
 ## Writing a task
 
-A whole application, `apps/hello/src/main.rs`:
+A whole application, `apps/examples/hello/src/main.rs`:
 
 ```rust
 #![no_std]
@@ -213,7 +214,8 @@ stack or filesystem today, or something production-proven — reach for
 ## Project layout
 
 ```
-apps/                applications — the binaries you flash
+apps/examples/       applications — the binaries you flash; read in order
+apps/tests/          on-target verification apps — PASS/FAIL, one issue each
 hal/                 traits + types every layer depends on (depends on nothing)
 api/                 the API your application code uses
 arch/<core>/         CPU — boot, vectors, context switch, tick (xtensa, armv6m)

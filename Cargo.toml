@@ -16,7 +16,7 @@ resolver = "2"
 #     hal/                          -> hal
 #     tools/build/                  -> build
 #     tools/size/                   -> size
-#     apps/demo/                    -> demo
+#     apps/examples/demo/           -> demo
 #     drivers/logical/bme280/       -> bme280
 #     lib/led-matrix/               -> led-matrix
 #
@@ -51,21 +51,12 @@ members = [
     "tools/size",
 
     # Applications. The kernel is a library; an application is the binary that
-    # links it. Adding one here is all that is needed for `make APP=<name>`.
-    "apps/hello",
-    "apps/arm-selftest",
-    "apps/demo",
-    "apps/blink",
-    "apps/imu",
-    "apps/pwm",
-    "apps/smp",
-    "apps/spidma",
-    "apps/spitxrx",
-    "apps/uartecho",
-    "apps/flashprobe",
-    "apps/wificonnect",
-    "apps/radioprobe",
-    "apps/wifiscan",
+    # links it. Two directories: `examples/` is what a newcomer reads or
+    # copies, `tests/` is the on-target verification workloads with a
+    # PASS/FAIL contract. Dropping a crate into either is all that is needed
+    # for `make APP=<name>`.
+    "apps/examples/*",
+    "apps/tests/*",
 
     "drivers/physical/esp32/uart",
     "drivers/physical/esp32/gpio",

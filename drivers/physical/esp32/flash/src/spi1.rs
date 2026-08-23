@@ -376,7 +376,7 @@ unsafe fn snapshot() {
 /// `unlock` runs earlier and uses slot 0 as a progress counter
 /// (`0x1000..=0x1006`), its own status readings in slots 1 and 2, and the
 /// JEDEC manufacturer byte in slot 3. Whichever ran last is what
-/// `apps/flashprobe` prints, so read a `0x1nnn` in slot 0 as unlock progress
+/// `apps/tests/flashprobe` prints, so read a `0x1nnn` in slot 0 as unlock progress
 /// and anything else as a status byte.
 ///
 /// This is bring-up scaffolding, kept because the unlock path is the one that

@@ -155,7 +155,7 @@ const CACHE_IDLE_SPINS: u32 = 100_000;
 /// the log path is in flash. So the two failures that are otherwise invisible
 /// leave a value here for a caller to read afterwards -- `0x8000_0000 | state`
 /// when the idle wait timed out, `0xDEAD_0001` when the chip never reported
-/// ready. `apps/flashprobe` prints it.
+/// ready. `apps/tests/flashprobe` prints it.
 pub static LAST_CACHE_STATE: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(0);
 

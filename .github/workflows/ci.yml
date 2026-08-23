@@ -249,7 +249,7 @@ jobs:
           # any other manifest; the rest build against the board the on-target
           # suite is verified on.
           status=0
-          for app in apps/*/; do
+          for app in apps/examples/*/ apps/tests/*/; do
             name=$(basename "$app")
             case "$name" in
               blink|imu|pwm) board=board-m5-atom-matrix ;;

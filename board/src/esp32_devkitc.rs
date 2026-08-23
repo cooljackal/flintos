@@ -64,7 +64,7 @@ pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = Some(21);
 /// folded onto the scratch pad: SPI uses both (a clock pad and a placeholder
 /// MISO), UART uses one (a placeholder RX). None carries an external wire —
 /// each is only ever driven-and-ignored or only read. GPIO23 and GPIO19 are
-/// free on a bare DevKitC — the pair `apps/spidma` has always looped on.
+/// free on a bare DevKitC — the pair `apps/tests/spidma` has always looped on.
 ///
 /// A board that declares `None` skips those loopback tests.
 pub const LOOPBACK_AUX_GPIOS: Option<(u8, u8)> = Some((23, 19));

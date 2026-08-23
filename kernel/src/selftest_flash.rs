@@ -77,7 +77,7 @@ const ALARM_US: u64 = 1_000;
 ///
 /// Not `nvs`: that holds a stored RF calibration, and silently erasing it
 /// would cost the next boot a few hundred milliseconds of recalibration and
-/// make `apps/radioprobe` report a first boot forever.
+/// make `apps/tests/radioprobe` report a first boot forever.
 #[cfg(target_os = "none")]
 const SCRATCH_BASE: u32 = 0x0000_F000;
 #[cfg(target_os = "none")]

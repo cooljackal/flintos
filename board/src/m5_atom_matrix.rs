@@ -20,7 +20,7 @@ pub const RGB_LED_COUNT: usize = 5 * 5;
 /// How the panel is folded.
 ///
 /// **Measured, not read off a datasheet.** Walking the chain one LED at a time
-/// (`apps/blink`) gave: index 0 at the bottom-right, running right-to-left
+/// (`apps/examples/blink`) gave: index 0 at the bottom-right, running right-to-left
 /// along the bottom row, then jumping back to the right edge one row up.
 ///
 /// So it is *progressive*, not zigzag — the arrangement that needs a return

@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "blink"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Drives the M5Stack Atom's onboard addressable LED over RMT"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+hal = { path = "../../../hal" }
+
+# The three layers this application composes, named explicitly because
+# composing them is the point of it. The kernel deliberately depends on no
+# driver but the console UART, so an application that wants one says so.
+#
+#   soc-esp32   layer 1  the RMT registers, and the pin routing
+#   esp32-gpio  layer 1  the pad's output enable
+#   ws2812      layer 3  the wire protocol, which knows about no chip at all
+soc-esp32 = { path = "../../../soc/esp32" }
+esp32-gpio = { path = "../../../drivers/physical/esp32/gpio" }
+esp32-rmt = { path = "../../../drivers/physical/esp32/rmt" }
+ws2812 = { path = "../../../drivers/logical/ws2812" }
+led-matrix = { path = "../../../lib/led-matrix" }
+
+[build-dependencies]
+build = { path = "../../../tools/build" }
+
+[features]
+# No default board. Every other application defaults to the WROVER, but this
+# one needs a board with an addressable LED on a known pin, and only the Atom
+# declares one. Defaulting to a board it cannot run on would turn `cargo build
+# -p blink` into a confusing failure; with no default it is an explicit one.
+default = ["debug-level-1"]
+
+# The LED count and panel layout come from the manifest now, so there is
+# nothing to select here beyond the board itself. `atom-matrix` used to be a
+# feature of this application, which meant the application carried a fact
+# about someone else's hardware.
+board-m5-atom-lite = ["kernel/board-m5-atom-lite"]
+board-m5-atom-matrix = ["kernel/board-m5-atom-matrix"]
+board-m5-atom = ["kernel/board-m5-atom"]
+
+# The other boards are accepted and then rejected by a `compile_error!` in
+# `main.rs` that says which board is needed and why. Omitting them would leave
+# cargo to report "the package 'blink' does not contain this feature", which is
+# true and tells the reader nothing about onboard LEDs.
+board-esp32-wrover = ["kernel/board-esp32-wrover"]
+board-esp32-devkitc = ["kernel/board-esp32-devkitc"]
+
+debug-level-0 = ["kernel/debug-level-0"]
+debug-level-1 = ["kernel/debug-level-1"]
+debug-level-2 = ["kernel/debug-level-2"]
+debug-level-3 = ["kernel/debug-level-3"]
+
+# `radio-bt` is declared here as well as in the kernel because
+# `build::link()` runs in *this* crate's build script and reads
+# CARGO_FEATURE_*, so the memory map keys off the application's own view of
+# whether Bluetooth is on. A mode that forwarded only to the kernel would
+# reserve nothing.
+radio-wifi = ["kernel/radio-wifi"]
+radio-bt = []
+radio-ble = ["radio-bt", "kernel/radio-ble"]
+radio-bt-classic = ["radio-bt", "kernel/radio-bt-classic"]
+

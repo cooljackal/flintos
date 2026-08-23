@@ -135,8 +135,12 @@ LD_SCRIPT       = $(if $(wildcard $(LD_GENERATED)),$(LD_GENERATED),$(LD_TEMPLATE
 # crate's. Before that seam existed they ran nowhere at all.
 #
 # This replaces a hand-kept list of fifteen names, which lived here and in three
-# more copies in ci.yml. Those copies had already drifted once.
-HOST_EXCLUDE   := arch-xtensa hello arm-selftest demo blink imu pwm smp spidma spitxrx uartecho flashprobe radioprobe wifiscan wificonnect
+# more copies in ci.yml. Those copies had already drifted once. The
+# applications are derived from the tree: every directory under
+# apps/examples/ and apps/tests/ is a package named after its leaf. The
+# `patsubst` strips the trailing slash `wildcard` leaves on a directory
+# pattern -- plain `$(notdir)` on `apps/examples/hello/` yields nothing.
+HOST_EXCLUDE   := arch-xtensa $(notdir $(patsubst %/,%,$(wildcard apps/*/*/)))
 HOST_SELECT    := --workspace $(addprefix --exclude ,$(HOST_EXCLUDE))
 
 # The host suite still has to compile `board` and `kernel`, and both need a
@@ -197,11 +201,12 @@ FLASH_MODE     := dio
 # ── Application selection ──────────────────────────────────────────────────────
 #
 # The kernel is a library; the binary that gets flashed is an application from
-# apps/. Pick one, a board, and how much debug output you want:
+# apps/examples/ or apps/tests/. Pick one, a board, and how much debug output
+# you want:
 #
-#   make flash                                    # apps/demo on a WROVER
-#   make flash APP=hello                          # apps/hello
-#   make flash APP=blink BOARD=board-m5-atom-matrix  # apps/blink, 5x5 panel
+#   make flash                                    # apps/examples/demo on a WROVER
+#   make flash APP=hello                          # apps/examples/hello
+#   make flash APP=blink BOARD=board-m5-atom-matrix  # apps/examples/blink, 5x5 panel
 #   make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
 #   make flash APP=hello DEBUG=debug-level-0      # no logging at all
 #   make apps                                     # what is available
@@ -367,12 +372,15 @@ flash-jtag: build ## Build + flash via probe-rs (JTAG)
 	probe-rs run --chip ESP32 $(APP_BIN)
 
 .PHONY: apps
-apps: ## List the applications in apps/
+apps: ## List the applications in apps/examples/ and apps/tests/
 	@echo "Applications (build with: make flash APP=<name>)"
-	@for d in apps/*/; do \
-		name=$$(basename $$d); \
-		desc=$$(sed -n 's/^description = "\(.*\)"/\1/p' $$d/Cargo.toml); \
-		printf "  %-12s %s\n" "$$name" "$$desc"; \
+	@for group in apps/examples apps/tests; do \
+		echo "$$group/"; \
+		for d in $$group/*/; do \
+			name=$$(basename $$d); \
+			desc=$$(sed -n 's/^description = "\(.*\)"/\1/p' $$d/Cargo.toml); \
+			printf "  %-12s %s\n" "$$name" "$$desc"; \
+		done; \
 	done
 	@echo ""
 	@echo "Boards: $(BOARDS)   (first is the default)"
@@ -572,7 +580,7 @@ test-watchdog: ## Prove a watchdog actually resets the board (WDT=kernel|idle)
 
 # ── Upgrading ─────────────────────────────────────────────────────────────────
 #
-# Applications are separate crates, so a pull never touches apps/<yours>/. What
+# Applications are separate crates, so a pull never touches apps/*/<yours>/. What
 # it does not do by itself is tell you what changed underneath them.
 #
 #   make upgrade            # pull, rebuild every app, report what broke

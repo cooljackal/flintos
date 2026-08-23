@@ -31,7 +31,7 @@
 //! There are 16 layouts and they all look plausible. Getting it wrong lights
 //! the wrong pixel, which reads as a broken panel rather than a wrong constant.
 //!
-//! `apps/blink --features atom-matrix` walks the chain one LED at a time and
+//! `apps/examples/blink --features atom-matrix` walks the chain one LED at a time and
 //! logs each index. Watch which cell lights, and you have measured it:
 //!
 //! - where index 0 sits → [`Origin`]

@@ -13,7 +13,7 @@
 //! looks like a hung kernel several seconds later, nowhere near the cause.
 //!
 //! The cross-core half — two cores hammering DPORT at once — needs the second
-//! core running, so it lives in `apps/smp` where that is already true.
+//! core running, so it lives in `apps/tests/smp` where that is already true.
 
 use hal::tick::TickSource;
 

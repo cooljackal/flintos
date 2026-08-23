@@ -6,24 +6,52 @@ The FlintOS kernel is a library. The thing you flash is an **application**: a
 small `no_std` binary crate that links the kernel, names an entry point, and
 spawns its own tasks.
 
-`make apps` prints this list from each crate's `description`, and is the copy
-that cannot go stale. This table adds the board each one needs.
+Two directories. [`examples/`](examples/) is what a newcomer reads or copies.
+[`tests/`](tests/) is the on-target verification workloads: each prints
+`PASS`/`FAIL` and stands in for one issue or plan step. `make apps` prints
+both lists from each crate's `description`, and is the copy that cannot go
+stale. The tables below add the board each one needs.
+
+## Examples, in reading order
+
+Read them top to bottom; each one's header ends with a `Next:` line pointing
+at the one after it. The order only really holds for the first two — `blink`
+and `pwm` need an Atom, and the last three are peers, not steps.
+
+| Step | App | What it does | Board |
+|---|---|---|---|
+| 1 | [`hello`](examples/hello/) | One task, logging once a second. The minimal template. | any |
+| 2 | [`demo`](examples/demo/) | Three tasks at three priorities on three periods. Also the on-target verification workload — `make test-target` flashes this. | any |
+| 3 | [`blink`](examples/blink/) | First peripheral: drives the onboard addressable LED over RMT. | Atom Lite or Matrix |
+| 4 | [`pwm`](examples/pwm/) | Drives LEDC and measures its own duty cycle by reading the pin back. | Atom Lite or Matrix |
+
+## Porting templates
+
+One per bus. Start from the one your device speaks; they have the same shape.
 
 | App | What it does | Board |
 |---|---|---|
-| [`hello`](hello/) | One task, logging once a second. The minimal template. | any |
-| [`demo`](demo/) | Three tasks at three priorities on three periods. What the kernel is verified against. | any |
-| [`smp`](smp/) | Starts the APP CPU and joins it to the scheduler, proving both cores run tasks. | any |
-| [`spidma`](spidma/) | Moves bytes through the DMA engine, over SPI looped back through the GPIO matrix. | any |
-| [`flashprobe`](flashprobe/) | Erases, programs and reads back the `nvs` partition — with core 1 running throughout, which is the only cover the cross-core flash path has. | any |
-| [`blink`](blink/) | Drives the onboard addressable LED over RMT. | Atom Lite or Matrix |
-| [`pwm`](pwm/) | Drives LEDC and measures its own duty cycle by reading the pin back. | Atom Lite or Matrix |
-| [`imu`](imu/) | Reads the onboard IMU — the first Layer 1-2-3 assembly. The I²C Layer-2 porting template. | Atom Matrix |
-| [`spitxrx`](spitxrx/) | SPI looped MOSI→MISO on one pad, driven through the Layer-2 `Bus`. The SPI porting template. | DevKitC |
-| [`uartecho`](uartecho/) | UART2 internal TX→RX loopback, echoed through the UART's `ByteStream` (a UART is a stream, not a `Bus`). The UART template. | DevKitC |
+| [`imu`](examples/imu/) | Reads the onboard IMU — the first Layer 1-2-3 assembly. The I²C porting template. | Atom Matrix |
+| [`spitxrx`](examples/spitxrx/) | SPI looped MOSI→MISO on one pad, driven through the Layer-2 `Bus`. The SPI porting template. | DevKitC |
+| [`uartecho`](examples/uartecho/) | UART2 internal TX→RX loopback, echoed through the UART's `ByteStream` (a UART is a stream, not a `Bus`). The UART template. | DevKitC |
 
-The last three refuse to build for a board whose manifest does not declare the
+These three refuse to build for a board whose manifest does not declare the
 hardware they drive, and say which board to use instead.
+
+## Verification apps
+
+Not templates. Each exercises one subsystem on hardware and reports
+`PASS`/`FAIL`. The last column is what it is the evidence for.
+
+| App | What it verifies | Board | Covers |
+|---|---|---|---|
+| [`smp`](tests/smp/) | Starts the APP CPU and joins it to the scheduler, proving both cores run tasks. | any | #20 |
+| [`spidma`](tests/spidma/) | Moves bytes through the DMA engine, over SPI looped back through the GPIO matrix. | any | #80 |
+| [`flashprobe`](tests/flashprobe/) | Erases, programs and reads back the `nvs` partition — with core 1 running throughout, which is the only cover the cross-core flash path has. | any | [nvs handover](../doc/nvs-flash-handover.md) |
+| [`radioprobe`](tests/radioprobe/) | Calls into the PHY blob on real silicon and reports what it did. Needs `EXTRA_FEATURES=blobs`. | any | [plan-radio](../doc/plan-radio.md) 3.6 |
+| [`wifiscan`](tests/wifiscan/) | Scans for access points. Needs `EXTRA_FEATURES=blobs`. | any | [plan-radio](../doc/plan-radio.md) 5.2 |
+| [`wificonnect`](tests/wificonnect/) | Joins a WPA2 network. Needs `EXTRA_FEATURES=blobs` and credentials in the environment. | any | [plan-radio](../doc/plan-radio.md) phase 3 acceptance |
+| [`arm-selftest`](tests/arm-selftest/) | The machine-judged RP2040 suite, run by `make test-arm-target`. | Wio RP2040 Mini | the ARM port |
 
 ```bash
 make apps                                                    # list what's here
@@ -40,11 +68,12 @@ the build stops and lists the choices.
 
 ## Starting your own
 
-Copy `hello/`, rename it, and add it to `members` in the workspace
-[`Cargo.toml`](../Cargo.toml). That is the whole setup — `make flash APP=<name>`
-works from there.
+Copy `examples/hello/` to `examples/<name>/` and rename the package in its
+`Cargo.toml`. That is the whole setup: the workspace picks up every directory
+under `apps/examples/` and `apps/tests/`, so there is nothing to register, and
+`make flash APP=<name>` works from there.
 
-An application is three files.
+An application is three files, and `hello` is nothing but those three.
 
 **`src/main.rs`** — the entry point and your tasks:
 
@@ -88,12 +117,12 @@ choice leaking into everything else that links the kernel:
 
 ```toml
 [dependencies]
-kernel = { path = "../../kernel", default-features = false }
-api = { path = "../../api" }
-hal = { path = "../../hal" }
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+hal = { path = "../../../hal" }
 
 [build-dependencies]
-build = { path = "../../tools/build" }
+build = { path = "../../../tools/build" }
 
 [features]
 default = ["debug-level-1"]          # no default board, deliberately
