@@ -50,7 +50,9 @@ echo "Driver catalog -- enable in an app with: make enable-driver APP=<app> DRIV
 printf '%-9s %-16s %s\n' "CATEGORY" "PACKAGE" "DESCRIPTION" >&2
 
 shown=0
-# physical, bus, logical order; alphabetical within, so the flat list is stable.
+# physical, bus, logical order; within a tier, the workspace members order.
+# No `sort`: under a make recipe on Windows, `sort` resolves to System32
+# sort.exe, which rejects -t/-k ("Input file specified two times").
 for cat in physical bus logical; do
 	[ -n "$CATEGORY" ] && [ "$CATEGORY" != "$cat" ] && continue
 	while IFS="	" read -r c pkg desc; do
@@ -61,7 +63,7 @@ for cat in physical bus logical; do
 		printf '%-9s %-16s %s\n' "$c" "$pkg" "$desc"
 		shown=$((shown + 1))
 	done <<EOF
-$(printf '%s\n' "$catalog" | sort -t'	' -k2)
+$catalog
 EOF
 done
 
