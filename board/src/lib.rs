@@ -19,8 +19,8 @@
 //! ## Board selection
 //!
 //! The active board is chosen at compile time via Cargo features, one per
-//! supported board. Exactly one must be enabled — the `compile_error!`s below
-//! turn "zero selected" and "more than one selected" into build failures
+//! supported board. Exactly one must be enabled — the guards below turn
+//! "zero selected" and "more than one selected" into build failures
 //! instead of a silently wrong manifest, which on real hardware shows up as a
 //! very confusing bring-up bug (wrong pins, wrong IRQ, etc).
 //!
@@ -35,9 +35,9 @@
 //! ```
 //!
 //! Adding a new board: add a `board-<name>` feature in `Cargo.toml`, a
-//! `#[cfg(feature = "board-<name>")] pub mod <name>;` line below, an arm in
-//! the `active` re-export block, and extend both `compile_error!` guards
-//! (the "more than one" guard is pairwise across all board features).
+//! `#[cfg(feature = "board-<name>")] pub mod <name>;` line below, one line
+//! in the `SELECTED` count, one line in the "no board selected" message, and
+//! an arm in the `active` re-export block.
 
 #![no_std]
 
@@ -92,20 +92,24 @@ compile_error!(
      	board-wio-rp2040-mini   Seeed Wio RP2040 Mini      (connected; first light pending)"
 );
 
-#[cfg(any(
-    all(feature = "board-esp32-wrover", feature = "board-esp32-devkitc"),
-    all(feature = "board-esp32-wrover", feature = "board-m5-atom-lite"),
-    all(feature = "board-esp32-wrover", feature = "board-m5-atom-matrix"),
-    all(feature = "board-esp32-devkitc", feature = "board-m5-atom-lite"),
-    all(feature = "board-esp32-devkitc", feature = "board-m5-atom-matrix"),
-    all(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix"),
-    all(feature = "board-wio-rp2040-mini", feature = "board-esp32-wrover"),
-    all(feature = "board-wio-rp2040-mini", feature = "board-esp32-devkitc"),
-    all(feature = "board-wio-rp2040-mini", feature = "board-m5-atom-lite"),
-    all(feature = "board-wio-rp2040-mini", feature = "board-m5-atom-matrix"),
-))]
-compile_error!(
-    "board: more than one `board-*` feature is enabled. A build with two      board manifests merged in is not a real board — it silently produces the      wrong pin/IRQ/bus map. Build with `--no-default-features --features <one-board>`."
+// How many `board-*` features are on. `cfg!()` is a const bool, so the count
+// is a const and the assert fails at compile time with the message below.
+// A new board is one line here: `+ cfg!(feature = "board-<name>") as usize`.
+// (The zero case has its own `compile_error!` above so it can list the boards.)
+const SELECTED: usize = cfg!(feature = "board-esp32-wrover") as usize
+    + cfg!(feature = "board-esp32-devkitc") as usize
+    + cfg!(feature = "board-m5-atom-lite") as usize
+    + cfg!(feature = "board-m5-atom-matrix") as usize
+    + cfg!(feature = "board-wio-rp2040-mini") as usize;
+
+const _: () = assert!(
+    SELECTED <= 1,
+    "board: more than one `board-*` feature is enabled. A build with two \
+     board manifests merged in is not a real board -- it silently produces \
+     the wrong pin/IRQ/bus map. Build with \
+     `--no-default-features --features <one-board>`, one of: \
+     board-esp32-devkitc, board-m5-atom-matrix, board-m5-atom-lite, \
+     board-esp32-wrover, board-wio-rp2040-mini."
 );
 
 // The name the Atom shipped under before the Lite and the Matrix were told
@@ -122,50 +126,23 @@ compile_error!(
 );
 
 // ── Active board re-export ──────────────────────────────────────────────────
+//
+// Plain `#[cfg(feature)]` arms: `SELECTED` above guarantees at most one is
+// on, so no arm needs to exclude the others.
 
-#[cfg(all(
-    feature = "board-esp32-wrover",
-    not(feature = "board-esp32-devkitc"),
-    not(feature = "board-m5-atom-lite"),
-    not(feature = "board-m5-atom-matrix"),
-    not(feature = "board-wio-rp2040-mini"),
-))]
+#[cfg(feature = "board-esp32-wrover")]
 pub use esp32_wrover as active;
 
-#[cfg(all(
-    feature = "board-esp32-devkitc",
-    not(feature = "board-esp32-wrover"),
-    not(feature = "board-m5-atom-lite"),
-    not(feature = "board-m5-atom-matrix"),
-    not(feature = "board-wio-rp2040-mini"),
-))]
+#[cfg(feature = "board-esp32-devkitc")]
 pub use esp32_devkitc as active;
 
-#[cfg(all(
-    feature = "board-m5-atom-lite",
-    not(feature = "board-esp32-wrover"),
-    not(feature = "board-esp32-devkitc"),
-    not(feature = "board-m5-atom-matrix"),
-    not(feature = "board-wio-rp2040-mini"),
-))]
+#[cfg(feature = "board-m5-atom-lite")]
 pub use m5_atom_lite as active;
 
-#[cfg(all(
-    feature = "board-m5-atom-matrix",
-    not(feature = "board-esp32-wrover"),
-    not(feature = "board-esp32-devkitc"),
-    not(feature = "board-m5-atom-lite"),
-    not(feature = "board-wio-rp2040-mini"),
-))]
+#[cfg(feature = "board-m5-atom-matrix")]
 pub use m5_atom_matrix as active;
 
-#[cfg(all(
-    feature = "board-wio-rp2040-mini",
-    not(feature = "board-esp32-wrover"),
-    not(feature = "board-esp32-devkitc"),
-    not(feature = "board-m5-atom-lite"),
-    not(feature = "board-m5-atom-matrix"),
-))]
+#[cfg(feature = "board-wio-rp2040-mini")]
 pub use wio_rp2040_mini as active;
 
 // ── Manifest invariant tests ────────────────────────────────────────────────
