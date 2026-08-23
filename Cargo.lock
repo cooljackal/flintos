@@ -41,13 +41,11 @@ name = "blink"
 version = "0.1.0"
 dependencies = [
  "api",
+ "board",
  "build",
- "esp32-gpio",
- "esp32-rmt",
  "hal",
  "kernel",
  "led-matrix",
- "soc-esp32",
  "ws2812",
 ]
 
@@ -70,7 +68,10 @@ name = "board"
 version = "0.1.0"
 dependencies = [
  "api",
+ "esp32-gpio",
  "esp32-i2c",
+ "esp32-ledc",
+ "esp32-rmt",
  "esp32-spi",
  "esp32-uart",
  "hal",
@@ -175,6 +176,7 @@ dependencies = [
 name = "esp32-ledc"
 version = "0.1.0"
 dependencies = [
+ "hal",
  "soc-esp32",
 ]
 
@@ -198,6 +200,7 @@ dependencies = [
 name = "esp32-rmt"
 version = "0.1.0"
 dependencies = [
+ "hal",
  "soc-esp32",
 ]
 
@@ -375,12 +378,10 @@ name = "pwm"
 version = "0.1.0"
 dependencies = [
  "api",
+ "board",
  "build",
- "esp32-gpio",
- "esp32-ledc",
  "hal",
  "kernel",
- "soc-esp32",
 ]
 
 [[package]]
@@ -465,8 +466,6 @@ dependencies = [
  "build",
  "hal",
  "kernel",
- "soc-esp32",
- "spi-bus",
 ]
 
 [[package]]
@@ -481,11 +480,10 @@ name = "uartecho"
 version = "0.1.0"
 dependencies = [
  "api",
+ "board",
  "build",
- "esp32-uart",
  "hal",
  "kernel",
- "soc-esp32",
 ]
 
 [[package]]
