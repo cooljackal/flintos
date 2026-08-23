@@ -26,7 +26,7 @@
 
 use api::prelude::*;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 // Priorities live here as named constants and are used both to spawn a task and
 // in what that task logs about itself, so the number in the log can never drift

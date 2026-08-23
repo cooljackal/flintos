@@ -36,14 +36,14 @@
 
 use core::ptr::addr_of;
 
-use api::bus::{Bus, BusConfig, BusSpeed, Op, PhysicalBus, SpiMode};
+use api::bus::{Bus, BusConfig, BusSpeed, Op, PhysicalBus};
 use api::task;
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::types::Priority;
 use soc_esp32::{addr, Esp32PinMux};
 use spi_bus::SpiBus;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 use kernel::board::active as board;
 
@@ -76,13 +76,7 @@ fn run() {
 
     api::log_info!("[spitxrx] SPI2 looped MOSI->MISO on GPIO{}, SCK on GPIO{}", scratch, sck);
 
-    let config = BusConfig::Spi {
-        mosi: scratch,
-        miso: miso_placeholder,
-        sck,
-        max_speed: BusSpeed::MHz(4),
-        mode: SpiMode::Mode0,
-    };
+    let config = BusConfig::spi_mode0(scratch, miso_placeholder, sck, BusSpeed::MHz(4));
 
     if unsafe { bring_up(&config, scratch) }.is_none() {
         api::log_error!("[spitxrx] SPI bring-up failed");

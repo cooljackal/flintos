@@ -33,7 +33,7 @@ use super::Check;
 #[cfg(target_os = "none")]
 pub(crate) fn spi_master_slave_loopback_round_trips(pads: [u8; 4]) -> Check {
     use esp32_spi::{Esp32Spi, Esp32SpiSlave};
-    use hal::bus::{BusConfig, BusSpeed, PhysicalBus, SpiMode};
+    use hal::bus::{BusConfig, BusSpeed, PhysicalBus};
     use hal::pinmux::PinPull;
     use hal::pinmux::{PinConfig, PinMux, Signal};
     use soc_esp32::{addr, gpio_matrix, io_mux, Esp32PinMux};
@@ -41,13 +41,7 @@ pub(crate) fn spi_master_slave_loopback_round_trips(pads: [u8; 4]) -> Check {
     let [sck, mosi, miso, cs] = pads;
 
     // ── Master: SPI2, ordinary init routes its output SCK/MOSI and input MISO.
-    let config = BusConfig::Spi {
-        mosi,
-        miso,
-        sck,
-        max_speed: BusSpeed::MHz(4),
-        mode: SpiMode::Mode0,
-    };
+    let config = BusConfig::spi_mode0(mosi, miso, sck, BusSpeed::MHz(4));
     let mut master = unsafe { Esp32Spi::new(addr::SPI2_BASE) };
     master
         .init(&config)
@@ -125,7 +119,7 @@ pub(crate) fn spi_master_slave_loopback_round_trips(pads: [u8; 4]) -> Check {
         // Arm the slave first: it must be waiting before the master clocks.
         slave.arm(&stx[..n], n).map_err(|_| "slave arm failed")?;
         master
-            .transfer(&mtx[..n], &mut mrx[..n])
+            .fifo_exchange(&mtx[..n], &mut mrx[..n])
             .map_err(|_| "master transfer failed")?;
         slave.complete(&mut srx[..n], n).map_err(|_| "slave completion timed out")?;
 

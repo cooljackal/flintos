@@ -26,7 +26,7 @@
 use api::task;
 use hal::types::Priority;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 fn main() {
     task::spawn("wificonnect", run, Priority::Normal(2), 16384);

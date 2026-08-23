@@ -116,6 +116,33 @@ A kernel that provides a different one refuses to build and points here.
   and test mocks implement it. Not an ABI bump — no application implements
   `Bus`, and nothing an application calls changed signature.
 
+### Breaking
+
+- **ABI 2. `BusConfig`'s variants are now named structs, and `PhysicalBus`
+  split into `PhysicalTransfer` (`&self` traffic) + `PhysicalBus` (`&mut init`).**
+  An application that builds a bus config or names the physical trait must
+  change; declare `abi = 2`.
+
+  Build configs through the helpers, or with struct syntax and `..Default`:
+
+  ```rust
+  // was:
+  let cfg = BusConfig::Uart { tx: 1, rx: 3, baud: 115_200,
+      data_bits: UartDataBits::Bits8, parity: UartParity::None,
+      stop_bits: UartStopBits::Stop1 };
+  // now:
+  let cfg = BusConfig::uart_8n1(1, 3, 115_200);
+  // also: BusConfig::spi_mode0(mosi, miso, sck, max_speed), BusConfig::i2c(sda, scl, speed).
+  // Matching a variant now binds a struct: BusConfig::Spi(SpiConfig { .. }).
+  ```
+
+  The transfer method is renamed and lives on the new supertrait: call
+  `PhysicalTransfer::exchange(&self, tx, rx)` where you called
+  `PhysicalBus::raw_transfer`. `set_enabled` is gone (it was a no-op on every
+  driver), and `impl PhysicalBus for Esp32Gpio` is gone (GPIO is not a bus —
+  every transfer returned `Err`). esp32-spi's inherent 64-byte `transfer` is
+  now `fifo_exchange`, returning `Err(InvalidConfig)` past 64 bytes.
+
 ### Changed
 
 - **The CPU runs at 240 MHz.** The bootloader hands off at its 80 MHz default;

@@ -37,14 +37,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
     irq: soc::IRQ_UART0,
     dma_capable: true,
     dma_pool_bytes: 512,
-    config: BusConfig::Uart {
-        tx: 0,
-        rx: 1,
-        baud: 115_200,
-        data_bits: UartDataBits::Bits8,
-        parity: UartParity::None,
-        stop_bits: UartStopBits::Stop1,
-    },
+    config: BusConfig::uart_8n1(0, 1, 115_200),
 }];
 
 pub const TARGET_DEVICES: &[BusDevice] = &[];
@@ -68,7 +61,7 @@ mod tests {
         assert_eq!(USER_LED_GPIO, 13);
         assert!(matches!(
             TARGET_BUSES[0].config,
-            BusConfig::Uart { tx: 0, rx: 1, .. }
+            BusConfig::Uart(UartConfig { tx: 0, rx: 1, .. })
         ));
     }
 

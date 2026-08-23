@@ -38,13 +38,13 @@
 
 use core::ptr::addr_of;
 
-use api::bus::{BusConfig, UartDataBits, UartParity, UartStopBits};
+use api::bus::BusConfig;
 use api::stream::ByteStream;
 use api::task;
 use hal::types::Priority;
 use soc_esp32::addr;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 use kernel::board::active as board;
 
@@ -130,15 +130,7 @@ fn run() {
 /// driver in a static the loop borrows.
 unsafe fn bring_up(tx_pin: u8, rx_pin: u8) -> Option<()> {
     let mut uart = esp32_uart::Esp32Uart::new(UART_BASE);
-    uart.init(&BusConfig::Uart {
-        tx: tx_pin,
-        rx: rx_pin,
-        baud: 115_200,
-        data_bits: UartDataBits::Bits8,
-        parity: UartParity::None,
-        stop_bits: UartStopBits::Stop1,
-    })
-    .ok()?;
+    uart.init(&BusConfig::uart_8n1(tx_pin, rx_pin, 115_200)).ok()?;
 
     // Route TX→RX internally: a clean digital path, no pad edge to mis-frame.
     uart.set_loopback(true);

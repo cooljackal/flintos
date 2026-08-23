@@ -2,7 +2,7 @@
 
 #![no_std]
 
-use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus};
+use hal::bus::{BusError, BusResult};
 
 /// ESP32 GPIO driver (pins 0-39; 32-39 are input-only on real silicon but the
 /// register plumbing is symmetric, so this driver does not special-case them).
@@ -120,9 +120,7 @@ impl Esp32Gpio {
     /// different pins never read-modify-write the same word. Two callers
     /// driving the *same* pin are a wiring-level conflict, not a memory-safety
     /// one, and are no more possible through this than through two `new`s.
-    /// `PhysicalBus::init` and `set_enabled` take `&mut self` but are no-ops
-    /// here, and are reachable only through a `&mut` the caller cannot get
-    /// from this `&'static`.
+    /// Nothing here takes `&mut self`.
     pub fn instance() -> &'static Self {
         static GPIO: Esp32Gpio = Esp32Gpio {
             base: soc_esp32::addr::GPIO_BASE,
@@ -195,22 +193,6 @@ impl Esp32Gpio {
         unsafe { self.reg(off).write_volatile(bit) };
         Ok(())
     }
-}
-
-impl PhysicalBus for Esp32Gpio {
-    fn init(&mut self, _config: &BusConfig) -> BusResult<()> {
-        // GPIO doesn't use a typical bus config -- Phase 6 initialisation
-        // is driven by the board manifest. GPIO is always clocked (it is not
-        // gated by DPORT_PERIP_CLK_EN_REG the way SPI2/3 and I2C0/1 are), so
-        // no clock-enable sequence is needed here.
-        Ok(())
-    }
-
-    fn raw_transfer(&self, _tx: &[u8], _rx: &mut [u8]) -> BusResult<()> {
-        Err(BusError::InvalidConfig)
-    }
-
-    fn set_enabled(&mut self, _enabled: bool) {}
 }
 
 #[cfg(test)]

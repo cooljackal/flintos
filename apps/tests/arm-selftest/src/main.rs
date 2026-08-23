@@ -14,7 +14,7 @@ use hal::types::Priority;
 #[cfg(not(feature = "expected-hardfault"))]
 use portable_atomic::{AtomicU32, Ordering};
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 #[cfg(not(feature = "expected-hardfault"))]
 static PEER_RUNS: AtomicU32 = AtomicU32::new(0);

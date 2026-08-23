@@ -4,7 +4,7 @@
 
 use core::ptr::addr_of_mut;
 
-use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, PhysicalBus, SpiMode};
+use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, PhysicalBus, PhysicalTransfer, SpiMode};
 use hal::dma::DmaReach as _;
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
@@ -41,7 +41,7 @@ pub struct Esp32Spi {
 // ── DMA under the Bus ────────────────────────────────────────────────────────
 //
 // A transfer past the FIFO cap runs over a DMA descriptor chain instead,
-// decided in `raw_transfer` and invisible to the caller. The channel, the
+// decided in `exchange` and invisible to the caller. The channel, the
 // descriptor scratch, and the enable flag cannot live in `Esp32Spi` — it is a
 // lightweight handle, reconstructed freely (see the ISR in `apps/tests/spidma`) — so
 // they live here, one slot per general-purpose host (SPI2, SPI3), claimed once
@@ -149,10 +149,10 @@ pub(crate) const SPI_CK_OUT_EDGE: u32 = 1 << 7;
 
 /// `SPI_DOUTDIN`, bitpos [0]: "Set the bit to enable full duplex
 /// communication." Without it the MOSI and MISO phases run one after the
-/// other, so a full-duplex `transfer` sends all its bytes and *then* clocks in
+/// other, so a full-duplex `fifo_exchange` sends all its bytes and *then* clocks in
 /// the reply -- reading a line nothing is driving.
 ///
-/// The signature of `transfer(tx, rx)` promises simultaneous exchange, which
+/// The signature of `fifo_exchange(tx, rx)` promises simultaneous exchange, which
 /// is what every SPI device expects. This bit is what makes that true.
 pub(crate) const SPI_DOUTDIN: u32 = 1 << 0;
 /// Assert CS during the prepare phase, using CTRL2.setup_time.
@@ -239,7 +239,7 @@ fn unpack_word(word: u32, out: &mut [u8]) {
 /// **must** engage. The previous code never set `clkdiv_pre`, so a 1 MHz request
 /// off an 80 MHz APB needed n = 80, which overflowed its field to 15 while the
 /// high-phase boundary stayed 39 — h > n, an inconsistent register the hardware
-/// never completes, so `SPI_CMD.usr` never self-cleared and `transfer()` hung
+/// never completes, so `SPI_CMD.usr` never self-cleared and `fifo_exchange()` hung
 /// (issue #91). Brute-forcing n and deriving the best pre, as esp-idf does,
 /// reaches low frequencies with a consistent register.
 ///
@@ -307,9 +307,18 @@ impl Esp32Spi {
         }
     }
 
-    /// Perform a polled SPI transfer (up to 64 bytes).
-    pub fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
-        let len = tx.len().min(rx.len()).min(SPI_MAX_BYTES);
+    /// One polled full-duplex exchange through the 64-byte data FIFO.
+    ///
+    /// The byte count is the shorter of `tx` and `rx`; past [`SPI_MAX_BYTES`]
+    /// it is `Err(InvalidConfig)`, never a silent truncation. Callers that may
+    /// exceed the FIFO go through [`PhysicalTransfer::exchange`], which chunks
+    /// or uses DMA. Public so the on-target self-tests can drive the FIFO path
+    /// directly.
+    pub fn fifo_exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+        let len = tx.len().min(rx.len());
+        if len > SPI_MAX_BYTES {
+            return Err(BusError::InvalidConfig);
+        }
         if len == 0 {
             return Ok(());
         }
@@ -409,7 +418,7 @@ impl Esp32Spi {
         let mut off = 0;
         while off < len {
             let end = (off + SPI_MAX_BYTES).min(len);
-            self.transfer(&tx[off..end], &mut rx[off..end])?;
+            self.fifo_exchange(&tx[off..end], &mut rx[off..end])?;
             off = end;
         }
         Ok(())
@@ -419,7 +428,7 @@ impl Esp32Spi {
 impl PhysicalBus for Esp32Spi {
     fn init(&mut self, config: &BusConfig) -> BusResult<()> {
         match config {
-            BusConfig::Spi { mosi, miso, sck, max_speed, mode } => {
+            BusConfig::Spi(hal::bus::SpiConfig { mosi, miso, sck, max_speed, mode }) => {
                 let instance = addr::spi_instance(self.base).ok_or(BusError::InvalidConfig)?;
 
                 // Clock and un-reset the peripheral before touching any of
@@ -500,8 +509,10 @@ impl PhysicalBus for Esp32Spi {
             _ => Err(BusError::InvalidConfig),
         }
     }
+}
 
-    fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+impl PhysicalTransfer for Esp32Spi {
+    fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
         let len = tx.len().min(rx.len());
 
         let instance = addr::spi_instance(self.base).ok_or(BusError::InvalidConfig)?;
@@ -586,8 +597,6 @@ impl PhysicalBus for Esp32Spi {
         self.apply_clock(hz);
         Ok(())
     }
-
-    fn set_enabled(&mut self, _enabled: bool) {}
 }
 
 #[cfg(test)]
@@ -620,7 +629,7 @@ mod tests {
     fn a_1mhz_clock_is_consistent_not_the_buggy_register() {
         // The bug: n = 80 overflowed its 6-bit field to 15 while h stayed 39,
         // giving CLOCK=0x0000f9cf with h > n — a register the core never
-        // finishes, so transfer() hung.
+        // finishes, so fifo_exchange() hung.
         let reg = spi_clock_reg(80_000_000, 1_000_000);
         assert_ne!(reg, 0x0000_f9cf, "reproduced the #91 hang register");
         let (pre, n, h, l) = decode_clock(reg).expect("not equ_sysclk at 1 MHz");

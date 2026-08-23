@@ -88,14 +88,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         irq: addr::IRQ_UART0,
         dma_capable: true,
         dma_pool_bytes: 512,
-        config: BusConfig::Uart {
-            tx: 1,     // GPIO1 (default TX)
-            rx: 3,     // GPIO3 (default RX)
-            baud: 115200,
-            data_bits: UartDataBits::Bits8,
-            parity: UartParity::None,
-            stop_bits: UartStopBits::Stop1,
-        },
+        config: BusConfig::uart_8n1(1, 3, 115200),
     },
     BusMapping {
         // VSPI (SPI3). GPIO 23/19/18 are VSPI's IO_MUX-native pins; pairing
@@ -107,13 +100,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         irq: addr::IRQ_SPI3,
         dma_capable: true,
         dma_pool_bytes: 2048,
-        config: BusConfig::Spi {
-            mosi: 23,
-            miso: 19,
-            sck: 18,
-            max_speed: BusSpeed::MHz(40),
-            mode: SpiMode::Mode0,
-        },
+        config: BusConfig::spi_mode0(23, 19, 18, BusSpeed::MHz(40)),
     },
     BusMapping {
         name: "i2c0",
@@ -122,11 +109,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         irq: addr::IRQ_I2C0,
         dma_capable: false,
         dma_pool_bytes: 0,
-        config: BusConfig::I2c {
-            sda: 21,
-            scl: 22,
-            speed: BusSpeed::Fast400k,
-        },
+        config: BusConfig::i2c(21, 22, BusSpeed::Fast400k),
     },
 ];
 

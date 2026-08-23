@@ -28,19 +28,12 @@ use super::Check;
 #[cfg(target_os = "none")]
 pub(crate) fn uart_bytestream_loopback_round_trips(tx_pin: u8, rx_pin: u8) -> Check {
     use esp32_uart::Esp32Uart;
-    use hal::bus::{BusConfig, UartDataBits, UartParity, UartStopBits};
+    use hal::bus::BusConfig;
     use hal::stream::ByteStream;
 
     let mut uart = unsafe { Esp32Uart::new(soc_esp32::addr::UART2_BASE) };
-    uart.init(&BusConfig::Uart {
-        tx: tx_pin,
-        rx: rx_pin,
-        baud: 115_200,
-        data_bits: UartDataBits::Bits8,
-        parity: UartParity::None,
-        stop_bits: UartStopBits::Stop1,
-    })
-    .map_err(|_| "UART init failed — the loopback pins would not route")?;
+    uart.init(&BusConfig::uart_8n1(tx_pin, rx_pin, 115_200))
+        .map_err(|_| "UART init failed — the loopback pins would not route")?;
 
     // Route TX→RX internally: a clean digital path with no pad edge to mis-frame.
     uart.set_loopback(true);

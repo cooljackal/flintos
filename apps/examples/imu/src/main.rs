@@ -49,7 +49,7 @@ compile_error!(
      an `IMU_SDA_GPIO`, `IMU_SCL_GPIO` and `IMU_I2C_ADDR`."
 );
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 use kernel::board::active as board;
 
@@ -157,13 +157,9 @@ fn read_mpu6886(bus: &'static dyn hal::bus::Bus) -> ! {
 /// Claims I2C0 and the IMU's two pads for the life of the program.
 unsafe fn bring_up_controller() -> Option<()> {
     let mut phys = Esp32I2c::new(I2C_BASE);
-    let config = BusConfig::I2c {
-        sda: board::IMU_SDA_GPIO,
-        scl: board::IMU_SCL_GPIO,
-        // 100 kHz. The part handles 400 kHz, but bring-up is not the time to
-        // find out whether the bus is marginal.
-        speed: BusSpeed::Standard100k,
-    };
+    // 100 kHz. The part handles 400 kHz, but bring-up is not the time to find
+    // out whether the bus is marginal.
+    let config = BusConfig::i2c(board::IMU_SDA_GPIO, board::IMU_SCL_GPIO, BusSpeed::Standard100k);
     // `init` gates the clock on, un-resets the peripheral and routes the pads
     // open-drain -- in that order, because a running controller connected to a
     // still-push-pull pad can short against a device holding the line low.
@@ -196,8 +192,8 @@ fn scan() {
     let mut found = 0;
     for addr in 0x08..=0x77u8 {
         // `tx[0]` is the 7-bit address, unshifted -- the physical driver adds
-        // the R/W bit. See `hal::PhysicalBus::raw_transfer`.
-        if hal::bus::PhysicalBus::raw_transfer(phys, &[addr], &mut []).is_ok() {
+        // the R/W bit. See `hal::bus::PhysicalTransfer::exchange`.
+        if hal::bus::PhysicalTransfer::exchange(phys, &[addr], &mut []).is_ok() {
             api::log_info!("[imu]   0x{:02X} responded", addr);
             found += 1;
         }

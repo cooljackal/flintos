@@ -16,7 +16,7 @@ use api::prelude::*;
 // Names `main` below as this build's application entry point. The kernel calls
 // it once the console, tick timer and idle task are up, and unmasks interrupts
 // when it returns.
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 fn main() {
     Task::new("hello", hello).spawn().expect("spawn");

@@ -159,7 +159,7 @@ mod tests {
     extern crate std;
 
     use crate::active::*;
-    use hal::bus::BusConfig;
+    use hal::bus::{BusConfig, I2cConfig, SpiConfig, UartConfig};
 
     // These are family facts, not generic manifest invariants. ESP32
     // peripheral registers live in the DPORT-mapped bus window
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn uart_pins_are_valid_gpios() {
         for bus in TARGET_BUSES {
-            if let BusConfig::Uart { tx, rx, .. } = bus.config {
+            if let BusConfig::Uart(UartConfig { tx, rx, .. }) = bus.config {
                 assert!(tx <= MAX_GPIO, "bus '{}' uart tx pin {} is not a valid GPIO", bus.name, tx);
                 assert!(rx <= MAX_GPIO, "bus '{}' uart rx pin {} is not a valid GPIO", bus.name, rx);
             }
@@ -225,7 +225,7 @@ mod tests {
     fn spi_and_i2c_pins_are_valid_gpios() {
         for bus in TARGET_BUSES {
             match bus.config {
-                BusConfig::Spi { mosi, miso, sck, .. } => {
+                BusConfig::Spi(SpiConfig { mosi, miso, sck, .. }) => {
                     for (label, pin) in [("mosi", mosi), ("miso", miso), ("sck", sck)] {
                         assert!(
                             pin <= MAX_GPIO,
@@ -236,7 +236,7 @@ mod tests {
                         );
                     }
                 }
-                BusConfig::I2c { sda, scl, .. } => {
+                BusConfig::I2c(I2cConfig { sda, scl, .. }) => {
                     for (label, pin) in [("sda", sda), ("scl", scl)] {
                         assert!(
                             pin <= MAX_GPIO,
@@ -247,7 +247,7 @@ mod tests {
                         );
                     }
                 }
-                BusConfig::Uart { .. } => {}
+                BusConfig::Uart(_) => {}
             }
         }
     }

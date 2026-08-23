@@ -20,7 +20,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use api::prelude::*;
 use kernel::smp::Spinlock;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 /// Per-task, per-core sighting counts. `seen[task][core]`.
 static SEEN: Spinlock<[[u32; 2]; 3]> = Spinlock::new([[0; 2]; 3]);

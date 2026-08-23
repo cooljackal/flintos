@@ -32,7 +32,7 @@ use super::Check;
 pub(crate) fn spi_bus_loopback_round_trips(scratch: u8, sck: u8, miso_placeholder: u8) -> Check {
     use core::ptr::addr_of_mut;
     use esp32_spi::Esp32Spi;
-    use hal::bus::{Bus, BusConfig, BusSpeed, Op, PhysicalBus, SpiMode};
+    use hal::bus::{Bus, BusConfig, BusSpeed, Op, PhysicalBus, PhysicalTransfer};
     use hal::pinmux::{PinConfig, PinMux, Signal};
     use soc_esp32::{addr, Esp32PinMux};
     use spi_bus::SpiBus;
@@ -47,13 +47,7 @@ pub(crate) fn spi_bus_loopback_round_trips(scratch: u8, sck: u8, miso_placeholde
     static mut TXB: [u32; MAX / 4] = [0; MAX / 4];
     static mut RXB: [u32; MAX / 4] = [0; MAX / 4];
 
-    let config = BusConfig::Spi {
-        mosi: scratch,
-        miso: miso_placeholder,
-        sck,
-        max_speed: BusSpeed::MHz(4),
-        mode: SpiMode::Mode0,
-    };
+    let config = BusConfig::spi_mode0(scratch, miso_placeholder, sck, BusSpeed::MHz(4));
 
     let mut spi = unsafe { Esp32Spi::new(addr::SPI2_BASE) };
     spi.init(&config).map_err(|_| "SPI init failed -- the loopback pins would not route")?;
@@ -111,14 +105,14 @@ pub(crate) fn spi_bus_loopback_round_trips(scratch: u8, sck: u8, miso_placeholde
     // #91: the FIFO master path hung at low bus clocks — the SPI_CLOCK divider
     // overflowed its 6-bit counter instead of engaging the prescaler, leaving
     // h > n so SPI_CMD.usr never self-cleared. Re-clock to 1 MHz and drive the
-    // driver's FIFO `transfer()` directly (the exact path that hung); it must
+    // driver's FIFO `fifo_exchange()` directly (the exact path that hung); it must
     // complete and round-trip byte-for-byte, not time out.
     dev.set_speed(BusSpeed::MHz(1)).map_err(|_| "could not reclock to 1 MHz")?;
     for (i, b) in txb[..32].iter_mut().enumerate() {
         *b = seed.wrapping_add((i as u8).wrapping_mul(31));
     }
     rxb[..32].fill(seed ^ 0xFF);
-    dev.transfer(&txb[..32], &mut rxb[..32])
+    dev.fifo_exchange(&txb[..32], &mut rxb[..32])
         .map_err(|_| "1 MHz FIFO transfer timed out -- the #91 divider bug")?;
     if rxb[..32] != txb[..32] {
         return Err("1 MHz FIFO transfer did not round-trip");

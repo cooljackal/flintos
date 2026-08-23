@@ -40,7 +40,7 @@ impl Bus for SpiBus {
                 return Err(BusError::InvalidConfig);
             }
             match (op.tx, op.rx.as_deref_mut()) {
-                (Some(tx), Some(rx)) => self.phys.raw_transfer(tx, rx)?,
+                (Some(tx), Some(rx)) => self.phys.exchange(tx, rx)?,
                 (Some(tx), None) => {
                     // A write still clocks a full duplex frame; the reply is
                     // discarded. The physical driver sends only min(tx, rx)
@@ -49,7 +49,7 @@ impl Bus for SpiBus {
                     // buffer's worth and drop the rest of tx (#98).
                     let mut scratch = [0u8; MAX_TRANSFER];
                     for chunk in tx.chunks(MAX_TRANSFER) {
-                        self.phys.raw_transfer(chunk, &mut scratch[..chunk.len()])?;
+                        self.phys.exchange(chunk, &mut scratch[..chunk.len()])?;
                     }
                 }
                 (None, Some(rx)) => {
@@ -57,7 +57,7 @@ impl Bus for SpiBus {
                     // reply in, one buffer-full at a time.
                     let scratch = [0u8; MAX_TRANSFER];
                     for chunk in rx.chunks_mut(MAX_TRANSFER) {
-                        self.phys.raw_transfer(&scratch[..chunk.len()], chunk)?;
+                        self.phys.exchange(&scratch[..chunk.len()], chunk)?;
                     }
                 }
                 (None, None) => {}
@@ -89,7 +89,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{BusConfig, BusHandle};
+    use api::bus::{BusConfig, BusHandle, PhysicalTransfer};
     use core::sync::atomic::{AtomicU32, Ordering};
     use std::boxed::Box;
     use std::sync::Mutex;
@@ -104,7 +104,10 @@ mod tests {
         fn init(&mut self, _: &BusConfig) -> BusResult<()> {
             Ok(())
         }
-        fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+    }
+
+    impl PhysicalTransfer for MockSpi {
+        fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
             let len = tx.len().min(rx.len());
             rx[..len].copy_from_slice(&tx[..len]);
             Ok(())
@@ -113,7 +116,6 @@ mod tests {
             self.last_speed_hz.store(speed.hz(), Ordering::Relaxed);
             Ok(())
         }
-        fn set_enabled(&mut self, _: bool) {}
     }
 
     fn mock() -> &'static dyn PhysicalBus {
@@ -168,13 +170,15 @@ mod tests {
         fn init(&mut self, _: &BusConfig) -> BusResult<()> {
             Ok(())
         }
-        fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+    }
+
+    impl PhysicalTransfer for SendRecorder {
+        fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
             let len = tx.len().min(rx.len());
             self.sent.lock().unwrap().extend_from_slice(&tx[..len]);
             rx[..len].copy_from_slice(&tx[..len]);
             Ok(())
         }
-        fn set_enabled(&mut self, _: bool) {}
     }
 
     fn recording() -> (SpiBus, &'static SendRecorder) {

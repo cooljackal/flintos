@@ -36,7 +36,7 @@
 use api::task;
 use hal::types::Priority;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 fn main() {
     // As `radioprobe`: the blob's frame depth is not knowable from here, and

@@ -2,7 +2,7 @@
 
 #![no_std]
 
-use hal::bus::{BusConfig, BusError, BusResult, PhysicalBus};
+use hal::bus::{BusConfig, BusError, BusResult, I2cConfig, PhysicalBus, PhysicalTransfer};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
@@ -132,7 +132,10 @@ const I2C_RW_READ: u32 = 1;
 // Confirmed against esp-idf `soc/i2c_reg.h`. A prior revision wrote
 // `1 << 1` for "MS_MODE", which is not the master-mode bit at all (and the
 // plain `write_volatile` calls in `write`/`read` also clobbered it on every
-// transaction instead of only setting TRANS_START).
+// transaction instead of only setting TRANS_START). Another took bit 0 for an
+// enable bit and toggled it from a since-deleted `set_enabled`; there is no
+// per-controller enable in this register — the real one is the DPORT clock
+// gate, which this driver does not own.
 
 const I2C_MS_MODE: u32 = 1 << 4;
 const I2C_TRANS_START: u32 = 1 << 5;
@@ -485,7 +488,7 @@ impl Esp32I2c {
 impl PhysicalBus for Esp32I2c {
     fn init(&mut self, config: &BusConfig) -> BusResult<()> {
         match config {
-            BusConfig::I2c { sda, scl, speed } => {
+            BusConfig::I2c(I2cConfig { sda, scl, speed }) => {
                 let instance = addr::i2c_instance(self.base).ok_or(BusError::InvalidConfig)?;
 
                 // Clock and un-reset the peripheral before touching any of
@@ -509,12 +512,14 @@ impl PhysicalBus for Esp32I2c {
             _ => Err(BusError::InvalidConfig),
         }
     }
+}
 
-    fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+impl PhysicalTransfer for Esp32I2c {
+    fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
         // `tx[0]` is the device's 7-bit address, UNSHIFTED -- this driver adds
         // the R/W bit itself (see `write`/`read`). A caller that pre-shifts
         // double-shifts, and 0x76 reaches the wire as 0xD8 with nothing to
-        // ACK it. See `hal::PhysicalBus::raw_transfer`.
+        // ACK it. See `hal::bus::PhysicalTransfer::exchange`.
         let Some((&addr, data)) = tx.split_first() else {
             return Err(BusError::InvalidConfig);
         };
@@ -531,22 +536,6 @@ impl PhysicalBus for Esp32I2c {
             }
         }
     }
-
-    /// Nothing, deliberately, as on every other bus in this tree.
-    ///
-    /// This used to set and clear bit 0 of `I2C_CTR_REG`, which it took for an
-    /// enable bit. There isn't one. Bit 0 is `I2C_SDA_FORCE_OUT` -- named
-    /// twenty lines up, in the same file, as one of the two bits *required*
-    /// for master mode -- so `set_enabled(false)` stopped the controller
-    /// driving SDA while leaving SCL driven and `MS_MODE` set, and
-    /// `set_enabled(true)` restored one of the three bits `init` writes. The
-    /// register comment at `I2C_MS_MODE` records the same mistake being made
-    /// once before with `1 << 1`.
-    ///
-    /// The ESP32 has no per-controller enable in `I2C_CTR`; the real one is
-    /// the DPORT clock gate, which this driver does not own. Doing nothing is
-    /// honest, and matches SPI, UART and GPIO.
-    fn set_enabled(&mut self, _enabled: bool) {}
 }
 
 #[cfg(test)]

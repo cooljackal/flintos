@@ -93,36 +93,109 @@ impl BusSpeed {
 // ─── Bus configuration ──────────────────────────────────────────────────────
 
 /// Complete configuration for initialising a peripheral bus.
-#[derive(Debug, Clone, Copy)]
+///
+/// One variant per bus kind, each wrapping a named config struct so a driver
+/// or port type can hold exactly the one it needs ([`SpiConfig`] on a SPI
+/// port, never a UART's). The `const fn` helpers cover the common shapes
+/// (`spi_mode0`, `i2c`, `uart_8n1`); anything else is built with struct
+/// syntax and `..Default::default()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusConfig {
     /// SPI bus configuration.
-    Spi {
-        mosi: u8,
-        miso: u8,
-        sck: u8,
-        max_speed: BusSpeed,
-        mode: SpiMode,
-    },
+    Spi(SpiConfig),
     /// I2C bus configuration.
-    I2c {
-        sda: u8,
-        scl: u8,
-        speed: BusSpeed,
-    },
+    I2c(I2cConfig),
     /// UART bus configuration.
-    Uart {
-        tx: u8,
-        rx: u8,
-        baud: u32,
-        data_bits: UartDataBits,
-        parity: UartParity,
-        stop_bits: UartStopBits,
-    },
+    Uart(UartConfig),
+}
+
+impl BusConfig {
+    /// A mode-0 SPI bus (clock idle low, sample on the rising edge).
+    pub const fn spi_mode0(mosi: u8, miso: u8, sck: u8, max_speed: BusSpeed) -> Self {
+        BusConfig::Spi(SpiConfig { mosi, miso, sck, max_speed, mode: SpiMode::Mode0 })
+    }
+
+    /// An I2C bus at `speed`.
+    pub const fn i2c(sda: u8, scl: u8, speed: BusSpeed) -> Self {
+        BusConfig::I2c(I2cConfig { sda, scl, speed })
+    }
+
+    /// A UART framed 8 data bits, no parity, 1 stop bit — the console default.
+    pub const fn uart_8n1(tx: u8, rx: u8, baud: u32) -> Self {
+        BusConfig::Uart(UartConfig {
+            tx,
+            rx,
+            baud,
+            data_bits: UartDataBits::Bits8,
+            parity: UartParity::None,
+            stop_bits: UartStopBits::Stop1,
+        })
+    }
+}
+
+/// Pins, clock ceiling and mode for a SPI controller.
+///
+/// `Default` is mode 0 at 1 MHz on pins 0/0/0 — a placeholder to spread with
+/// `..`, not a wiring anyone should run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpiConfig {
+    pub mosi: u8,
+    pub miso: u8,
+    pub sck: u8,
+    pub max_speed: BusSpeed,
+    pub mode: SpiMode,
+}
+
+impl Default for SpiConfig {
+    fn default() -> Self {
+        Self { mosi: 0, miso: 0, sck: 0, max_speed: BusSpeed::MHz(1), mode: SpiMode::Mode0 }
+    }
+}
+
+/// Pins and clock for an I2C controller. `Default` is standard-mode (100 kHz)
+/// on pins 0/0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct I2cConfig {
+    pub sda: u8,
+    pub scl: u8,
+    pub speed: BusSpeed,
+}
+
+impl Default for I2cConfig {
+    fn default() -> Self {
+        Self { sda: 0, scl: 0, speed: BusSpeed::Standard100k }
+    }
+}
+
+/// Pins, baud rate and framing for a UART. `Default` is 115200 8N1 on pins
+/// 0/0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UartConfig {
+    pub tx: u8,
+    pub rx: u8,
+    pub baud: u32,
+    pub data_bits: UartDataBits,
+    pub parity: UartParity,
+    pub stop_bits: UartStopBits,
+}
+
+impl Default for UartConfig {
+    fn default() -> Self {
+        Self {
+            tx: 0,
+            rx: 0,
+            baud: 115_200,
+            data_bits: UartDataBits::Bits8,
+            parity: UartParity::None,
+            stop_bits: UartStopBits::Stop1,
+        }
+    }
 }
 
 /// SPI clock polarity / phase modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpiMode {
+    #[default]
     Mode0,
     Mode1,
     Mode2,
@@ -130,26 +203,29 @@ pub enum SpiMode {
 }
 
 /// Number of data bits per UART character.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UartDataBits {
     Bits5 = 5,
     Bits6 = 6,
     Bits7 = 7,
+    #[default]
     Bits8 = 8,
 }
 
 /// UART parity setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UartParity {
+    #[default]
     None,
     Even,
     Odd,
 }
 
 /// Number of stop bits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UartStopBits {
     /// 1 stop bit.
+    #[default]
     Stop1 = 1,
     /// 1.5 stop bits (encoded as 15 for the register field).
     Stop1_5 = 15,
@@ -270,16 +346,16 @@ pub trait Bus: Send + Sync {
 
 // ── Layer 1: Physical bus trait ────────────────────────────────────────────
 
-/// Implemented by physical driver crates (e.g. `esp32_spi`).
+/// The run-time half of a physical driver: everything that moves bytes on a
+/// peripheral that is already up. Every method takes `&self`, so a shared
+/// reference to a driver is itself a `PhysicalTransfer` (the blanket impl
+/// below) and a bus layer can hold one without owning the driver.
 ///
-/// These have direct hardware register access and run at the lowest
-/// level of the driver stack.
-pub trait PhysicalBus: Send + Sync {
-    /// Initialise the hardware peripheral with the given configuration.
-    fn init(&mut self, config: &BusConfig) -> BusResult<()>;
-
-    /// Perform a raw duplex hardware transfer.
-    /// Perform a transfer.
+/// Construction-time work (`init`, `&mut self`) lives on [`PhysicalBus`],
+/// which extends this trait; the split is what makes the blanket impl sound.
+pub trait PhysicalTransfer: Send + Sync {
+    /// Perform a raw full-duplex hardware exchange: clock `tx` out while
+    /// filling `rx`.
     ///
     /// **For I2C, `tx[0]` is the device's 7-bit address, unshifted.** The
     /// physical driver adds the R/W bit. This was never written down, and the
@@ -300,16 +376,35 @@ pub trait PhysicalBus: Send + Sync {
     ///
     /// SPI and UART ignore the addressing rule: `tx` is data, `rx` is the
     /// buffer, and the two are clocked together.
-    fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()>;
+    fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()>;
 
     /// Re-program the bus clock / data rate on a live peripheral, without a
-    /// full re-init. Default: unsupported. SPI and UART override it.
+    /// full re-init. Default: unsupported. SPI overrides it.
     fn set_speed(&self, _speed: BusSpeed) -> BusResult<()> {
         Err(BusError::InvalidConfig)
     }
+}
 
-    /// Enable or disable the peripheral clock.
-    fn set_enabled(&mut self, enabled: bool);
+/// A shared reference to a transfer-capable driver is one itself. Sound
+/// because nothing on [`PhysicalTransfer`] takes `&mut self`.
+impl<T: PhysicalTransfer + ?Sized> PhysicalTransfer for &T {
+    fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+        (**self).exchange(tx, rx)
+    }
+
+    fn set_speed(&self, speed: BusSpeed) -> BusResult<()> {
+        (**self).set_speed(speed)
+    }
+}
+
+/// Implemented by physical driver crates (e.g. `esp32_spi`).
+///
+/// These have direct hardware register access and run at the lowest level of
+/// the driver stack. This trait adds the one construction-time method to
+/// [`PhysicalTransfer`]; once `init` has run, callers need only the supertrait.
+pub trait PhysicalBus: PhysicalTransfer {
+    /// Initialise the hardware peripheral with the given configuration.
+    fn init(&mut self, config: &BusConfig) -> BusResult<()>;
 }
 
 // ── Bus handle (layer 2 → layer 3 bridge) ──────────────────────────────────
@@ -660,6 +755,56 @@ mod tests {
         assert!(handle.deselect().is_ok());
         assert_eq!(handle.set_speed(BusSpeed::MHz(10)), Err(BusError::InvalidConfig));
         assert_eq!(handle.max_transfer(), 64);
+    }
+
+    #[test]
+    fn bus_config_helpers_fill_the_fixed_fields() {
+        let BusConfig::Uart(u) = BusConfig::uart_8n1(1, 3, 9600) else { panic!() };
+        assert_eq!((u.tx, u.rx, u.baud), (1, 3, 9600));
+        assert_eq!(u.data_bits, UartDataBits::Bits8);
+        assert_eq!(u.parity, UartParity::None);
+        assert_eq!(u.stop_bits, UartStopBits::Stop1);
+
+        let BusConfig::Spi(s) = BusConfig::spi_mode0(23, 19, 18, BusSpeed::MHz(10)) else {
+            panic!()
+        };
+        assert_eq!((s.mosi, s.miso, s.sck), (23, 19, 18));
+        assert_eq!(s.max_speed, BusSpeed::MHz(10));
+        assert_eq!(s.mode, SpiMode::Mode0);
+
+        let BusConfig::I2c(i) = BusConfig::i2c(21, 22, BusSpeed::Fast400k) else { panic!() };
+        assert_eq!((i.sda, i.scl, i.speed), (21, 22, BusSpeed::Fast400k));
+
+        // Defaults agree with the 8N1 helper on framing.
+        let d = UartConfig::default();
+        assert_eq!((d.data_bits, d.parity, d.stop_bits), (u.data_bits, u.parity, u.stop_bits));
+    }
+
+    /// Echoes `tx` into `rx`; exists to prove a `&T` is a `PhysicalTransfer`.
+    struct Echo;
+
+    impl PhysicalTransfer for Echo {
+        fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+            let n = tx.len().min(rx.len());
+            rx[..n].copy_from_slice(&tx[..n]);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shared_reference_is_a_physical_transfer() {
+        fn run<P: PhysicalTransfer>(p: P) -> BusResult<[u8; 2]> {
+            let mut rx = [0u8; 2];
+            p.exchange(&[7, 9], &mut rx)?;
+            Ok(rx)
+        }
+        let echo = Echo;
+        assert_eq!(run(&echo), Ok([7, 9]));
+        let dynamic: &dyn PhysicalTransfer = &echo;
+        assert_eq!(run(dynamic), Ok([7, 9]));
+        // The `&T` blanket forwards the default `set_speed` too.
+        let by_ref: &Echo = &echo;
+        assert_eq!(PhysicalTransfer::set_speed(&by_ref, BusSpeed::MHz(1)), Err(BusError::InvalidConfig));
     }
 
     #[test]

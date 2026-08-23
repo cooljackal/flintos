@@ -46,7 +46,7 @@ compile_error!(
      To run it elsewhere, point PWM_GPIO at a free pin on your board."
 );
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 use kernel::board::active as board;
 

@@ -43,12 +43,12 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use api::task;
-use hal::bus::{BusConfig, BusSpeed, PhysicalBus, SpiMode};
+use hal::bus::{BusConfig, BusSpeed, PhysicalBus};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::types::Priority;
 use soc_esp32::{addr, dma, Esp32PinMux};
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 /// The pad MOSI drives and MISO reads.
 const LOOPBACK_GPIO: u8 = 22;
@@ -139,13 +139,12 @@ fn attempt() -> Result<(), &'static str> {
 
     // 2. The host itself, through the ordinary init path.
     let mut spi = unsafe { esp32_spi::Esp32Spi::new(addr::SPI2_BASE) };
-    spi.init(&BusConfig::Spi {
-        mosi: LOOPBACK_GPIO,
-        miso: MISO_PLACEHOLDER_GPIO,
-        sck: SCK_GPIO,
-        max_speed: BusSpeed::MHz(4),
-        mode: SpiMode::Mode0,
-    })
+    spi.init(&BusConfig::spi_mode0(
+        LOOPBACK_GPIO,
+        MISO_PLACEHOLDER_GPIO,
+        SCK_GPIO,
+        BusSpeed::MHz(4),
+    ))
     .map_err(|_| "SPI init failed")?;
 
     // 3. Now fold MISO onto the MOSI pad. `init` rejects that on purpose —
@@ -163,7 +162,7 @@ fn attempt() -> Result<(), &'static str> {
     if FIFO_PRECHECK {
         let tx = [0xA5u8, 0x00, 0xFF, 0x5A, 0x01, 0x02, 0x04, 0x08];
         let mut rx = [0u8; 8];
-        spi.transfer(&tx, &mut rx).map_err(|_| "FIFO loopback transfer failed")?;
+        spi.fifo_exchange(&tx, &mut rx).map_err(|_| "FIFO loopback transfer failed")?;
         api::log_info!("[spidma] fifo sent {:?}", tx);
         api::log_info!("[spidma] fifo got  {:?}", rx);
         if rx != tx {

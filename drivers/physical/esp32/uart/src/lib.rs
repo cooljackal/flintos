@@ -2,7 +2,9 @@
 
 #![no_std]
 
-use hal::bus::{BusConfig, BusError, BusResult, BusSpeed, UartDataBits, UartParity, UartStopBits};
+use hal::bus::{
+    BusConfig, BusError, BusResult, BusSpeed, UartConfig, UartDataBits, UartParity, UartStopBits,
+};
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::stream::{ByteStream, StreamErrors};
 use soc_esp32::addr;
@@ -227,7 +229,7 @@ impl Esp32Uart {
     /// `BusConfig` is reused only as the manifest's configuration record; the
     /// port's actual traffic goes through its [`ByteStream`] impl.
     pub fn init(&mut self, config: &BusConfig) -> BusResult<()> {
-        let BusConfig::Uart { baud, data_bits, parity, stop_bits, tx, rx, .. } = config else {
+        let BusConfig::Uart(UartConfig { baud, data_bits, parity, stop_bits, tx, rx }) = config else {
             return Err(BusError::InvalidConfig);
         };
 

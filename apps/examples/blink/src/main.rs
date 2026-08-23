@@ -69,7 +69,7 @@ compile_error!(
      `RGB_LED_COUNT` and an `RGB_LED_LAYOUT`, and add a feature here."
 );
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 /// The pin the board put the LED on. From the manifest, not from a datasheet
 /// read at coding time — that is what the manifest is for.

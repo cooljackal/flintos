@@ -138,14 +138,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
     irq: addr::IRQ_UART0,
     dma_capable: true,
     dma_pool_bytes: 512,
-    config: BusConfig::Uart {
-        tx: 1,     // GPIO1 (default TX)
-        rx: 3,     // GPIO3 (default RX)
-        baud: 115200,
-        data_bits: UartDataBits::Bits8,
-        parity: UartParity::None,
-        stop_bits: UartStopBits::Stop1,
-    },
+    config: BusConfig::uart_8n1(1, 3, 115200),
 }];
 
 /// Logical device drivers attached to buses.

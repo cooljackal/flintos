@@ -20,10 +20,11 @@
 //!
 //! The port structs pair a controller with its pin configuration so an app
 //! passes one `Copy` value instead of a base, an instance and a config that
-//! have to agree. They carry the hal [`BusConfig`] today; #110 splits that
-//! into per-bus config types and these fields follow.
+//! have to agree. Each carries the per-bus config type that matches its
+//! controller — an [`I2cPort`] holds an [`I2cConfig`], never a SPI one — so a
+//! mismatch is a type error rather than a run-time `InvalidConfig`.
 
-use hal::bus::BusConfig;
+use hal::bus::{I2cConfig, SpiConfig, UartConfig};
 
 use crate::addr;
 use crate::dport::ClockBit;
@@ -198,31 +199,26 @@ impl UartCtrl {
 }
 
 // ── Ports ───────────────────────────────────────────────────────────────────
-//
-// TODO(#110): `cfg` holds the whole hal `BusConfig` enum, so an `I2cPort`
-// can currently carry a `BusConfig::Spi`. Once the config split lands these
-// become `I2cConfig` / `SpiConfig` / `UartConfig` and the mismatch is a type
-// error.
 
 /// An I2C controller and the pin configuration it is to be brought up with.
 #[derive(Copy, Clone, Debug)]
 pub struct I2cPort {
     pub ctrl: I2cCtrl,
-    pub cfg: BusConfig,
+    pub cfg: I2cConfig,
 }
 
 /// A SPI controller and the pin configuration it is to be brought up with.
 #[derive(Copy, Clone, Debug)]
 pub struct SpiPort {
     pub ctrl: SpiCtrl,
-    pub cfg: BusConfig,
+    pub cfg: SpiConfig,
 }
 
 /// A UART controller and the pin configuration it is to be brought up with.
 #[derive(Copy, Clone, Debug)]
 pub struct UartPort {
     pub ctrl: UartCtrl,
-    pub cfg: BusConfig,
+    pub cfg: UartConfig,
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

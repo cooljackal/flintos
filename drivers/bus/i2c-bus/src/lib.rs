@@ -27,7 +27,7 @@ impl I2cBus {
 
 impl Bus for I2cBus {
     // Every op passes the address UNSHIFTED as `tx[0]`; the physical driver
-    // adds the R/W bit. See `hal::PhysicalBus::raw_transfer`. This crate used
+    // adds the R/W bit. See `hal::bus::PhysicalTransfer::exchange`. This crate used
     // to pre-shift in `write` and not in `transfer`, disagreeing with the
     // physical driver and with itself.
     fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
@@ -50,13 +50,13 @@ impl Bus for I2cBus {
                     buf[0] = self.addr;
                     buf[1..=len].copy_from_slice(&tx[..len]);
                     match rx_opt {
-                        Some(rx) => self.phys.raw_transfer(&buf[..=len], rx)?,
-                        None => self.phys.raw_transfer(&buf[..=len], &mut [])?,
+                        Some(rx) => self.phys.exchange(&buf[..=len], rx)?,
+                        None => self.phys.exchange(&buf[..=len], &mut [])?,
                     }
                 }
                 // Plain read: address only, no data bytes — not a zero-length
                 // write, which would address the I2C general-call address.
-                (None, Some(rx)) => self.phys.raw_transfer(&[self.addr], rx)?,
+                (None, Some(rx)) => self.phys.exchange(&[self.addr], rx)?,
                 (None, None) => {}
             }
             // I2C has no separate chip-select line; `op.cs` is not meaningful.
@@ -84,7 +84,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::BusConfig;
+    use api::bus::{BusConfig, PhysicalTransfer};
     use std::boxed::Box;
     use std::sync::Mutex;
     use std::vec::Vec;
@@ -97,7 +97,7 @@ mod tests {
     /// shifting for as long as they did -- each was tested against a mock that
     /// shared its own author's assumption.
     struct Recorder {
-        // Mutex, not RefCell: `PhysicalBus` is `Sync`.
+        // Mutex, not RefCell: `PhysicalTransfer` is `Sync`.
         seen: Mutex<Vec<u8>>,
         canned: Vec<u8>,
     }
@@ -106,13 +106,15 @@ mod tests {
         fn init(&mut self, _: &BusConfig) -> BusResult<()> {
             Ok(())
         }
-        fn raw_transfer(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
+    }
+
+    impl PhysicalTransfer for Recorder {
+        fn exchange(&self, tx: &[u8], rx: &mut [u8]) -> BusResult<()> {
             *self.seen.lock().unwrap() = tx.to_vec();
             let n = rx.len().min(self.canned.len());
             rx[..n].copy_from_slice(&self.canned[..n]);
             Ok(())
         }
-        fn set_enabled(&mut self, _: bool) {}
     }
 
     fn bus_with(canned: &[u8]) -> (I2cBus, &'static Recorder) {

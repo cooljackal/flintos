@@ -25,7 +25,7 @@
 use api::task;
 use hal::types::Priority;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 /// Bumped by a task on the *second* core, so a flash operation can be checked
 /// against a core that is genuinely running rather than one parked at boot.

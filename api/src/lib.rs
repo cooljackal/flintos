@@ -31,7 +31,7 @@
 /// Every bump needs a **Breaking** entry in `CHANGELOG.md` saying what to
 /// change. A bump without one is worse than no version at all: it tells a user
 /// they are broken and not how to stop being broken.
-pub const ABI: u32 = 1;
+pub const ABI: u32 = 2;
 
 pub mod debug;
 pub mod mutex;
@@ -55,7 +55,9 @@ pub use sync::{CsCell, Once};
 /// `hal` or `arch-*` directly — the dependency graph is the layer
 /// boundary, checked in CI by `tools/check-layers.sh`.
 pub use hal::bus;
-pub use hal::bus::{Bus, BusError, BusHandle, BusResult, BusSpeed, CsHold, Op, PhysicalBus};
+pub use hal::bus::{
+    Bus, BusError, BusHandle, BusResult, BusSpeed, CsHold, Op, PhysicalBus, PhysicalTransfer,
+};
 
 /// Byte-stream subsystem surface (UART), re-exported like `bus` so Layer-2/3
 /// drivers depend only on `api`. A UART is a stream, not a `Bus` — see

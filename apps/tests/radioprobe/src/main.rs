@@ -88,7 +88,7 @@
 use api::task;
 use hal::types::Priority;
 
-kernel::flint_app!(main, abi = 1);
+kernel::flint_app!(main, abi = 2);
 
 fn main() {
     // `MAX_STACK_SIZE`, because `register_chipv7_phy` is a blob of unknown
