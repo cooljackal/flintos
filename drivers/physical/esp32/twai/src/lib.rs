@@ -211,28 +211,31 @@ impl Twai {
     /// Transmit `frame` as a self-reception and return the copy the controller
     /// receives. Requires [`Mode::SelfTest`].
     ///
-    /// # Safety
-    /// Drives the TWAI TX and RX buffers.
-    pub unsafe fn self_reception(&self, frame: &Frame) -> Result<Frame, TwaiError> {
+    /// Safe: drives the TWAI TX/RX buffers a held `Twai` owns; `frame` encodes
+    /// to a bounded buffer.
+    pub fn self_reception(&self, frame: &Frame) -> Result<Frame, TwaiError> {
         let (buf, n) = encode(frame);
-        for (i, b) in buf.iter().enumerate().take(n) {
-            write8(DATA0 + (i as u32) * 4, *b as u32);
+        // SAFETY: a held `Twai` owns the TWAI registers.
+        unsafe {
+            for (i, b) in buf.iter().enumerate().take(n) {
+                write8(DATA0 + (i as u32) * 4, *b as u32);
+            }
+
+            // Transmit and receive the same frame.
+            write8(CMD, CMD_SRR);
+
+            poll::until(|| read8(STATUS) & STATUS_RBS != 0, RX_SPINS)
+                .map_err(|_| TwaiError::Timeout)?;
+
+            let mut rx = [0u8; 11];
+            for (i, b) in rx.iter_mut().enumerate() {
+                *b = read8(DATA0 + (i as u32) * 4) as u8;
+            }
+            // Release the RX buffer for the next frame.
+            write8(CMD, CMD_RRB);
+
+            Ok(decode(&rx))
         }
-
-        // Transmit and receive the same frame.
-        write8(CMD, CMD_SRR);
-
-        poll::until(|| unsafe { read8(STATUS) & STATUS_RBS != 0 }, RX_SPINS)
-            .map_err(|_| TwaiError::Timeout)?;
-
-        let mut rx = [0u8; 11];
-        for (i, b) in rx.iter_mut().enumerate() {
-            *b = read8(DATA0 + (i as u32) * 4) as u8;
-        }
-        // Release the RX buffer for the next frame.
-        write8(CMD, CMD_RRB);
-
-        Ok(decode(&rx))
     }
 }
 

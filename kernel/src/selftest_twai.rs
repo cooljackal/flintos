@@ -22,7 +22,7 @@ pub(crate) fn twai_self_reception_round_trips(pin: u8) -> Check {
         .map_err(|_| "the TWAI loopback pin would not route")?;
 
     let sent = Frame { id: 0x2AB, len: 4, data: [0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0] };
-    let got = unsafe { twai.self_reception(&sent) }
+    let got = twai.self_reception(&sent)
         .map_err(|_| "no frame came back — the self-reception never completed")?;
 
     {
