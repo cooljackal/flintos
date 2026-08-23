@@ -3,68 +3,50 @@
 //! Boot startup — board initialisation, driver setup.
 //!
 //! Called from FlintMain() before the scheduler starts.
-
-#[cfg(feature = "soc-esp32")]
-use crate::board::active;
-#[cfg(feature = "soc-esp32")]
-use hal::bus::BusKind;
-
-/// Global UART console driver (used by log/panic).
-/// The console UART.
-///
-/// A `static mut` handing out `&`, which is sound only because of when it is
-/// written: once, during boot on the first core, before `join_scheduler` can
-/// bring a second one up. After that it is read-only and shared reads race
-/// with nothing.
-///
-/// What that argument does *not* cover is a second write. There is no path to
-/// one today; adding one -- reconfiguring the console at runtime, say -- needs
-/// this behind a lock first.
-#[cfg(feature = "soc-esp32")]
-pub static mut CONSOLE_UART: Option<esp32_uart::Esp32Uart> = None;
+//!
+//! The console is a board-owned device, not a kernel one. Each board brings up
+//! its own console (`board::console_init`) and hands the kernel a
+//! [`ByteStream`](hal::stream::ByteStream) to write to (`board::console`); the
+//! kernel calls both blind, so it names no UART driver and the seam is the same
+//! on every arch. The one board-owned device that lived in the kernel — a
+//! `static mut CONSOLE_UART: Esp32Uart` behind `cfg(soc-esp32)` — is gone.
 
 /// Initialise board-level hardware.
-/// Must be called before the scheduler starts.
+///
+/// Must be called before the scheduler starts, and — because log and panic go
+/// through the console — the console is the very first thing brought up, before
+/// any line is written.
 pub fn init() {
-    #[cfg(feature = "soc-esp32")]
-    {
-    // Find the UART console from the board manifest.
-    for bus in active::TARGET_BUSES {
-        if bus.kind == BusKind::Uart {
-            // SAFETY: `base_addr` comes from the board manifest, which is the
-            // single source of truth for peripheral addresses, and this is the
-            // only place a console UART is constructed.
-            let mut uart = unsafe { esp32_uart::Esp32Uart::new(bus.base_addr) };
-            let configured = uart.init(&bus.config);
-            unsafe {
-                CONSOLE_UART = Some(uart);
-            }
-            if configured.is_err() {
-                // The port keeps whatever framing the ROM left, which is
-                // usually 115200 8N1 and therefore still readable. Say so
-                // rather than printing a banner that implies the requested
-                // configuration was applied.
-                crate::debug::fault::raw_print(
-                    "[FLINT] WARNING: UART init rejected the board config; \
-                     console is running at the bootloader's settings\r\n",
-                );
-            }
-            // Print a boot banner.
-            console_write(b"FlintOS booting...\r\n");
-            break;
-        }
+    // Bring the console up first. `console_init` returns whether it came up at
+    // the board's configured framing; a `false` on a board that has a console
+    // means the port rejected the config and fell back to the bootloader's
+    // settings (usually 115200 8N1, so still readable) — say so via the raw
+    // path, which does not depend on the console being configured.
+    if !crate::board::console_init() {
+        crate::debug::fault::raw_print(
+            "[FLINT] WARNING: the console rejected the board config; \
+             it is running at the bootloader's settings\r\n",
+        );
     }
-    }
+    console_write(b"FlintOS booting...\r\n");
 }
 
-/// Write bytes to the console UART.
+/// Write bytes to the board's console, if it has one.
+///
+/// Loops until every byte is queued: the board hands out a non-blocking
+/// [`ByteStream`](hal::stream::ByteStream) whose `write` takes what fits and
+/// returns the count, so a log line longer than the FIFO spins here until it
+/// drains rather than being truncated. A board with no console drops the bytes.
 pub fn console_write(data: &[u8]) {
-    #[cfg(feature = "soc-esp32")]
-    unsafe {
-        if let Some(ref uart) = CONSOLE_UART {
-            uart.write_str(data);
+    if let Some(console) = crate::board::console() {
+        let mut written = 0;
+        while written < data.len() {
+            let n = console.write(&data[written..]);
+            if n == 0 {
+                core::hint::spin_loop();
+            } else {
+                written += n;
+            }
         }
     }
-    #[cfg(not(feature = "soc-esp32"))]
-    let _ = data;
 }

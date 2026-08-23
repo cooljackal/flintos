@@ -356,6 +356,85 @@ pub fn led() -> Option<RgbLed> {
     active::BOARD.rgb_led
 }
 
+// ── Console ──────────────────────────────────────────────────────────────────
+//
+// The console is a board-owned device, moved out of the kernel: the board
+// brings its own up (`console_init`, called first thing by `startup::init` on
+// the boot core) and hands the kernel a `&'static dyn ByteStream` to write to
+// (`console`). The kernel calls both blind and names no UART driver, so the
+// seam is identical on every arch.
+
+/// The board's console UART, an [`Esp32Uart`](esp32_uart::Esp32Uart) on UART0.
+#[cfg(feature = "esp32-drivers")]
+static CONSOLE: api::Once<esp32_uart::Esp32Uart> = api::Once::new();
+
+/// Bring up the console. Called once, first thing in `startup::init`.
+///
+/// Returns whether it came up at the board's configured framing. `false` means
+/// the port rejected the config and this fell back to the bootloader's settings
+/// (usually 115200 8N1, so still readable) — the kernel logs a warning on
+/// `false`. A board with no console driver returns `true` (nothing to warn
+/// about) and [`console`] returns `None`.
+#[cfg(feature = "esp32-drivers")]
+pub fn console_init() -> bool {
+    use hal::bus::{UartConfig, UartDataBits, UartParity, UartStopBits};
+    use soc_esp32::{UartCtrl, UartPort};
+
+    if CONSOLE.get().is_some() {
+        return true;
+    }
+    let pins = active::BOARD.console;
+    let port = UartPort {
+        ctrl: UartCtrl::Uart0,
+        cfg: UartConfig {
+            tx: pins.tx,
+            rx: pins.rx,
+            baud: pins.baud,
+            data_bits: UartDataBits::Bits8,
+            parity: UartParity::None,
+            stop_bits: UartStopBits::Stop1,
+        },
+    };
+    match esp32_uart::Esp32Uart::open(&port) {
+        Ok(uart) => {
+            CONSOLE.init(uart);
+            true
+        }
+        Err(_) => {
+            // The config was rejected. Keep the bootloader's framing so the
+            // console stays readable rather than going silent.
+            //
+            // SAFETY: this runs once on the boot core before the scheduler
+            // starts, UART0 is the console by convention, and nothing else
+            // constructs a driver on it.
+            let uart = unsafe { esp32_uart::Esp32Uart::new(UartCtrl::Uart0.base()) };
+            CONSOLE.init(uart);
+            false
+        }
+    }
+}
+
+/// The board's console as a [`ByteStream`](hal::stream::ByteStream), or `None`
+/// if this board has no console driver.
+#[cfg(feature = "esp32-drivers")]
+pub fn console() -> Option<&'static dyn hal::stream::ByteStream> {
+    CONSOLE.get().map(|uart| uart as &dyn hal::stream::ByteStream)
+}
+
+/// Bring up the console. No-op on a board with no console driver yet (the
+/// RP2040 board): the kernel calls this blind, so the seam works here too — it
+/// just has nothing to write to. Returns `true` (nothing to warn about).
+#[cfg(not(feature = "esp32-drivers"))]
+pub fn console_init() -> bool {
+    true
+}
+
+/// The board's console. `None` until this board grows a console driver.
+#[cfg(not(feature = "esp32-drivers"))]
+pub fn console() -> Option<&'static dyn hal::stream::ByteStream> {
+    None
+}
+
 // ── Manifest invariant tests ────────────────────────────────────────────────
 //
 // Run against whichever board is currently selected (`crate::active`), so

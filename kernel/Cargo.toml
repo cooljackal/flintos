@@ -23,20 +23,11 @@ kvstore = { path = "../lib/kvstore" }
 # registered as a global allocator.
 heap = { path = "../lib/heap" }
 
-# The console UART is the one driver the kernel itself names: `startup::init`
-# constructs it from the board manifest so log and panic have somewhere to go
-# before any application code runs.
-#
-# The other eight drivers are deliberately absent. The kernel used to depend on
-# all nine, but Rust dependencies are not transitive -- an application wanting
-# `bme280` declares it itself -- and the kernel re-exports none of them, so no
-# symbol could ever reach them. `--gc-sections` kept them out of the image, so
-# this costs image size nothing; what it cost was compiling 2,477 lines on
-# every kernel build to satisfy nothing.
-#
-# They are still checked for Xtensa, by `make check-all` walking the whole
-# workspace -- now called from the Xtensa CI job, because being pulled in here
-# is what used to give them that coverage.
+# The console UART is a board-owned device now (#118): the board brings it up
+# and hands the kernel a `&dyn ByteStream`, so `startup` names no UART driver
+# and the kernel no longer depends on `esp32-uart` for the console. The one
+# remaining use is the UART `ByteStream` self-test, so the dependency moved onto
+# the `self-test` feature below rather than the always-on `soc-esp32` one.
 esp32-uart = { path = "../drivers/physical/esp32/uart", optional = true }
 
 # Two more the kernel genuinely uses: `watchdog` feeds them and `rng` is
@@ -119,7 +110,6 @@ arch-armv6m = ["dep:arch-armv6m"]
 soc-esp32 = [
     "dep:board",
     "dep:soc-esp32",
-    "dep:esp32-uart",
     "dep:esp32-wdt",
     "dep:esp32-rng",
     "dep:esp32-flash",
@@ -176,4 +166,7 @@ flint-cpu-util = ["api/flint-cpu-util"]
 # unmasked and checks the result, so a trap that corrupts the interrupted
 # task's register windows fails the boot loudly. Off by default; turn it on
 # with `make build DEBUG=debug-level-1 EXTRA_FEATURES=self-test`.
-self-test = []
+# The UART `ByteStream` loopback self-test (`selftest_uart`) is the one kernel
+# use of `esp32-uart` left after the console moved to the board (#118), so the
+# dependency rides this feature now instead of `soc-esp32`.
+self-test = ["dep:esp32-uart"]

@@ -18,6 +18,12 @@
 #[cfg(any(feature = "soc-esp32", feature = "soc-rp2040"))]
 pub use board::active;
 
+/// The console the kernel writes log and panic output to. The board owns it now
+/// (`console_init` brings it up, `console` hands out a `&'static dyn ByteStream`
+/// or `None`); `startup` calls these blind, so the kernel names no UART driver.
+#[cfg(any(feature = "soc-esp32", feature = "soc-rp2040"))]
+pub use board::{console, console_init};
+
 /// SoC selected by the active ESP32 board family.
 #[cfg(feature = "soc-esp32")]
 pub type SelectedSoc = soc_esp32::Esp32;
