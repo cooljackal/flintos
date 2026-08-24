@@ -6,23 +6,22 @@
 // bare WROOM the Core2 is a fully-populated board — AXP192 PMIC, MPU6886 IMU,
 // ILI9342C LCD, FT6336U touch, all on shared internal buses behind a power
 // gate — so most of its pins are *not* free and this manifest declares no
-// self-test pads. It is deliberately minimal: UART0 console and GPIO only,
-// enough to boot and print. The devices and their power ordering come later
-// (see #133 for this phase, #135 for the AXP192 rail-ordering, #136 for the
-// IMU/LCD/touch showcase).
+// self-test pads. It carries the console UART, the internal I2C bus, and the
+// AXP192 PMIC with the rails it brings up at boot (#135). The remaining devices
+// come later (see #136 for the IMU/LCD/touch showcase).
 //
 // PSRAM: the Core2 carries 8 MB, which would reserve GPIO16/17 for its SPI
 // bus, but this tree never initialises PSRAM on any board, so 16/17 are left
 // unwired rather than reserved. Nothing here touches them.
 //
-// FLASH BRICKING HAZARD: the 16 MB flash part is the first non-GigaDevice
-// chip this tree meets, and `spi1::unlock` writes the status register with no
-// manufacturer check (QE at bit 9 — wrong for Macronix/ISSI). Do not run the
-// flash-erase self-test on this board until that path is gated on the JEDEC
-// ID (#134). This manifest declares no flash-touching device for that reason.
+// FLASH: the 16 MB part reports JEDEC vendor 0x20 (XMC/Micron), which
+// `spi1::unlock` does not recognise, so it refuses to clear the block-protect
+// bit rather than risk a wrong QE write — verified on hardware, no brick
+// (#134, closed). Flash writes are therefore unavailable here until vendor 0x20
+// is supported (#137); this manifest declares no flash-touching device.
 
 use hal::bus::*;
-use soc_esp32::addr;
+use soc_esp32::{addr, I2cCtrl, I2cPort};
 
 pub const BOARD_NAME: &str = "M5Stack Core2";
 
@@ -51,11 +50,19 @@ pub const PHY_MAX_TX_POWER_DBM: i32 = 20;
 pub const TICK_PERIOD_US: u32 = 1000;
 pub const DMA_POOL_BYTES: usize = 8192;
 
-/// Physical bus drivers to instantiate at boot.
-///
-/// Phase 1 declares only the console UART. The Core2's internal I2C bus
-/// (AXP192 at 0x34, MPU6886 at 0x68, FT6336U at 0x38, on GPIO21/22) waits for
-/// the AXP192 driver, which owns the rail those devices sit behind (#135).
+/// The Core2's internal I2C bus: SDA GPIO21, SCL GPIO22. Shared by the AXP192
+/// PMIC (0x34), the MPU6886 IMU (0x68) and the FT6336U touch (0x38). Fast-mode
+/// 400 kHz. The PMIC and (later, #136) the IMU must both go through one
+/// controller — see [`crate::pmic_bus`].
+const INTERNAL_I2C_SDA: u8 = 21;
+const INTERNAL_I2C_SCL: u8 = 22;
+const INTERNAL_I2C_PORT: I2cPort = I2cPort {
+    ctrl: I2cCtrl::I2c0,
+    cfg: I2cConfig { sda: INTERNAL_I2C_SDA, scl: INTERNAL_I2C_SCL, speed: BusSpeed::Fast400k },
+};
+
+/// Physical bus drivers to instantiate at boot: the console UART and the
+/// internal I2C bus the PMIC lives on.
 pub const TARGET_BUSES: &[BusMapping] = &[
     BusMapping {
         name: "uart0",
@@ -66,6 +73,28 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         dma_pool_bytes: 512,
         config: BusConfig::uart_8n1(1, 3, 115200),
     },
+    BusMapping {
+        name: "i2c0",
+        kind: BusKind::I2c,
+        base_addr: addr::I2C0_BASE,
+        irq: addr::IRQ_I2C0,
+        dma_capable: false,
+        dma_pool_bytes: 0,
+        config: BusConfig::i2c(INTERNAL_I2C_SDA, INTERNAL_I2C_SCL, BusSpeed::Fast400k),
+    },
+];
+
+/// The AXP192 PMIC and the rails it brings up at boot.
+///
+/// Rail assignments are the M5Core2's (from the M5 schematic / docs), *not*
+/// AXP192 defaults: DCDC1 is the ESP32's own 3.3 V system rail — **deliberately
+/// absent from the list**, as `power_init` refuses to switch it. Order matters:
+/// LDO2 (peripheral 3.3 V — SD card and LCD logic) comes up before DCDC3 (the
+/// 2.8 V LCD backlight) that sits on top of it. LDO3 (vibration motor) is left
+/// as the bootloader had it.
+pub const PMIC_RAILS: &[crate::RailSetup] = &[
+    crate::RailSetup { rail: axp192::Rail::Ldo2, millivolts: 3300 },
+    crate::RailSetup { rail: axp192::Rail::Dcdc3, millivolts: 2800 },
 ];
 
 /// No logical devices yet — the Core2's sensors and display sit behind the
@@ -86,6 +115,11 @@ pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[
 pub const BOARD: crate::Board = crate::Board {
     name: BOARD_NAME,
     imu: None,
+    pmic: Some(crate::PmicAttachment {
+        port: INTERNAL_I2C_PORT,
+        addr: axp192::ADDR,
+        rails: PMIC_RAILS,
+    }),
     rgb_led: None,
     selftest: crate::SelftestPads {
         scratch: LOOPBACK_SCRATCH_GPIO,

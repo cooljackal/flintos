@@ -234,6 +234,40 @@ pub struct I2cAttachment {
     pub addr: u8,
 }
 
+/// One rail to bring up at boot: which [`Rail`](axp192::Rail) and at what
+/// voltage. A board's [`PmicAttachment::rails`] is an ordered list of these.
+///
+/// The order is the inter-rail ordering the PMIC introduces — a peripheral rail
+/// up before the rail that depends on it. `power_init` walks the list in order,
+/// setting each rail's voltage then enabling it.
+#[cfg(feature = "esp32-drivers")]
+#[derive(Copy, Clone, Debug)]
+pub struct RailSetup {
+    pub rail: axp192::Rail,
+    pub millivolts: u16,
+}
+
+/// A power-management IC wired onto the board: which controller and pins reach
+/// it, its address, and the ordered list of rails to bring up at boot.
+///
+/// This is the manifest fact that finally gives the board a power *ordering* to
+/// express — which rail must be up before the peripherals that sit on it. The
+/// system rail (DCDC1 on the Core2, powering the ESP32 itself) must never
+/// appear in `rails`; `power_init` refuses it rather than brown the CPU out.
+#[cfg(any(
+    feature = "board-esp32-wrover",
+    feature = "board-esp32-devkitc",
+    feature = "board-m5-atom-lite",
+    feature = "board-m5-atom-matrix",
+    feature = "board-m5-core2",
+))]
+#[derive(Copy, Clone, Debug)]
+pub struct PmicAttachment {
+    pub port: soc_esp32::I2cPort,
+    pub addr: u8,
+    pub rails: &'static [RailSetup],
+}
+
 /// Everything an application asks a board manifest about, as one value.
 #[derive(Copy, Clone, Debug)]
 pub struct Board {
@@ -248,6 +282,16 @@ pub struct Board {
         feature = "board-m5-core2",
     ))]
     pub imu: Option<I2cAttachment>,
+    /// The onboard PMIC and the rails it brings up at boot, if the board has
+    /// one. `None` on a board wired straight to a regulator.
+    #[cfg(any(
+        feature = "board-esp32-wrover",
+        feature = "board-esp32-devkitc",
+        feature = "board-m5-atom-lite",
+        feature = "board-m5-atom-matrix",
+        feature = "board-m5-core2",
+    ))]
+    pub pmic: Option<PmicAttachment>,
     /// The onboard addressable RGB LED or panel, if any.
     pub rgb_led: Option<RgbLed>,
     /// Free pads for the self-tests and porting examples.
@@ -295,6 +339,89 @@ pub fn imu_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32
     IMU_BUS.get_or_try_init(|| {
         Ok(i2c_bus::I2cController::new(esp32_i2c::Esp32I2c::open(&imu.port)?))
     })
+}
+
+// ── Power management (PMIC) ──────────────────────────────────────────────────
+//
+// The AXP192, re-exported so an application names its `Rail`/`Axp192` types
+// through `board` without depending on the driver crate — the same way `rmt`
+// and the LEDC helpers are re-exported.
+
+/// The AXP192 PMIC driver, re-exported for applications that switch a rail at
+/// runtime (dim the backlight, read the battery). The board brings the rails up
+/// at boot; this is only for an app that wants to change one afterwards.
+#[cfg(feature = "esp32-drivers")]
+pub use axp192;
+
+/// The PMIC's I2C bus: opens the controller on the board's PMIC pins and caches
+/// it. `Error::Other` if this board declares no PMIC (`BOARD.pmic` is `None`).
+///
+/// Returns the [`I2cController`](i2c_bus::I2cController); take a device with
+/// `.device(axp192::ADDR)` and wrap it in [`axp192::Axp192`]. On a board where
+/// the PMIC shares its bus with another device (the Core2's IMU sits on the
+/// same I2C0), both must go through this one controller — a second `open` of
+/// the same port returns `BusError::Busy`.
+#[cfg(feature = "esp32-drivers")]
+pub fn pmic_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32I2c>> {
+    static PMIC_BUS: api::Once<i2c_bus::I2cController<esp32_i2c::Esp32I2c>> = api::Once::new();
+    if let Some(bus) = PMIC_BUS.get() {
+        return Ok(bus);
+    }
+    let pmic = active::BOARD
+        .pmic
+        .ok_or(hal::Error::Other("this board declares no PMIC"))?;
+    PMIC_BUS.get_or_try_init(|| {
+        Ok(i2c_bus::I2cController::new(esp32_i2c::Esp32I2c::open(&pmic.port)?))
+    })
+}
+
+/// Bring the board's power rails up, in the manifest's order. Called once by
+/// `startup::init`, after the console and before any rail-dependent device.
+///
+/// Returns `true` if every declared rail came up (or the board has no PMIC —
+/// nothing to do). A `false` means at least one rail write failed, or the
+/// manifest listed the system rail (DCDC1), which this refuses to touch: moving
+/// it under the running CPU browns the board out, so a board that lists it is a
+/// manifest bug caught here rather than a dead board.
+///
+/// Also switches on the battery ADC so a later [`pmic_bus`] caller can read
+/// charge state; a failure there is not fatal to bring-up and is ignored.
+#[cfg(feature = "esp32-drivers")]
+pub fn power_init() -> bool {
+    let Some(pmic) = active::BOARD.pmic else {
+        return true;
+    };
+    let ctrl = match pmic_bus() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let device = ctrl.device(pmic.addr);
+    let axp = axp192::Axp192::new(&device);
+
+    let mut ok = true;
+    for setup in pmic.rails {
+        if setup.rail == axp192::Rail::Dcdc1 {
+            // The system rail. A board must never ask us to switch it.
+            ok = false;
+            continue;
+        }
+        if axp.set_rail_millivolts(setup.rail, setup.millivolts).is_err() {
+            ok = false;
+            continue;
+        }
+        if axp.set_rail_enabled(setup.rail, true).is_err() {
+            ok = false;
+        }
+    }
+    let _ = axp.enable_battery_adc();
+    ok
+}
+
+/// Bring the board's power rails up. No-op on a board with no PMIC driver (the
+/// RP2040 board): the kernel calls this blind, so the seam works here too.
+#[cfg(not(feature = "esp32-drivers"))]
+pub fn power_init() -> bool {
+    true
 }
 
 /// The free pads for the loopback bus/stream porting examples, or `None` if

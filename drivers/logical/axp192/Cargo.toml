@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "axp192"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "X-Powers AXP192 PMIC — Layer 3 logical driver"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+api = { path = "../../../api" }

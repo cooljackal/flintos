@@ -149,6 +149,19 @@ pub extern "C" fn FlintMain() -> ! {
     // interrupts are enabled.
     install_idle_task();
 
+    // Step 3b: bring the board's power rails up, before the application touches
+    // any rail-dependent device. This is *after* `install_idle_task` on purpose:
+    // a board with a PMIC reaches it over I2C, whose bus wraps the controller in
+    // a kernel mutex, and a mutex needs a current task to record as its holder —
+    // which only exists once the idle task is installed. It is still before the
+    // app and before interrupts unmask (step 5); the I2C driver is polled, so it
+    // does not need them. A board with no PMIC is a no-op. A `false` means a rail
+    // write failed — say so and keep booting, since the CPU and console sit on
+    // the system rail this never switches.
+    if !board::power_init() {
+        debug::fault::raw_print("[FLINT] WARNING: a board power rail failed to come up\r\n");
+    }
+
     // Step 4: hand over to the application, which spawns its own tasks.
     unsafe { flint_app_main() };
 

@@ -144,7 +144,15 @@ ALLOWED = {
     # in a bus -- so it may name the physical and bus drivers, plus hal, api,
     # the soc crates and the libs. It may NOT name `kernel`: a board is a pin
     # map, not the scheduler that runs on it.
-    "board":            {"hal", "api"} | SOCS | PHYSICAL | BUS | LIBS,
+    #
+    # `axp192` is the one Layer-3 logical driver this tier may name, for the same
+    # reason it constructs its console UART: a PMIC is board power *infrastructure*
+    # that must come up at boot, before any app runs, not an app resource an app
+    # reaches for when it wants it (a sensor is the latter, and the board still
+    # may not name those -- `imu_bus` hands back a controller and the app builds
+    # the driver). Named explicitly, exactly like `smoltcp` for radio: a second
+    # logical driver here trips the check and asks why.
+    "board":            {"hal", "api", "axp192"} | SOCS | PHYSICAL | BUS | LIBS,
     # An application composes drivers the board already opened; it never opens a
     # peripheral itself. So it may name api and board (the ready devices),
     # kernel (for `flint_app!`), the Layer-2 bus and Layer-3 logical drivers,
@@ -162,7 +170,7 @@ DESCRIBE = {
     "drivers/logical":  "api and lib/ crates",
     "lib":              "other lib/ crates only",
     "radio":            "hal, api, kernel, smoltcp, soc/ and lib/ crates",
-    "board":            "hal, api, soc/, drivers/physical, drivers/bus and lib/ crates",
+    "board":            "hal, api, soc/, drivers/physical, drivers/bus, lib/ crates and the axp192 PMIC driver",
     "apps/examples":    "hal, api, board, kernel, drivers/bus, drivers/logical and lib/ crates",
 }
 

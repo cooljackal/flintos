@@ -24,6 +24,12 @@ pub use board::active;
 #[cfg(any(feature = "soc-esp32", feature = "soc-rp2040"))]
 pub use board::{console, console_init};
 
+/// Bring the board's power rails up. The board owns its PMIC; `startup` calls
+/// this blind after the console, so the kernel names no PMIC driver and a board
+/// without one is a no-op. See `board::power_init`.
+#[cfg(any(feature = "soc-esp32", feature = "soc-rp2040"))]
+pub use board::power_init;
+
 /// SoC selected by the active ESP32 board family.
 #[cfg(feature = "soc-esp32")]
 pub type SelectedSoc = soc_esp32::Esp32;

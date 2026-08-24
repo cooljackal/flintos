@@ -29,6 +29,11 @@ esp32-gpio = { path = "../drivers/physical/esp32/gpio", optional = true }
 i2c-bus = { path = "../drivers/bus/i2c-bus", optional = true }
 spi-bus = { path = "../drivers/bus/spi-bus", optional = true }
 
+# The AXP192 PMIC (Layer 3), so a board with one can bring its power rails up in
+# order at boot (`power_init`) and hand an application a handle to switch them.
+# Optional, pulled in by the ESP32 board features alongside the buses.
+axp192 = { path = "../drivers/logical/axp192", optional = true }
+
 # Panel geometry, so a board with an LED panel can declare its shape the same
 # way it declares a pin. `led-matrix` is a portable library, not a driver: it
 # touches no register and its output is an integer.
@@ -49,7 +54,7 @@ led-matrix = { path = "../lib/led-matrix" }
 default = []
 # The ESP32 boards pull in the drivers their device accessors construct. Named
 # once as `esp32-drivers` so a new ESP32 board is still a one-line feature.
-esp32-drivers = ["dep:api", "dep:esp32-i2c", "dep:esp32-spi", "dep:esp32-uart", "dep:esp32-ledc", "dep:esp32-rmt", "dep:esp32-gpio", "dep:i2c-bus", "dep:spi-bus"]
+esp32-drivers = ["dep:api", "dep:esp32-i2c", "dep:esp32-spi", "dep:esp32-uart", "dep:esp32-ledc", "dep:esp32-rmt", "dep:esp32-gpio", "dep:i2c-bus", "dep:spi-bus", "dep:axp192"]
 board-esp32-wrover = ["dep:soc-esp32", "esp32-drivers"]
 board-esp32-devkitc = ["dep:soc-esp32", "esp32-drivers"]
 board-m5-atom-lite = ["dep:soc-esp32", "esp32-drivers"]

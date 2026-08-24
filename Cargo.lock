@@ -46,6 +46,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "axp192"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
+
+[[package]]
+name = "backlight"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "axp192",
+ "board",
+ "build",
+ "hal",
+ "i2c-bus",
+ "kernel",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -83,6 +103,7 @@ name = "board"
 version = "0.1.0"
 dependencies = [
  "api",
+ "axp192",
  "esp32-gpio",
  "esp32-i2c",
  "esp32-ledc",

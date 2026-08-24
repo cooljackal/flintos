@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "backlight"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Toggles the M5Core2 LCD backlight rail through the AXP192 PMIC"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+hal = { path = "../../../hal" }
+
+# The board owns power bring-up: `board::power_init()` has already set the rails
+# at boot, and `board::pmic_bus()` hands back the shared I2C controller. This app
+# names the AXP192 driver (re-exported through `board`) to switch one rail at
+# runtime -- the backlight -- and read the battery.
+#
+#   board       opens I2C0 on the PMIC pins and applies the boot rail list
+#   i2c-bus     Layer 2   addressing and framing
+#   axp192      Layer 3   the PMIC part
+board = { path = "../../../board" }
+i2c-bus = { path = "../../../drivers/bus/i2c-bus" }
+axp192 = { path = "../../../drivers/logical/axp192" }
+
+[build-dependencies]
+build = { path = "../../../tools/build" }
+
+[features]
+# Board and debug level are chosen on the command line and passed to the kernel
+# (`--features kernel/board-m5-core2,kernel/debug-level-2`). `backlight` needs a
+# board with a PMIC (only the Core2 today); a `const` assert in `main.rs` keyed
+# on `BOARD.pmic` catches building it elsewhere.
+default = ["kernel/debug-level-1"]

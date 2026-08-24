@@ -21,6 +21,7 @@ pub const RGB_LED_LAYOUT: Option<led_matrix::Layout> = None;
 pub const BOARD: crate::Board = crate::Board {
     name: BOARD_NAME,
     imu: None,
+    pmic: None,
     rgb_led: Some(crate::RgbLed { gpio: RGB_LED_GPIO, count: RGB_LED_COUNT, layout: RGB_LED_LAYOUT }),
     selftest: SELFTEST_PADS,
     console: CONSOLE,

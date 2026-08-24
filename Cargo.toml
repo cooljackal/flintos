@@ -81,6 +81,7 @@ members = [
     "drivers/physical/esp32/_template",
     "drivers/bus/spi-bus",
     "drivers/bus/i2c-bus",
+    "drivers/logical/axp192",
     "drivers/logical/bme280",
     "drivers/logical/bmi270",
     "drivers/logical/mpu6886",
