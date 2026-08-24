@@ -774,4 +774,3 @@ help: ## Show this help message
 	@printf '\n  Quick start:   make env  ->  make check  ->  make build\n'
 	@printf '  Host tests:    make test-host    (no hardware; runs in CI)\n'
 	@printf '  Board tests:   make test-target BOARD=board-m5-atom-matrix PORT=COM5\n\n'
-
