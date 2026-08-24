@@ -55,6 +55,9 @@ pub mod m5_atom_lite;
 #[cfg(feature = "board-m5-atom-matrix")]
 pub mod m5_atom_matrix;
 
+#[cfg(feature = "board-m5-core2")]
+pub mod m5_core2;
+
 #[cfg(feature = "board-wio-rp2040-mini")]
 pub mod wio_rp2040_mini;
 
@@ -73,6 +76,7 @@ mod m5_atom_common;
         feature = "board-esp32-devkitc",
         feature = "board-m5-atom-lite",
         feature = "board-m5-atom-matrix",
+        feature = "board-m5-core2",
         feature = "board-wio-rp2040-mini",
     )),
     not(feature = "board-m5-atom")
@@ -90,6 +94,7 @@ compile_error!(
      	board-esp32-devkitc     ESP32-DevKitC / WROOM-32   (verified on hardware)
      	board-m5-atom-matrix    M5Stack Atom Matrix        (verified on hardware)
      	board-m5-atom-lite      M5Stack Atom Lite          (verified on hardware)
+     	board-m5-core2          M5Stack Core2              (bring-up in progress)
      	board-esp32-wrover      ESP32-WROVER               (never flashed)
      	board-wio-rp2040-mini   Seeed Wio RP2040 Mini      (connected; first light pending)"
 );
@@ -102,6 +107,7 @@ const SELECTED: usize = cfg!(feature = "board-esp32-wrover") as usize
     + cfg!(feature = "board-esp32-devkitc") as usize
     + cfg!(feature = "board-m5-atom-lite") as usize
     + cfg!(feature = "board-m5-atom-matrix") as usize
+    + cfg!(feature = "board-m5-core2") as usize
     + cfg!(feature = "board-wio-rp2040-mini") as usize;
 
 const _: () = assert!(
@@ -111,7 +117,7 @@ const _: () = assert!(
      the wrong pin/IRQ/bus map. Build with \
      `--no-default-features --features <one-board>`, one of: \
      board-esp32-devkitc, board-m5-atom-matrix, board-m5-atom-lite, \
-     board-esp32-wrover, board-wio-rp2040-mini."
+     board-m5-core2, board-esp32-wrover, board-wio-rp2040-mini."
 );
 
 // The name the Atom shipped under before the Lite and the Matrix were told
@@ -143,6 +149,9 @@ pub use m5_atom_lite as active;
 
 #[cfg(feature = "board-m5-atom-matrix")]
 pub use m5_atom_matrix as active;
+
+#[cfg(feature = "board-m5-core2")]
+pub use m5_core2 as active;
 
 #[cfg(feature = "board-wio-rp2040-mini")]
 pub use wio_rp2040_mini as active;
@@ -217,6 +226,7 @@ pub struct SelftestPads {
     feature = "board-esp32-devkitc",
     feature = "board-m5-atom-lite",
     feature = "board-m5-atom-matrix",
+    feature = "board-m5-core2",
 ))]
 #[derive(Copy, Clone, Debug)]
 pub struct I2cAttachment {
@@ -235,6 +245,7 @@ pub struct Board {
         feature = "board-esp32-devkitc",
         feature = "board-m5-atom-lite",
         feature = "board-m5-atom-matrix",
+        feature = "board-m5-core2",
     ))]
     pub imu: Option<I2cAttachment>,
     /// The onboard addressable RGB LED or panel, if any.
@@ -251,6 +262,7 @@ pub struct Board {
     feature = "board-esp32-devkitc",
     feature = "board-m5-atom-lite",
     feature = "board-m5-atom-matrix",
+    feature = "board-m5-core2",
     feature = "board-wio-rp2040-mini",
 ))]
 pub use active::BOARD;

@@ -340,6 +340,7 @@ No board selected, and there is no default.
     board-wio-rp2040-mini   Seeed Wio RP2040 Mini      bring-up in progress
     board-m5-atom-matrix    M5Stack Atom Matrix        verified on hardware
     board-m5-atom-lite      M5Stack Atom Lite          verified on hardware
+    board-m5-core2          M5Stack Core2              bring-up in progress
     board-esp32-wrover      ESP32-WROVER               never flashed
 
 endef
@@ -625,7 +626,7 @@ test-host: test-boards ## Run host-side unit tests (every board manifest include
 # for the board that is selected, so testing the default board alone leaves
 # every other manifest unchecked -- which is how a pin or a panel layout stays
 # wrong until someone flashes it.
-BOARDS := board-esp32-wrover board-esp32-devkitc board-m5-atom-lite board-m5-atom-matrix
+BOARDS := board-esp32-wrover board-esp32-devkitc board-m5-atom-lite board-m5-atom-matrix board-m5-core2
 
 .PHONY: test-boards
 test-boards: ## Run each board manifest's invariant tests, one board at a time

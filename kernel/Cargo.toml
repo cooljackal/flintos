@@ -134,6 +134,7 @@ board-esp32-wrover = ["arch-xtensa", "soc-esp32", "board/board-esp32-wrover"]
 board-esp32-devkitc = ["arch-xtensa", "soc-esp32", "board/board-esp32-devkitc"]
 board-m5-atom-lite = ["arch-xtensa", "soc-esp32", "board/board-m5-atom-lite"]
 board-m5-atom-matrix = ["arch-xtensa", "soc-esp32", "board/board-m5-atom-matrix"]
+board-m5-core2 = ["arch-xtensa", "soc-esp32", "board/board-m5-core2"]
 board-wio-rp2040-mini = ["arch-armv6m", "soc-rp2040", "board/board-wio-rp2040-mini"]
 # Retired; forwards so `board` can print which of the two to use.
 board-m5-atom = ["board/board-m5-atom"]

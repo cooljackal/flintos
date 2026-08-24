@@ -117,6 +117,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 | ESP32-DevKitC / WROOM-32 | Xtensa LX6 / ESP32 | ✅ verified — reference board; rev 1 & rev 3, full self-test suite + Wi-Fi/IP stack |
 | M5Stack Atom Matrix | Xtensa LX6 / ESP32-PICO | ✅ verified — LED panel, IMU, ADC |
 | M5Stack Atom Lite | Xtensa LX6 / ESP32-PICO | ✅ verified — one LED |
+| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — manifest + first boot; AXP192/IMU/LCD pending |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
 | ESP32-WROVER | Xtensa LX6 / ESP32 | 🟡 manifest written, never flashed |
 
@@ -155,7 +156,8 @@ make flash APP=smp   BOARD=board-m5-atom-matrix    # starts the second core
 
 `DEBUG` defaults to `debug-level-1` (dev). `debug-level-0` compiles logging out
 entirely. Board features: `board-esp32-devkitc`, `board-m5-atom-lite`,
-`board-m5-atom-matrix`, `board-wio-rp2040-mini`, `board-esp32-wrover`.
+`board-m5-atom-matrix`, `board-m5-core2`, `board-wio-rp2040-mini`,
+`board-esp32-wrover`.
 
 ---
 

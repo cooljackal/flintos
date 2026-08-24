@@ -54,6 +54,7 @@ board-esp32-wrover = ["dep:soc-esp32", "esp32-drivers"]
 board-esp32-devkitc = ["dep:soc-esp32", "esp32-drivers"]
 board-m5-atom-lite = ["dep:soc-esp32", "esp32-drivers"]
 board-m5-atom-matrix = ["dep:soc-esp32", "esp32-drivers"]
+board-m5-core2 = ["dep:soc-esp32", "esp32-drivers"]
 board-wio-rp2040-mini = ["dep:soc-rp2040"]
 
 # Retired. Accepted only so `src/lib.rs` can explain which of the two Atoms to
