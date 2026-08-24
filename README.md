@@ -114,7 +114,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 
 | Board | Arch / SoC | Status |
 |---|---|---|
-| ESP32-DevKitC / WROOM-32 | Xtensa LX6 / ESP32 | ✅ verified — the reference board |
+| ESP32-DevKitC / WROOM-32 | Xtensa LX6 / ESP32 | ✅ verified — reference board; rev 1 & rev 3, full self-test suite + Wi-Fi/IP stack |
 | M5Stack Atom Matrix | Xtensa LX6 / ESP32-PICO | ✅ verified — LED panel, IMU, ADC |
 | M5Stack Atom Lite | Xtensa LX6 / ESP32-PICO | ✅ verified — one LED |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
