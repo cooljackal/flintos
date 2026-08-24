@@ -55,8 +55,8 @@ MEMORY
    *   0x3FFB0000  dram_seg      64K   .data + .bss + kernel/boot stack
    *   0x3FFC0000  task_stacks   96K   per-task stacks
    *   0x3FFD8000  panic_region   4K   postmortem snapshot
-   *   0x3FFD9000  dma_pool       8K   DMA-safe buffers
-   *   0x3FFDB000  (4.5K spare up to the 0x3FFDC200 bound)
+   *   0x3FFD9000  dma_pool      12K   DMA-safe buffers (#140: was 8K)
+   *   0x3FFDC000  (0.5K spare up to the 0x3FFDC200 bound)
    *
    * That is the map for a build with no Bluetooth, which is every build today
    * and every Wi-Fi-only build — Wi-Fi costs no static DRAM. A `radio-ble` or
@@ -97,7 +97,7 @@ MEMORY
   dram_seg    (RW) : ORIGIN = 0x3FFB0000, LENGTH = 0x10000    /*  64K .data + .bss + kernel/boot stack */
   task_stacks (RW) : ORIGIN = 0x3FFC0000, LENGTH = 0x18000    /*  96K per-task stacks */
   panic_region(RW) : ORIGIN = 0x3FFD8000, LENGTH = 0x1000     /*   4K survives soft reset */
-  dma_pool    (RW) : ORIGIN = 0x3FFD9000, LENGTH = 0x2000     /*   8K DMA-safe buffers */
+  dma_pool    (RW) : ORIGIN = 0x3FFD9000, LENGTH = 0x3000     /*  12K DMA-safe buffers */
   /* @FLINT-DRAM-MAP-END */
 }
 

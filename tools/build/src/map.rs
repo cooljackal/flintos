@@ -64,6 +64,19 @@ pub const SRAM2_END: u32 = 0x3FFE_0000;
 /// `CONFIG_BTDM_RESERVE_DRAM`, the controller's own static DRAM.
 pub const BTDM_RESERVE_DRAM: u32 = 0xDB5C;
 
+/// DMA pool size, radio-keyed. The pool is the last region, so it grows into
+/// whatever slack is left under [`SAFE_END`] without moving anything below it.
+///
+/// A Wi-Fi-only build has ~4.5 KiB of that slack, so the pool takes 12 KiB —
+/// enough for the display to DMA in 4 KiB chunks (#140) rather than the 2 KiB
+/// the old fixed 8 KiB forced. A Bluetooth build has ~0.5 KiB of slack once the
+/// controller's reservation and the trimmed stacks are placed, so it keeps
+/// 8 KiB; growing it there would have to come out of `task_stacks`. `problem()`
+/// validates both against the bound regardless — this is a tuned size, not a
+/// trusted one.
+pub const DMA_POOL_WIFI_ONLY: u32 = 0x3000; // 12 KiB
+pub const DMA_POOL_WITH_BT: u32 = 0x2000; // 8 KiB
+
 /// What we actually reserve: `BTDM_RESERVE_DRAM` rounded up to a clean
 /// boundary, so every following origin stays readable in a hex dump.
 pub const BT_RESERVE: u32 = 0xE000;
@@ -108,6 +121,7 @@ impl DramMap {
         } else {
             (0x10000, 0x18000) // 64 KiB, 96 KiB
         };
+        let dma_len = if bluetooth { DMA_POOL_WITH_BT } else { DMA_POOL_WIFI_ONLY };
 
         let mut at = DRAM_BASE + bt_reserve;
         let mut place = |name, length, note| {
@@ -122,7 +136,7 @@ impl DramMap {
                 place("dram_seg", dram_len, ".data + .bss + kernel/boot stack"),
                 place("task_stacks", stacks_len, "per-task stacks"),
                 place("panic_region", 0x1000, "survives soft reset"),
-                place("dma_pool", 0x2000, "DMA-safe buffers"),
+                place("dma_pool", dma_len, "DMA-safe buffers"),
             ],
         }
     }
@@ -205,18 +219,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_map_is_unchanged() {
-        // The literal addresses FlintOS has always used. This test is the
-        // promise that turning the map into generated text did not move a
-        // single byte for anyone not using Bluetooth -- which is every build
-        // that exists today, and every Wi-Fi-only build that ever will.
+    fn the_default_map_keeps_every_origin() {
+        // The literal ORIGINs FlintOS has always used. The promise this test
+        // guards is that no region below `dma_pool` ever moves for a build
+        // without Bluetooth. `dma_pool` is last, so #140 growing it 8K -> 12K
+        // extends only its own end (checked against `SAFE_END` by `problem`)
+        // and shifts nothing beneath it.
         let m = DramMap::new(false);
         assert_eq!(m.bt_reserve, 0);
         let want = [
             ("dram_seg", 0x3FFB_0000u32, 0x10000u32),
             ("task_stacks", 0x3FFC_0000, 0x18000),
             ("panic_region", 0x3FFD_8000, 0x1000),
-            ("dma_pool", 0x3FFD_9000, 0x2000),
+            ("dma_pool", 0x3FFD_9000, DMA_POOL_WIFI_ONLY),
         ];
         for (r, (name, origin, length)) in m.regions.iter().zip(want) {
             assert_eq!(r.name, name);

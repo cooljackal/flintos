@@ -48,10 +48,13 @@ pub const MCPWM_SELFTEST_GPIOS: Option<[u8; 3]> = None;
 pub const PHY_MAX_TX_POWER_DBM: i32 = 20;
 
 pub const TICK_PERIOD_US: u32 = 1000;
-/// The DMA pool is fixed at 8 KiB by the build's memory map (`tools/build`), not
-/// this constant; it is kept as a manifest fact. The display's DMA double buffer
-/// (two 2 KiB chunks) plus its receive buffer fit inside that 8 KiB.
-pub const DMA_POOL_BYTES: usize = 8192;
+/// The DMA pool's size is set by the build's memory map (`tools/build/src/map.rs`,
+/// radio-keyed against the ROM bound), *not* by this constant, and the runtime
+/// reads the real size from the linker symbols the map emits. This value is a
+/// manifest fact only — it mirrors the Wi-Fi-only pool the map places (12 KiB
+/// on this board, #140). The display's DMA chunk follows the pool at runtime
+/// rather than a fixed size, so it uses whatever the map leaves it.
+pub const DMA_POOL_BYTES: usize = 12288;
 
 /// The LCD's SPI bus and control pins. ILI9342C over SPI3 (VSPI): MOSI 23 and
 /// SCK 18 are VSPI-native pads; MISO 38 is unused by the write-only panel and

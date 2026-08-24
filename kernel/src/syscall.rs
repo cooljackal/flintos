@@ -217,6 +217,12 @@ pub fn _flint_sys_dma_alloc(size: u32) -> Result<hal::DmaHandle, hal::DmaError> 
     crate::dma_broker::alloc(size)
 }
 
+/// Bytes still free in the DMA pool. Backs [`api::dma::available`].
+#[no_mangle]
+pub fn _flint_sys_dma_available() -> u32 {
+    crate::dma_broker::available()
+}
+
 /// Begin a transfer over an owned buffer and mint its completion id. Backs
 /// [`api::dma::begin`].
 #[no_mangle]

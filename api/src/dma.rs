@@ -23,6 +23,19 @@ pub fn alloc(size: u32) -> Result<DmaHandle, DmaError> {
     unsafe { _flint_sys_dma_alloc(size) }
 }
 
+/// Bytes still free in the DMA pool.
+///
+/// The pool is a bump allocator with no free, so this only falls over a run.
+/// A driver that sizes a buffer to what the pool can spare — rather than to a
+/// constant that has to be right for every board's pool at once — reads this
+/// before [`alloc`]. The display's DMA chunk follows the pool this way.
+pub fn available() -> u32 {
+    extern "Rust" {
+        fn _flint_sys_dma_available() -> u32;
+    }
+    unsafe { _flint_sys_dma_available() }
+}
+
 /// Begin a transfer over `handle` and get the id its completion will carry.
 ///
 /// Only the task that allocated the buffer may start a transfer over it;

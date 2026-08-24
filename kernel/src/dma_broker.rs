@@ -88,6 +88,16 @@ pub fn alloc(size: u32) -> Result<DmaHandle, DmaError> {
     })
 }
 
+/// Bytes still free in the pool.
+///
+/// The bump allocator never frees, so this only falls. A caller that wants to
+/// size a buffer to what the pool can actually spare — the display's DMA
+/// chunk, which follows the pool rather than a hardcoded constant — reads this
+/// once before allocating.
+pub fn available() -> u32 {
+    crate::scheduler::with(|_| pool_size().saturating_sub(unsafe { DMA_OFFSET }))
+}
+
 /// Round `size` up to the next multiple of 4, or `None` if doing so would
 /// overflow `u32` (i.e. `size` is within 3 of `u32::MAX`).
 fn checked_align_up4(size: u32) -> Option<u32> {

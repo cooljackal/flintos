@@ -33,13 +33,16 @@ use api::dma::{self, DmaHandle};
 use esp32_gpio::{Esp32Gpio, PinLevel, PinMode};
 use esp32_spi::Esp32Spi;
 
-/// Bytes per DMA chunk. 2 KiB = 1024 RGB565 pixels. The interface's DMA
-/// footprint is two of these (the double buffer) plus one throwaway receive
-/// buffer the full-duplex engine needs — 6 KiB, inside the build's fixed 8 KiB
-/// DMA pool. Throughput is DMA-clock-bound, so a larger chunk buys almost
-/// nothing above ~1 KiB; the pool ceiling sets this, not performance.
-const CHUNK_BYTES: usize = 2048;
-const CHUNK_PX: usize = CHUNK_BYTES / 2;
+/// Most a single DMA chunk is allowed to grow to. Throughput is DMA-clock-
+/// bound, so a larger chunk than this buys almost nothing — it only reduces the
+/// count of per-transaction gaps, which flattens out quickly. Capping the
+/// appetite here means a board with a large pool leaves the rest of it for
+/// other DMA users rather than the display swallowing all of it.
+const MAX_CHUNK_BYTES: u32 = 4096;
+/// Smallest chunk worth running. Below this the per-transaction overhead
+/// dominates; if the pool cannot spare three of these the allocation fails and
+/// the caller hears about it rather than limping.
+const MIN_CHUNK_BYTES: u32 = 1024;
 /// The FIFO's limit; commands and window data stay under it.
 const FIFO_MAX: usize = 64;
 
@@ -53,6 +56,10 @@ pub struct Esp32DisplayInterface {
     tx: [DmaHandle; 2],
     /// Throwaway receive buffer (the engine is full-duplex; MISO is ignored).
     rx: DmaHandle,
+    /// RGB565 pixels one chunk holds — half the allocated buffer size. Chosen
+    /// from the pool at construction, not a constant, so the display uses
+    /// whatever DMA the build's memory map left it (#140).
+    chunk_px: usize,
 }
 
 impl Esp32DisplayInterface {
@@ -65,16 +72,21 @@ impl Esp32DisplayInterface {
         gpio.set_mode(dc, PinMode::Output)?;
         gpio.set_mode(cs, PinMode::Output)?;
         gpio.write(cs, PinLevel::High)?; // idle high
-        let tx = [dma::alloc(CHUNK_BYTES as u32)?, dma::alloc(CHUNK_BYTES as u32)?];
-        let rx = dma::alloc(CHUNK_BYTES as u32)?;
-        Ok(Self { spi, gpio, dc, cs, tx, rx })
+        // Size the chunk from what the pool can spare across the three buffers
+        // (double tx + one throwaway rx), rounded to whole RGB565 pixels and
+        // held between the min-worth-it and the point of diminishing returns.
+        let chunk = (dma::available() / 3 & !1).clamp(MIN_CHUNK_BYTES, MAX_CHUNK_BYTES);
+        let tx = [dma::alloc(chunk)?, dma::alloc(chunk)?];
+        let rx = dma::alloc(chunk)?;
+        Ok(Self { spi, gpio, dc, cs, tx, rx, chunk_px: (chunk / 2) as usize })
     }
 
     /// Pack `n` copies of one RGB565 color, big-endian (the wire order), into a
     /// DMA buffer.
     ///
     /// # Safety
-    /// `n <= CHUNK_PX`, so `2*n <= CHUNK_BYTES == buf.size()`.
+    /// `2*n <= buf.size()`, i.e. `n <= self.chunk_px` for the interface's own
+    /// buffers.
     unsafe fn pack_solid(buf: &DmaHandle, color: u16, n: usize) {
         let (hi, lo) = ((color >> 8) as u8, color as u8);
         let p = buf.addr() as *mut u8;
@@ -87,7 +99,7 @@ impl Esp32DisplayInterface {
     /// Pack a run of RGB565 pixels, big-endian, into a DMA buffer.
     ///
     /// # Safety
-    /// `px.len() <= CHUNK_PX`.
+    /// `px.len() <= self.chunk_px`, i.e. `2*px.len() <= buf.size()`.
     unsafe fn pack_pixels(buf: &DmaHandle, px: &[u16]) {
         let p = buf.addr() as *mut u8;
         for (i, &c) in px.iter().enumerate() {
@@ -148,12 +160,12 @@ impl DisplayInterface for Esp32DisplayInterface {
         self.set(self.dc, PinLevel::High)?;
         // Pack once: every chunk sends the same color, so buffer 0 is filled to
         // its cap and reused. A short final chunk just sends a prefix of it.
-        let packed = count.min(CHUNK_PX);
-        // SAFETY: packed <= CHUNK_PX.
+        let packed = count.min(self.chunk_px);
+        // SAFETY: packed <= self.chunk_px.
         unsafe { Self::pack_solid(&self.tx[0], color, packed) };
         let mut remaining = count;
         while remaining > 0 {
-            let n = remaining.min(CHUNK_PX);
+            let n = remaining.min(self.chunk_px);
             self.dma_send(0, n * 2)?;
             remaining -= n;
         }
@@ -168,8 +180,8 @@ impl DisplayInterface for Esp32DisplayInterface {
         // Double-buffered: convert chunk i+1 into the spare buffer while chunk i
         // is transferring out of the other one.
         let total = px.len();
-        let n0 = total.min(CHUNK_PX);
-        // SAFETY: n0 <= CHUNK_PX.
+        let n0 = total.min(self.chunk_px);
+        // SAFETY: n0 <= self.chunk_px.
         unsafe { Self::pack_pixels(&self.tx[0], &px[..n0]) };
         let mut xfer = self
             .spi
@@ -178,8 +190,8 @@ impl DisplayInterface for Esp32DisplayInterface {
         let mut off = n0;
         let mut buf = 1usize;
         while off < total {
-            let n = (total - off).min(CHUNK_PX);
-            // SAFETY: n <= CHUNK_PX; tx[buf] is the buffer not currently in
+            let n = (total - off).min(self.chunk_px);
+            // SAFETY: n <= self.chunk_px; tx[buf] is the buffer not currently in
             // flight (buf alternates and each transfer is awaited before the
             // next kick), so writing it does not race the DMA.
             unsafe { Self::pack_pixels(&self.tx[buf], &px[off..off + n]) };
