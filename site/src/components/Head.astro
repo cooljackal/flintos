@@ -1,0 +1,11 @@
+---
+// Enable client-side routing (Astro's ClientRouter). Two wins:
+//  - navigation swaps content in place, so the already-loaded fonts and CSS
+//    are reused -- no fallback -> Plex font re-flash on every page change;
+//  - it gives view transitions (a subtle cross-fade) between pages for free.
+import Default from '@astrojs/starlight/components/Head.astro';
+import { ClientRouter } from 'astro:transitions';
+---
+
+<Default><slot /></Default>
+<ClientRouter />

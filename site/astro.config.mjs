@@ -16,7 +16,10 @@ export default defineConfig({
 				'./src/styles/base.css',
 				'./src/styles/themes/slate.css',
 			],
-			components: { SiteTitle: './src/components/SiteTitle.astro' },
+			components: {
+				SiteTitle: './src/components/SiteTitle.astro',
+				Head: './src/components/Head.astro',
+			},
 			description: 'A dead-simple modern Rust RTOS for 32-bit microcontrollers.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/cooljackal/flintos' },
