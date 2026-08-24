@@ -33,4 +33,19 @@ impl MultiCore for XtensaSmp {
     fn cores() -> u8 {
         2
     }
+
+    /// Interrupt `core` through the kernel's cross-core reschedule channel.
+    ///
+    /// The mechanism needs the ESP32 DPORT `FromCpu` signals and the kernel's
+    /// interrupt plumbing, neither of which this `hal`-only crate may name, so
+    /// it is implemented in `kernel::xtensa` behind this hook — the same split
+    /// the RP2040 uses for `_flint_armv6m_request_reschedule`.
+    fn request_reschedule(core: CoreId) -> bool {
+        extern "C" {
+            fn _flint_xtensa_request_reschedule(core: u32) -> bool;
+        }
+        // SAFETY: a plain FFI call to a kernel-provided function that only reads
+        // core state and raises a DPORT signal.
+        unsafe { _flint_xtensa_request_reschedule(u32::from(core.0)) }
+    }
 }

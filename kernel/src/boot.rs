@@ -144,6 +144,14 @@ pub extern "C" fn FlintMain() -> ! {
         );
     }
 
+    // Step 2c: wire the cross-core reschedule channels. Done here — single-core,
+    // before the app connects any driver interrupt (so the fixed handler slot is
+    // reserved first) and before the second core exists — so `request_switch_on`
+    // can interrupt a peer core instead of waiting up to a tick for it to notice
+    // the pending flag. A secondary core unmasks its own channel when it joins.
+    #[cfg(target_os = "none")]
+    crate::xtensa::setup_boot_core();
+
     // Step 3: install the idle task as TCB 0 and make it `current`. It runs on
     // the current (kernel/boot) stack — `FlintMain` itself becomes idle once
     // interrupts are enabled.
@@ -485,6 +493,11 @@ pub unsafe fn join_scheduler() -> ! {
             ),
         }
     }
+
+    // Unmask this core's reschedule channel. Routing and registration were done
+    // once on the boot core; `INTENABLE` is per-core, so each core enables the
+    // shared input for itself, exactly as it does the software interrupt above.
+    crate::xtensa::enable_this_core();
 
     let _prev = registers::set_intlevel_0();
 

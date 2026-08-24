@@ -68,6 +68,8 @@ pub mod boot;
 pub mod switch;
 #[cfg(all(target_os = "none", feature = "soc-esp32"))]
 pub mod watchdog;
+#[cfg(all(target_os = "none", feature = "soc-esp32"))]
+mod xtensa;
 
 /// The chip's hardware random number generator.
 ///
