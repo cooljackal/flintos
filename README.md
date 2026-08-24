@@ -28,9 +28,10 @@ silicon — Xtensa (ESP32-WROOM, ESP32-PICO) and ARM (Wio RP2040 Mini) — but i
 is young, most drivers are thin, and the API will change.
 
 Wi-Fi runs as a station: it scans, associates, and completes a WPA2-PSK
-handshake in a first-party Rust supplicant, held for minutes on hardware. No IP
-layer yet, so the link drops at the AP's inactivity timeout ([#74]). BLE is
-groundwork only. See [doc/plan-radio.md](doc/plan-radio.md).
+handshake in a first-party Rust supplicant, then brings up an IP stack (smoltcp)
+over the link — a DHCP lease, DNS resolution and an outbound TCP connection, on
+hardware ([#68]). BLE is groundwork only. See
+[doc/plan-radio.md](doc/plan-radio.md).
 
 Full docs are at [flintos.dev][wiki], the API reference is at [flintos.dev/api][apidocs],
 and open work lives in [issues] — the source of truth.
@@ -84,9 +85,11 @@ Real parts you attach — one part number each, MCU-agnostic (`drivers/logical/`
 |---|---|---|
 | MPU6886 | 6-axis IMU (accelerometer + gyro) | ✅ |
 | WS2812 / SK6812 | Addressable RGB LED | ✅ |
+| AXP192 | Power-management IC — rails + battery status | ✅ |
 | BMI270 | 6-axis IMU | 🧪 |
 | BME280 | Temperature / humidity / pressure sensor | 🧪 |
 | SSD1306 | 128×64 monochrome OLED display | 🧪 |
+| FT6336U | Capacitive touchscreen controller | 🧪 |
 
 ### Logical drivers
 
@@ -117,7 +120,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 | ESP32-DevKitC / WROOM-32 | Xtensa LX6 / ESP32 | ✅ verified — reference board; rev 1 & rev 3, full self-test suite + Wi-Fi/IP stack |
 | M5Stack Atom Matrix | Xtensa LX6 / ESP32-PICO | ✅ verified — LED panel, IMU, ADC |
 | M5Stack Atom Lite | Xtensa LX6 / ESP32-PICO | ✅ verified — one LED |
-| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — boots; AXP192 power rails + battery status; IMU/LCD/touch pending |
+| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — boots on AXP192 power rails + battery status; onboard IMU and FT6336U touch wired; LCD pending |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
 | ESP32-WROVER | Xtensa LX6 / ESP32 | 🟡 manifest written, never flashed |
 
@@ -232,7 +235,8 @@ drivers/bus/         Layer 2 — transport abstractions
 drivers/logical/     Layer 3 — one part number each, MCU-agnostic
 lib/                 portable libraries — no registers, no part numbers
 tools/               build helpers, size report, layer/name checks
-doc/wiki/            wiki source; CI publishes it on merge
+site/                docs site (Astro/Starlight), published to flintos.dev
+doc/                 design notes, plans, and the migrated wiki source
 ```
 
 arch / SoC / board are three tiers because the core, the chip and the circuit
@@ -266,4 +270,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) — commits need a DCO sign-off
 [tutorial]: https://flintos.dev/users/hello-world/
 [arch]: https://flintos.dev/developers/architecture/
 [add-board]: https://flintos.dev/developers/adding-a-board/
-[#74]: https://github.com/cooljackal/flintos/issues/74
+[#68]: https://github.com/cooljackal/flintos/issues/68
