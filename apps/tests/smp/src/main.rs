@@ -56,6 +56,20 @@ fn main() {
         soc_esp32::appcpu::start(arch_xtensa::appcpu::_flint_appcpu_entry);
     }
 
+    // `appcpu::start` only *releases* the second core; it joins the scheduler
+    // asynchronously, some microseconds later. A task pinned to core 1 cannot be
+    // spawned until that core has marked itself joined, so wait for it here
+    // instead of racing the spawn below (which otherwise panics on a fast boot).
+    // `main` runs with interrupts masked, so this spins rather than sleeps;
+    // core 1 makes progress on its own hardware regardless. Bounded, so a core
+    // that never joins fails at the spawn below rather than hanging here.
+    for _ in 0..20_000_000u32 {
+        if kernel::smp::is_pinnable(1) {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+
     Task::new("dport0", dport_core0)
         .priority(Priority::Background(0))
         .on_core(0)
