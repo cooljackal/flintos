@@ -12,7 +12,10 @@ const LOAD: *mut u32 = (WATCHDOG_BASE + 0x04) as *mut u32;
 const REASON: *const u32 = (WATCHDOG_BASE + 0x08) as *const u32;
 const SCRATCH4: *mut u32 = (WATCHDOG_BASE + 0x1c) as *mut u32;
 const TICK: *mut u32 = (WATCHDOG_BASE + 0x2c) as *mut u32;
-const PSM_WDSEL: *mut u32 = 0x4001_000c as *mut u32;
+// RP2040 PSM layout is FRCE_ON, FRCE_OFF, WDSEL, DONE. WDSEL is therefore
+// offset 0x08; offset 0x0c is the read-only DONE register.
+const PSM_WDSEL_ADDR: usize = 0x4001_0008;
+const PSM_WDSEL: *mut u32 = PSM_WDSEL_ADDR as *mut u32;
 
 const CTRL_ENABLE: u32 = 1 << 30;
 const CTRL_DEBUG_PAUSE: u32 = (1 << 26) | (1 << 25) | (1 << 24);
@@ -122,5 +125,10 @@ mod tests {
         assert_eq!(reset_reason_name(1), "watchdog timer");
         assert_eq!(reset_reason_name(2), "watchdog force");
         assert_eq!(reset_reason_name(3), "watchdog timer and force");
+    }
+
+    #[test]
+    fn watchdog_reset_selection_uses_psm_wdsel_not_done() {
+        assert_eq!(PSM_WDSEL_ADDR, 0x4001_0008);
     }
 }
