@@ -23,16 +23,16 @@
 //!
 //! # Status
 //!
-//! **6.2/6.3: frames move both ways and the station gets an address.** The
-//! [`RxQueue`] and [`WifiDevice`] carry traffic in both directions;
-//! [`rx_trampoline`] is the MAC's receive callback filling the ring, and
-//! [`obtain_dhcp_lease`] brings a smoltcp `Interface` up on the station and
-//! runs DHCP to a lease. Validated on an ESP32-DevKitC against a real AP:
-//! DISCOVER out, OFFER/ACK in, a lease logged within a second of association.
-//! The ring behaviour is host-tested besides.
+//! **6.2/6.3/6.4: the stack reaches the internet.** The [`RxQueue`] and
+//! [`WifiDevice`] carry traffic both ways; [`rx_trampoline`] is the MAC's
+//! receive callback filling the ring. [`obtain_dhcp_lease`] runs DHCP to a
+//! lease, and [`dns_tcp_probe`] takes it further — one interface running DHCP,
+//! then a DNS resolution, then a TCP connection with a byte exchange.
+//! Validated on an ESP32-DevKitC against a real AP: a DHCP lease, `example.com`
+//! resolved, a TCP connection to it, and an `HTTP/1.1 200 OK` read back, all
+//! within a second of association. The ring behaviour is host-tested besides.
 //!
-//! Still to come for #68: **6.4** DNS resolution and a TCP connect; **6.5** TLS
-//! is deferred by the plan.
+//! Still to come for #68: **6.5** TLS, deferred by the plan.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -421,6 +421,242 @@ pub fn obtain_dhcp_lease(timeout_ms: u64) -> Option<Lease> {
         // Yield: DHCP has retransmit timers of its own, and a tight poll would
         // starve the driver task that fills the ring.
         api::task::sleep_ms(50);
+    }
+}
+
+/// The outcome of [`dns_tcp_probe`]: the lease, the resolved address, whether
+/// the TCP connection established, and the first bytes the peer sent back.
+#[cfg(target_os = "none")]
+pub struct Probe {
+    pub lease: Lease,
+    /// The IPv4 address `host` resolved to.
+    pub resolved: [u8; 4],
+    /// Whether the TCP three-way handshake completed.
+    pub connected: bool,
+    /// The first bytes received on the connection (e.g. an HTTP status line).
+    pub resp: [u8; 64],
+    pub resp_len: usize,
+}
+
+/// A `core::fmt::Write` into a fixed slice, for building the request line
+/// without an allocator. Stops at the slice's end.
+#[cfg(target_os = "none")]
+struct BufWriter<'a> {
+    buf: &'a mut [u8],
+    pos: usize,
+}
+
+#[cfg(target_os = "none")]
+impl core::fmt::Write for BufWriter<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let b = s.as_bytes();
+        let end = self.pos.checked_add(b.len()).ok_or(core::fmt::Error)?;
+        if end > self.buf.len() {
+            return Err(core::fmt::Error);
+        }
+        self.buf[self.pos..end].copy_from_slice(b);
+        self.pos = end;
+        Ok(())
+    }
+}
+
+/// Bring the interface up (DHCP), resolve `host` over DNS, open a TCP
+/// connection to `host:port`, send a minimal HTTP request and read the peer's
+/// first bytes. Phase 6.4 of the plan — DNS and TCP end to end.
+///
+/// This is one interface for the whole exchange rather than a lease followed by
+/// a fresh stack: the DHCP lease, the ARP cache and the resolver all carry
+/// forward into the connection. Runs a single poll loop over three sockets,
+/// advancing a phase at a time; a whole-run `timeout_ms` bounds it. Must run
+/// after the station reports `Connected`.
+#[cfg(target_os = "none")]
+pub fn dns_tcp_probe(host: &str, port: u16, timeout_ms: u64) -> Result<Probe, &'static str> {
+    use core::fmt::Write as _;
+    use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
+    use smoltcp::socket::{dhcpv4, dns, tcp};
+    use smoltcp::wire::{
+        DnsQueryType, EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address,
+    };
+
+    let mac = station_mac();
+    api::log_info!(
+        "[net] station mac {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    );
+
+    // SAFETY: `rx_trampoline` matches `wifi_rxcb_t` and the station is
+    // associated (the caller's contract).
+    if unsafe { esp_wifi_internal_reg_rxcb(IF_STA, rx_trampoline) } != 0 {
+        return Err("could not register the rx callback");
+    }
+
+    let mut device = WifiDevice::new(&RX_QUEUE);
+    let now = || smoltcp::time::Instant::from_millis(api::timer::now_ms() as i64);
+    let mut config = Config::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
+    config.random_seed = api::time::now_us();
+    let mut iface = Interface::new(config, &mut device, now());
+
+    // Three sockets share one set; their backing storage is declared first so it
+    // outlives the borrows the set takes.
+    let mut sock_storage: [SocketStorage; 3] = [SocketStorage::EMPTY; 3];
+    let mut dns_queries: [Option<dns::DnsQuery>; 1] = [None];
+    let mut tcp_rx = [0u8; 2048];
+    let mut tcp_tx = [0u8; 512];
+    let mut sockets = SocketSet::new(&mut sock_storage[..]);
+    let dhcp_h = sockets.add(dhcpv4::Socket::new());
+    let dns_h = sockets.add(dns::Socket::new(&[], &mut dns_queries[..]));
+    let tcp_h = sockets.add(tcp::Socket::new(
+        tcp::SocketBuffer::new(&mut tcp_rx[..]),
+        tcp::SocketBuffer::new(&mut tcp_tx[..]),
+    ));
+
+    // The request, built once. HTTP/1.0 with a Host header — the smallest thing
+    // a name-based virtual host will answer.
+    let mut req = [0u8; 128];
+    let req = {
+        let mut w = BufWriter { buf: &mut req, pos: 0 };
+        write!(w, "GET / HTTP/1.0\r\nHost: {host}\r\n\r\n").map_err(|_| "request line too long")?;
+        let end = w.pos;
+        &req[..end]
+    };
+
+    #[derive(PartialEq)]
+    enum Phase {
+        Dhcp,
+        Resolving,
+        Connecting,
+        Exchanging,
+    }
+    let mut phase = Phase::Dhcp;
+    let mut probe = Probe {
+        lease: Lease { ip: [0; 4], prefix_len: 0, router: None, dns: None },
+        resolved: [0; 4],
+        connected: false,
+        resp: [0; 64],
+        resp_len: 0,
+    };
+    let mut query: Option<dns::QueryHandle> = None;
+    let start = api::timer::now_ms();
+
+    loop {
+        iface.poll(now(), &mut device, &mut sockets);
+
+        match phase {
+            Phase::Dhcp => {
+                if let Some(dhcpv4::Event::Configured(cfg)) =
+                    sockets.get_mut::<dhcpv4::Socket>(dhcp_h).poll()
+                {
+                    let addr = cfg.address;
+                    iface.update_ip_addrs(|a| {
+                        let _ = a.push(IpCidr::Ipv4(addr));
+                    });
+                    if let Some(router) = cfg.router {
+                        let _ = iface.routes_mut().add_default_ipv4_route(router);
+                    }
+                    probe.lease = Lease {
+                        ip: addr.address().octets(),
+                        prefix_len: addr.prefix_len(),
+                        router: cfg.router.map(|r| r.octets()),
+                        dns: cfg.dns_servers.first().map(|d| d.octets()),
+                    };
+                    api::log_info!(
+                        "[net] DHCP lease {}.{}.{}.{}/{}",
+                        probe.lease.ip[0], probe.lease.ip[1], probe.lease.ip[2],
+                        probe.lease.ip[3], probe.lease.prefix_len
+                    );
+
+                    // Hand the offered resolvers to the DNS socket, then ask for
+                    // the host. Nothing resolves before this.
+                    let mut servers = [IpAddress::Ipv4(Ipv4Address::new(0, 0, 0, 0)); 3];
+                    let mut n = 0;
+                    for d in cfg.dns_servers.iter() {
+                        servers[n] = IpAddress::Ipv4(*d);
+                        n += 1;
+                    }
+                    if n == 0 {
+                        return Err("the lease named no DNS server");
+                    }
+                    let dns_sock = sockets.get_mut::<dns::Socket>(dns_h);
+                    dns_sock.update_servers(&servers[..n]);
+                    query = Some(
+                        dns_sock
+                            .start_query(iface.context(), host, DnsQueryType::A)
+                            .map_err(|_| "the DNS query would not start")?,
+                    );
+                    api::log_info!("[net] resolving {}", host);
+                    phase = Phase::Resolving;
+                }
+            }
+            Phase::Resolving => {
+                let dns_sock = sockets.get_mut::<dns::Socket>(dns_h);
+                match dns_sock.get_query_result(query.unwrap()) {
+                    Ok(addrs) => {
+                        let v4 = addrs.iter().find_map(|a| match a {
+                            IpAddress::Ipv4(v) => Some(*v),
+                            #[allow(unreachable_patterns)]
+                            _ => None,
+                        });
+                        let Some(v4) = v4 else {
+                            return Err("DNS returned no A record");
+                        };
+                        probe.resolved = v4.octets();
+                        api::log_info!(
+                            "[net] {} is {}.{}.{}.{}",
+                            host, probe.resolved[0], probe.resolved[1],
+                            probe.resolved[2], probe.resolved[3]
+                        );
+                        // An ephemeral local port, varied by the uptime clock.
+                        let local = 49152 + (api::time::now_us() as u16 & 0x3fff);
+                        let tcp_sock = sockets.get_mut::<tcp::Socket>(tcp_h);
+                        tcp_sock
+                            .connect(iface.context(), (IpAddress::Ipv4(v4), port), local)
+                            .map_err(|_| "the TCP connection would not start")?;
+                        api::log_info!("[net] connecting to port {}", port);
+                        phase = Phase::Connecting;
+                    }
+                    Err(dns::GetQueryResultError::Pending) => {}
+                    Err(_) => return Err("DNS resolution failed"),
+                }
+            }
+            Phase::Connecting => {
+                let tcp_sock = sockets.get_mut::<tcp::Socket>(tcp_h);
+                if tcp_sock.may_send() {
+                    probe.connected = true;
+                    api::log_info!("[net] TCP connected; sending request");
+                    let _ = tcp_sock.send_slice(req);
+                    phase = Phase::Exchanging;
+                }
+            }
+            Phase::Exchanging => {
+                let tcp_sock = sockets.get_mut::<tcp::Socket>(tcp_h);
+                if tcp_sock.can_recv() {
+                    probe.resp_len = tcp_sock.recv_slice(&mut probe.resp).unwrap_or(0);
+                    tcp_sock.close();
+                    return Ok(probe);
+                }
+                // The peer closed without sending, but the connection did
+                // establish — that alone is bytes moving both ways.
+                if !tcp_sock.is_active() {
+                    return Ok(probe);
+                }
+            }
+        }
+
+        if api::timer::now_ms().saturating_sub(start) > timeout_ms {
+            api::log_warn!("[net] frames dropped for a full ring: {}", RX_QUEUE.dropped());
+            // A connection that established still proves the phase, even if the
+            // peer was slow to answer.
+            if probe.connected {
+                return Ok(probe);
+            }
+            return Err(match phase {
+                Phase::Dhcp => "timed out before a DHCP lease",
+                Phase::Resolving => "timed out resolving the host",
+                Phase::Connecting => "timed out connecting",
+                Phase::Exchanging => "timed out awaiting a reply",
+            });
+        }
+        api::task::sleep_ms(20);
     }
 }
 

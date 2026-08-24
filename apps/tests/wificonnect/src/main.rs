@@ -115,26 +115,30 @@ fn run() {
     }
 
     // The handshake result arrives at `on_event`. Once it reports the link up,
-    // bring a smoltcp interface up on it and pull a DHCP lease — the first
-    // thing that moves a frame both ways past association (#68, phase 6.2/6.3).
+    // bring a smoltcp interface up on it and run DHCP → DNS → TCP end to end:
+    // resolve a host and open a connection to it (#68, phase 6.2/6.3/6.4).
     if task::wait_until(
         || CONNECTED.load(core::sync::atomic::Ordering::SeqCst),
         20_000,
     ) {
-        match radio_esp32::net::obtain_dhcp_lease(15_000) {
-            Some(l) => {
+        match radio_esp32::net::dns_tcp_probe("example.com", 80, 20_000) {
+            Ok(p) => {
                 api::log_info!(
-                    "[net] DHCP lease {}.{}.{}.{}/{}",
-                    l.ip[0], l.ip[1], l.ip[2], l.ip[3], l.prefix_len
+                    "[net] lease {}.{}.{}.{}/{}  gw {:?}  dns {:?}",
+                    p.lease.ip[0], p.lease.ip[1], p.lease.ip[2], p.lease.ip[3],
+                    p.lease.prefix_len, p.lease.router, p.lease.dns
                 );
-                if let Some(r) = l.router {
-                    api::log_info!("[net] gateway {}.{}.{}.{}", r[0], r[1], r[2], r[3]);
-                }
-                if let Some(d) = l.dns {
-                    api::log_info!("[net] dns {}.{}.{}.{}", d[0], d[1], d[2], d[3]);
+                api::log_info!(
+                    "[net] example.com -> {}.{}.{}.{}  connected={}",
+                    p.resolved[0], p.resolved[1], p.resolved[2], p.resolved[3], p.connected
+                );
+                if let Ok(line) = core::str::from_utf8(&p.resp[..p.resp_len]) {
+                    api::log_info!("[net] peer said: {:?}", line.trim_end());
+                } else {
+                    api::log_info!("[net] peer sent {} bytes", p.resp_len);
                 }
             }
-            None => api::log_error!("[net] DHCP did not complete"),
+            Err(e) => api::log_error!("[net] probe failed: {}", e),
         }
     } else {
         api::log_warn!("no handshake within 20 s; not starting the network");
