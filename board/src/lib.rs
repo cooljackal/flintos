@@ -320,25 +320,46 @@ pub use active::BOARD;
 // a ready bus instead of open-coding `new(base) + init + static mut`. Gated on
 // `esp32-drivers`: only the ESP32 boards pull the drivers these construct.
 
-/// The onboard IMU's I2C bus: opens I2C0 on the board's private IMU pins and
-/// returns the shared controller. `Error::Other` if this board declares no IMU
-/// (`BOARD.imu` is `None`).
+/// The board's I2C controller for `port.ctrl`, opened once and cached.
 ///
-/// The returned [`I2cController`](i2c_bus::I2cController) owns its
-/// [`Esp32I2c`](esp32_i2c::Esp32I2c) by value; take a device handle with
-/// `.device(addr)` for the address to talk to.
+/// Keyed on *which* of the two controllers (I2C0/I2C1) the port names, not on
+/// the caller's purpose: a board where two devices share one bus — the Core2's
+/// IMU (0x68) and AXP192 PMIC (0x34) both sit on I2C0 — must drive them through
+/// one controller, because [`Esp32I2c::open`](esp32_i2c::Esp32I2c::open) claims
+/// the peripheral and a second `open` of the same one returns `BusError::Busy`.
+/// The first caller's config (pins, speed) wins, so a board must not declare the
+/// same controller twice with different settings. Callers take a per-device
+/// handle with `.device(addr)`; transfers to the two addresses serialise through
+/// the controller's mutex, which is exactly right for a shared bus.
 #[cfg(feature = "esp32-drivers")]
-pub fn imu_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32I2c>> {
-    static IMU_BUS: api::Once<i2c_bus::I2cController<esp32_i2c::Esp32I2c>> = api::Once::new();
-    if let Some(bus) = IMU_BUS.get() {
+fn i2c_controller(
+    port: &soc_esp32::I2cPort,
+) -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32I2c>> {
+    use soc_esp32::I2cCtrl;
+    static I2C0: api::Once<i2c_bus::I2cController<esp32_i2c::Esp32I2c>> = api::Once::new();
+    static I2C1: api::Once<i2c_bus::I2cController<esp32_i2c::Esp32I2c>> = api::Once::new();
+    let cell = match port.ctrl {
+        I2cCtrl::I2c0 => &I2C0,
+        I2cCtrl::I2c1 => &I2C1,
+    };
+    if let Some(bus) = cell.get() {
         return Ok(bus);
     }
+    cell.get_or_try_init(|| Ok(i2c_bus::I2cController::new(esp32_i2c::Esp32I2c::open(port)?)))
+}
+
+/// The onboard IMU's I2C bus. `Error::Other` if this board declares no IMU
+/// (`BOARD.imu` is `None`).
+///
+/// The returned [`I2cController`](i2c_bus::I2cController) is shared with any
+/// other device on the same controller (see [`i2c_controller`]); take a device
+/// handle with `.device(addr)` for the address to talk to.
+#[cfg(feature = "esp32-drivers")]
+pub fn imu_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32I2c>> {
     let imu = active::BOARD
         .imu
         .ok_or(hal::Error::Other("this board declares no onboard IMU"))?;
-    IMU_BUS.get_or_try_init(|| {
-        Ok(i2c_bus::I2cController::new(esp32_i2c::Esp32I2c::open(&imu.port)?))
-    })
+    i2c_controller(&imu.port)
 }
 
 // ── Power management (PMIC) ──────────────────────────────────────────────────
@@ -357,22 +378,15 @@ pub use axp192;
 /// it. `Error::Other` if this board declares no PMIC (`BOARD.pmic` is `None`).
 ///
 /// Returns the [`I2cController`](i2c_bus::I2cController); take a device with
-/// `.device(axp192::ADDR)` and wrap it in [`axp192::Axp192`]. On a board where
-/// the PMIC shares its bus with another device (the Core2's IMU sits on the
-/// same I2C0), both must go through this one controller — a second `open` of
-/// the same port returns `BusError::Busy`.
+/// `.device(axp192::ADDR)` and wrap it in [`axp192::Axp192`]. Shares the
+/// controller with any other device on the same bus (the Core2's IMU sits on the
+/// same I2C0) via [`i2c_controller`], so the two never fight to open it.
 #[cfg(feature = "esp32-drivers")]
 pub fn pmic_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32I2c>> {
-    static PMIC_BUS: api::Once<i2c_bus::I2cController<esp32_i2c::Esp32I2c>> = api::Once::new();
-    if let Some(bus) = PMIC_BUS.get() {
-        return Ok(bus);
-    }
     let pmic = active::BOARD
         .pmic
         .ok_or(hal::Error::Other("this board declares no PMIC"))?;
-    PMIC_BUS.get_or_try_init(|| {
-        Ok(i2c_bus::I2cController::new(esp32_i2c::Esp32I2c::open(&pmic.port)?))
-    })
+    i2c_controller(&pmic.port)
 }
 
 /// Bring the board's power rails up, in the manifest's order. Called once by

@@ -97,9 +97,26 @@ pub const PMIC_RAILS: &[crate::RailSetup] = &[
     crate::RailSetup { rail: axp192::Rail::Dcdc3, millivolts: 2800 },
 ];
 
-/// No logical devices yet — the Core2's sensors and display sit behind the
-/// AXP192 power gate (#135/#136).
-pub const TARGET_DEVICES: &[BusDevice] = &[];
+/// The onboard IMU's I2C address and pins, exposed like the Atom Matrix's for
+/// the `imu` app that logs them. M5 shipped the Core2 with an MPU6886; the app
+/// probes for that and a BMI270 (both answer here) and drives whichever replied.
+/// The pins are the internal bus's — the IMU and PMIC share it.
+pub const IMU_I2C_ADDR: u8 = 0x68;
+pub const IMU_SDA_GPIO: u8 = INTERNAL_I2C_SDA;
+pub const IMU_SCL_GPIO: u8 = INTERNAL_I2C_SCL;
+
+/// Logical devices on the internal I2C bus. The IMU is powered off LDO2, which
+/// `power_init` brings up before the app runs, so it is live by the time the
+/// app opens the bus. The display and touch controller come later (#136).
+pub const TARGET_DEVICES: &[BusDevice] = &[
+    BusDevice {
+        name: "imu",
+        logical_driver: "mpu6886",
+        bus: "i2c0",
+        cs_pin: None,
+        bus_speed: BusSpeed::Fast400k,
+    },
+];
 
 /// Direct peripheral drivers (not bus-attached). UART0 is not repeated here —
 /// it is a bus in [`TARGET_BUSES`].
@@ -109,12 +126,12 @@ pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[
 
 /// This board as one value; see [`crate::Board`].
 ///
-/// The IMU is present on hardware (MPU6886 at 0x68) but declared `None` until
-/// the AXP192 rail that powers the internal I2C bus is brought up (#136); the
-/// Core2 has no addressable LED and no free self-test pads.
+/// The IMU and the PMIC share the internal I2C0 bus — `imu_bus()` and
+/// `pmic_bus()` hand back the same controller. The Core2 has no addressable LED
+/// and no free self-test pads.
 pub const BOARD: crate::Board = crate::Board {
     name: BOARD_NAME,
-    imu: None,
+    imu: Some(crate::I2cAttachment { port: INTERNAL_I2C_PORT, addr: IMU_I2C_ADDR }),
     pmic: Some(crate::PmicAttachment {
         port: INTERNAL_I2C_PORT,
         addr: axp192::ADDR,
