@@ -464,14 +464,14 @@ check: ## Check every host-compatible crate
 # drift from the code. Same host-crate set as `check`/`test-host` (HOST_SELECT),
 # so the API reference covers exactly what builds on the host: the `api` system
 # surface, the bus/driver traits in `hal`, the portable `lib/*` crates, and the
-# logical drivers. Output lands in `target/$(HOST_TARGET)/doc`; CI publishes it.
+# logical drivers. Output lands in `target/$(HOST_TARGET)/doc`.
 #
-# NOTE: this plain rustdoc is superseded by `apidoc` (#132), which renders the
-# reference into the flintos.dev site instead. It stays only until GitHub Pages
-# is retired (#129); the flintOS skin it used to carry was removed with the
-# switch, since the generated pages now inherit the site's theme directly.
+# The *published* reference is now `apidoc` (#132) on flintos.dev, not this; the
+# GitHub Pages build that used to publish this rustdoc was retired with #129.
+# `docs` stays as a local sanity check that the doc comments still build --
+# their prose is the source `apidoc` renders, and it must not rot.
 .PHONY: docs
-docs: ## Generate the API reference (rustdoc) for host-buildable crates
+docs: ## Build rustdoc locally (a doc-comment sanity check; the site is `apidoc`)
 	cargo doc --no-deps $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 
 # The site API reference (#132): rustdoc's JSON output, rendered by tools/apidoc
