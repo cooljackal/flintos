@@ -161,7 +161,7 @@ unsafe fn feed(kind: ShaKind, block: &[u8], first: bool) -> Result<(), CryptoErr
 /// # Safety
 /// The SHA clock must be on.
 unsafe fn wait_idle(kind: ShaKind) -> Result<(), CryptoError> {
-    poll::until(|| dport::read(kind.bank() + BUSY_OFF) == 0, poll::DEFAULT_SPINS)
+    poll::until_us(poll::DEFAULT_TIMEOUT_US, || dport::read(kind.bank() + BUSY_OFF) == 0)
         .map_err(|_| CryptoError::Timeout)
 }
 

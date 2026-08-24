@@ -120,7 +120,7 @@ impl Aes {
         }
 
         dport::write(START_REG, 1);
-        poll::until(|| dport::read(IDLE_REG) == STATE_IDLE, poll::DEFAULT_SPINS)
+        poll::until_us(poll::DEFAULT_TIMEOUT_US, || dport::read(IDLE_REG) == STATE_IDLE)
             .map_err(|_| CryptoError::Timeout)?;
 
         for (i, word) in block.chunks_exact_mut(4).enumerate() {

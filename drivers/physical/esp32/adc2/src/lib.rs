@@ -268,10 +268,9 @@ impl Adc2 {
             start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT));
             start.write_volatile(base | ((1u32 << ch.index()) << EN_PAD_SHIFT) | MEAS_START_SAR);
 
-            poll::until(
-                || start.read_volatile() & MEAS_DONE_SAR != 0,
-                poll::DEFAULT_SPINS,
-            )
+            poll::until_us(poll::DEFAULT_TIMEOUT_US, || {
+                start.read_volatile() & MEAS_DONE_SAR != 0
+            })
             .map_err(|_| Adc2Error::Timeout)?;
             Ok((start.read_volatile() & MEAS_DATA_MASK) as u16)
         }

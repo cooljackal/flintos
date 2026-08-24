@@ -88,9 +88,9 @@ const CDR_PELICAN_NO_CLKOUT: u32 = (1 << 7) | (1 << 3);
 const BTR0_125K: u32 = (32 / 2 - 1) | ((3 - 1) << 6); // brp=15, sjw=2 -> 0x8F
 const BTR1_125K: u32 = (15 - 1) | ((4 - 1) << 4); // tseg1=14, tseg2=3 -> 0x3E
 
-/// Poll bound for a self-reception. A 125 kbit/s standard frame is well under a
-/// millisecond; this absorbs interrupts and still fails a dead controller.
-const RX_SPINS: u32 = 2_000_000;
+/// Poll timeout for a self-reception. A 125 kbit/s standard frame is well under
+/// a millisecond; this absorbs interrupts and still fails a dead controller.
+const RX_TIMEOUT_US: u64 = 200_000;
 
 /// A standard (11-bit identifier) CAN frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,7 +224,7 @@ impl Twai {
             // Transmit and receive the same frame.
             write8(CMD, CMD_SRR);
 
-            poll::until(|| read8(STATUS) & STATUS_RBS != 0, RX_SPINS)
+            poll::until_us(RX_TIMEOUT_US, || read8(STATUS) & STATUS_RBS != 0)
                 .map_err(|_| TwaiError::Timeout)?;
 
             let mut rx = [0u8; 11];

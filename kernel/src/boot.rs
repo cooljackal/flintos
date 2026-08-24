@@ -116,6 +116,13 @@ pub extern "C" fn FlintMain() -> ! {
         );
     }
 
+    // Hand that clock to the SoC poll helper, so a driver's busy-wait can be
+    // bounded by microseconds instead of a CPU-clock-dependent spin count. Done
+    // here, after `clock::init` and before any driver runs, so the first poll
+    // already sees a real clock rather than the spin-count fallback.
+    #[cfg(target_os = "none")]
+    soc_esp32::poll::set_clock(clock::now_us);
+
     let (cpu_hz, measured) = measure_cpu_hz();
     CPU_HZ_MEASURED.store(measured, portable_atomic::Ordering::Relaxed);
     Tick::init(board::active::TICK_PERIOD_US, cpu_hz);

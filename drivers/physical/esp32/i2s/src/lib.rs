@@ -125,9 +125,9 @@ const RX_BITS_MOD_SHIFT: u32 = 18;
 const SAMPLE_RATE_16BIT_BCK8: u32 =
     8 | (8 << RX_BCK_DIV_SHIFT) | (16 << TX_BITS_MOD_SHIFT) | (16 << RX_BITS_MOD_SHIFT);
 
-/// Poll bound for the loopback. A few hundred samples at multi-MHz bit clock is
-/// microseconds; this absorbs interrupts and still fails a stalled transfer.
-const EOF_SPINS: u32 = 2_000_000;
+/// Poll timeout for the loopback. A few hundred samples at multi-MHz bit clock
+/// is microseconds; this absorbs interrupts and still fails a stalled transfer.
+const EOF_TIMEOUT_US: u64 = 200_000;
 
 /// Why a loopback failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,7 +241,8 @@ impl I2sLoopback {
         write(OUT_LINK, link_addr(tx_head) | LINK_START);
         set(CONF, CONF_TX_START);
 
-        if poll::until(|| unsafe { read(INT_RAW) & INT_IN_SUC_EOF != 0 }, EOF_SPINS).is_err() {
+        if poll::until_us(EOF_TIMEOUT_US, || unsafe { read(INT_RAW) & INT_IN_SUC_EOF != 0 }).is_err()
+        {
             self.stop();
             return Err(I2sError::Timeout);
         }
@@ -371,7 +372,8 @@ impl I2sStream<'_> {
     /// The engine is live against the buffers; the returned index is only safe
     /// to touch until the engine laps back to it (`count - 1` buffers later).
     pub unsafe fn wait(&mut self) -> Result<usize, I2sError> {
-        if poll::until(|| unsafe { read(INT_RAW) & INT_IN_SUC_EOF != 0 }, EOF_SPINS).is_err() {
+        if poll::until_us(EOF_TIMEOUT_US, || unsafe { read(INT_RAW) & INT_IN_SUC_EOF != 0 }).is_err()
+        {
             return Err(I2sError::Timeout);
         }
         let eof_addr = read(IN_EOF_DES_ADDR);
