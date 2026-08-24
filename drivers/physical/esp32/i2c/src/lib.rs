@@ -9,6 +9,7 @@ use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
 use soc_esp32::ctrl::{I2cCtrl, I2cPort};
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
+use soc_esp32::poll;
 use soc_esp32::reg;
 
 /// One claim flag per I2C controller (I2C0, I2C1). `open` wins exactly one per
@@ -227,10 +228,11 @@ fn route_pins(instance: u8, sda: u8, scl: u8) -> BusResult<()> {
     Ok(())
 }
 
-/// Bound on `wait_done` poll iterations before giving up. Generous relative
+/// Timeout on `wait_done` before giving up, in microseconds. Generous relative
 /// to a worst-case (100 kHz, 9 bits/byte with ACK) single-byte transaction,
-/// which completes in well under a millisecond.
-const I2C_TIMEOUT_SPINS: u32 = 1_000_000;
+/// which completes in well under a millisecond, and independent of the CPU
+/// clock unlike a spin count.
+const I2C_TIMEOUT_US: u64 = 50_000;
 
 /// Maximum bytes per `write`/`read` call. The command register file has
 /// `I2C_COMD_SLOTS` (16) slots and every transfer needs 1 (RSTART) + 1
@@ -394,7 +396,7 @@ impl Esp32I2c {
     /// ACK_ERR too. Without that check every address in a scan appears to
     /// respond, which is exactly what the first run on hardware showed.
     fn wait_done(&self) -> BusResult<()> {
-        let mut spins: u32 = 0;
+        let mut deadline = poll::Deadline::new(I2C_TIMEOUT_US);
         loop {
             let raw = unsafe { self.reg(I2C_INT_RAW).read_volatile() };
 
@@ -421,8 +423,7 @@ impl Esp32I2c {
                 return Ok(());
             }
 
-            spins += 1;
-            if spins > I2C_TIMEOUT_SPINS {
+            if deadline.expired() {
                 unsafe { self.recover() };
                 return Err(BusError::Timeout);
             }

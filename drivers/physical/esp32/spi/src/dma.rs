@@ -42,12 +42,13 @@ use hal::bus::{BusError, BusResult};
 use hal::{DmaError, DmaHandle, DmaTransferId};
 use soc_esp32::addr;
 use soc_esp32::dma;
+use soc_esp32::poll;
 use soc_esp32::reg;
 
 use super::{
     dma_slot, Esp32Spi, MAX_DESCS, SPI_CK_I_EDGE, SPI_CK_OUT_EDGE, SPI_CMD, SPI_CMD_USR,
     SPI_DMA, SPI_DOUTDIN, SPI_MISO_DLEN, SPI_MOSI_DLEN, SPI_SLAVE, SPI_SYNC_RESET,
-    SPI_TIMEOUT_SPINS, SPI_TRANS_DONE, SPI_USER, SPI_USR_MISO, SPI_USR_MOSI,
+    SPI_TIMEOUT_US, SPI_TRANS_DONE, SPI_USER, SPI_USR_MISO, SPI_USR_MOSI,
 };
 
 // ── The kernel DMA broker, reached over the syscall ABI seam ─────────────────
@@ -266,7 +267,7 @@ impl Esp32Spi {
         // polls it. With SPI_INLINK_AUTO_RET set (as esp-idf leaves it), the
         // receive descriptor's length is not a reliable progress signal, so this
         // does not gate on it.
-        let mut spins: u32 = 0;
+        let mut deadline = poll::Deadline::new(SPI_TIMEOUT_US);
         loop {
             let done = self.reg(SPI_SLAVE).read_volatile() & SPI_TRANS_DONE != 0;
             // The receive DMA raises IN_SUC_EOF once its last byte has landed in
@@ -283,8 +284,7 @@ impl Esp32Spi {
             if done && rx_landed && tx_drained {
                 return Ok(());
             }
-            spins += 1;
-            if spins > SPI_TIMEOUT_SPINS {
+            if deadline.expired() {
                 self.dma_stop();
                 return Err(BusError::Timeout);
             }
@@ -375,10 +375,9 @@ impl Esp32Spi {
         // clock starts, so the first byte is present. NuttX polls this exact
         // status bit; without it a re-armed transfer clocks out its first byte
         // as zero.
-        let mut spins: u32 = 0;
+        let mut deadline = poll::Deadline::new(SPI_TIMEOUT_US);
         while self.reg(SPI_DMA_RSTATUS).read_volatile() & SPI_DMA_TX_FIFO_EMPTY != 0 {
-            spins += 1;
-            if spins > SPI_TIMEOUT_SPINS {
+            if deadline.expired() {
                 break;
             }
             core::hint::spin_loop();

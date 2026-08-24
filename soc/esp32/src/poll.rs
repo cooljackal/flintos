@@ -118,6 +118,57 @@ pub fn until_us(timeout_us: u64, mut ready: impl FnMut() -> bool) -> Result<(), 
     Ok(())
 }
 
+/// A microsecond deadline for a hand-rolled poll loop whose several exit
+/// branches [`until_us`]'s single condition cannot express — an I2C wait that
+/// must tell a NAK from an arbitration loss from a timeout, say.
+///
+/// Construct it once before the loop, then call [`expired`](Deadline::expired)
+/// once per iteration where a spin counter used to be checked. Before the clock
+/// is installed it falls back to the same [`DEFAULT_SPINS`] budget [`until`]
+/// uses, so a loop that races boot still terminates.
+pub struct Deadline {
+    /// The wall-clock end, or `None` when no clock was installed yet.
+    end_us: Option<u64>,
+    /// The remaining fallback budget, used only when `end_us` is `None`.
+    spins_left: u32,
+}
+
+impl Deadline {
+    /// A deadline `timeout_us` microseconds from now.
+    #[inline]
+    pub fn new(timeout_us: u64) -> Self {
+        match now_us() {
+            Some(start) => Self {
+                end_us: Some(start.saturating_add(timeout_us)),
+                spins_left: 0,
+            },
+            None => Self {
+                end_us: None,
+                spins_left: DEFAULT_SPINS,
+            },
+        }
+    }
+
+    /// Whether the deadline has passed. Call once per loop iteration; on the
+    /// clockless fallback each call spends one unit of the spin budget.
+    #[inline]
+    pub fn expired(&mut self) -> bool {
+        match self.end_us {
+            // A stopped clock reads a constant; a non-advancing reading counts
+            // as expired rather than looping forever on it.
+            Some(end) => now_us().unwrap_or(u64::MAX) >= end,
+            None => {
+                if self.spins_left == 0 {
+                    true
+                } else {
+                    self.spins_left -= 1;
+                    false
+                }
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -160,6 +211,17 @@ mod tests {
         // Checked before the clock is even read, so this holds with or without
         // an installed clock.
         assert_eq!(until_us(0, || true), Ok(()));
+    }
+
+    #[test]
+    fn a_deadline_eventually_expires() {
+        set_clock(test_clock);
+        let mut d = Deadline::new(100);
+        let mut iterations = 0u32;
+        while !d.expired() {
+            iterations += 1;
+            assert!(iterations < 100_000, "deadline never expired");
+        }
     }
 
     #[test]

@@ -35,11 +35,12 @@
 
 use hal::bus::{BusError, BusResult, SpiMode};
 use soc_esp32::addr;
+use soc_esp32::poll;
 use soc_esp32::{dport, reg};
 
 use super::{
     pack_word, unpack_word, SPI_CK_I_EDGE, SPI_CMD, SPI_CMD_USR, SPI_DOUTDIN, SPI_MAX_BYTES,
-    SPI_SLAVE, SPI_SYNC_RESET, SPI_TIMEOUT_SPINS, SPI_TRANS_DONE, SPI_USER, SPI_USR_MISO,
+    SPI_SLAVE, SPI_SYNC_RESET, SPI_TIMEOUT_US, SPI_TRANS_DONE, SPI_USER, SPI_USR_MISO,
     SPI_USR_MOSI, SPI_W0,
 };
 // Register offsets the master path leaves private; a child module may read an
@@ -236,10 +237,9 @@ impl Esp32SpiSlave {
 
         // SAFETY: single-owner register block, a transfer armed by `arm`.
         unsafe {
-            let mut spins: u32 = 0;
+            let mut deadline = poll::Deadline::new(SPI_TIMEOUT_US);
             while self.reg(SPI_SLAVE).read_volatile() & SPI_TRANS_DONE == 0 {
-                spins += 1;
-                if spins > SPI_TIMEOUT_SPINS {
+                if deadline.expired() {
                     return Err(BusError::Timeout);
                 }
                 core::hint::spin_loop();

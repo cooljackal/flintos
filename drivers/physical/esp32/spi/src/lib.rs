@@ -11,6 +11,7 @@ use hal::pinmux::{PinConfig, PinMux, Signal};
 use soc_esp32::addr;
 use soc_esp32::ctrl::{SpiCtrl, SpiPort};
 use soc_esp32::dma::{self, build_chain, descriptors_needed, Channel, Descriptor, Direction, Host};
+use soc_esp32::poll;
 use soc_esp32::reg;
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
@@ -182,12 +183,12 @@ const SPI_CS_HOLD: u32 = 1 << 4;
 const SPI_DATA_BUF_WORDS: usize = 16;
 const SPI_MAX_BYTES: usize = SPI_DATA_BUF_WORDS * 4;
 
-/// Bound on `SPI_CMD_USR` poll iterations before giving up. A polled byte
-/// transfer at the slowest supported clock completes in well under a
-/// millisecond; this bound is generous enough to absorb scheduling jitter
-/// while still failing a genuinely wedged peripheral instead of hanging
-/// forever.
-pub(crate) const SPI_TIMEOUT_SPINS: u32 = 1_000_000;
+/// Timeout on the completion poll before giving up, in microseconds. A polled
+/// byte transfer at the slowest supported clock completes in well under a
+/// millisecond; this bound is generous enough to absorb scheduling jitter while
+/// still failing a genuinely wedged peripheral instead of hanging forever, and
+/// means the same wall-clock time at any CPU frequency unlike a spin count.
+pub(crate) const SPI_TIMEOUT_US: u64 = 50_000;
 
 // ── Pin routing ──────────────────────────────────────────────────────────────
 //
@@ -401,10 +402,9 @@ impl Esp32Spi {
 
             // Wait for completion, bounded: SPI_USR self-clears when the
             // hardware finishes the transaction.
-            let mut spins: u32 = 0;
+            let mut deadline = poll::Deadline::new(SPI_TIMEOUT_US);
             while self.reg(SPI_CMD).read_volatile() & SPI_CMD_USR != 0 {
-                spins += 1;
-                if spins > SPI_TIMEOUT_SPINS {
+                if deadline.expired() {
                     return Err(BusError::Timeout);
                 }
                 core::hint::spin_loop();
