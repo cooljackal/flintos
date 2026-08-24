@@ -466,19 +466,13 @@ check: ## Check every host-compatible crate
 # surface, the bus/driver traits in `hal`, the portable `lib/*` crates, and the
 # logical drivers. Output lands in `target/$(HOST_TARGET)/doc`; CI publishes it.
 #
-# RUSTDOCFLAGS injects the flintOS skin (site/rustdoc/header.html) into every
-# page so the reference matches the flintos.dev site -- IBM Plex fonts, the site
-# accent, dark by default. The fonts are the same woff2 the site serves, reached
-# same-origin at /fonts/ under flintos.dev/api. Kept out of the recipe body so an
-# ad-hoc `cargo doc` still works unstyled.
-# A path relative to the repo root (where cargo runs) -- rustdoc resolves
-# --html-in-header against its cwd. Relative avoids the MSYS-vs-native path
-# mismatch on Windows, where an absolute /d/... CURDIR is unreadable by the
-# native rustdoc.exe, and works unchanged on Linux CI.
-DOCS_RUSTDOCFLAGS = --html-in-header site/rustdoc/header.html --default-theme dark
+# NOTE: this plain rustdoc is superseded by `apidoc` (#132), which renders the
+# reference into the flintos.dev site instead. It stays only until GitHub Pages
+# is retired (#129); the flintOS skin it used to carry was removed with the
+# switch, since the generated pages now inherit the site's theme directly.
 .PHONY: docs
 docs: ## Generate the API reference (rustdoc) for host-buildable crates
-	RUSTDOCFLAGS='$(DOCS_RUSTDOCFLAGS)' cargo doc --no-deps $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
+	cargo doc --no-deps $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 
 # The site API reference (#132): rustdoc's JSON output, rendered by tools/apidoc
 # into Starlight pages so the reference lives inside flintos.dev -- the site's
