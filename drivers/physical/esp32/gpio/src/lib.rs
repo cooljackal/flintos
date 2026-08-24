@@ -142,9 +142,29 @@ impl Esp32Gpio {
         };
         match mode {
             PinMode::Output => unsafe {
+                // Route the pad to the GPIO function before enabling output. A
+                // pad whose reset IO_MUX function is a peripheral -- GPIO12-15
+                // are the JTAG pins (GPIO15 = MTDO), GPIO6-11 the flash -- never
+                // reflects the GPIO output register until this is set, so the
+                // output silently goes nowhere and the pin looks dead. esp-idf
+                // writes the same function unconditionally in
+                // `gpio_pad_select_gpio`. Input stays enabled so a driven pad can
+                // still be read back (the PWM example does this).
+                soc_esp32::io_mux::configure(
+                    pin,
+                    soc_esp32::io_mux::gpio_function(pin),
+                    true,
+                    hal::pinmux::PinPull::None,
+                )?;
                 self.reg(set_off).write_volatile(bit);
             },
             PinMode::Input => unsafe {
+                soc_esp32::io_mux::configure(
+                    pin,
+                    soc_esp32::io_mux::gpio_function(pin),
+                    true,
+                    hal::pinmux::PinPull::None,
+                )?;
                 self.reg(clr_off).write_volatile(bit);
             },
             // Pull-up/-down and open-drain need the IO_MUX / GPIO_PIN pad
