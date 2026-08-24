@@ -64,8 +64,11 @@ mod display;
 #[cfg(feature = "esp32-drivers")]
 pub use display::Esp32DisplayInterface;
 
-#[cfg(feature = "board-wio-rp2040-mini")]
+#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
 pub mod wio_rp2040_mini;
+
+#[cfg(feature = "board-raspberry-pi-pico")]
+pub mod raspberry_pi_pico;
 
 /// Pin map shared by both Atom variants. Not selectable on its own: it declares
 /// no LED count, because that is the only thing the two disagree about.
@@ -88,6 +91,7 @@ mod esp32_wroom_common;
         feature = "board-m5-atom-matrix",
         feature = "board-m5-core2",
         feature = "board-wio-rp2040-mini",
+        feature = "board-raspberry-pi-pico",
     )),
     not(feature = "board-m5-atom")
 ))]
@@ -106,7 +110,8 @@ compile_error!(
      	board-m5-atom-lite      M5Stack Atom Lite          (verified on hardware)
      	board-m5-core2          M5Stack Core2              (bring-up in progress)
      	board-esp32-wrover      ESP32-WROVER               (never flashed)
-     	board-wio-rp2040-mini   Seeed Wio RP2040 Mini      (connected; first light pending)"
+     	board-wio-rp2040-mini   Seeed Wio RP2040 Mini      (verified on hardware)
+     	board-raspberry-pi-pico Raspberry Pi Pico           (connected)"
 );
 
 // How many `board-*` features are on. `cfg!()` is a const bool, so the count
@@ -118,7 +123,8 @@ const SELECTED: usize = cfg!(feature = "board-esp32-wrover") as usize
     + cfg!(feature = "board-m5-atom-lite") as usize
     + cfg!(feature = "board-m5-atom-matrix") as usize
     + cfg!(feature = "board-m5-core2") as usize
-    + cfg!(feature = "board-wio-rp2040-mini") as usize;
+    + cfg!(feature = "board-wio-rp2040-mini") as usize
+    + cfg!(feature = "board-raspberry-pi-pico") as usize;
 
 const _: () = assert!(
     SELECTED <= 1,
@@ -127,7 +133,8 @@ const _: () = assert!(
      the wrong pin/IRQ/bus map. Build with \
      `--no-default-features --features <one-board>`, one of: \
      board-esp32-devkitc, board-m5-atom-matrix, board-m5-atom-lite, \
-     board-m5-core2, board-esp32-wrover, board-wio-rp2040-mini."
+     board-m5-core2, board-esp32-wrover, board-wio-rp2040-mini, \
+     board-raspberry-pi-pico."
 );
 
 // The name the Atom shipped under before the Lite and the Matrix were told
@@ -165,6 +172,9 @@ pub use m5_core2 as active;
 
 #[cfg(feature = "board-wio-rp2040-mini")]
 pub use wio_rp2040_mini as active;
+
+#[cfg(feature = "board-raspberry-pi-pico")]
+pub use raspberry_pi_pico as active;
 
 // ── The board as one value ──────────────────────────────────────────────────
 //
@@ -365,6 +375,7 @@ pub struct Board {
     feature = "board-m5-atom-matrix",
     feature = "board-m5-core2",
     feature = "board-wio-rp2040-mini",
+    feature = "board-raspberry-pi-pico",
 ))]
 pub use active::BOARD;
 
@@ -907,9 +918,9 @@ mod tests {
     // the selected SoC's `SystemOnChip` impl rather than being keyed on the
     // board name here. The board type is the one thing that still varies by
     // family, so it is picked by which soc crate this board pulls in.
-    #[cfg(feature = "board-wio-rp2040-mini")]
+    #[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
     use soc_rp2040::Rp2040 as SelectedSoc;
-    #[cfg(not(feature = "board-wio-rp2040-mini"))]
+    #[cfg(not(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico")))]
     use soc_esp32::Esp32 as SelectedSoc;
 
     const PERIPH_BASE_LOW: u32 = SelectedSoc::PERIPHERAL_WINDOW.0;

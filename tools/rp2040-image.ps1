@@ -15,21 +15,41 @@ param(
     [string]$Objdump = 'arm-none-eabi-objdump',
     [string]$Elf2Uf2 = 'elf2uf2-rs',
     [string]$ProbeRs = 'probe-rs',
+    [string]$ProbeSerial,
     [int]$TimeoutSeconds = 20
 )
 
 $ErrorActionPreference = 'Stop'
-$expected = @{ Architecture='armv6m'; Soc='rp2040'; Board='wio-rp2040-mini' }
-foreach ($name in $expected.Keys) {
-    if ((Get-Variable -Name $name -ValueOnly) -ne $expected[$name]) {
-        throw "unsupported build tuple: expected armv6m/rp2040/wio-rp2040-mini; got $Architecture/$Soc/$Board"
-    }
+if ($Architecture -ne 'armv6m' -or $Soc -ne 'rp2040' -or
+    $Board -notin @('wio-rp2040-mini', 'raspberry-pi-pico')) {
+    throw "unsupported build tuple: expected armv6m/rp2040 with a supported board; got $Architecture/$Soc/$Board"
 }
 
 function Invoke-Checked {
     param([string]$Program, [string[]]$Arguments)
     & $Program @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Program failed with exit $LASTEXITCODE" }
+}
+
+function Invoke-SwdAfterResetPulse {
+    param([string[]]$Arguments)
+
+    $selector = if ($ProbeSerial) { @('--probe', "2e8a:000c:$ProbeSerial") } else { @('--non-interactive') }
+    $pulse = @(
+        'reset', '--chip', 'RP2040', '--protocol', 'swd', '--speed', '100',
+        '--connect-under-reset'
+    ) + $selector
+
+    # RP2040 does not answer SWD while RUN is held low. probe-rs therefore
+    # reports that attach as failed, then releases RUN while closing the probe.
+    # The following operation must start immediately, before target firmware
+    # can disturb the debug port.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        & $ProbeRs @pulse 2>&1 | Out-Null
+        & $ProbeRs @Arguments
+        if ($LASTEXITCODE -eq 0) { return }
+    }
+    throw "SWD operation failed after three reset-release-attach attempts"
 }
 
 function Test-Elf {
@@ -81,6 +101,9 @@ if ($Action -eq 'flash') {
 
 if ($Action -eq 'swd') {
     $resolvedElf = Test-Elf
-    Invoke-Checked $ProbeRs @('download','--chip','RP2040',$resolvedElf)
+    $selector = if ($ProbeSerial) { @('--probe', "2e8a:000c:$ProbeSerial") } else { @('--non-interactive') }
+    Invoke-SwdAfterResetPulse (@(
+        'download', '--chip', 'RP2040', '--protocol', 'swd', '--speed', '100'
+    ) + $selector + @($resolvedElf))
     exit 0
 }

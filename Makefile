@@ -250,7 +250,9 @@ COMMA          := ,
 # whatever the app still owns (self-test, blobs, watchdog-test-*, radio-bt) or a
 # further kernel feature (`kernel/radio-ble`).
 APP_FEATURES   := kernel/$(BOARD),kernel/$(DEBUG)$(if $(EXTRA_FEATURES),$(COMMA)$(EXTRA_FEATURES))
-ifeq ($(BOARD),board-wio-rp2040-mini)
+RP2040_BOARDS  := board-wio-rp2040-mini board-raspberry-pi-pico
+RP2040_BOARD_NAME := $(patsubst board-%,%,$(BOARD))
+ifneq ($(filter $(BOARD),$(RP2040_BOARDS)),)
 CARGO          := cargo
 APP_FLAGS      := --target $(ARM_TARGET) -p $(APP) --no-default-features --features $(APP_FEATURES)
 APP_BIN        := target/$(ARM_TARGET)/debug/$(APP)
@@ -342,6 +344,7 @@ No board selected, and there is no default.
 
     board-esp32-devkitc     ESP32-DevKitC / WROOM-32   verified on hardware
     board-wio-rp2040-mini   Seeed Wio RP2040 Mini      bring-up in progress
+    board-raspberry-pi-pico Raspberry Pi Pico           connected
     board-m5-atom-matrix    M5Stack Atom Matrix        verified on hardware
     board-m5-atom-lite      M5Stack Atom Lite          verified on hardware
     board-m5-core2          M5Stack Core2              bring-up in progress
@@ -357,9 +360,9 @@ ifneq ($(filter $(BOARD_GOALS),$(MAKECMDGOALS)),)
 endif
 build: ## Build the selected app (APP=demo BOARD=board-esp32-devkitc DEBUG=debug-level-1)
 	@$(LOAD_ENV) $(CARGO) build $(APP_FLAGS)
-ifeq ($(BOARD),board-wio-rp2040-mini)
+ifneq ($(filter $(BOARD),$(RP2040_BOARDS)),)
 	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action convert \
-		-Architecture armv6m -Soc rp2040 -Board wio-rp2040-mini \
+		-Architecture armv6m -Soc rp2040 -Board $(RP2040_BOARD_NAME) \
 		-Elf $(APP_BIN) -Bin $(APP_RAW_BIN) -Uf2 $(APP_UF2)
 else
 	@$(MAKE) --no-print-directory size
@@ -380,9 +383,9 @@ build-trace: ## Build with kernel event tracing
 
 .PHONY: flash
 flash: build ## Build + flash + monitor via espflash (USB serial)
-ifeq ($(BOARD),board-wio-rp2040-mini)
+ifneq ($(filter $(BOARD),$(RP2040_BOARDS)),)
 	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action flash \
-		-Architecture armv6m -Soc rp2040 -Board wio-rp2040-mini -Uf2 $(APP_UF2)
+		-Architecture armv6m -Soc rp2040 -Board $(RP2040_BOARD_NAME) -Uf2 $(APP_UF2)
 else
 	espflash flash $(APP_BIN) $(PORT_ARG) \
 		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
@@ -667,22 +670,24 @@ test-target: ## Flash and run the on-target self-tests (needs a board attached)
 	$(BASH) tools/target-test.sh
 
 ARM_PROBE_SERIAL   ?= 4150325537323116
-ARM_BOOTSEL_SERIAL ?= E0C9125B0D9B
+ARM_BOOTSEL_SERIAL ?= E0C912D24340
 
 .PHONY: test-arm-target
-test-arm-target: ## Build, flash, and judge ARM tests through Debug Probe
-	$(MAKE) build APP=arm-selftest BOARD=board-wio-rp2040-mini
+test-arm-target: ## Build, flash, and judge ARM tests through ROM BOOTSEL
+	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico
 	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
 		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL)
+		-ProbeSerial $(ARM_PROBE_SERIAL) \
+		-BootselSerial $(ARM_BOOTSEL_SERIAL)
 
 .PHONY: test-arm-watchdog
-test-arm-watchdog: ## Prove RP2040 watchdog reset and retained cause through Debug Probe
+test-arm-watchdog: ## Prove RP2040 watchdog reset and retained cause through ROM BOOTSEL
 	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "kernel/board-wio-rp2040-mini,kernel/debug-level-1,arm-selftest/watchdog-reset"
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/watchdog-reset"
 	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
 		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
+		-ProbeSerial $(ARM_PROBE_SERIAL) \
+		-BootselSerial $(ARM_BOOTSEL_SERIAL) \
 		-Suite watchdog-reset
 
 # The judging half of the harness, checked without hardware. It is the part
@@ -769,5 +774,4 @@ help: ## Show this help message
 	@printf '\n  Quick start:   make env  ->  make check  ->  make build\n'
 	@printf '  Host tests:    make test-host    (no hardware; runs in CI)\n'
 	@printf '  Board tests:   make test-target BOARD=board-m5-atom-matrix PORT=COM5\n\n'
-
 

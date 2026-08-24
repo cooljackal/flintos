@@ -6,8 +6,8 @@
 param(
     [Parameter(Mandatory)]
     [string]$ElfPath,
-    [Parameter(Mandatory)]
     [string]$ProbeSerial,
+    [string]$Uf2Path,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
     [ValidateSet('acceptance', 'watchdog-reset')]
@@ -31,9 +31,42 @@ function Test-ExpectedBootsel {
     }).Count -eq 1
 }
 
+if ($Uf2Path) {
+    $uf2 = (Resolve-Path -LiteralPath $Uf2Path).Path
+    if (-not (Test-ExpectedBootsel)) { throw 'the selected target is not in BOOTSEL' }
+    $volumes = @(Get-Volume | Where-Object { $_.FileSystemLabel -eq 'RPI-RP2' -and $_.DriveLetter })
+    if ($volumes.Count -ne 1) { throw "expected one mounted RPI-RP2 volume, found $($volumes.Count)" }
+    [IO.File]::Copy($uf2, "$($volumes[0].DriveLetter):\$(Split-Path -Leaf $uf2)", $true)
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $sawApplication = $false
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $inBootsel = Test-ExpectedBootsel
+        if (-not $inBootsel) { $sawApplication = $true }
+        if ($sawApplication -and $inBootsel) {
+            [pscustomobject]@{
+                state = 'passed'
+                evidence = 'uf2-target-left-and-returned-to-expected-bootsel'
+                target_bootsel_serial = $BootselSerial
+                transport = 'bootsel-uf2'
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    throw "the UF2 target did not leave and return to BOOTSEL within $TimeoutSeconds seconds"
+}
+
+if (-not $ProbeSerial) { throw '-ProbeSerial is required when -Uf2Path is omitted' }
+
+# RP2040 cannot answer SWD while RUN is held low. This deliberately lets the
+# connect-under-reset attempt fail; probe-rs releases RUN while closing, and
+# the real run operation below attaches during the measured recovery window.
+& $ProbeRsPath reset --probe "2e8a:000c:$ProbeSerial" --chip RP2040 `
+    --protocol swd --non-interactive --speed 100 --connect-under-reset 2>&1 | Out-Null
+
 $arguments = @(
     'run', '--probe', "2e8a:000c:$ProbeSerial", '--chip', 'RP2040',
-    '--protocol', 'swd', '--non-interactive', '--speed', '1000', $elf
+    '--protocol', 'swd', '--non-interactive', '--speed', '100', $elf
 )
 $process = Start-Process -FilePath $ProbeRsPath -ArgumentList $arguments -NoNewWindow -PassThru `
     -RedirectStandardOutput $stdout -RedirectStandardError $stderr
