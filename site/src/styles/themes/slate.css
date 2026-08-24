@@ -1,0 +1,11 @@
+/* Slate -- cool indigo on neutral grays. */
+:root {
+	--sl-color-accent-low: #1a2033;
+	--sl-color-accent: #6c8cff;
+	--sl-color-accent-high: #cdd8ff;
+}
+:root[data-theme="light"] {
+	--sl-color-accent-low: #dde4ff;
+	--sl-color-accent: #3a55d9;
+	--sl-color-accent-high: #1b2a6b;
+}

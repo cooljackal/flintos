@@ -1,0 +1,11 @@
+/* Ocean -- teal/cyan. */
+:root {
+	--sl-color-accent-low: #0c2a2e;
+	--sl-color-accent: #2bb6c4;
+	--sl-color-accent-high: #b3ecf2;
+}
+:root[data-theme="light"] {
+	--sl-color-accent-low: #d4f2f6;
+	--sl-color-accent: #0e7c88;
+	--sl-color-accent-high: #08363c;
+}

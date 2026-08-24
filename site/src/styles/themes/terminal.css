@@ -1,0 +1,13 @@
+/* Terminal -- phosphor green, near-black grays. */
+:root {
+	--sl-color-accent-low: #0d1f12;
+	--sl-color-accent: #3fb950;
+	--sl-color-accent-high: #b9f5c0;
+	--sl-color-bg: #0a0e0a;
+	--sl-color-bg-nav: #0c120c;
+}
+:root[data-theme="light"] {
+	--sl-color-accent-low: #d6f5da;
+	--sl-color-accent: #1a7f37;
+	--sl-color-accent-high: #0a3d1a;
+}

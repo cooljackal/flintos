@@ -1,0 +1,11 @@
+/* Ember -- warm amber, matches the flint-and-spark name. */
+:root {
+	--sl-color-accent-low: #2b1a0e;
+	--sl-color-accent: #ea7317;
+	--sl-color-accent-high: #ffcaa1;
+}
+:root[data-theme="light"] {
+	--sl-color-accent-low: #ffe6d1;
+	--sl-color-accent: #b5560e;
+	--sl-color-accent-high: #5a2a07;
+}

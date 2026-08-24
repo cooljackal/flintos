@@ -1,0 +1,23 @@
+---
+// Text wordmark: flint + ember OS. Overrides Starlight's default site title.
+const { siteTitleHref } = Astro.locals.starlightRoute;
+---
+
+<a href={siteTitleHref} class="site-title sl-flex" translate="no">
+	<span class="wordmark">flint<span class="brand-os">OS</span></span>
+</a>
+
+<style>
+	.site-title {
+		align-items: center;
+		gap: var(--sl-nav-gap);
+		font-size: var(--sl-text-h4);
+		font-weight: 600;
+		color: var(--sl-color-white);
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.brand-os {
+		color: #ea7317; /* ember */
+	}
+</style>

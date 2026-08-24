@@ -1,0 +1,42 @@
+/* System-ui font stacks -- no bundled webfonts, use what the OS ships. */
+:root {
+	--sl-font: "IBM Plex Sans", system-ui, -apple-system, BlinkMacSystemFont,
+		"Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji",
+		"Segoe UI Emoji";
+	--sl-font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", SFMono-Regular,
+		Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Splash hero: balance the two columns, keep the copy at a readable measure,
+   and stop the H1 from dwarfing everything. */
+.hero {
+	align-items: center;
+	gap: clamp(1.5rem, 5vw, 4rem);
+}
+.hero .copy {
+	max-width: 34ch;
+}
+.hero h1 {
+	font-size: clamp(2.5rem, 6vw, 3.75rem);
+	line-height: 1.05;
+	letter-spacing: -0.02em;
+}
+/* The wordmark: flint in the heading colour, OS in ember, in the hero H1. */
+.hero h1 .brand-os {
+	color: #ea7317;
+}
+.hero .tagline {
+	max-width: 42ch;
+	font-size: var(--sl-text-body-lg, 1.125rem);
+	line-height: 1.5;
+}
+/* The hero image (the spark mark): cap its size so it reads as a logo, not art. */
+.hero > img,
+.hero .hero-html {
+	max-width: 12rem;
+	margin-inline: auto;
+}
+/* A touch more air under the hero before the card grid. */
+.hero + .sl-markdown-content {
+	margin-top: 1.5rem;
+}
