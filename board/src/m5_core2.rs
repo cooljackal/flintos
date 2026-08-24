@@ -60,7 +60,17 @@ pub const DMA_POOL_BYTES: usize = 12288;
 /// SCK 18 are VSPI-native pads; MISO 38 is unused by the write-only panel and
 /// matrix-routed; CS 5 and D/C 15 are driven as plain GPIOs by the display
 /// transport (not the SPI controller's hardware CS), so a windowed fill holds CS
-/// across the whole transaction. 40 MHz, SPI mode 0.
+/// across the whole transaction. SPI mode 0.
+///
+/// `max_speed` is 40 MHz — hardware-verified on a Core2 (clean animation; see
+/// #140), and the fastest clean rate this panel can take. The SPI clock is an
+/// integer divide of the 80 MHz APB, so the only rates available are 80 (÷1),
+/// 40 (÷2), 26.7 (÷3)…; there is nothing clean between 40 and 80. 80 MHz was
+/// tried on hardware: the driver clocks the pixels out (IO_MUX-native pads,
+/// MOSI 23 / SCK 18), but the panel does not latch at that rate and the screen
+/// stays blank; 60 MHz has no integer divisor and the fallback ran at ~2 fps.
+/// So 40 is both the ceiling and the practical maximum: an app may run slower
+/// via [`crate::display_interface_at`], never faster.
 const LCD_MOSI_GPIO: u8 = 23;
 const LCD_MISO_GPIO: u8 = 38;
 const LCD_SCK_GPIO: u8 = 18;

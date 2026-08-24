@@ -448,12 +448,43 @@ pub fn lcd_spi() -> hal::Result<&'static esp32_spi::Esp32Spi> {
 /// Allocates DMA buffers, so call it from the task that will draw. The caller
 /// must also connect the SPI controller's interrupt for DMA completion — see
 /// [`Esp32DisplayInterface`].
+///
+/// Runs the panel at the board manifest's declared speed. An application that
+/// wants a different clock uses [`display_interface_at`].
 #[cfg(feature = "esp32-drivers")]
 pub fn display_interface() -> hal::Result<Esp32DisplayInterface> {
     let disp = active::BOARD
         .display
         .ok_or(hal::Error::Other("this board declares no display"))?;
-    Esp32DisplayInterface::new(lcd_spi()?, disp.dc, disp.cs)
+    display_interface_at(disp.port.cfg.max_speed)
+}
+
+/// Like [`display_interface`], but runs the panel at `speed` — **clamped to the
+/// board manifest's declared maximum**.
+///
+/// The split is deliberate. The manifest's `max_speed` is a hardware fact the
+/// board author owns: how fast this panel and its wiring can be clocked without
+/// glitching. An application owns a different question — whether to trade some
+/// of that speed for margin (long jumper wires, a stacked module, EMI headroom)
+/// — so it may ask for *less*. It may not ask for more: a request above the
+/// manifest ceiling is capped at the ceiling, never granted, because the board,
+/// not the app, is what knows the wire.
+#[cfg(feature = "esp32-drivers")]
+pub fn display_interface_at(
+    speed: hal::bus::BusSpeed,
+) -> hal::Result<Esp32DisplayInterface> {
+    use hal::bus::PhysicalTransfer as _;
+    let disp = active::BOARD
+        .display
+        .ok_or(hal::Error::Other("this board declares no display"))?;
+    // Never above the board's declared ceiling; the exact manifest value is
+    // used at the cap so an app asking for "max" gets precisely it.
+    let ceiling = disp.port.cfg.max_speed;
+    let clamped = if speed.hz() <= ceiling.hz() { speed } else { ceiling };
+    let spi = lcd_spi()?;
+    spi.set_speed(clamped)
+        .map_err(|_| hal::Error::Other("LCD SPI rejected the requested clock"))?;
+    Esp32DisplayInterface::new(spi, disp.dc, disp.cs)
 }
 
 // ── Power management (PMIC) ──────────────────────────────────────────────────
