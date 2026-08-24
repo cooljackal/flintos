@@ -258,6 +258,19 @@ APP_FLAGS      := --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins 
 APP_BIN        := target/$(XTENSA_TARGET)/debug/$(APP)
 endif
 
+# Developer-local secrets, sourced into the environment of the build recipes.
+# `wificonnect`'s build.rs reads FLINT_WIFI_SSID / FLINT_WIFI_PASS through
+# `option_env!`, so they must be exported for the `$(CARGO) build` that compiles
+# it. Kept in a git-ignored `.env` rather than a shell profile so a checkout
+# carries its own network without touching the environment.
+#
+# Sourced by the shell, never `include`d as a makefile: a passphrase may hold
+# `$`, `#` or spaces, which make would mangle but `.` reads literally. Format is
+# KEY=VALUE, one per line, unquoted (the shell keeps quotes verbatim). `set -a`
+# exports whatever the file defines; a missing file is a silent no-op, so a
+# build that needs no credentials is unaffected.
+LOAD_ENV := if [ -f .env ]; then set -a; . ./.env; set +a; fi;
+
 # ── Environment Setup ──────────────────────────────────────────────────────────
 
 ##@ Environment
@@ -338,7 +351,7 @@ ifneq ($(filter $(BOARD_GOALS),$(MAKECMDGOALS)),)
   endif
 endif
 build: ## Build the selected app (APP=demo BOARD=board-esp32-devkitc DEBUG=debug-level-1)
-	$(CARGO) build $(APP_FLAGS)
+	@$(LOAD_ENV) $(CARGO) build $(APP_FLAGS)
 ifeq ($(BOARD),board-wio-rp2040-mini)
 	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action convert \
 		-Architecture armv6m -Soc rp2040 -Board wio-rp2040-mini \
@@ -349,7 +362,7 @@ endif
 
 .PHONY: build-release
 build-release: ## Build release (smallest binary)
-	$(CARGO) build $(APP_FLAGS) --release
+	@$(LOAD_ENV) $(CARGO) build $(APP_FLAGS) --release
 	@$(MAKE) --no-print-directory size APP_BIN=target/$(XTENSA_TARGET)/release/$(APP)
 
 .PHONY: size

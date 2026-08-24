@@ -30,3 +30,8 @@ esp-idf/
 # revisions esp-idf references -- see doc/plan-radio.md for why these are
 # fetched rather than committed.
 .blobs/
+
+# Developer-local secrets, sourced by the build recipes (see LOAD_ENV in the
+# Makefile). Holds the Wi-Fi credentials `wificonnect` compiles in --
+# FLINT_WIFI_SSID / FLINT_WIFI_PASS -- so it must never be committed.
+.env
