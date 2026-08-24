@@ -32,7 +32,7 @@ handshake in a first-party Rust supplicant, held for minutes on hardware. No IP
 layer yet, so the link drops at the AP's inactivity timeout ([#74]). BLE is
 groundwork only. See [doc/plan-radio.md](doc/plan-radio.md).
 
-Full docs are in the [wiki], the API reference is at [flintos.dev/api][apidocs],
+Full docs are at [flintos.dev][wiki], the API reference is at [flintos.dev/api][apidocs],
 and open work lives in [issues] — the source of truth.
 
 ✅ verified on hardware · 🧪 host-tested, not yet on silicon · 🚧 partial · ⛔ not started · — n/a
@@ -91,7 +91,7 @@ Real parts you attach — one part number each, MCU-agnostic (`drivers/logical/`
 ### Logical drivers
 
 No hardware of their own — pure code over a device contract (`lib/`), portable to
-any part that keeps the contract. See [Libraries](https://github.com/cooljackal/flintos/wiki/Libraries).
+any part that keeps the contract. See [Libraries](https://flintos.dev/api/).
 
 | Driver | What it is | Status |
 |---|---|---|
@@ -120,7 +120,7 @@ any part that keeps the contract. See [Libraries](https://github.com/cooljackal/
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
 | ESP32-WROVER | Xtensa LX6 / ESP32 | 🟡 manifest written, never flashed |
 
-Full list, pinouts and register maps in the [wiki][boards]. Adding a board is one
+Full list, pinouts and register maps in the [docs][boards]. Adding a board is one
 manifest file — see [Adding a Board][add-board].
 
 **What we want most:** flash the 🟡 row, or any board not listed, and tell us
@@ -256,12 +256,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) — commits need a DCO sign-off
 
 [Apache-2.0](LICENSE). Patent grant included — see section 3.
 
-[wiki]: https://github.com/cooljackal/flintos/wiki
+[wiki]: https://flintos.dev
 [apidocs]: https://flintos.dev/api/
 [issues]: https://github.com/cooljackal/flintos/issues
-[boards]: https://github.com/cooljackal/flintos/wiki/Supported-Boards
-[quickstart]: https://github.com/cooljackal/flintos/wiki/Quickstart
-[tutorial]: https://github.com/cooljackal/flintos/wiki/Tutorial-Hello-World
-[arch]: https://github.com/cooljackal/flintos/wiki/Architecture
-[add-board]: https://github.com/cooljackal/flintos/wiki/Adding-a-Board
+[boards]: https://flintos.dev/users/supported-boards/
+[quickstart]: https://flintos.dev/users/quickstart/
+[tutorial]: https://flintos.dev/users/hello-world/
+[arch]: https://flintos.dev/developers/architecture/
+[add-board]: https://flintos.dev/developers/adding-a-board/
 [#74]: https://github.com/cooljackal/flintos/issues/74

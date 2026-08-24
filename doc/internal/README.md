@@ -17,5 +17,5 @@ sometimes worth knowing. Nothing more.
 | `flint_remediation_plan.md` | A workstream tracker from the first review |
 
 **For current documentation** see the
-[wiki](https://github.com/cooljackal/flintos/wiki). For what is actually open,
+[wiki](https://flintos.dev). For what is actually open,
 see [issues](https://github.com/cooljackal/flintos/issues).
