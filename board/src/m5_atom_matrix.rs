@@ -75,6 +75,7 @@ pub const BOARD: crate::Board = crate::Board {
     imu: Some(crate::I2cAttachment { port: IMU_PORT, addr: IMU_I2C_ADDR }),
     pmic: None,
     touch: None,
+    display: None,
     rgb_led: Some(crate::RgbLed { gpio: RGB_LED_GPIO, count: RGB_LED_COUNT, layout: RGB_LED_LAYOUT }),
     selftest: SELFTEST_PADS,
     console: CONSOLE,

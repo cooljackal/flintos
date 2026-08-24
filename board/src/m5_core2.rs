@@ -21,7 +21,7 @@
 // is supported (#137); this manifest declares no flash-touching device.
 
 use hal::bus::*;
-use soc_esp32::{addr, I2cCtrl, I2cPort};
+use soc_esp32::{addr, I2cCtrl, I2cPort, SpiCtrl, SpiPort};
 
 pub const BOARD_NAME: &str = "M5Stack Core2";
 
@@ -48,7 +48,31 @@ pub const MCPWM_SELFTEST_GPIOS: Option<[u8; 3]> = None;
 pub const PHY_MAX_TX_POWER_DBM: i32 = 20;
 
 pub const TICK_PERIOD_US: u32 = 1000;
+/// The DMA pool is fixed at 8 KiB by the build's memory map (`tools/build`), not
+/// this constant; it is kept as a manifest fact. The display's DMA double buffer
+/// (two 2 KiB chunks) plus its receive buffer fit inside that 8 KiB.
 pub const DMA_POOL_BYTES: usize = 8192;
+
+/// The LCD's SPI bus and control pins. ILI9342C over SPI3 (VSPI): MOSI 23 and
+/// SCK 18 are VSPI-native pads; MISO 38 is unused by the write-only panel and
+/// matrix-routed; CS 5 and D/C 15 are driven as plain GPIOs by the display
+/// transport (not the SPI controller's hardware CS), so a windowed fill holds CS
+/// across the whole transaction. 40 MHz, SPI mode 0.
+const LCD_MOSI_GPIO: u8 = 23;
+const LCD_MISO_GPIO: u8 = 38;
+const LCD_SCK_GPIO: u8 = 18;
+pub const LCD_CS_GPIO: u8 = 5;
+pub const LCD_DC_GPIO: u8 = 15;
+const LCD_PORT: SpiPort = SpiPort {
+    ctrl: SpiCtrl::Spi3,
+    cfg: SpiConfig {
+        mosi: LCD_MOSI_GPIO,
+        miso: LCD_MISO_GPIO,
+        sck: LCD_SCK_GPIO,
+        max_speed: BusSpeed::MHz(40),
+        mode: SpiMode::Mode0,
+    },
+};
 
 /// The Core2's internal I2C bus: SDA GPIO21, SCL GPIO22. Shared by the AXP192
 /// PMIC (0x34), the MPU6886 IMU (0x68) and the FT6336U touch (0x38). Fast-mode
@@ -81,6 +105,15 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         dma_capable: false,
         dma_pool_bytes: 0,
         config: BusConfig::i2c(INTERNAL_I2C_SDA, INTERNAL_I2C_SCL, BusSpeed::Fast400k),
+    },
+    BusMapping {
+        name: "spi3",
+        kind: BusKind::Spi,
+        base_addr: addr::SPI3_BASE,
+        irq: addr::IRQ_SPI3,
+        dma_capable: true,
+        dma_pool_bytes: 8192,
+        config: BusConfig::spi_mode0(LCD_MOSI_GPIO, LCD_MISO_GPIO, LCD_SCK_GPIO, BusSpeed::MHz(40)),
     },
 ];
 
@@ -150,6 +183,7 @@ pub const BOARD: crate::Board = crate::Board {
         rails: PMIC_RAILS,
     }),
     touch: Some(crate::I2cAttachment { port: INTERNAL_I2C_PORT, addr: TOUCH_I2C_ADDR }),
+    display: Some(crate::DisplayAttachment { port: LCD_PORT, dc: LCD_DC_GPIO, cs: LCD_CS_GPIO }),
     rgb_led: None,
     selftest: crate::SelftestPads {
         scratch: LOOPBACK_SCRATCH_GPIO,

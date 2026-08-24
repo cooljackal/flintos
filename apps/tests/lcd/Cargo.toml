@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "lcd"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "M5Core2 ILI9342C bring-up: DMA fills, blits, and a throughput benchmark"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+hal = { path = "../../../hal" }
+board = { path = "../../../board" }
+ili9342c = { path = "../../../drivers/logical/ili9342c" }
+
+# The SPI DMA-completion interrupt top-half names the controller (to acknowledge
+# it) and the kernel's DMA broker (to wake the transfer) — which only an
+# apps/tests probe may do. That is why this bring-up lives here rather than in
+# apps/examples.
+esp32-spi = { path = "../../../drivers/physical/esp32/spi" }
+soc-esp32 = { path = "../../../soc/esp32" }
+
+[build-dependencies]
+build = { path = "../../../tools/build" }
+
+[features]
+default = ["kernel/debug-level-1"]

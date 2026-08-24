@@ -69,6 +69,11 @@ pub use hal::bus::{
 pub use hal::stream;
 pub use hal::stream::{ByteStream, StreamErrors};
 
+/// Display transport contract, re-exported from `hal::display` the same way
+/// `bus` and `stream` are — so a Layer-3 panel driver names it through `api`.
+pub use hal::display;
+pub use hal::display::{DisplayError, DisplayInterface};
+
 /// Pin routing, re-exported so an application that configures a pin depends
 /// on `api` alone (#105). This was the one surface `api` did not carry, and
 /// the only reason application manifests listed `hal`.

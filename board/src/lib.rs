@@ -58,6 +58,12 @@ pub mod m5_atom_matrix;
 #[cfg(feature = "board-m5-core2")]
 pub mod m5_core2;
 
+/// The Esp32 DMA-backed display transport, for boards with an SPI TFT.
+#[cfg(feature = "esp32-drivers")]
+mod display;
+#[cfg(feature = "esp32-drivers")]
+pub use display::Esp32DisplayInterface;
+
 #[cfg(feature = "board-wio-rp2040-mini")]
 pub mod wio_rp2040_mini;
 
@@ -268,6 +274,24 @@ pub struct PmicAttachment {
     pub rails: &'static [RailSetup],
 }
 
+/// An SPI display panel wired onto the board: the SPI port it is driven over and
+/// the two GPIOs — data/command and chip-select — the transport toggles. The
+/// panel's own reset (an AXP192 GPIO on the Core2) is the driver's `init`
+/// closure, not a manifest pin.
+#[cfg(any(
+    feature = "board-esp32-wrover",
+    feature = "board-esp32-devkitc",
+    feature = "board-m5-atom-lite",
+    feature = "board-m5-atom-matrix",
+    feature = "board-m5-core2",
+))]
+#[derive(Copy, Clone, Debug)]
+pub struct DisplayAttachment {
+    pub port: soc_esp32::SpiPort,
+    pub dc: u8,
+    pub cs: u8,
+}
+
 /// Everything an application asks a board manifest about, as one value.
 #[derive(Copy, Clone, Debug)]
 pub struct Board {
@@ -302,6 +326,15 @@ pub struct Board {
         feature = "board-m5-core2",
     ))]
     pub touch: Option<I2cAttachment>,
+    /// The onboard SPI display panel, if any.
+    #[cfg(any(
+        feature = "board-esp32-wrover",
+        feature = "board-esp32-devkitc",
+        feature = "board-m5-atom-lite",
+        feature = "board-m5-atom-matrix",
+        feature = "board-m5-core2",
+    ))]
+    pub display: Option<DisplayAttachment>,
     /// The onboard addressable RGB LED or panel, if any.
     pub rgb_led: Option<RgbLed>,
     /// Free pads for the self-tests and porting examples.
@@ -384,6 +417,43 @@ pub fn touch_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp
         .touch
         .ok_or(hal::Error::Other("this board declares no touch panel"))?;
     i2c_controller(&touch.port)
+}
+
+// ── Display ──────────────────────────────────────────────────────────────────
+
+/// The display panel's SPI controller, opened once and cached.
+///
+/// Returned as the concrete [`Esp32Spi`](esp32_spi::Esp32Spi) rather than a
+/// bus, because the display transport streams pixels by DMA (`exchange_async`),
+/// which the byte-capped `Bus` layer does not expose — and because the DMA
+/// completion interrupt's top-half needs this same shared controller to
+/// acknowledge it. `Error::Other` if this board declares no display.
+#[cfg(feature = "esp32-drivers")]
+pub fn lcd_spi() -> hal::Result<&'static esp32_spi::Esp32Spi> {
+    static LCD_SPI: api::Once<esp32_spi::Esp32Spi> = api::Once::new();
+    if let Some(spi) = LCD_SPI.get() {
+        return Ok(spi);
+    }
+    let disp = active::BOARD
+        .display
+        .ok_or(hal::Error::Other("this board declares no display"))?;
+    LCD_SPI.get_or_try_init(|| esp32_spi::Esp32Spi::open(&disp.port))
+}
+
+/// A ready [`DisplayInterface`](hal::display::DisplayInterface) for the board's
+/// panel: the shared SPI controller plus its data/command and chip-select pins,
+/// with DMA pixel streaming. `Error::Other` if this board declares no display.
+///
+/// Wrap the returned interface in a panel driver (`ili9342c::Ili9342c::new`).
+/// Allocates DMA buffers, so call it from the task that will draw. The caller
+/// must also connect the SPI controller's interrupt for DMA completion — see
+/// [`Esp32DisplayInterface`].
+#[cfg(feature = "esp32-drivers")]
+pub fn display_interface() -> hal::Result<Esp32DisplayInterface> {
+    let disp = active::BOARD
+        .display
+        .ok_or(hal::Error::Other("this board declares no display"))?;
+    Esp32DisplayInterface::new(lcd_spi()?, disp.dc, disp.cs)
 }
 
 // ── Power management (PMIC) ──────────────────────────────────────────────────

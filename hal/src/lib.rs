@@ -16,6 +16,7 @@
 pub mod arch;
 pub mod bus;
 pub mod critical_section;
+pub mod display;
 pub mod dma;
 pub mod error;
 pub mod interrupt;
@@ -31,6 +32,7 @@ pub mod wifi;
 pub use arch::{Architecture, TaskContext};
 pub use bus::*;
 pub use critical_section::CriticalSection;
+pub use display::{DisplayError, DisplayInterface};
 pub use dma::{DmaError, DmaHandle, DmaReach, DmaTransferId};
 pub use error::{ConnectError, Error, Result};
 pub use interrupt::CpuInt;

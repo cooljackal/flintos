@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "ili9342c"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "ILI9342C 320x240 RGB565 SPI LCD — Layer 3 logical driver"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+api = { path = "../../../api" }

@@ -371,6 +371,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ili9342c"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
+
+[[package]]
 name = "imu"
 version = "0.1.0"
 dependencies = [
@@ -428,6 +435,20 @@ dependencies = [
 [[package]]
 name = "kvstore"
 version = "0.1.0"
+
+[[package]]
+name = "lcd"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "board",
+ "build",
+ "esp32-spi",
+ "hal",
+ "ili9342c",
+ "kernel",
+ "soc-esp32",
+]
 
 [[package]]
 name = "led-matrix"
