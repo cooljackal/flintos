@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Docs site
+
+# Build (and, on main, deploy) the flintos.dev documentation site: the Starlight
+# pages plus the generated API reference (#132), shipped as one atomic bundle.
+#
+# The site and the reference are built together here rather than in Cloudflare's
+# git integration, because the reference needs the Rust toolchain to generate and
+# Cloudflare's build image does not have it. On a pull request the build runs as a
+# check (broken MDX, a bad link, or a reference that fails to generate fails the
+# PR); on a push to main it also deploys. See issue #128.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '**/src/**'
+      - '**/Cargo.toml'
+      - 'Makefile'
+      - 'tools/apidoc/**'
+      - 'tools/rustdoc-json.*'
+      - '.github/workflows/site.yml'
+  pull_request:
+    paths:
+      - 'site/**'
+      - '**/src/**'
+      - '**/Cargo.toml'
+      - 'Makefile'
+      - 'tools/apidoc/**'
+      - 'tools/rustdoc-json.*'
+      - '.github/workflows/site.yml'
+  workflow_dispatch:
+
+# One deploy at a time; a newer push wins.
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build site + API reference
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pin the toolchain: `make apidoc` renders rustdoc's JSON, whose
+      # `format_version` is tied to the compiler version. tools/apidoc pins
+      # rustdoc-types to FORMAT_VERSION 57, which rustc 1.96.0 emits -- a newer
+      # stable would emit a newer shape and fail the parse. Bump both together.
+      - name: Install Rust 1.96.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.96.0"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      # rustdoc JSON -> Starlight pages, into the (git-ignored) content dir.
+      - name: Generate the API reference
+        run: make apidoc
+
+      - name: Build the site
+        working-directory: site
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload the built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-dist
+          path: site/dist
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Cloudflare Pages
+    needs: build
+    # Only from main, and only once the deploy credentials exist -- until the
+    # Cloudflare project and its secrets are set up (see #128) this job is
+    # skipped rather than failing every run.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-dist
+          path: site/dist
+
+      # Cloudflare Pages is a pure host here (Direct Upload / Wrangler), not a
+      # builder: the bundle is already built above. One-time setup: create a
+      # Pages project named `flintos`, add the flintos.dev custom domain, and set
+      # CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID as repository secrets.
+      - name: Publish
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site/dist --project-name=flintos --branch=main
