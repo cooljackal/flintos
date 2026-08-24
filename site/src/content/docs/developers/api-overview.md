@@ -28,7 +28,7 @@ Everything an application calls lives in the [`api`](/api/api/) crate.
 | `api::Error` / `api::Result` | The one error type an application `?`s into (re-exported from `hal`) |
 | [`api::debug`](/api/api/debug/) | `log_error!`…`log_trace!`, metrics, stack high-water marks, panic capture |
 
-Start with [Tutorial: Hello World](Tutorial-Hello-World).
+Start with [Tutorial: Hello World](/users/hello-world/).
 
 ## Writing a driver — the layer contracts
 
@@ -42,17 +42,17 @@ carries the exact signatures.
 | A protocol bus (Layer 2) | [`api::bus::Bus`](/api/hal/bus/#bus) | e.g. [`spi_bus`](/api/spi-bus/), [`i2c_bus`](/api/i2c-bus/) |
 | A peripheral register driver (Layer 1) | [`hal::bus::PhysicalBus`](/api/hal/bus/#physicalbus) | the `esp32-*` driver crates |
 
-Start with [Writing a Driver](Writing-a-Driver), which walks one example per layer.
+Start with [Writing a Driver](/developers/writing-a-driver/), which walks one example per layer.
 
 ## Portable libraries
 
 The [`lib/`](/api/led-strip/) crates —
 `led-strip`, `led-matrix`, `crypto`, `wpa`, `kvstore`, `heap` — hold device-class
-contracts and pure code with no hardware. See [Libraries](Libraries).
+contracts and pure code with no hardware. See [Libraries](/developers/libraries/).
 
 ## What's not here
 
 The reference covers the crates that build on the host: the `api` surface, the
 driver/bus traits, the logical drivers, and `lib/*`. Architecture- and
 chip-specific internals (`arch/*`, `soc/*`) are documented in their own source
-and in the [Hardware](Home#hardware) pages, not in this reference.
+and in the [Hardware](/#hardware) pages, not in this reference.

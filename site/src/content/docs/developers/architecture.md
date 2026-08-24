@@ -31,9 +31,9 @@ Three things that vary independently, so three tiers.
 
 | Tier | Owns | Example |
 |---|---|---|
-| `arch/xtensa` | **CPU core** — traps, context switch, tick, register model | [Xtensa LX6](Arch-Xtensa-LX6) |
-| `soc/esp32` | **Chip infrastructure** — address map, IRQ crossbar, pin mux, clock gating | [ESP32](SoC-ESP32) |
-| `board/` | **PCB** — which pin is wired to what, and what is on it | [Atom](Board-M5Stack-Atom) |
+| `arch/xtensa` | **CPU core** — traps, context switch, tick, register model | [Xtensa LX6](/hardware/arch-xtensa-lx6/) |
+| `soc/esp32` | **Chip infrastructure** — address map, IRQ crossbar, pin mux, clock gating | [ESP32](/hardware/soc-esp32/) |
+| `board/` | **PCB** — which pin is wired to what, and what is on it | [Atom](/hardware/board-m5stack-atom/) |
 
 ### What does *not* go in arch or soc
 
@@ -215,12 +215,12 @@ There is one scheduler and one ready queue, shared by every core. A task is not
 owned by a core; where it runs is a scheduling decision, and pinning it is a
 constraint you add rather than the default.
 
-This holds only for **symmetric** cores. See [Multicore](Multicore).
+This holds only for **symmetric** cores. See [Multicore](/developers/multicore/).
 
 ## The kernel is a library
 
 The binary is an application in `apps/`. See
-[Tutorial: Hello World](Tutorial-Hello-World).
+[Tutorial: Hello World](/users/hello-world/).
 
 That's why board and debug features are selected by the app: it's the only crate
 that can choose without the choice leaking into everything else that links the

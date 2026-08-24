@@ -91,7 +91,7 @@ Real parts you attach — one part number each, MCU-agnostic (`drivers/logical/`
 ### Logical drivers
 
 No hardware of their own — pure code over a device contract (`lib/`), portable to
-any part that keeps the contract. See [Libraries](https://flintos.dev/api/).
+any part that keeps the contract. See [Libraries](https://flintos.dev/developers/libraries/).
 
 | Driver | What it is | Status |
 |---|---|---|

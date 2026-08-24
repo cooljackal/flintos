@@ -43,6 +43,7 @@ export default defineConfig({
 						{ label: 'Supported boards', slug: 'users/supported-boards' },
 						{ label: 'Debug levels', slug: 'users/debug-levels' },
 						{ label: 'Troubleshooting', slug: 'users/troubleshooting' },
+						{ label: 'Upgrading', slug: 'users/upgrading' },
 					],
 				},
 				{
@@ -52,7 +53,19 @@ export default defineConfig({
 						{ label: 'Writing a driver', slug: 'developers/writing-a-driver' },
 						{ label: 'Adding a board', slug: 'developers/adding-a-board' },
 						{ label: 'Multicore', slug: 'developers/multicore' },
+						{ label: 'Libraries', slug: 'developers/libraries' },
 						{ label: 'API overview', slug: 'developers/api-overview' },
+					],
+				},
+				{
+					label: 'Hardware',
+					collapsed: true,
+					items: [
+						{ label: 'Xtensa LX6', slug: 'hardware/arch-xtensa-lx6' },
+						{ label: 'ESP32 (SoC)', slug: 'hardware/soc-esp32' },
+						{ label: 'ESP32-DevKitC', slug: 'hardware/board-esp32-devkitc' },
+						{ label: 'ESP32-WROVER', slug: 'hardware/board-esp32-wrover' },
+						{ label: 'M5Stack Atom', slug: 'hardware/board-m5stack-atom' },
 					],
 				},
 				{

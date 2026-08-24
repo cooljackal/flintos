@@ -41,7 +41,7 @@ Defaults: `APP=demo`, `DEBUG=debug-level-1`. `BOARD` has none — see below.
 >
 > For a plain ESP32 devboard use `BOARD=board-esp32-devkitc` — that is the
 > board the on-target suite is verified against. See
-> [ESP32-DevKitC](Board-ESP32-DevKitC).
+> [ESP32-DevKitC](/hardware/board-esp32-devkitc/).
 
 Enabling two boards is a compile error, not a warning — a wrong pin map looks
 like broken hardware.
@@ -63,7 +63,7 @@ The bracketed number is the tick. sensor every 500 ms, consumer every 1000 ms,
 housekeep every 3000 ms.
 
 Each banner line proves the step before it, so **the last line you see tells you
-where it died**. See [Troubleshooting](Troubleshooting).
+where it died**. See [Troubleshooting](/users/troubleshooting/).
 
 ## Size report
 
@@ -83,4 +83,4 @@ Per region, not per section — IRAM or DRAM runs out long before flash.
 
 ## Next
 
-[Supported Boards](Supported-Boards) · [Tutorial: Hello World](Tutorial-Hello-World).
+[Supported Boards](/users/supported-boards/) · [Tutorial: Hello World](/users/hello-world/).

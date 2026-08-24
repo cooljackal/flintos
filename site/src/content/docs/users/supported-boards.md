@@ -8,11 +8,11 @@ feature that matches your hardware; `BOARD` has no default.
 
 | Board | Arch / SoC | Feature | Status |
 |---|---|---|---|
-| [ESP32-DevKitC / WROOM-32](Board-ESP32-DevKitC) | Xtensa LX6 / ESP32 | `board-esp32-devkitc` | 🟢 verified — the reference board |
-| [M5Stack Atom Matrix](Board-M5Stack-Atom) | Xtensa LX6 / ESP32-PICO | `board-m5-atom-matrix` | 🟢 verified — LED panel, IMU, ADC |
-| [M5Stack Atom Lite](Board-M5Stack-Atom) | Xtensa LX6 / ESP32-PICO | `board-m5-atom-lite` | 🟢 verified — one LED |
+| [ESP32-DevKitC / WROOM-32](/hardware/board-esp32-devkitc/) | Xtensa LX6 / ESP32 | `board-esp32-devkitc` | 🟢 verified — the reference board |
+| [M5Stack Atom Matrix](/hardware/board-m5stack-atom/) | Xtensa LX6 / ESP32-PICO | `board-m5-atom-matrix` | 🟢 verified — LED panel, IMU, ADC |
+| [M5Stack Atom Lite](/hardware/board-m5stack-atom/) | Xtensa LX6 / ESP32-PICO | `board-m5-atom-lite` | 🟢 verified — one LED |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | `board-wio-rp2040-mini` | 🟢 verified — kernel suite, both cores |
-| [ESP32-WROVER](Board-ESP32-WROVER) | Xtensa LX6 / ESP32 | `board-esp32-wrover` | 🟡 manifest written, never flashed |
+| [ESP32-WROVER](/hardware/board-esp32-wrover/) | Xtensa LX6 / ESP32 | `board-esp32-wrover` | 🟡 manifest written, never flashed |
 
 🟢 checked on real silicon · 🟡 should work, nobody has flashed it
 
@@ -38,5 +38,5 @@ garbled serial dump is a useful result.
 ## Adding your board
 
 One manifest under `board/src/`, plus a feature line in a few `Cargo.toml`
-files. See [Adding a Board](Adding-a-Board). The per-chip pin and register
-detail you'll need lives in [ESP32](SoC-ESP32) and [Xtensa LX6](Arch-Xtensa-LX6).
+files. See [Adding a Board](/developers/adding-a-board/). The per-chip pin and register
+detail you'll need lives in [ESP32](/hardware/soc-esp32/) and [Xtensa LX6](/hardware/arch-xtensa-lx6/).

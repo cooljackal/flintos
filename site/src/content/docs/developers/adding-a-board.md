@@ -165,7 +165,7 @@ make flash BOARD=board-my-board
 
 ## Picking pins
 
-Check [ESP32](SoC-ESP32) before you commit to anything:
+Check [ESP32](/hardware/soc-esp32/) before you commit to anything:
 
 - **Never GPIO 6–11.** SPI flash.
 - **GPIO 34–39 are input-only.** No output driver at all. Routing an output
@@ -189,6 +189,6 @@ assert!(mux.can_route(Signal::I2cSda(0), 26).is_ok());
 ## A board on a chip FlintOS doesn't support yet
 
 That's a new SoC crate, not a board file. See
-[Architecture](Architecture#hardware-arch--soc--board). You'd write `soc/<chip>`
+[Architecture](/developers/architecture/#hardware-arch--soc--board). You'd write `soc/<chip>`
 with the peripheral map and a `PinMux` impl, and reuse the arch crate if the
 core is the same.

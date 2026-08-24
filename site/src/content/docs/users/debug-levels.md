@@ -50,7 +50,7 @@ Both are `const bool` in source, not features. Flip and rebuild.
 
 **`BOOT_DIAGNOSTICS`** in `kernel/src/boot.rs` — the `[FLINT] ...` boot banner.
 On by default. It's how you bisect a failing boot; see
-[Troubleshooting](Troubleshooting).
+[Troubleshooting](/users/troubleshooting/).
 
 **`TRAP_DIAGNOSTICS`** in `kernel/src/switch.rs` — per-tick heartbeat from
 inside the trap handler. **Off** by default, because on a working kernel it's

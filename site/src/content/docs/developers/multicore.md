@@ -121,7 +121,7 @@ Shared, one copy, protected by a lock:
 - **DPORT** — peripheral clock gating, the interrupt crossbar, the DMA channel
   selector. Shared hardware rather than kernel state, and unsafe in its own
   particular way: see
-  [Reading DPORT](SoC-ESP32#reading-dport). Go through `soc_esp32::dport`,
+  [Reading DPORT](/hardware/soc-esp32/#reading-dport). Go through `soc_esp32::dport`,
   never a bare `read_volatile`.
 
 Per-core, one copy each:

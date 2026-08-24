@@ -119,7 +119,7 @@ It reports itself:
 
 Raise the stack in your `spawn` call. Remember traps run on the interrupted
 task's own stack — see
-[Tutorial: Hello World](Tutorial-Hello-World#stack-sizes).
+[Tutorial: Hello World](/users/hello-world/#stack-sizes).
 
 ## Flashing fails
 

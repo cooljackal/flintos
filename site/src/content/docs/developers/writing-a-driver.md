@@ -236,7 +236,7 @@ value was wrong once.
 ## Registering it
 
 Add to the workspace `members`, then to the board manifest's `TARGET_BUSES` or
-`TARGET_DEVICES`. See [Adding a Board](Adding-a-Board).
+`TARGET_DEVICES`. See [Adding a Board](/developers/adding-a-board/).
 
 Adding it to `members` is what puts it in CI: the host jobs select the whole
 workspace minus the few crates that need the Xtensa toolchain, so a new driver

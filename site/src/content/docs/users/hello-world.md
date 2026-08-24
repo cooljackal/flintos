@@ -131,5 +131,5 @@ Queues and mutexes: see `api/src/queue.rs` and `api/src/mutex.rs`.
 
 `Task::new` leaves the task free to run on any core, which is usually what you
 want. Reach for `.on_core(n)` when the core matters for correctness — see
-[Multicore](Multicore#when-to-pin). The second core has to be started first,
+[Multicore](/developers/multicore/#when-to-pin). The second core has to be started first,
 or a task pinned to it waits forever.
