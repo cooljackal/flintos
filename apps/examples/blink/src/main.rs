@@ -422,7 +422,7 @@ fn rmt_isr() {
 
 /// Bring up the channel and the interrupt.
 ///
-/// The board claims RMT channel 0, gates the clock, routes `Signal::RmtOut` to
+/// The board claims RMT channel 0, gates the clock, routes `Signal::PulseOut` to
 /// the LED pin and enables the pad; this app connects the channel's interrupt
 /// and stages the shared `LINK`. `None` means one of those was refused, and the
 /// log says which.

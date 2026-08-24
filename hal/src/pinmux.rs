@@ -30,7 +30,14 @@ use crate::bus::BusResult;
 /// I2C0's SDA line. Which controllers exist is a property of the SoC, so
 /// routing a signal for an instance the chip does not have is an error, not a
 /// compile failure — a board manifest is data, and data can be wrong.
+///
+/// Names are the *function*, not a vendor's peripheral: a pulse-train output is
+/// `PulseOut`, whatever the SoC calls the block that generates it (the ESP32's
+/// is "RMT"). `#[non_exhaustive]` because the set of functions a chip family can
+/// route is open — a second SoC will add signals this one has no block for, and
+/// that must not be a breaking change to the contract crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Signal {
     /// UART transmit, output.
     UartTx(u8),
@@ -52,17 +59,20 @@ pub enum Signal {
     SpiSck(u8),
     /// SPI chip select, output.
     SpiCs(u8),
-    /// RMT channel output — pulse trains, e.g. addressable LEDs.
-    RmtOut(u8),
-    /// LEDC high-speed PWM channel n (0..8).
-    LedcHs(u8),
-    /// TWAI (CAN) transmit, output. One controller, so no instance number.
-    TwaiTx,
-    /// TWAI (CAN) receive, input.
-    TwaiRx,
-    /// I2S0 serial data out, output.
+    /// Pulse-train output channel n — e.g. addressable LEDs. The ESP32
+    /// generates these with its RMT block.
+    PulseOut(u8),
+    /// PWM output channel n. The ESP32 drives these from LEDC's high-speed
+    /// channels (0..8).
+    PwmOut(u8),
+    /// CAN transmit, output. One controller, so no instance number. (The ESP32
+    /// names its CAN controller "TWAI".)
+    CanTx,
+    /// CAN receive, input.
+    CanRx,
+    /// I2S serial data out, output.
     I2sTxData,
-    /// I2S0 serial data in, input.
+    /// I2S serial data in, input.
     I2sRxData,
 }
 
@@ -80,10 +90,10 @@ impl Signal {
             | Signal::SpiMiso(n)
             | Signal::SpiSck(n)
             | Signal::SpiCs(n)
-            | Signal::RmtOut(n)
-            | Signal::LedcHs(n) => *n,
+            | Signal::PulseOut(n)
+            | Signal::PwmOut(n) => *n,
             // Single-instance controllers.
-            Signal::TwaiTx | Signal::TwaiRx | Signal::I2sTxData | Signal::I2sRxData => 0,
+            Signal::CanTx | Signal::CanRx | Signal::I2sTxData | Signal::I2sRxData => 0,
         }
     }
 
@@ -99,14 +109,14 @@ impl Signal {
             | Signal::SpiMosi(_)
             | Signal::SpiSck(_)
             | Signal::SpiCs(_)
-            | Signal::RmtOut(_)
-            | Signal::LedcHs(_)
-            | Signal::TwaiTx
+            | Signal::PulseOut(_)
+            | Signal::PwmOut(_)
+            | Signal::CanTx
             | Signal::I2sTxData => SignalDirection::Output,
             Signal::UartRx(_)
             | Signal::UartCts(_)
             | Signal::SpiMiso(_)
-            | Signal::TwaiRx
+            | Signal::CanRx
             | Signal::I2sRxData => SignalDirection::Input,
             Signal::I2cSda(_) | Signal::I2cScl(_) => SignalDirection::Bidirectional,
         }

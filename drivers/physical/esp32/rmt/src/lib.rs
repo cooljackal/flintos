@@ -287,7 +287,7 @@ impl Rmt {
     /// Wins the channel's claim flag (a second `on_pin` for the same channel
     /// returns [`BusError::Busy`]), gates the RMT peripheral clock — the block
     /// answers reads with garbage until it is clocked — routes
-    /// `Signal::RmtOut(ch)` to the pad per `config`, and configures the channel
+    /// `Signal::PulseOut(ch)` to the pad per `config`, and configures the channel
     /// from [`Rmt::new`]. That is what `Esp32I2c::open` does for its bus
     /// internally: the driver gates its own clock and owns its own pin, so the
     /// caller touches neither `dport` nor `PinMux`.
@@ -311,7 +311,7 @@ impl Rmt {
         // against the other core and interrupts.
         unsafe { dport::enable(ClockBit::RMT) };
 
-        let route = Esp32PinMux::new().route(Signal::RmtOut(ch), pin, config);
+        let route = Esp32PinMux::new().route(Signal::PulseOut(ch), pin, config);
         // SAFETY: the claim above is exclusive, so this is the only live `Rmt`
         // on channel `ch`, and its output was just routed to the pad.
         let built = route.ok().and_then(|()| unsafe { Self::new(ch, div) });

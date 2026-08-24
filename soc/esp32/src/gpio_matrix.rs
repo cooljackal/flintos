@@ -118,17 +118,20 @@ pub fn signal_index(signal: Signal) -> Option<u32> {
         Signal::SpiMosi(3) => 65,
         Signal::SpiCs(3) => 68,
 
-        // RMT channel n output. Eight consecutive indices from 87.
-        Signal::RmtOut(n) if n < 8 => 87 + n as u32,
-        // `LEDC_HS_SIG_OUT0_IDX`. The low-speed channels start at 79.
-        Signal::LedcHs(n) if n < 8 => 71 + n as u32,
+        // RMT channel n output — the ESP32 block behind `PulseOut`. Eight
+        // consecutive indices from 87.
+        Signal::PulseOut(n) if n < 8 => 87 + n as u32,
+        // `LEDC_HS_SIG_OUT0_IDX` — the high-speed channels behind `PwmOut`. The
+        // low-speed channels start at 79.
+        Signal::PwmOut(n) if n < 8 => 71 + n as u32,
 
-        // TWAI is the exception to the "input and output indices coincide"
-        // note above: `TWAI_TX_IDX` is 123 and `TWAI_RX_IDX` is 94. The two are
-        // separate `Signal` variants, each used only in its own direction, so
-        // the mismatch never has to be reconciled in one value.
-        Signal::TwaiTx => 123,
-        Signal::TwaiRx => 94,
+        // TWAI (the ESP32's CAN controller) is the exception to the "input and
+        // output indices coincide" note above: `TWAI_TX_IDX` is 123 and
+        // `TWAI_RX_IDX` is 94. The two are separate `Signal` variants, each used
+        // only in its own direction, so the mismatch never has to be reconciled
+        // in one value.
+        Signal::CanTx => 123,
+        Signal::CanRx => 94,
 
         // I2S0 serial data: `I2S0O_DATA_OUT23_IDX` and `I2S0I_DATA_IN15_IDX`,
         // the lines esp-idf uses for the standard (non-parallel) stream.

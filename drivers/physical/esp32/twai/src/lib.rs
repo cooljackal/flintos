@@ -175,10 +175,10 @@ impl Twai {
         // overlap deliberately: the pad is driven by TX and read by RX, which
         // is the loopback. TX first, RX second, so the pad ends input-enabled.
         let mux = Esp32PinMux::new();
-        mux.can_route(Signal::TwaiTx, tx_pin)?;
-        mux.can_route(Signal::TwaiRx, rx_pin)?;
-        mux.route(Signal::TwaiTx, tx_pin, PinConfig::PUSH_PULL)?;
-        mux.route(Signal::TwaiRx, rx_pin, PinConfig::PUSH_PULL)?;
+        mux.can_route(Signal::CanTx, tx_pin)?;
+        mux.can_route(Signal::CanRx, rx_pin)?;
+        mux.route(Signal::CanTx, tx_pin, PinConfig::PUSH_PULL)?;
+        mux.route(Signal::CanRx, rx_pin, PinConfig::PUSH_PULL)?;
 
         // Everything below is configured in reset mode; the core only accepts
         // it there.

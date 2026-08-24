@@ -242,7 +242,7 @@ pub struct Channel {
 impl Channel {
     /// Point channel `idx` at `timer` and start driving.
     ///
-    /// The caller must have routed [`soc_esp32::gpio_matrix`]'s `LedcHs(idx)`
+    /// The caller must have routed [`soc_esp32::gpio_matrix`]'s `PwmOut(idx)`
     /// signal to a pad; this drives nothing on its own.
     ///
     /// # Safety
@@ -274,7 +274,7 @@ impl Channel {
     /// start driving. The safe constructor.
     ///
     /// Wins the channel's claim flag (a second `on_pin` for the same channel
-    /// returns [`BusError::Busy`]), routes `Signal::LedcHs(idx)` to the pad per
+    /// returns [`BusError::Busy`]), routes `Signal::PwmOut(idx)` to the pad per
     /// `config`, and configures the channel from [`Channel::new`]. The route is
     /// what `Esp32I2c::open` does for its bus internally: the driver owns its
     /// own pin, so the caller does not touch `PinMux`. Pass
@@ -298,7 +298,7 @@ impl Channel {
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
             .map_err(|_| BusError::Busy)?;
 
-        let route = Esp32PinMux::new().route(Signal::LedcHs(idx), pin, config);
+        let route = Esp32PinMux::new().route(Signal::PwmOut(idx), pin, config);
         let built = route.ok().and_then(|()| {
             // SAFETY: the claim above is exclusive, so this is the only live
             // `Channel` on channel `idx`, and its output was just routed to the
