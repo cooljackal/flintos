@@ -130,20 +130,12 @@ pub fn _flint_sys_timer_now_ms() -> u64 {
 /// [`api::time::now_us`].
 ///
 /// Lock-free by design so it can be read from trap context — see
-/// `clock::now_us`. Where there is no such counter (a SoC without the TIMG
-/// clock) it falls back to the millisecond scheduler tick scaled up: monotonic
-/// and correctly ordered, a thousand times coarser.
+/// [`crate::clock::now_us`], which selects a hardware microsecond counter when
+/// the SoC has one and falls back to the scaled scheduler tick when it does
+/// not. Either way the answer is monotonic and correctly ordered.
 #[no_mangle]
 pub fn _flint_sys_now_us() -> u64 {
-    #[cfg(feature = "soc-esp32")]
-    {
-        crate::clock::now_us()
-    }
-    #[cfg(not(feature = "soc-esp32"))]
-    {
-        use hal::tick::TickSource;
-        crate::arch::Tick::now().saturating_mul(1_000)
-    }
+    crate::clock::now_us()
 }
 
 #[no_mangle]

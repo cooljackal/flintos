@@ -15,6 +15,7 @@
 
 pub mod arch;
 pub mod bus;
+pub mod clock;
 pub mod critical_section;
 pub mod display;
 pub mod dma;
@@ -31,6 +32,7 @@ pub mod wifi;
 
 pub use arch::{Architecture, TaskContext};
 pub use bus::*;
+pub use clock::MonotonicClock;
 pub use critical_section::CriticalSection;
 pub use display::{DisplayError, DisplayInterface};
 pub use dma::{DmaError, DmaHandle, DmaReach, DmaTransferId};

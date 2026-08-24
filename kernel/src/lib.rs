@@ -81,7 +81,6 @@ pub use esp32_rng as rng;
 
 #[cfg(feature = "soc-esp32")]
 pub mod alarm;
-#[cfg(feature = "soc-esp32")]
 pub mod clock;
 pub mod power;
 pub mod queue;
