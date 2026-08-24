@@ -918,34 +918,55 @@ fn yaml_escape(s: &str) -> String {
 }
 
 /// The generated `API` sidebar group as JSON, for the Starlight config to splice.
-fn build_sidebar(crates: &[CrateDoc]) -> String {
-    // Shape: [{ "label": "<crate>", "items": [{ "label": "<mod path>", "link": "<url>" }] }]
-    // Lead with the landing page so the group has an "Overview" front door.
-    let mut roots: Vec<String> = vec![
-        "  { \"label\": \"Overview\", \"link\": \"/api/\" }".to_string(),
-    ];
-    for c in crates {
-        let mut entries: Vec<String> = Vec::new();
-        for (path, _slug) in &c.modules {
-            let label = path.join("::");
-            let link = url_for(path);
-            entries.push(format!(
-                "    {{ \"label\": \"{}\", \"link\": \"{}\" }}",
-                json_escape(&label),
-                link
-            ));
-        }
-        roots.push(format!(
-            "  {{\n    \"label\": \"{}\",\n    \"collapsed\": true,\n    \"items\": [\n{}\n    ]\n  }}",
-            json_escape(&c.name),
-            entries.join(",\n")
-        ));
+/// Group a crate under a sidebar category by its name -- so 41 flat crates read
+/// as a handful of sections (the esp32 drivers together, the buses together,
+/// ...). Returns `(order, label)`; `order` fixes the section sequence.
+fn category(name: &str) -> (u8, &'static str) {
+    let n = name.replace('-', "_");
+    match n.as_str() {
+        "api" | "hal" | "kernel" | "board" => (0, "System"),
+        _ if n.starts_with("arch_") => (1, "Architectures"),
+        _ if n.starts_with("soc_") => (2, "SoCs"),
+        _ if n.starts_with("esp32_") => (3, "Drivers · ESP32"),
+        _ if n.ends_with("_bus") => (4, "Buses"),
+        _ if n.starts_with("radio") => (5, "Radio"),
+        _ => (6, "Drivers & libraries"),
     }
-    format!("[\n{}\n]\n", roots.join(",\n"))
 }
 
-fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+/// The generated API sidebar: an Overview link, then one section per category,
+/// each a collapsed group whose items are the crates (themselves collapsed
+/// groups of their module pages). Built with serde_json so the nesting is
+/// correct by construction.
+fn build_sidebar(crates: &[CrateDoc]) -> String {
+    use serde_json::{json, Value};
+
+    // Bucket crates by category, preserving a stable order within each.
+    let mut ordered: Vec<&CrateDoc> = crates.iter().collect();
+    ordered.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut items: Vec<Value> = vec![json!({ "label": "Overview", "link": "/api/" })];
+    // Walk categories in fixed order; within a category, the crates in name order.
+    let mut cats: Vec<(u8, &'static str)> = ordered.iter().map(|c| category(&c.name)).collect();
+    cats.sort();
+    cats.dedup();
+    for (ord, label) in cats {
+        let crate_groups: Vec<Value> = ordered
+            .iter()
+            .filter(|c| category(&c.name) == (ord, label))
+            .map(|c| {
+                let mods: Vec<Value> = c
+                    .modules
+                    .iter()
+                    .map(|(path, _slug)| json!({ "label": path.join("::"), "link": url_for(path) }))
+                    .collect();
+                json!({ "label": c.name, "collapsed": true, "items": mods })
+            })
+            .collect();
+        items.push(json!({ "label": label, "collapsed": true, "items": crate_groups }));
+    }
+
+    serde_json::to_string_pretty(&Value::Array(items)).unwrap_or_else(|_| "[]".to_string())
 }
 
 // Silence unused-import churn while the related-items model grows.
