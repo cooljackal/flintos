@@ -33,6 +33,23 @@ soc-esp32 = { path = "../../soc/esp32" }
 # with no hardware in it, so this costs the layer check nothing.
 kvstore = { path = "../../lib/kvstore" }
 
+# The TCP/IP stack (#68, plan-radio Phase 6). Rust, `no_std`, no C build step
+# and no heap of its own — it works from fixed buffers we hand it, which suits
+# the ground rule that only this tier allocates. The first third-party crate of
+# any size in a tiered crate, so `tools/check-layers.sh` names it explicitly.
+# Pinned exact, as every external dependency in this tree is; 0.12.0 is the
+# newest release whose MSRV is within the workspace's `rust-version`.
+smoltcp = { version = "=0.12.0", default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "proto-dhcpv4",
+    "proto-dns",
+    "socket-udp",
+    "socket-tcp",
+    "socket-dhcpv4",
+    "socket-dns",
+] }
+
 [features]
 # **No `blobs` feature, and no build script.** This crate declares the
 # `extern "C"` functions; the archives that define them are named by the

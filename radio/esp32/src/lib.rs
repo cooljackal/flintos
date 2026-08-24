@@ -54,6 +54,7 @@ pub mod coex;
 pub mod ets_timer;
 pub mod events;
 pub mod interrupts;
+pub mod net;
 pub mod nvs;
 pub mod phy;
 pub mod phy_init;

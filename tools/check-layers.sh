@@ -133,7 +133,13 @@ ALLOWED = {
     "drivers/bus":      {"api"} | LIBS,
     "drivers/logical":  {"api"} | LIBS,
     "lib":              LIBS,
-    "radio":            {"hal", "api", "kernel"} | SOCS | LIBS,
+    # `smoltcp` is the one external crate this tier is allowed to name: the
+    # TCP/IP stack (#68), Rust and no_std, driven from buffers out of the radio
+    # heap. It is named explicitly rather than by opening the tier to any
+    # crates.io dependency -- the whitelist stays a whitelist, and a stray dep
+    # still trips. If a second external crate wants in here, that is the signal
+    # to ask why, exactly as `kernel` is for the tiers below.
+    "radio":            {"hal", "api", "kernel", "smoltcp"} | SOCS | LIBS,
     # The board crate constructs drivers -- it opens a controller and wraps it
     # in a bus -- so it may name the physical and bus drivers, plus hal, api,
     # the soc crates and the libs. It may NOT name `kernel`: a board is a pin
@@ -155,7 +161,7 @@ DESCRIBE = {
     "drivers/bus":      "api and lib/ crates",
     "drivers/logical":  "api and lib/ crates",
     "lib":              "other lib/ crates only",
-    "radio":            "hal, api, kernel, soc/ and lib/ crates",
+    "radio":            "hal, api, kernel, smoltcp, soc/ and lib/ crates",
     "board":            "hal, api, soc/, drivers/physical, drivers/bus and lib/ crates",
     "apps/examples":    "hal, api, board, kernel, drivers/bus, drivers/logical and lib/ crates",
 }
