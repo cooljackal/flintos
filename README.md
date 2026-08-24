@@ -86,7 +86,6 @@ Real parts you attach — one part number each, MCU-agnostic (`drivers/logical/`
 | MPU6886 | 6-axis IMU (accelerometer + gyro) | ✅ |
 | WS2812 / SK6812 | Addressable RGB LED | ✅ |
 | AXP192 | Power-management IC — rails + battery status | ✅ |
-| ILI9342C | 320×240 RGB565 SPI TFT — DMA pixel streaming | ✅ |
 | BMI270 | 6-axis IMU | 🧪 |
 | BME280 | Temperature / humidity / pressure sensor | 🧪 |
 | SSD1306 | 128×64 monochrome OLED display | 🧪 |
@@ -106,7 +105,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 
 | Check | Status |
 |---|---|
-| Host unit tests | ✅ 552 passing, kernel included — `make test-host` |
+| Host unit tests | ✅ 925 passing, kernel included — `make test-host` |
 | On-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
 | Layer boundary + package naming | ✅ enforced in CI |
 | Image size, per region | `make size` |
@@ -121,7 +120,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 | ESP32-DevKitC / WROOM-32 | Xtensa LX6 / ESP32 | ✅ verified — reference board; rev 1 & rev 3, full self-test suite + Wi-Fi/IP stack |
 | M5Stack Atom Matrix | Xtensa LX6 / ESP32-PICO | ✅ verified — LED panel, IMU, ADC |
 | M5Stack Atom Lite | Xtensa LX6 / ESP32-PICO | ✅ verified — one LED |
-| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — AXP192 rails + battery, MPU6886 IMU, FT6336U touch, ILI9342C LCD (DMA), all on hardware |
+| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — boots on AXP192 power rails + battery status; onboard IMU and FT6336U touch wired; LCD pending |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
 | ESP32-WROVER | Xtensa LX6 / ESP32 | 🟡 manifest written, never flashed |
 
