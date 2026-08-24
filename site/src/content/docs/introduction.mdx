@@ -1,0 +1,90 @@
+---
+title: Introduction
+description: What flintOS is, who it's for, and where to start.
+---
+
+import { Card, CardGrid, LinkCard, Aside } from '@astrojs/starlight/components';
+
+flintOS is a tiny real-time operating system for small 32-bit chips — the kind
+inside an ESP32 or a Raspberry Pi Pico. You write your app in plain Rust: start
+a task, blink an LED, read a sensor. flintOS quietly handles the hard parts
+underneath — scheduling, timing, talking to the hardware.
+
+<Aside type="tip" title="The whole point">
+**flintOS is meant to be dead-simple to use.** No build-system yak-shaving, no
+hundred-line startup dance, no fighting the borrow checker to turn on an LED.
+Pick a board, write a little Rust, flash it. That's the bar we hold everything to.
+</Aside>
+
+## What you get for free
+
+Link the kernel into your app and all of this comes along — no extra crates, no
+setup. The point of each one is to save you the thing that usually goes wrong on
+a chip with no screen and no debugger attached.
+
+<CardGrid>
+	<Card title="🪵 Logging you can turn down">
+		`log_error!` … `log_trace!`, with a build-time level. Keep chatty logs
+		while you develop; a release build **compiles the noise away** so you pay
+		nothing for it in the field.
+	</Card>
+	<Card title="📊 Metrics without the plumbing">
+		Name a `Counter` or `Gauge` in a line and read it back live. Answer
+		“how many, how often, how full?” **without bolting on a framework.**
+	</Card>
+	<Card title="🧯 Panic capture">
+		When something crashes you get a snapshot — which task, where, and why —
+		in debug builds, and a clean reset in release. **A dead board on your
+		desk becomes a readable report** instead of a mystery.
+	</Card>
+	<Card title="📏 Stack high-water marks">
+		See how close each task came to overflowing its stack. **Size your
+		stacks from real evidence** instead of guessing and hoping.
+	</Card>
+	<Card title="⏱️ CPU load & timing">
+		Per-task load and precise timing spans, off by default. **Find the slow
+		path with numbers** — and pay nothing when you're not looking.
+	</Card>
+</CardGrid>
+
+## Who it's for
+
+- **App authors** who want firmware in plain, readable Rust — spawn a task, open
+  a bus, talk to a sensor — without wrestling the hardware.
+- **Driver & board authors** adding new peripherals and boards, inside a layer
+  model that keeps chip-specific code and portable code cleanly apart.
+
+## What runs today
+
+flintOS runs on two chip families right now, with a portable core that keeps the
+chip- and CPU-specific bits at the edges:
+
+<CardGrid>
+	<Card title="Xtensa LX6 · ESP32">
+		- ESP32-DevKitC / WROOM-32 — the reference board
+		- ESP32-WROVER
+		- M5Stack Atom Matrix
+		- M5Stack Atom Lite
+	</Card>
+	<Card title="Arm Cortex-M0+ · RP2040">
+		- Wio RP2040 Mini (both cores)
+	</Card>
+</CardGrid>
+
+The full matrix, with what's verified on hardware, is in
+[Supported boards](/users/supported-boards/).
+
+## Where to start
+
+<CardGrid>
+	<LinkCard title="Quickstart" href="/users/quickstart/"
+		description="Bare toolchain to a running board in a few minutes." />
+	<LinkCard title="Hello, world" href="/users/hello-world/"
+		description="Write and flash your first app." />
+	<LinkCard title="Architecture" href="/developers/architecture/"
+		description="How flintOS is put together, and why." />
+	<LinkCard title="Writing a driver" href="/developers/writing-a-driver/"
+		description="Add support for a new part." />
+	<LinkCard title="API reference" href="/api/"
+		description="Every crate, generated from the source." />
+</CardGrid>

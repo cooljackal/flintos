@@ -35,6 +35,7 @@ export default defineConfig({
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/cooljackal/flintos' },
 			],
 			sidebar: [
+				{ label: 'Introduction', slug: 'introduction' },
 				{
 					label: 'Users',
 					items: [
