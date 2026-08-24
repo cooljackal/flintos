@@ -45,6 +45,10 @@ const PASS: Option<&str> = option_env!("FLINT_WIFI_PASS");
 #[cfg(feature = "blobs")]
 static SCAN_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// Set when the 4-way handshake completes and the link carries data frames.
+#[cfg(feature = "blobs")]
+static CONNECTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// The build with no archives to call.
 #[cfg(not(feature = "blobs"))]
 fn run() {
@@ -110,7 +114,33 @@ fn run() {
         Err(e) => api::log_error!("connect refused: {:?}", e),
     }
 
-    // The result arrives at `on_event`. Report the running state each second.
+    // The handshake result arrives at `on_event`. Once it reports the link up,
+    // bring a smoltcp interface up on it and pull a DHCP lease — the first
+    // thing that moves a frame both ways past association (#68, phase 6.2/6.3).
+    if task::wait_until(
+        || CONNECTED.load(core::sync::atomic::Ordering::SeqCst),
+        20_000,
+    ) {
+        match radio_esp32::net::obtain_dhcp_lease(15_000) {
+            Some(l) => {
+                api::log_info!(
+                    "[net] DHCP lease {}.{}.{}.{}/{}",
+                    l.ip[0], l.ip[1], l.ip[2], l.ip[3], l.prefix_len
+                );
+                if let Some(r) = l.router {
+                    api::log_info!("[net] gateway {}.{}.{}.{}", r[0], r[1], r[2], r[3]);
+                }
+                if let Some(d) = l.dns {
+                    api::log_info!("[net] dns {}.{}.{}.{}", d[0], d[1], d[2], d[3]);
+                }
+            }
+            None => api::log_error!("[net] DHCP did not complete"),
+        }
+    } else {
+        api::log_warn!("no handshake within 20 s; not starting the network");
+    }
+
+    // Report the running state each second thereafter.
     let mut i = 0;
     loop {
         task::sleep_ms(1000);
@@ -152,10 +182,13 @@ fn on_event(event: hal::wifi::StationEvent) {
             }
             SCAN_DONE.store(true, core::sync::atomic::Ordering::SeqCst);
         }
-        StationEvent::Connected { bssid, channel } => api::log_info!(
-            "[wifi] CONNECTED to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} on channel {}",
-            bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], channel
-        ),
+        StationEvent::Connected { bssid, channel } => {
+            api::log_info!(
+                "[wifi] CONNECTED to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} on channel {}",
+                bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], channel
+            );
+            CONNECTED.store(true, core::sync::atomic::Ordering::SeqCst);
+        }
         StationEvent::Disconnected { reason } => {
             api::log_warn!("[wifi] DISCONNECTED: {:?}", reason)
         }

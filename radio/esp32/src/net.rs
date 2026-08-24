@@ -23,14 +23,16 @@
 //!
 //! # Status
 //!
-//! **6.1: the seam compiles into the tree.** The [`RxQueue`] and the
-//! [`WifiDevice`] are here and host-tested for their ring behaviour, and
-//! transmit is wired to the blob. What is **not** here yet, and not on
-//! hardware, is 6.2's other half: registering the MAC receive callback that
-//! fills the queue, and driving a smoltcp `Interface` poll loop. Those land
-//! next, validated against a real AP — a device seam that has never carried a
-//! frame is exactly the kind of thing this crate does not claim works until the
-//! blob has driven it.
+//! **6.2/6.3: frames move both ways and the station gets an address.** The
+//! [`RxQueue`] and [`WifiDevice`] carry traffic in both directions;
+//! [`rx_trampoline`] is the MAC's receive callback filling the ring, and
+//! [`obtain_dhcp_lease`] brings a smoltcp `Interface` up on the station and
+//! runs DHCP to a lease. Validated on an ESP32-DevKitC against a real AP:
+//! DISCOVER out, OFFER/ACK in, a lease logged within a second of association.
+//! The ring behaviour is host-tested besides.
+//!
+//! Still to come for #68: **6.4** DNS resolution and a TCP connect; **6.5** TLS
+//! is deferred by the plan.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -58,7 +60,26 @@ extern "C" {
     /// in [`crate::supplicant`]; redeclared here so this module stands alone.
     /// Sends a raw L2 frame — the caller supplies the Ethernet header.
     fn esp_wifi_internal_tx(ifx: u32, buffer: *const core::ffi::c_void, len: u16) -> i32;
+
+    /// `esp_err_t esp_wifi_internal_reg_rxcb(wifi_interface_t, wifi_rxcb_t)`.
+    /// Registers the callback the MAC delivers received frames to. Signature
+    /// from esp-idf `esp_private/wifi.h` at v4.4.
+    fn esp_wifi_internal_reg_rxcb(ifx: u32, cb: RxCb) -> i32;
+
+    /// `void esp_wifi_internal_free_rx_buffer(void* buffer)`. Returns the
+    /// buffer handle (`eb`) the MAC lent the callback back to the driver; the
+    /// frame's storage is the MAC's, not ours, so it is freed once copied.
+    fn esp_wifi_internal_free_rx_buffer(eb: *mut core::ffi::c_void);
+
+    /// `int esp_wifi_get_macaddr_internal(uint8_t if_index, uint8_t*)` — the
+    /// station's own MAC, which smoltcp needs as its Ethernet hardware address.
+    fn esp_wifi_get_macaddr_internal(ifx: u8, mac: *mut u8) -> i32;
 }
+
+/// `typedef esp_err_t (*wifi_rxcb_t)(void *buffer, uint16_t len, void *eb)` —
+/// the shape [`esp_wifi_internal_reg_rxcb`] expects.
+#[cfg(target_os = "none")]
+type RxCb = unsafe extern "C" fn(buffer: *mut core::ffi::c_void, len: u16, eb: *mut core::ffi::c_void) -> i32;
 
 /// One frame's worth of storage: the bytes plus how many are valid.
 struct Slot {
@@ -264,6 +285,144 @@ fn tx_raw(frame: &[u8]) {
 /// which is what lets the ring and token logic be exercised off-target.
 #[cfg(not(target_os = "none"))]
 fn tx_raw(_frame: &[u8]) {}
+
+// ── The receive path and a DHCP-driven interface (6.2 / 6.3) ─────────────────
+
+/// The one receive queue, filled by [`rx_trampoline`] and drained by the
+/// interface poll. A `static` because the MAC's callback is a bare `extern "C"`
+/// function with no place to carry a handle — it reaches the queue by name.
+#[cfg(target_os = "none")]
+static RX_QUEUE: RxQueue = RxQueue::new();
+
+/// The callback the MAC calls for every received frame, on the driver's task.
+///
+/// The frame lives in a buffer the MAC owns only until this returns, so it is
+/// copied into the ring here and the buffer handed straight back. Returning
+/// `ESP_OK` (0) is what the blob expects; there is no failure it acts on.
+#[cfg(target_os = "none")]
+unsafe extern "C" fn rx_trampoline(
+    buffer: *mut core::ffi::c_void,
+    len: u16,
+    eb: *mut core::ffi::c_void,
+) -> i32 {
+    if !buffer.is_null() && len != 0 {
+        // SAFETY: the MAC guarantees `len` valid bytes at `buffer` for the
+        // duration of this call; `push` copies them out before returning.
+        let frame = core::slice::from_raw_parts(buffer as *const u8, len as usize);
+        RX_QUEUE.push(frame);
+    }
+    // The buffer handle is the MAC's to reclaim. A NULL `eb` means the frame
+    // was one the MAC will not take back (already copied on its side), so free
+    // only a real handle.
+    if !eb.is_null() {
+        esp_wifi_internal_free_rx_buffer(eb);
+    }
+    0
+}
+
+/// The station's own MAC address, for smoltcp's Ethernet hardware address.
+#[cfg(target_os = "none")]
+pub fn station_mac() -> [u8; 6] {
+    let mut mac = [0u8; 6];
+    // SAFETY: writes exactly six bytes into a six-byte buffer.
+    unsafe { esp_wifi_get_macaddr_internal(0, mac.as_mut_ptr()) };
+    mac
+}
+
+/// A DHCP lease, in plain bytes so the caller needs no smoltcp types.
+#[derive(Clone, Copy, Debug)]
+pub struct Lease {
+    /// The assigned address and its prefix length.
+    pub ip: [u8; 4],
+    pub prefix_len: u8,
+    /// The default gateway, if the server offered one.
+    pub router: Option<[u8; 4]>,
+    /// The first DNS server offered, if any.
+    pub dns: Option<[u8; 4]>,
+}
+
+/// Register the receive callback, bring up a smoltcp interface on the
+/// associated station, and run DHCP until it configures or `timeout_ms`
+/// elapses. Returns the lease on success.
+///
+/// This is the first thing that moves a frame both ways: DHCP DISCOVER leaves
+/// through [`tx_raw`], the server's OFFER/ACK arrives through [`rx_trampoline`]
+/// into the ring, and smoltcp's state machine closes the exchange. It must run
+/// **after** the station reports `Connected` — before association the MAC drops
+/// everything.
+///
+/// Call once per association: it registers the callback and owns the interface
+/// for the length of the call.
+#[cfg(target_os = "none")]
+pub fn obtain_dhcp_lease(timeout_ms: u64) -> Option<Lease> {
+    use smoltcp::iface::{Config, Interface, SocketSet, SocketStorage};
+    use smoltcp::socket::dhcpv4;
+    use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr};
+
+    let mac = station_mac();
+    api::log_info!(
+        "[net] station mac {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    );
+
+    // SAFETY: `rx_trampoline` matches `wifi_rxcb_t`, and the station is
+    // associated (the caller's contract), so the MAC has a control block to
+    // attach it to.
+    let rc = unsafe { esp_wifi_internal_reg_rxcb(IF_STA, rx_trampoline) };
+    if rc != 0 {
+        api::log_error!("[net] could not register the rx callback: rc={}", rc);
+        return None;
+    }
+
+    let mut device = WifiDevice::new(&RX_QUEUE);
+
+    let now = || smoltcp::time::Instant::from_millis(api::timer::now_ms() as i64);
+    let mut config = Config::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
+    // The DHCP transaction id must not repeat across boots; the uptime clock in
+    // microseconds is the seed esp-idf's own examples use for the same reason.
+    config.random_seed = api::time::now_us();
+    let mut iface = Interface::new(config, &mut device, now());
+
+    let mut sock_storage: [SocketStorage; 1] = [SocketStorage::EMPTY];
+    let mut sockets = SocketSet::new(&mut sock_storage[..]);
+    let dhcp = sockets.add(dhcpv4::Socket::new());
+
+    let start = api::timer::now_ms();
+    loop {
+        let t = now();
+        iface.poll(t, &mut device, &mut sockets);
+
+        match sockets.get_mut::<dhcpv4::Socket>(dhcp).poll() {
+            Some(dhcpv4::Event::Configured(cfg)) => {
+                let addr = cfg.address;
+                iface.update_ip_addrs(|addrs| {
+                    let _ = addrs.push(IpCidr::Ipv4(addr));
+                });
+                if let Some(router) = cfg.router {
+                    let _ = iface.routes_mut().add_default_ipv4_route(router);
+                }
+                let lease = Lease {
+                    ip: addr.address().octets(),
+                    prefix_len: addr.prefix_len(),
+                    router: cfg.router.map(|r| r.octets()),
+                    dns: cfg.dns_servers.first().map(|d| d.octets()),
+                };
+                return Some(lease);
+            }
+            Some(dhcpv4::Event::Deconfigured) => {}
+            None => {}
+        }
+
+        if api::timer::now_ms().saturating_sub(start) > timeout_ms {
+            api::log_warn!("[net] no DHCP lease within {} ms", timeout_ms);
+            api::log_warn!("[net] frames dropped for a full ring: {}", RX_QUEUE.dropped());
+            return None;
+        }
+        // Yield: DHCP has retransmit timers of its own, and a tight poll would
+        // starve the driver task that fills the ring.
+        api::task::sleep_ms(50);
+    }
+}
 
 #[cfg(all(test, not(target_os = "none")))]
 mod tests {
