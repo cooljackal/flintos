@@ -24,6 +24,11 @@ pub const HAS_WIFI: bool = false; // ESP8285 over UART, not a PHY the RP2040 dri
 pub const HAS_BT: bool = false;
 pub const USER_LED_GPIO: u8 = 13;
 pub const TICK_PERIOD_US: u32 = 1_000;
+/// The DMA pool's size is fixed by the linker script (`arch/armv6m/rp2040.ld`
+/// reserves 8 KiB), *not* by this constant; the runtime reads the real size
+/// from the `_dma_pool_start`/`_dma_pool_end` symbols it emits. This value is a
+/// manifest fact only, mirroring that reservation. Unlike the ESP32 boards the
+/// RP2040 map is not radio-keyed — the chip has no radio of its own.
 pub const DMA_POOL_BYTES: usize = 8_192;
 pub const ADC_EXTERNAL_HIGH_GPIO: Option<u8> = None;
 pub const LOOPBACK_SCRATCH_GPIO: Option<u8> = None;

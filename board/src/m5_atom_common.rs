@@ -79,7 +79,13 @@ pub const MCPWM_SELFTEST_GPIOS: Option<[u8; 3]> = None;
 pub const PHY_MAX_TX_POWER_DBM: i32 = 20;
 
 pub const TICK_PERIOD_US: u32 = 1000;
-pub const DMA_POOL_BYTES: usize = 8192;
+/// The DMA pool's size is set by the build's memory map (`tools/build/src/map.rs`,
+/// radio-keyed against the ROM bound), *not* by this constant, and the runtime
+/// reads the real size from the linker symbols the map emits. This value is a
+/// manifest fact only: it mirrors the Wi-Fi-only pool the map places (12 KiB; a
+/// `radio-bt` build gets 8 KiB, the ROM bound being tighter once the controller
+/// takes the bottom of DRAM). See #140.
+pub const DMA_POOL_BYTES: usize = 12288;
 
 /// **Do not use GPIO16 or GPIO17 on this board.**
 ///
