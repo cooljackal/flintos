@@ -480,6 +480,44 @@ DOCS_RUSTDOCFLAGS = --html-in-header site/rustdoc/header.html --default-theme da
 docs: ## Generate the API reference (rustdoc) for host-buildable crates
 	RUSTDOCFLAGS='$(DOCS_RUSTDOCFLAGS)' cargo doc --no-deps $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 
+# The site API reference (#132): rustdoc's JSON output, rendered by tools/apidoc
+# into Starlight pages so the reference lives inside flintos.dev -- the site's
+# theme and, the point, its Pagefind search -- and still cannot drift from the
+# code. Supersedes the standalone rustdoc site (`docs`).
+#
+# Two steps: emit one <crate>.json per crate (nightly-only format, gated on
+# stable with RUSTC_BOOTSTRAP=1, pinned to FORMAT_VERSION 57 by tools/apidoc's
+# rustdoc-types dep), then render. The host tool crates are excluded -- they are
+# not part of the public API a reader wants.
+#
+# Output lands in a git-ignored content dir; it is a build artifact regenerated
+# in CI before the site build, never committed.
+APIDOC_OUT     := site/src/content/docs/api
+API_SELECT     := $(HOST_SELECT) --exclude build --exclude size --exclude apidoc
+# An isolated target dir: the JSON pass and the ordinary embedded build must not
+# share a cache, or the other's artifacts (built with a different core) leak in.
+API_TARGET_DIR := target/apidoc
+API_JSON_DIR   := $(API_TARGET_DIR)/$(HOST_TARGET)/doc
+# The JSON output format is nightly-only, so rustdoc runs with RUSTC_BOOTSTRAP=1
+# -- but only rustdoc, via this wrapper, never cargo. If cargo saw it too it
+# would honour `[unstable] build-std` from .cargo/config.toml and build a second
+# `core` for the host target, which collides with the sysroot's (E0152). Cargo
+# on stable ignores build-std and documents against sysroot core cleanly.
+# Key off the host triple, not $(OS): under MSYS make, $(OS) is not reliably
+# "Windows_NT". cargo (a native binary) cannot exec a shell script as RUSTDOC on
+# Windows, so hand it the .bat via a native (cygpath -w) path.
+ifneq (,$(findstring windows,$(HOST_TARGET)))
+RUSTDOC_WRAP := $(shell cygpath -w $(CURDIR)/tools/rustdoc-json.bat)
+else
+RUSTDOC_WRAP := $(CURDIR)/tools/rustdoc-json.sh
+endif
+.PHONY: apidoc
+apidoc: ## Generate the site API reference (Starlight pages) from rustdoc JSON
+	CARGO_TARGET_DIR=$(API_TARGET_DIR) RUSTDOC='$(RUSTDOC_WRAP)' \
+		RUSTDOCFLAGS='--output-format json -Z unstable-options' \
+		cargo doc --no-deps $(API_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
+	cargo run -q -p apidoc --target $(HOST_TARGET) -- $(API_JSON_DIR) $(APIDOC_OUT)
+
 # Applications that refuse to build for the default board, and the board each
 # one wants. `blink`, `imu` and `pwm` need hardware only the Atoms declare, and
 # they say so with a `compile_error!` naming the board -- which is good

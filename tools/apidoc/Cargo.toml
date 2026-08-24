@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "apidoc"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Generate the flintos.dev API reference (Starlight pages) from rustdoc JSON"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "apidoc"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned to the rustdoc JSON format the pinned toolchain emits: rustdoc-types
+# 0.NN.0 carries FORMAT_VERSION = NN, and `make apidoc` emits format_version 57.
+# A toolchain bump that changes the format is a deliberate, paired change here.
+rustdoc-types = "=0.57.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

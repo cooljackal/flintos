@@ -22,3 +22,6 @@ pnpm-debug.log*
 
 # generated rustdoc, copied in for local combined-site preview (make docs -> public/api)
 public/api/
+
+# generated API reference (make apidoc -> Starlight pages, issue #132)
+src/content/docs/api/

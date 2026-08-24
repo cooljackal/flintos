@@ -1,6 +1,16 @@
 // @ts-check
+import { existsSync, readFileSync } from 'node:fs';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+
+// The API reference is generated (`make apidoc`, issue #132): one collapsible
+// group per crate, written to a git-ignored `_sidebar.json`. Read it if present
+// so `astro build` works whether or not the reference has been generated yet --
+// CI runs `make apidoc` first; a bare local dev checkout falls back to a stub.
+const API_SIDEBAR = './src/content/docs/api/_sidebar.json';
+const apiGroups = existsSync(API_SIDEBAR)
+	? JSON.parse(readFileSync(API_SIDEBAR, 'utf8'))
+	: [{ label: 'Not generated — run `make apidoc`', link: '/api/' }];
 
 // https://astro.build/config
 export default defineConfig({
@@ -46,10 +56,9 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Reference',
-					items: [
-						{ label: 'API docs (rustdoc)', link: '/api/', attrs: { target: '_blank' } },
-					],
+					label: 'API Reference',
+					collapsed: true,
+					items: apiGroups,
 				},
 			],
 		}),

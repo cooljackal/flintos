@@ -49,6 +49,7 @@ members = [
     "board",
     "tools/build",
     "tools/size",
+    "tools/apidoc",
 
     # Applications. The kernel is a library; an application is the binary that
     # links it. Two directories: `examples/` is what a newcomer reads or
