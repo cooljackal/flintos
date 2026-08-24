@@ -539,18 +539,30 @@ XTENSA_BOARD_FEATURES = --features board/$(XTENSA_BOARD),kernel/$(XTENSA_BOARD)
 
 BOARD_SPECIFIC_APPS := blink imu pwm
 ATOM_BOARD          := board-m5-atom-matrix
+# The M5Core2 bring-up apps guard on manifest features only that board declares
+# (`backlight` on `BOARD.pmic`, `lcd` on `BOARD.display`), so like the Atom apps
+# they cannot build against the default board and are checked against theirs.
+CORE2_APPS          := backlight lcd
+CORE2_BOARD         := board-m5-core2
 
 .PHONY: check-all
 check-all: ## Full check including Xtensa and ARM architectures
 	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
 		--workspace --exclude build --exclude size --exclude apidoc \
 		$(addprefix --exclude ,$(BOARD_SPECIFIC_APPS)) \
+		$(addprefix --exclude ,$(CORE2_APPS)) \
 		$(XTENSA_BOARD_FEATURES)
 	@for a in $(BOARD_SPECIFIC_APPS); do \
 		echo "== $$a ($(ATOM_BOARD))"; \
 		$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
 			-p $$a --no-default-features \
 			--features "kernel/$(ATOM_BOARD),kernel/debug-level-1" || exit 1; \
+	done
+	@for a in $(CORE2_APPS); do \
+		echo "== $$a ($(CORE2_BOARD))"; \
+		$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
+			-p $$a --no-default-features \
+			--features "kernel/$(CORE2_BOARD),kernel/debug-level-1" || exit 1; \
 	done
 	@echo "== arm-selftest (board-wio-rp2040-mini)"
 	@# Plain `cargo`, not $(CARGO): the ARM port builds on the stable toolchain
