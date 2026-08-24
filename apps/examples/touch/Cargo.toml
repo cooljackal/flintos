@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "touch"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Reports M5Core2 touch coordinates from the FT6336U over the shared I2C bus"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+hal = { path = "../../../hal" }
+
+# The board opens the shared internal I2C controller (the touch panel sits on it
+# with the IMU and PMIC); `board::touch_bus()` hands it back. This app names the
+# Layer-2 bus type it threads and the Layer-3 touch part.
+board = { path = "../../../board" }
+i2c-bus = { path = "../../../drivers/bus/i2c-bus" }
+ft6336u = { path = "../../../drivers/logical/ft6336u" }
+
+[build-dependencies]
+build = { path = "../../../tools/build" }
+
+[features]
+# Board and debug level are chosen on the command line and passed to the kernel
+# (`--features kernel/board-m5-core2,kernel/debug-level-2`). `touch` needs a board
+# with a touch panel (only the Core2 today); a `const` assert in `main.rs` keyed
+# on `BOARD.touch` catches building it elsewhere.
+default = ["kernel/debug-level-1"]

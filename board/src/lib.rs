@@ -292,6 +292,16 @@ pub struct Board {
         feature = "board-m5-core2",
     ))]
     pub pmic: Option<PmicAttachment>,
+    /// The onboard capacitive-touch controller, if any. On the Core2 it shares
+    /// the internal I2C bus with the IMU and PMIC.
+    #[cfg(any(
+        feature = "board-esp32-wrover",
+        feature = "board-esp32-devkitc",
+        feature = "board-m5-atom-lite",
+        feature = "board-m5-atom-matrix",
+        feature = "board-m5-core2",
+    ))]
+    pub touch: Option<I2cAttachment>,
     /// The onboard addressable RGB LED or panel, if any.
     pub rgb_led: Option<RgbLed>,
     /// Free pads for the self-tests and porting examples.
@@ -360,6 +370,20 @@ pub fn imu_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32
         .imu
         .ok_or(hal::Error::Other("this board declares no onboard IMU"))?;
     i2c_controller(&imu.port)
+}
+
+/// The touch controller's I2C bus. `Error::Other` if this board declares no
+/// touch panel (`BOARD.touch` is `None`).
+///
+/// Shares the controller with any other device on the same bus (the Core2's
+/// touch, IMU and PMIC are all on I2C0) via [`i2c_controller`]; take a device
+/// handle with `.device(addr)`.
+#[cfg(feature = "esp32-drivers")]
+pub fn touch_bus() -> hal::Result<&'static i2c_bus::I2cController<esp32_i2c::Esp32I2c>> {
+    let touch = active::BOARD
+        .touch
+        .ok_or(hal::Error::Other("this board declares no touch panel"))?;
+    i2c_controller(&touch.port)
 }
 
 // ── Power management (PMIC) ──────────────────────────────────────────────────

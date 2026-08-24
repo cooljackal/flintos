@@ -105,6 +105,11 @@ pub const IMU_I2C_ADDR: u8 = 0x68;
 pub const IMU_SDA_GPIO: u8 = INTERNAL_I2C_SDA;
 pub const IMU_SCL_GPIO: u8 = INTERNAL_I2C_SCL;
 
+/// The FT6336U capacitive-touch controller's I2C address, on the same internal
+/// bus. The touch area is taller than the 320×240 screen — the three capacitive
+/// buttons below it — so reported y runs past 240.
+pub const TOUCH_I2C_ADDR: u8 = 0x38;
+
 /// Logical devices on the internal I2C bus. The IMU is powered off LDO2, which
 /// `power_init` brings up before the app runs, so it is live by the time the
 /// app opens the bus. The display and touch controller come later (#136).
@@ -112,6 +117,13 @@ pub const TARGET_DEVICES: &[BusDevice] = &[
     BusDevice {
         name: "imu",
         logical_driver: "mpu6886",
+        bus: "i2c0",
+        cs_pin: None,
+        bus_speed: BusSpeed::Fast400k,
+    },
+    BusDevice {
+        name: "touch",
+        logical_driver: "ft6336u",
         bus: "i2c0",
         cs_pin: None,
         bus_speed: BusSpeed::Fast400k,
@@ -137,6 +149,7 @@ pub const BOARD: crate::Board = crate::Board {
         addr: axp192::ADDR,
         rails: PMIC_RAILS,
     }),
+    touch: Some(crate::I2cAttachment { port: INTERNAL_I2C_PORT, addr: TOUCH_I2C_ADDR }),
     rgb_led: None,
     selftest: crate::SelftestPads {
         scratch: LOOPBACK_SCRATCH_GPIO,

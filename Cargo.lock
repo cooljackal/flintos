@@ -321,6 +321,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ft6336u"
+version = "0.1.0"
+dependencies = [
+ "api",
+]
+
+[[package]]
 name = "hal"
 version = "0.1.0"
 
@@ -660,6 +667,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "touch"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "board",
+ "build",
+ "ft6336u",
+ "hal",
+ "i2c-bus",
+ "kernel",
 ]
 
 [[package]]

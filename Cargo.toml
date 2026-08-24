@@ -84,6 +84,7 @@ members = [
     "drivers/logical/axp192",
     "drivers/logical/bme280",
     "drivers/logical/bmi270",
+    "drivers/logical/ft6336u",
     "drivers/logical/mpu6886",
     "drivers/logical/ssd1306",
     "drivers/logical/ws2812",
