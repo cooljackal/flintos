@@ -69,6 +69,13 @@ const REG_BAT_VOLTAGE_LO: u8 = 0x79;
 /// ADC enable 1: bit 7 battery voltage, bit 6 battery current.
 const REG_ADC_ENABLE_1: u8 = 0x82;
 
+/// GPIO3/4 function control, and GPIO3/4 output status. GPIO4 is the M5Core2's
+/// LCD reset line; GPIO4's status bit is bit 1 (its index, 4, minus the 3 that
+/// starts this register's pin pair).
+const REG_GPIO34_FUNCTION: u8 = 0x95;
+const REG_GPIO34_STATUS: u8 = 0x96;
+const GPIO4_STATUS_BIT: u8 = 1 << 1;
+
 /// `CHARGE_STATUS` bit 6: the charger is active.
 const CHARGE_ACTIVE: u8 = 1 << 6;
 /// `CHARGE_STATUS` bit 5: a battery is connected.
@@ -262,6 +269,25 @@ impl<'a> Axp192<'a> {
         Ok(())
     }
 
+    /// Configure GPIO4 as an open-drain output — the M5Core2 wires the LCD's
+    /// reset line to it. The function value is the Core2's, and it preserves
+    /// GPIO3's bits.
+    pub fn configure_gpio4_output(&self) -> AxpResult<()> {
+        let v = self.bus.read_reg(REG_GPIO34_FUNCTION)?;
+        self.bus.write_reg(REG_GPIO34_FUNCTION, (v & 0x72) | 0x84)?;
+        Ok(())
+    }
+
+    /// Drive GPIO4. Open-drain: `true` floats the pin (an external pull-up takes
+    /// the line high), `false` pulls it to ground. A reset line is thus asserted
+    /// with `false` and released with `true`.
+    pub fn set_gpio4(&self, high: bool) -> AxpResult<()> {
+        let v = self.bus.read_reg(REG_GPIO34_STATUS)?;
+        let next = if high { v | GPIO4_STATUS_BIT } else { v & !GPIO4_STATUS_BIT };
+        self.bus.write_reg(REG_GPIO34_STATUS, next)?;
+        Ok(())
+    }
+
     /// Battery voltage in millivolts, from the 12-bit ADC at 1.1 mV/LSB.
     ///
     /// Requires [`enable_battery_adc`](Self::enable_battery_adc) first, else the
@@ -377,5 +403,15 @@ mod tests {
         assert_eq!(BATTERY_PRESENT, 1 << 5);
         assert_eq!(ADC_BATTERY_V, 1 << 7);
         assert_eq!(ADC_BATTERY_I, 1 << 6);
+    }
+
+    #[test]
+    fn gpio4_is_bit_one_of_the_gpio34_status_register() {
+        // GPIO4 sits in the 0x96 register that pairs GPIO3 and GPIO4; its bit is
+        // its index minus 3. Getting this wrong drives GPIO3 (something else on
+        // the board) instead of the LCD reset.
+        assert_eq!(GPIO4_STATUS_BIT, 1 << 1);
+        assert_eq!(REG_GPIO34_STATUS, 0x96);
+        assert_eq!(REG_GPIO34_FUNCTION, 0x95);
     }
 }

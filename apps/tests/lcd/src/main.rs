@@ -78,9 +78,24 @@ fn run() {
     };
     let mut lcd = Ili9342c::new(iface, Config::CORE2);
 
-    // Hardware reset is the panel's AXP192 GPIO; the software reset in `init`
-    // covers register state, so pass a no-op hardware reset for now.
-    if let Err(e) = lcd.init(|_asserted| {}, task::sleep_ms) {
+    // The panel's reset line is AXP192 GPIO4. Configure it as an output and pass
+    // a real hardware reset into init — a freshly-powered ILI9342C needs it, not
+    // just the software reset. The PMIC is on the shared internal I2C bus the
+    // board opened at boot.
+    let pmic = match board::pmic_bus() {
+        Ok(c) => c,
+        Err(e) => {
+            api::log_error!("no PMIC bus for LCD reset: {}", e);
+            return;
+        }
+    };
+    let pmic_dev = pmic.device(board::axp192::ADDR);
+    let axp = board::axp192::Axp192::new(&pmic_dev);
+    if axp.configure_gpio4_output().is_err() {
+        api::log_error!("could not configure the LCD reset GPIO");
+        return;
+    }
+    if let Err(e) = lcd.init(|asserted| { let _ = axp.set_gpio4(!asserted); }, task::sleep_ms) {
         api::log_error!("panel init failed: {:?}", e);
         return;
     }
@@ -142,29 +157,32 @@ fn run() {
     }
     api::log_info!("drew the rect grid — bring-up PASS");
 
-    // 5. A bouncing box: a moving fill, so the screen is visibly alive and the
-    // per-frame path is exercised continuously.
-    let (mut x, mut y) = (0i16, 0i16);
-    let (mut dx, mut dy) = (3i16, 2i16);
-    const BOX: i16 = 40;
-    let w = lcd.width() as i16;
-    let h = lcd.height() as i16;
-    let mut prev = (x, y);
+    // 5. A random animation: random-colored blocks at random positions, forever.
+    // Clearly alive and clearly *rendering* — a broken panel shows noise or
+    // nothing, not crisp colored squares. Seeded from the microsecond clock so
+    // each boot differs.
+    let _ = lcd.fill_screen(BLACK);
+    const BOX: u16 = 30;
+    let w = lcd.width() - BOX;
+    let h = lcd.height() - BOX;
+    let mut rng = (now_us() as u32) | 1;
+    api::log_info!("random animation running — watch the screen");
     loop {
-        // Erase the previous box, draw the new one (no full clear — cheap).
-        let _ = lcd.fill_rect(prev.0 as u16, prev.1 as u16, BOX as u16, BOX as u16, BLACK);
-        let _ = lcd.fill_rect(x as u16, y as u16, BOX as u16, BOX as u16, CYAN);
-        prev = (x, y);
-        x += dx;
-        y += dy;
-        if x <= 0 || x + BOX >= w {
-            dx = -dx;
-            x += dx;
-        }
-        if y <= 0 || y + BOX >= h {
-            dy = -dy;
-            y += dy;
-        }
-        task::sleep_ms(16);
+        let r = xorshift(&mut rng);
+        let x = (r % w as u32) as u16;
+        let y = ((r >> 9) % h as u32) as u16;
+        let color = (xorshift(&mut rng) & 0xFFFF) as u16;
+        let _ = lcd.fill_rect(x, y, BOX, BOX, color);
+        task::sleep_ms(40);
     }
+}
+
+/// A tiny xorshift32 PRNG — enough for a lively animation, no crate needed.
+fn xorshift(state: &mut u32) -> u32 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    x
 }
