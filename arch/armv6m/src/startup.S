@@ -38,6 +38,55 @@ _vector_table_start:
 .global Reset
 Reset:
     cpsid i
+    /* Arm recovery before touching RAM. If this watchdog fired, enter the
+     * RP2040 ROM USB bootloader without depending on Rust initialization. */
+    ldr r0, =0x40058008
+    ldr r1, [r0]
+    movs r2, #1
+    tst r1, r2
+    beq 8f
+    ldr r0, =0x4005801c
+    ldr r1, [r0]
+    ldr r2, =0x6ab73121
+    cmp r1, r2
+    bne 8f
+    movs r1, #0
+    str r1, [r0]
+    ldr r0, =0x00000014
+    ldrh r0, [r0]
+    ldr r2, =0x00000018
+    ldrh r2, [r2]
+    movs r1, #1
+    orrs r2, r1
+    ldr r1, =0x00004255
+    blx r2
+    mov r2, r0
+    movs r0, #0
+    movs r1, #0
+    blx r2
+8:  /* Match pico-sdk watchdog_enable(): marker, disable, reset selection,
+     * debug-pause policy, load, then enable through atomic aliases. */
+    ldr r0, =0x4005801c
+    ldr r1, =0x6ab73121
+    str r1, [r0]
+    ldr r0, =0x4005b000
+    ldr r1, =0x40000000
+    str r1, [r0]
+    ldr r0, =0x40012008
+    ldr r1, =0x0001fffc
+    str r1, [r0]
+    ldr r0, =0x4005b000
+    ldr r1, =0x07000000
+    str r1, [r0]
+    ldr r0, =0x4005802c
+    ldr r1, =0x0000020c
+    str r1, [r0]
+    ldr r0, =0x40058004
+    ldr r1, =0x005b8d80
+    str r1, [r0]
+    ldr r0, =0x4005a000
+    ldr r1, =0x40000000
+    str r1, [r0]
     ldr r0, =0xe000ed08
     ldr r1, =_vector_table_start
     str r1, [r0]

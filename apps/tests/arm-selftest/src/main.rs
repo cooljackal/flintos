@@ -4,10 +4,16 @@
 
 #![no_std]
 #![no_main]
-#![cfg_attr(feature = "watchdog-reset", allow(dead_code))]
+#![cfg_attr(
+    any(
+        feature = "watchdog-reset",
+        feature = "reset-recovery-smoke"
+    ),
+    allow(dead_code)
+)]
 
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
-use api::mutex::{Mutex, lock};
+use api::mutex::{lock, Mutex};
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 use api::queue::{Queue, RecvError};
 use api::task;
@@ -217,7 +223,11 @@ fn main() {
     task::spawn("watchdog", watchdog_reset_test, Priority::Normal(0), 2048).expect("watchdog task");
     #[cfg(feature = "expected-hardfault")]
     task::spawn("fault", inject_hardfault, Priority::Normal(1), 2048).expect("fault task");
-    #[cfg(all(not(feature = "expected-hardfault"), not(feature = "watchdog-reset")))]
+    #[cfg(all(
+        not(feature = "expected-hardfault"),
+        not(feature = "watchdog-reset"),
+        not(feature = "reset-recovery-smoke")
+    ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
         task::spawn_on(1, "core1", core1_peer, Priority::Normal(2), 2048).expect("core-1 task");

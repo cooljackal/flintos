@@ -14,6 +14,8 @@ param(
     [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
+    [ValidateRange(1, 100)]
+    [int]$Cycles = 1,
     [string]$ProbeRsPath = 'probe-rs'
 )
 
@@ -31,29 +33,52 @@ function Test-ExpectedBootsel {
     }).Count -eq 1
 }
 
+function Write-Uf2([string]$Source, [string]$Destination) {
+    $bytes = [IO.File]::ReadAllBytes($Source)
+    $stream = [IO.FileStream]::new(
+        $Destination,
+        [IO.FileMode]::Create,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::None,
+        4096,
+        [IO.FileOptions]::WriteThrough
+    )
+    try {
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 if ($Uf2Path) {
     $uf2 = (Resolve-Path -LiteralPath $Uf2Path).Path
-    if (-not (Test-ExpectedBootsel)) { throw 'the selected target is not in BOOTSEL' }
-    $volumes = @(Get-Volume | Where-Object { $_.FileSystemLabel -eq 'RPI-RP2' -and $_.DriveLetter })
-    if ($volumes.Count -ne 1) { throw "expected one mounted RPI-RP2 volume, found $($volumes.Count)" }
-    [IO.File]::Copy($uf2, "$($volumes[0].DriveLetter):\$(Split-Path -Leaf $uf2)", $true)
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    $sawApplication = $false
-    while ([DateTime]::UtcNow -lt $deadline) {
-        $inBootsel = Test-ExpectedBootsel
-        if (-not $inBootsel) { $sawApplication = $true }
-        if ($sawApplication -and $inBootsel) {
-            [pscustomobject]@{
-                state = 'passed'
-                evidence = 'uf2-target-left-and-returned-to-expected-bootsel'
-                target_bootsel_serial = $BootselSerial
-                transport = 'bootsel-uf2'
-            } | ConvertTo-Json -Compress
-            exit 0
+    for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
+        if (-not (Test-ExpectedBootsel)) { throw "the selected target is not in BOOTSEL before cycle $cycle" }
+        $volumes = @(Get-Volume | Where-Object { $_.FileSystemLabel -eq 'RPI-RP2' -and $_.DriveLetter })
+        if ($volumes.Count -ne 1) { throw "expected one mounted RPI-RP2 volume, found $($volumes.Count)" }
+        Write-Uf2 $uf2 "$($volumes[0].DriveLetter):\flint-$cycle.uf2"
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        $sawApplication = $false
+        $returned = $false
+        while ([DateTime]::UtcNow -lt $deadline) {
+            $inBootsel = Test-ExpectedBootsel
+            if (-not $inBootsel) { $sawApplication = $true }
+            if ($sawApplication -and $inBootsel) { $returned = $true; break }
+            Start-Sleep -Milliseconds 50
         }
-        Start-Sleep -Milliseconds 50
+        if (-not $returned) {
+            throw "the UF2 target did not leave and return to BOOTSEL in cycle $cycle within $TimeoutSeconds seconds (left=$sawApplication)"
+        }
     }
-    throw "the UF2 target did not leave and return to BOOTSEL within $TimeoutSeconds seconds"
+    [pscustomobject]@{
+        state = 'passed'
+        evidence = 'uf2-target-left-and-returned-to-expected-bootsel'
+        cycles = $Cycles
+        target_bootsel_serial = $BootselSerial
+        transport = 'bootsel-uf2'
+    } | ConvertTo-Json -Compress
+    exit 0
 }
 
 if (-not $ProbeSerial) { throw '-ProbeSerial is required when -Uf2Path is omitted' }

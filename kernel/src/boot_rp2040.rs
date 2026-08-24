@@ -62,6 +62,12 @@ pub extern "C" fn _flint_armv6m_boot() {
     // releases its one owned lock before attempting the outer boot section.
     unsafe { crate::arch::init_boot_core() };
 
+    #[cfg(not(feature = "rp2040-test-recovery"))]
+    unsafe {
+        soc_rp2040::watchdog::disarm();
+        soc_rp2040::watchdog::clear_flint_watchdog_marker();
+    }
+
     // This token records the reset handler's PRIMASK state. Every scheduler
     // lock taken below nests inside it and restores to "still masked".
     let boot_primask = unsafe { crate::arch::cs_enter() };
@@ -71,7 +77,6 @@ pub extern "C" fn _flint_armv6m_boot() {
         use hal::soc::SystemOnChip;
         board::SelectedSoc::configure_cpu_clock();
     }
-
     // The linker-defined task-stack pool is consumed lazily by spawn. The
     // remaining SRAM above the static DMA pool backs runtime kernel objects.
     unsafe { crate::heap::init_from_map() };

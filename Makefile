@@ -684,11 +684,16 @@ test-arm-target: ## Build, flash, and judge ARM tests through ROM BOOTSEL
 test-arm-watchdog: ## Prove RP2040 watchdog reset and retained cause through ROM BOOTSEL
 	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
 		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/watchdog-reset"
+	pwsh -NoProfile -File tools/rp2040-image.ps1 \
+		-Action convert -Architecture armv6m -Soc rp2040 -Board raspberry-pi-pico \
+		-Elf target/$(ARM_TARGET)/debug/arm-selftest \
+		-Uf2 target/$(ARM_TARGET)/debug/arm-watchdog-reset.uf2 \
+		-Bin target/$(ARM_TARGET)/debug/arm-watchdog-reset.bin
 	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
 		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) \
+		-Uf2Path target/$(ARM_TARGET)/debug/arm-watchdog-reset.uf2 \
 		-BootselSerial $(ARM_BOOTSEL_SERIAL) \
-		-Suite watchdog-reset
+		-Suite watchdog-reset -Cycles 10 -TimeoutSeconds 60
 
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────

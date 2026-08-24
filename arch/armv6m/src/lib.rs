@@ -316,6 +316,19 @@ mod tests {
     }
 
     #[test]
+    fn reset_arms_recovery_before_ram_initialization() {
+        let startup = include_str!("startup.S");
+        let reset = startup.split("Reset:\n").nth(1).expect("reset handler");
+        let watchdog = reset.find("0x4005a000").expect("watchdog control set alias");
+        let data = reset.find("_sidata").expect("data initialization");
+        assert!(watchdog < data);
+        assert!(reset[..data].contains("0x6ab73121"));
+        assert!(reset[..data].contains("0x00004255"));
+        assert!(reset[..data].contains("0x4005b000"));
+        assert!(reset[..data].contains("0x4005a000"));
+    }
+
+    #[test]
     fn cortex_vectors_put_hard_fault_and_svc_in_their_architected_slots() {
         let startup = include_str!("startup.S");
         let table = startup

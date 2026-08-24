@@ -23,8 +23,9 @@ const TICK_ENABLE: u32 = 1 << 9;
 const PSM_WDSEL_ALL_EXCEPT_OSCILLATORS: u32 = 0x0001_fffc;
 const MAX_LOAD: u32 = 0x00ff_ffff;
 
-/// Marker retained across a watchdog reset and distinct from Pico SDK reboot markers.
-pub const FLINT_WATCHDOG_MARKER: u32 = 0xf1_17_20_40;
+/// Pico SDK's non-reboot marker. Its intentional reboot path clears this,
+/// which distinguishes a timeout from UF2 flashing and ROM USB reboot.
+pub const FLINT_WATCHDOG_MARKER: u32 = 0x6ab7_3121;
 
 /// Convert milliseconds to the RP2040-E1-adjusted counter load.
 pub const fn load_for_ms(timeout_ms: u32) -> u32 {
@@ -130,5 +131,10 @@ mod tests {
     #[test]
     fn watchdog_reset_selection_uses_psm_wdsel_not_done() {
         assert_eq!(PSM_WDSEL_ADDR, 0x4001_0008);
+    }
+
+    #[test]
+    fn timeout_marker_matches_pico_sdk_and_survives_only_timeout_reboots() {
+        assert_eq!(FLINT_WATCHDOG_MARKER, 0x6ab7_3121);
     }
 }

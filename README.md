@@ -50,8 +50,8 @@ and open work lives in [issues] — the source of truth.
 | Mutexes with priority inheritance | ✅ | 🧪 |
 | Queues, task↔task and ISR→task | ✅ | ✅ |
 | Task-vs-ISR race tests | ✅ | 🧪 |
-| Watchdogs | ✅ | ⛔ |
-| Reset-cause reporting | ✅ | ⛔ |
+| Watchdogs | ✅ | ✅ |
+| Reset-cause reporting | ✅ | ✅ |
 | Logging, metrics, panic capture | ✅ | 🚧 |
 | Stack high-water marks | ✅ | ✅ |
 | Second core · task pinning | ✅ | ✅ |
