@@ -65,17 +65,32 @@ fn main() {
     }
     fs::create_dir_all(&out_dir).unwrap_or_else(|e| fatal(&format!("mkdir out: {e}")));
 
+    // Parse every crate up front, because cross-linking is a two-phase job:
+    // phase 1 builds a workspace-wide map from an item's fully-qualified path
+    // (crate::mod::Name) to the site URL of the anchor it renders at, so phase 2
+    // can turn a type mentioned in one crate into a link into another.
+    let parsed: Vec<Crate> = json_files
+        .iter()
+        .map(|path| {
+            let text = fs::read_to_string(path)
+                .unwrap_or_else(|e| fatal(&format!("read {}: {e}", path.display())));
+            serde_json::from_str(&text).unwrap_or_else(|e| {
+                fatal(&format!(
+                    "parse {} (format mismatch? this tool pins FORMAT_VERSION 57): {e}",
+                    path.display()
+                ))
+            })
+        })
+        .collect();
+
+    let mut links: Links = HashMap::new();
+    for krate in &parsed {
+        collect_links(krate, &mut links);
+    }
+
     let mut crates: Vec<CrateDoc> = Vec::new();
-    for path in &json_files {
-        let text = fs::read_to_string(path)
-            .unwrap_or_else(|e| fatal(&format!("read {}: {e}", path.display())));
-        let krate: Crate = serde_json::from_str(&text).unwrap_or_else(|e| {
-            fatal(&format!(
-                "parse {} (format mismatch? this tool pins FORMAT_VERSION 57): {e}",
-                path.display()
-            ))
-        });
-        crates.push(CrateDoc::render(krate, &out_dir));
+    for krate in &parsed {
+        crates.push(CrateDoc::render(krate, &links, &out_dir));
     }
 
     // The generated sidebar group: one collapsed entry per crate, its modules
@@ -111,14 +126,14 @@ struct CrateDoc {
 }
 
 impl CrateDoc {
-    fn render(krate: Crate, out_dir: &Path) -> CrateDoc {
+    fn render(krate: &Crate, links: &Links, out_dir: &Path) -> CrateDoc {
         let root = krate.index.get(&krate.root);
         let crate_name = root
             .and_then(|i| i.name.clone())
             .unwrap_or_else(|| "crate".to_string());
         let summary = first_line(root.and_then(|i| i.docs.as_deref()));
 
-        let ctx = Ctx { krate: &krate };
+        let ctx = Ctx { krate, links };
         let mut modules = Vec::new();
         let mut pages = 0usize;
 
@@ -187,9 +202,98 @@ fn write_landing(out_dir: &Path, crates: &[CrateDoc]) {
     fs::write(out_dir.join("index.md"), s).unwrap_or_else(|e| fatal(&format!("write landing: {e}")));
 }
 
-/// Shared read-only view over one crate while rendering it.
+/// A workspace-wide map: an item's fully-qualified path (`crate::mod::Name`) to
+/// the site URL of the anchor it renders at. Built in phase 1, read in phase 2
+/// to turn a type reference into a cross-crate link.
+type Links = HashMap<String, String>;
+
+/// Phase 1: record every module-level item's qualified path -> anchor URL. The
+/// walk mirrors phase-2 rendering (same module tree, same anchor rule) so the
+/// URLs line up. Nested items (methods, fields) are not separately linkable.
+fn collect_links(krate: &Crate, links: &mut Links) {
+    let Some(root) = krate.index.get(&krate.root) else { return };
+    let crate_name = root.name.clone().unwrap_or_else(|| "crate".to_string());
+    let mut stack: Vec<(Id, Vec<String>)> = vec![(krate.root.clone(), vec![crate_name])];
+    while let Some((id, path)) = stack.pop() {
+        let Some(item) = krate.index.get(&id) else { continue };
+        let ItemEnum::Module(module) = &item.inner else { continue };
+        let page = url_for(&path);
+        for child_id in &module.items {
+            let Some(child) = krate.index.get(child_id) else { continue };
+            let Some(name) = &child.name else { continue };
+            match &child.inner {
+                ItemEnum::Module(_) => {
+                    let mut cp = path.clone();
+                    cp.push(name.clone());
+                    stack.push((child_id.clone(), cp));
+                }
+                ItemEnum::Struct(_)
+                | ItemEnum::Enum(_)
+                | ItemEnum::Trait(_)
+                | ItemEnum::Function(_)
+                | ItemEnum::TypeAlias(_)
+                | ItemEnum::Constant { .. }
+                | ItemEnum::Macro(_) => {
+                    let qual = format!("{}::{}", path.join("::"), name);
+                    let url = format!("{page}#{}", anchor(name));
+                    links.insert(qual, url);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The heading anchor Starlight (github-slugger) gives `### name`. Item names are
+/// identifiers (alphanumerics + `_`), so this is just a lowercase.
+fn anchor(name: &str) -> String {
+    name.to_lowercase()
+}
+
+/// Collect the `(path, id)` of every nominal type (`ResolvedPath`) reachable
+/// inside `ty`: through references, pointers, slices, arrays, tuples, and
+/// generic arguments. Used to build an item's "References" links.
+fn walk_paths(ty: &Type, out: &mut Vec<(String, Id)>) {
+    match ty {
+        Type::ResolvedPath(p) => {
+            out.push((p.path.clone(), p.id.clone()));
+            if let Some(args) = &p.args {
+                walk_args(args, out);
+            }
+        }
+        Type::BorrowedRef { type_, .. } | Type::RawPointer { type_, .. } => walk_paths(type_, out),
+        Type::Slice(inner) => walk_paths(inner, out),
+        Type::Array { type_, .. } => walk_paths(type_, out),
+        Type::Tuple(items) => items.iter().for_each(|t| walk_paths(t, out)),
+        Type::QualifiedPath { self_type, .. } => walk_paths(self_type, out),
+        _ => {}
+    }
+}
+
+fn walk_args(args: &GenericArgs, out: &mut Vec<(String, Id)>) {
+    match args {
+        GenericArgs::AngleBracketed { args, .. } => {
+            for a in args {
+                if let GenericArg::Type(t) = a {
+                    walk_paths(t, out);
+                }
+            }
+        }
+        GenericArgs::Parenthesized { inputs, output } => {
+            inputs.iter().for_each(|t| walk_paths(t, out));
+            if let Some(o) = output {
+                walk_paths(o, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Shared read-only view over one crate while rendering it, plus the workspace
+/// link map for cross-references.
 struct Ctx<'a> {
     krate: &'a Crate,
+    links: &'a Links,
 }
 
 impl<'a> Ctx<'a> {
@@ -478,46 +582,121 @@ impl<'a> Ctx<'a> {
         s
     }
 
-    /// A `### name` item's "Related" block: for a struct/enum, the traits it
-    /// implements; for a trait, its implementors. Cross-linked where the type
-    /// is one we generated a page for.
+    /// A `### name` item's cross-reference block, rendered *outside* the code
+    /// fence (where markdown links would be inert): the traits a struct/enum
+    /// implements, and the named types its signature mentions -- each a link
+    /// wherever the target is an item we generated a page for, in this crate or
+    /// any other.
     fn related(&self, out: &mut String, item: &Item) {
-        let mut lines: Vec<String> = Vec::new();
-        match &item.inner {
-            ItemEnum::Struct(st) => {
-                for id in &st.impls {
-                    if let Some(t) = self.impl_trait_name(id) {
-                        lines.push(t);
-                    }
-                }
-            }
-            ItemEnum::Enum(en) => {
-                for id in &en.impls {
-                    if let Some(t) = self.impl_trait_name(id) {
-                        lines.push(t);
-                    }
-                }
-            }
-            _ => {}
+        // Implements: the crate's own trait impls (auto/blanket ones filtered).
+        let impls = match &item.inner {
+            ItemEnum::Struct(st) => &st.impls[..],
+            ItemEnum::Enum(en) => &en.impls[..],
+            _ => &[][..],
+        };
+        let mut implemented: Vec<String> = impls
+            .iter()
+            .filter_map(|id| self.impl_trait_link(id))
+            .collect();
+        implemented.sort();
+        implemented.dedup();
+        if !implemented.is_empty() {
+            let _ = writeln!(out, "**Implements:** {}\n", implemented.join(", "));
         }
-        lines.sort();
-        lines.dedup();
-        if !lines.is_empty() {
-            let _ = writeln!(out, "**Implements:** {}\n", lines.join(", "));
+
+        // References: named types mentioned in the signature that we can link.
+        let self_name = item.name.clone().unwrap_or_default();
+        let mut refs: Vec<(String, Id)> = Vec::new();
+        self.referenced_paths(item, &mut refs);
+        let mut links: Vec<String> = refs
+            .iter()
+            .filter(|(name, _)| *name != self_name)
+            .filter_map(|(name, id)| {
+                let url = self.path_url(id)?;
+                let short = name.rsplit("::").next().unwrap_or(name);
+                Some(format!("[`{short}`]({url})"))
+            })
+            .collect();
+        links.sort();
+        links.dedup();
+        if !links.is_empty() {
+            let _ = writeln!(out, "**References:** {}\n", links.join(", "));
         }
     }
 
-    fn impl_trait_name(&self, id: &Id) -> Option<String> {
+    /// A linked (or, if we did not generate its page, plain) code span for the
+    /// trait an impl implements. `None` for the impls rustdoc hides by default:
+    /// synthesised auto traits (Send/Sync/...) and blanket impls (From/Into/...).
+    fn impl_trait_link(&self, id: &Id) -> Option<String> {
         let item = self.krate.index.get(id)?;
         let ItemEnum::Impl(imp) = &item.inner else { return None };
-        // Skip the impls rustdoc hides by default: compiler-synthesised auto
-        // traits (Send/Sync/Unpin/...) and blanket impls (From/Into/TryFrom/...).
-        // What is left is what the crate itself chose to implement.
         if imp.is_synthetic || imp.blanket_impl.is_some() {
             return None;
         }
         let path = imp.trait_.as_ref()?;
-        Some(format!("`{}`", path.path))
+        let short = path.path.rsplit("::").next().unwrap_or(&path.path);
+        Some(match self.path_url(&path.id) {
+            Some(url) => format!("[`{short}`]({url})"),
+            None => format!("`{short}`"),
+        })
+    }
+
+    /// The site URL for the item `id` names, via its fully-qualified path in the
+    /// crate's `paths` table (which covers external items too), or `None` if it
+    /// is not something we generated a page for (a primitive, a std type, ...).
+    fn path_url(&self, id: &Id) -> Option<String> {
+        let summary = self.krate.paths.get(id)?;
+        self.links.get(&summary.path.join("::")).cloned()
+    }
+
+    /// Collect the `(name, id)` of every named type mentioned in `item`'s
+    /// signature -- parameters, return, fields, variants, aliased type.
+    fn referenced_paths(&self, item: &Item, out: &mut Vec<(String, Id)>) {
+        match &item.inner {
+            ItemEnum::Function(f) => {
+                for (_, ty) in &f.sig.inputs {
+                    walk_paths(ty, out);
+                }
+                if let Some(o) = &f.sig.output {
+                    walk_paths(o, out);
+                }
+            }
+            ItemEnum::Struct(st) => {
+                let field_ids: Vec<Id> = match &st.kind {
+                    StructKind::Plain { fields, .. } => fields.clone(),
+                    StructKind::Tuple(fields) => fields.iter().flatten().cloned().collect(),
+                    StructKind::Unit => Vec::new(),
+                };
+                for fid in field_ids {
+                    if let Some(ItemEnum::StructField(ty)) =
+                        self.krate.index.get(&fid).map(|i| &i.inner)
+                    {
+                        walk_paths(ty, out);
+                    }
+                }
+            }
+            ItemEnum::Enum(en) => {
+                for vid in &en.variants {
+                    if let Some(ItemEnum::Variant(v)) = self.krate.index.get(vid).map(|i| &i.inner) {
+                        let fids: Vec<Id> = match &v.kind {
+                            VariantKind::Tuple(fields) => fields.iter().flatten().cloned().collect(),
+                            VariantKind::Struct { fields, .. } => fields.clone(),
+                            VariantKind::Plain => Vec::new(),
+                        };
+                        for fid in fids {
+                            if let Some(ItemEnum::StructField(ty)) =
+                                self.krate.index.get(&fid).map(|i| &i.inner)
+                            {
+                                walk_paths(ty, out);
+                            }
+                        }
+                    }
+                }
+            }
+            ItemEnum::TypeAlias(a) => walk_paths(&a.type_, out),
+            ItemEnum::Constant { type_, .. } => walk_paths(type_, out),
+            _ => {}
+        }
     }
 
     // ----- generics / where / bounds -----
