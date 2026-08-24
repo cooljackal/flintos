@@ -87,6 +87,15 @@ const INT_CLR: u32 = RTC_CNTL_BASE + 0x48;
 const SLP_REJECT_CONF: u32 = RTC_CNTL_BASE + 0x64;
 /// `RTC_CNTL_DIG_PWC_REG` — digital-domain power control (deep sleep).
 const DIG_PWC: u32 = RTC_CNTL_BASE + 0x84;
+/// `RTC_CNTL_PWC_REG` — RTC fast/slow memory and peripheral power control.
+const PWC: u32 = RTC_CNTL_BASE + 0x80;
+/// `RTC_CNTL_SDIO_CONF_REG` — the VDDSDIO regulator's sleep control.
+const SDIO_CONF: u32 = RTC_CNTL_BASE + 0x74;
+/// `RTC_CNTL_CLK_CONF_REG` — the RTC clock sources, incl. the 8 MHz oscillator.
+const CLK_CONF: u32 = RTC_CNTL_BASE + 0x70;
+/// `RTC_CNTL_REG` — the analog bias register, holding the sleep/wake DBIAS
+/// fields for the digital and RTC domains.
+const RTC_REG: u32 = RTC_CNTL_BASE + 0x7C;
 
 // ── Register fields ──────────────────────────────────────────────────────────
 
@@ -158,13 +167,56 @@ const XTL_FORCE_PU: u32 = 1 << 13;
 /// `RTC_CNTL_DBG_ATTEN` field (`_S 24`, `_V 0x3`) of `BIAS_CONF`, zeroed on the
 /// non-deep path.
 const DBG_ATTEN_MASK: u32 = 0x3 << 24;
+/// `RTC_CNTL_DBG_ATTEN_DEFAULT` (= 3), the value esp-idf's `rtc_sleep_finish`
+/// restores on every wake. `light_init` zeroes the field for the sleep; leaving
+/// it there under-biases the RTC regulator, which rev-3 silicon tolerates but
+/// rev-1 does not — the core browns out at 240 MHz on wake and the console
+/// garbles into a reset loop.
+const DBG_ATTEN_DEFAULT: u32 = 0x3 << 24;
 
-// The analog-bias (`DBIAS_*`) trims esp-idf's `rtc_sleep_init` also programs are
-// deliberately *not* touched here. Its light-sleep default is 1.10 V, but this
-// board runs the CPU at 240 MHz, which `cpu_clk::set_240mhz` holds at 1.25 V
-// (`DIG_DBIAS`, level 7); forcing 1.10 V while running browns the digital logic
-// out. The wake path re-runs `set_240mhz`, which re-establishes the correct
-// bias along with the clock, so the sleep never needs to change it.
+// ── The rest of rtc_sleep_init (memory/domain power, VDDSDIO, bias) ──────────
+//
+// esp-idf's `rtc_sleep_init` programs far more than the wake-transition timers
+// above: it keeps the RTC fast/slow memory powered and un-isolated, hands
+// VDDSDIO back to the state machine, and sets the sleep/wake analog bias. On a
+// rev-3 die a sleep woke without any of it; a rev-1 die gates the CPU and never
+// wakes, so the full config is ported here. Values are esp-idf's light-sleep
+// defaults (`RTC_SLEEP_CONFIG_DEFAULT` with no power-down flags), bit positions
+// from `rtc_cntl_reg.h`.
+
+/// `RTC_CNTL_PWC_REG`: keep both RTC memories powered, un-isolated, and not
+/// following the CPU through the sleep — `FASTMEM/SLOWMEM_FORCE_PU|_FORCE_NOISO`
+/// set, `_PD_EN|_FOLW_CPU` clear — plus `PD_EN` (the RTC-peripheral power-down)
+/// clear. The memories the wake logic sits beside stay alive.
+const PWC_SET: u32 = (1 << 13) | (1 << 16) | (1 << 0) | (1 << 2); // FASTMEM/SLOWMEM FORCE_PU|FORCE_NOISO
+const PWC_CLEAR: u32 = (1 << 14) | (1 << 17) | (1 << 6) | (1 << 9) | (1 << 20); // *_PD_EN, *_FOLW_CPU, peri PD_EN
+
+/// `RTC_CNTL_DIG_PWC_REG`: no Wi-Fi power-down, no low-sleep-memory force-up.
+const DIG_PWC_CLEAR: u32 = (1 << 30) | (1 << 4); // WIFI_PD_EN | LSLP_MEM_FORCE_PU
+
+/// `RTC_CNTL_CK8M_FORCE_PU`, bit 26 of `CLK_CONF`: cleared — the slow clock is
+/// the 150 kHz RC, not the 8 MHz/256 divider, so the 8 MHz oscillator need not
+/// be forced up.
+const CK8M_FORCE_PU: u32 = 1 << 26;
+
+/// `RTC_CNTL_SDIO_CONF_REG`: return VDDSDIO to state-machine control
+/// (`SDIO_FORCE` clear) and do not power it down (`SDIO_PD_EN` clear).
+const SDIO_CONF_CLEAR: u32 = (1 << 22) | (1 << 21); // SDIO_FORCE | SDIO_PD_EN
+
+/// `RTC_CNTL_REG` analog bias, in the three fields it is safe to set here:
+/// `RTC_DBIAS_WAK` (`_S 25`), `RTC_DBIAS_SLP` (`_S 22`) and `DIG_DBIAS_SLP`
+/// (`_S 8`), all to `RTC_CNTL_DBIAS_1V10` (level 4).
+///
+/// `DIG_DBIAS_WAK` (`_S 11`) is **deliberately excluded**: it is the digital
+/// core's bias while awake, and esp-idf's 1.10 V would brown out a core running
+/// at 240 MHz. esp-idf can use it because it drops the CPU clock before sleeping
+/// and raises it after; FlintOS sleeps straight from 240 MHz, so
+/// `cpu_clk::set_240mhz` owns that field and holds it at 1.25 V (level 7). The
+/// RTC-domain bias is independent of the CPU clock, so setting it is safe and
+/// is what the wake comparator's analog runs on.
+const DBIAS_MASK: u32 = (0x7 << 25) | (0x7 << 22) | (0x7 << 8);
+const DBIAS_1V10: u32 = 4;
+const DBIAS_VAL: u32 = (DBIAS_1V10 << 25) | (DBIAS_1V10 << 22) | (DBIAS_1V10 << 8);
 
 // ── Slow-clock ↔ microsecond conversion ──────────────────────────────────────
 //
@@ -293,6 +345,17 @@ unsafe fn light_init() {
         reg::modify(reg::at(TIMER4, 0), TIMER34_MASK, TIMER34_VAL);
         reg::modify(reg::at(TIMER5, 0), TIMER5_MASK, TIMER5_VAL);
 
+        // Keep the RTC fast/slow memories powered and un-isolated, hand VDDSDIO
+        // back to the state machine, and leave the Wi-Fi domain up — the rest of
+        // rtc_sleep_init for a no-power-down light sleep. rev-1 silicon does not
+        // wake without this; rev-3 did.
+        reg::set(reg::at(PWC, 0), PWC_SET);
+        reg::clear(reg::at(PWC, 0), PWC_CLEAR);
+        reg::clear(reg::at(DIG_PWC, 0), DIG_PWC_CLEAR);
+        reg::clear(reg::at(CLK_CONF, 0), CK8M_FORCE_PU);
+        reg::clear(reg::at(SDIO_CONF, 0), SDIO_CONF_CLEAR);
+        reg::modify(reg::at(RTC_REG, 0), DBIAS_MASK, DBIAS_VAL);
+
         // Non-deep branch: keep the digital core powered, no debug attenuation.
         reg::clear(reg::at(DIG_PWC, 0), DG_WRAP_PD_EN);
         reg::modify(reg::at(BIAS_CONF, 0), DBG_ATTEN_MASK, 0);
@@ -372,6 +435,13 @@ pub unsafe fn light_sleep(sleep_us: u64) -> Result<u64, SleepError> {
         drain_console();
         match enter() {
             Ok(()) => {
+                // rtc_sleep_finish: restore DBG_ATTEN to its default. light_init
+                // zeroed it for the sleep, and set_240mhz does not touch the
+                // BIAS_CONF register, so without this the RTC regulator stays
+                // under-biased on wake — harmless on rev-3 silicon, a brownout
+                // at 240 MHz on rev-1. (esp-idf esp32/rtc_sleep.c.)
+                reg::modify(reg::at(BIAS_CONF, 0), DBG_ATTEN_MASK, DBG_ATTEN_DEFAULT);
+
                 // Wake resumes on the 40 MHz crystal with the BBPLL powered
                 // down — the FSM does not restore the clock tree, so every
                 // clock derived from the PLL (the CPU, and the APB the UART is
@@ -467,6 +537,8 @@ mod tests {
         // XTL_FORCE_PU is bit 13; DBG_ATTEN a 2-bit field at bit 24.
         assert_eq!(XTL_FORCE_PU, 1 << 13);
         assert_eq!(DBG_ATTEN_MASK, 0x3 << 24);
+        // rtc_sleep_finish restores DBG_ATTEN to RTC_CNTL_DBG_ATTEN_DEFAULT = 3.
+        assert_eq!(DBG_ATTEN_DEFAULT, 3 << 24);
     }
 
     #[test]
