@@ -15,9 +15,8 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` →
 `make flash BOARD=<your board>` → three tasks running on real silicon.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/cooljackal/flintos/actions/workflows/ci.yml/badge.svg)](https://github.com/cooljackal/flintos/actions/workflows/ci.yml)
 [![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
-[![Word size](https://img.shields.io/badge/word%20size-32--bit%20only-lightgrey.svg)](#what-it-is--isnt)
-[![Targets](https://img.shields.io/badge/targets-Xtensa%20LX6%20%C2%B7%20ARMv6--M-lightgrey.svg)](#supported-boards)
 
 ---
 
