@@ -246,23 +246,7 @@ COMMA          := ,
 # whatever the app still owns (self-test, blobs, watchdog-test-*, radio-bt) or a
 # further kernel feature (`kernel/radio-ble`).
 APP_FEATURES   := kernel/$(BOARD),kernel/$(DEBUG)$(if $(EXTRA_FEATURES),$(COMMA)$(EXTRA_FEATURES))
-
-# ── Board → target tuple ──────────────────────────────────────────────────────
-#
-# Each board maps to `<arch> <soc> <board-id>`, and everything downstream — the
-# Rust target triple, the toolchain, the image format and the flash tool — is
-# derived from it, so adding a board is one entry here rather than an edit to a
-# build or flash recipe. A board not listed defaults to the esp32 family, so the
-# five esp32/M5 boards need no entry. `<board-id>` is the manifest name with the
-# `board-` prefix stripped, which is what the RP2040 image tool expects.
-BOARD_TUPLE_board-wio-rp2040-mini := armv6m rp2040 wio-rp2040-mini
-
-BOARD_TUPLE := $(or $(BOARD_TUPLE_$(BOARD)),xtensa esp32 $(BOARD:board-%=%))
-ARCH        := $(word 1,$(BOARD_TUPLE))
-SOC         := $(word 2,$(BOARD_TUPLE))
-BOARD_ID    := $(word 3,$(BOARD_TUPLE))
-
-ifeq ($(SOC),rp2040)
+ifeq ($(BOARD),board-wio-rp2040-mini)
 CARGO          := cargo
 APP_FLAGS      := --target $(ARM_TARGET) -p $(APP) --no-default-features --features $(APP_FEATURES)
 APP_BIN        := target/$(ARM_TARGET)/debug/$(APP)
@@ -369,9 +353,9 @@ ifneq ($(filter $(BOARD_GOALS),$(MAKECMDGOALS)),)
 endif
 build: ## Build the selected app (APP=demo BOARD=board-esp32-devkitc DEBUG=debug-level-1)
 	@$(LOAD_ENV) $(CARGO) build $(APP_FLAGS)
-ifeq ($(SOC),rp2040)
+ifeq ($(BOARD),board-wio-rp2040-mini)
 	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action convert \
-		-Architecture $(ARCH) -Soc $(SOC) -Board $(BOARD_ID) \
+		-Architecture armv6m -Soc rp2040 -Board wio-rp2040-mini \
 		-Elf $(APP_BIN) -Bin $(APP_RAW_BIN) -Uf2 $(APP_UF2)
 else
 	@$(MAKE) --no-print-directory size
@@ -392,9 +376,9 @@ build-trace: ## Build with kernel event tracing
 
 .PHONY: flash
 flash: build ## Build + flash + monitor via espflash (USB serial)
-ifeq ($(SOC),rp2040)
+ifeq ($(BOARD),board-wio-rp2040-mini)
 	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action flash \
-		-Architecture $(ARCH) -Soc $(SOC) -Board $(BOARD_ID) -Uf2 $(APP_UF2)
+		-Architecture armv6m -Soc rp2040 -Board wio-rp2040-mini -Uf2 $(APP_UF2)
 else
 	espflash flash $(APP_BIN) \
 		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
@@ -559,7 +543,7 @@ ATOM_BOARD          := board-m5-atom-matrix
 .PHONY: check-all
 check-all: ## Full check including Xtensa and ARM architectures
 	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
-		--workspace --exclude build --exclude size \
+		--workspace --exclude build --exclude size --exclude apidoc \
 		$(addprefix --exclude ,$(BOARD_SPECIFIC_APPS)) \
 		$(XTENSA_BOARD_FEATURES)
 	@for a in $(BOARD_SPECIFIC_APPS); do \

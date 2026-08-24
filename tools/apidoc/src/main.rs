@@ -140,7 +140,7 @@ impl CrateDoc {
         // Walk the module tree depth-first from the crate root, emitting one
         // page per module. `path` accumulates the human module path
         // (crate::mod::sub) which is both the page title and its slug.
-        let mut stack: Vec<(Id, Vec<String>)> = vec![(krate.root.clone(), vec![crate_name.clone()])];
+        let mut stack: Vec<(Id, Vec<String>)> = vec![(krate.root, vec![crate_name.clone()])];
         while let Some((id, path)) = stack.pop() {
             let Some(item) = krate.index.get(&id) else { continue };
             let ItemEnum::Module(module) = &item.inner else { continue };
@@ -162,7 +162,7 @@ impl CrateDoc {
                         let name = child.name.clone().unwrap_or_default();
                         let mut cp = path.clone();
                         cp.push(name);
-                        stack.push((child_id.clone(), cp));
+                        stack.push((*child_id, cp));
                     }
                 }
             }
@@ -192,7 +192,7 @@ fn write_landing(out_dir: &Path, crates: &[CrateDoc]) {
     let mut sorted: Vec<&CrateDoc> = crates.iter().collect();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     for c in sorted {
-        let url = url_for(&[c.name.clone()]);
+        let url = url_for(std::slice::from_ref(&c.name));
         if c.summary.is_empty() {
             let _ = writeln!(s, "- [`{}`]({})", c.name, url);
         } else {
@@ -213,7 +213,7 @@ type Links = HashMap<String, String>;
 fn collect_links(krate: &Crate, links: &mut Links) {
     let Some(root) = krate.index.get(&krate.root) else { return };
     let crate_name = root.name.clone().unwrap_or_else(|| "crate".to_string());
-    let mut stack: Vec<(Id, Vec<String>)> = vec![(krate.root.clone(), vec![crate_name])];
+    let mut stack: Vec<(Id, Vec<String>)> = vec![(krate.root, vec![crate_name])];
     while let Some((id, path)) = stack.pop() {
         let Some(item) = krate.index.get(&id) else { continue };
         let ItemEnum::Module(module) = &item.inner else { continue };
@@ -225,7 +225,7 @@ fn collect_links(krate: &Crate, links: &mut Links) {
                 ItemEnum::Module(_) => {
                     let mut cp = path.clone();
                     cp.push(name.clone());
-                    stack.push((child_id.clone(), cp));
+                    stack.push((*child_id, cp));
                 }
                 ItemEnum::Struct(_)
                 | ItemEnum::Enum(_)
@@ -256,7 +256,7 @@ fn anchor(name: &str) -> String {
 fn walk_paths(ty: &Type, out: &mut Vec<(String, Id)>) {
     match ty {
         Type::ResolvedPath(p) => {
-            out.push((p.path.clone(), p.id.clone()));
+            out.push((p.path.clone(), p.id));
             if let Some(args) = &p.args {
                 walk_args(args, out);
             }
@@ -708,11 +708,11 @@ impl<'a> Ctx<'a> {
         let parts: Vec<String> = g
             .params
             .iter()
-            .filter_map(|p| match &p.kind {
-                rustdoc_types::GenericParamDefKind::Lifetime { .. } => Some(p.name.clone()),
-                rustdoc_types::GenericParamDefKind::Type { .. } => Some(p.name.clone()),
+            .map(|p| match &p.kind {
+                rustdoc_types::GenericParamDefKind::Lifetime { .. } => p.name.clone(),
+                rustdoc_types::GenericParamDefKind::Type { .. } => p.name.clone(),
                 rustdoc_types::GenericParamDefKind::Const { type_, .. } => {
-                    Some(format!("const {}: {}", p.name, self.ty(type_)))
+                    format!("const {}: {}", p.name, self.ty(type_))
                 }
             })
             .collect();
