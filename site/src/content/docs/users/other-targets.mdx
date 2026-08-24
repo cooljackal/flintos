@@ -1,0 +1,53 @@
+---
+title: Other boards & toolchains
+description: The Quickstart commands for boards and CPUs other than the ESP32-DevKitC.
+---
+
+The [Quickstart](/users/quickstart/) uses the **ESP32-DevKitC**. Every step is
+the same shape on any board — only two things change: the **toolchain** (which
+CPU your board uses) and the **`BOARD=`** value you pass. Here are the variants.
+
+## Toolchain
+
+flintOS builds on two CPU families. Install the one your board uses.
+
+### Xtensa — ESP32 boards
+
+Espressif ships a Rust fork; `espup` installs it.
+
+```bash
+cargo install espup espflash
+espup install
+. $HOME/export-esp.sh          # PowerShell: . $env:USERPROFILE\export-esp.ps1
+```
+
+Boards: ESP32-DevKitC, ESP32-WROVER, M5Stack Atom Matrix, M5Stack Atom Lite.
+
+### Arm Cortex-M0+ — RP2040 boards
+
+Stock Rust — just add the target. Building the flashable RP2040 image uses the
+bundled PowerShell tooling, so PowerShell needs to be on your PATH.
+
+```bash
+rustup target add thumbv6m-none-eabi
+```
+
+Boards: Wio RP2040 Mini.
+
+## Build & flash
+
+The command is the same on every board — only `BOARD=` changes. `make flash`
+picks the right flasher for you: `espflash` over USB serial for an ESP32, a UF2
+image for the RP2040.
+
+```bash
+make apps                                        # list the example apps
+make flash APP=demo BOARD=board-esp32-devkitc    # ESP32-DevKitC (reference)
+make flash APP=demo BOARD=board-esp32-wrover     # ESP32-WROVER
+make flash APP=demo BOARD=board-m5-atom-matrix   # M5Stack Atom Matrix
+make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
+make flash APP=demo BOARD=board-wio-rp2040-mini  # Wio RP2040 Mini (Arm)
+```
+
+`make flash` with no `BOARD` lists the boards and stops. The full matrix, with
+what's verified on hardware, is in [Supported boards](/users/supported-boards/).

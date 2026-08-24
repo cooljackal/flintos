@@ -2,10 +2,13 @@
 title: Quickstart
 ---
 
+This quickstart targets the **ESP32-DevKitC** — the reference board. Every step
+is the same shape on any board; where a command depends on your board or CPU, a
+link points to the [alternatives](/users/other-targets/).
 
 ## 1. Toolchain
 
-Xtensa needs Espressif's Rust fork.
+The ESP32 is an Xtensa chip, which needs Espressif's Rust fork.
 
 ```bash
 cargo install espup espflash
@@ -14,6 +17,8 @@ espup install
 ```
 
 Windows PowerShell: `. $env:USERPROFILE\export-esp.ps1`
+
+→ On an Arm board (RP2040) instead? [Arm toolchain](/users/other-targets/#toolchain).
 
 ## 2. Flash
 
@@ -24,6 +29,8 @@ make flash BOARD=board-esp32-devkitc
 ```
 
 Builds `apps/examples/demo`, flashes over USB serial, opens a monitor.
+
+→ Flashing a different board? [Board commands](/users/other-targets/#build--flash).
 
 ## 3. Pick something else
 

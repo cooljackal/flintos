@@ -42,6 +42,7 @@ export default defineConfig({
 						{ label: 'Quickstart', slug: 'users/quickstart' },
 						{ label: 'Hello, world', slug: 'users/hello-world' },
 						{ label: 'Supported boards', slug: 'users/supported-boards' },
+						{ label: 'Other boards & toolchains', slug: 'users/other-targets' },
 						{ label: 'Debug levels', slug: 'users/debug-levels' },
 						{ label: 'Troubleshooting', slug: 'users/troubleshooting' },
 						{ label: 'Upgrading', slug: 'users/upgrading' },
