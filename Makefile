@@ -465,9 +465,20 @@ check: ## Check every host-compatible crate
 # so the API reference covers exactly what builds on the host: the `api` system
 # surface, the bus/driver traits in `hal`, the portable `lib/*` crates, and the
 # logical drivers. Output lands in `target/$(HOST_TARGET)/doc`; CI publishes it.
+#
+# RUSTDOCFLAGS injects the flintOS skin (site/rustdoc/header.html) into every
+# page so the reference matches the flintos.dev site -- IBM Plex fonts, the site
+# accent, dark by default. The fonts are the same woff2 the site serves, reached
+# same-origin at /fonts/ under flintos.dev/api. Kept out of the recipe body so an
+# ad-hoc `cargo doc` still works unstyled.
+# A path relative to the repo root (where cargo runs) -- rustdoc resolves
+# --html-in-header against its cwd. Relative avoids the MSYS-vs-native path
+# mismatch on Windows, where an absolute /d/... CURDIR is unreadable by the
+# native rustdoc.exe, and works unchanged on Linux CI.
+DOCS_RUSTDOCFLAGS = --html-in-header site/rustdoc/header.html --default-theme dark
 .PHONY: docs
 docs: ## Generate the API reference (rustdoc) for host-buildable crates
-	cargo doc --no-deps $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
+	RUSTDOCFLAGS='$(DOCS_RUSTDOCFLAGS)' cargo doc --no-deps $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 
 # Applications that refuse to build for the default board, and the board each
 # one wants. `blink`, `imu` and `pwm` need hardware only the Atoms declare, and
