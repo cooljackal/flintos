@@ -270,7 +270,8 @@ jobs:
           . "$HOME/export-esp.sh"
           # Every application names a board, because none is a default any more.
           # blink, imu and pwm drive hardware only the Atoms declare and refuse
-          # any other manifest; arm-selftest is the RP2040 suite and declares
+          # any other manifest; backlight and lcd likewise need the Core2 (its
+          # PMIC and SPI display); arm-selftest is the RP2040 suite and declares
           # only the Wio, so it builds for thumbv6m on the stable toolchain
           # (installed above) instead of for Xtensa; the rest build against the
           # board the on-target suite is verified on.
@@ -279,6 +280,7 @@ jobs:
             name=$(basename "$app")
             case "$name" in
               blink|imu|pwm) board=board-m5-atom-matrix ;;
+              backlight|lcd) board=board-m5-core2 ;;
               arm-selftest)  board=board-wio-rp2040-mini ;;
               *)             board=board-esp32-devkitc ;;
             esac
