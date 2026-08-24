@@ -70,7 +70,7 @@
 // unconditional feature gate would be E0554 on stable and take those with it.
 #![cfg_attr(target_arch = "xtensa", feature(asm_experimental_arch))]
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 // From the SoC crate rather than redeclared here. This file used to carry its
 // own `DPORT_BASE = 0x3FF0_0000`, and `spi1.rs` its own `SPI1_BASE`, both of
@@ -109,6 +109,22 @@ pub enum FlashError {
     /// lose the ability to boot it: see `spi1::unlock`.
     UnknownChip,
 }
+
+/// The flash chip's SFDP Quad-Enable Requirement, read once before the first
+/// unlock and cached here for `spi1::unlock` to branch on.
+///
+/// `unlock` reads this with a plain atomic load inside its cache-off window, so
+/// it must be a static, not a value threaded through the flash primitives. A
+/// value of [`QER_UNREAD`] means it has not been read yet; [`QER_NO_SFDP`] means
+/// the chip did not answer SFDP, and `unlock` then falls back to the
+/// manufacturer gate. Any other value is the SFDP QER (0..=7).
+pub(crate) static FLASH_QER: AtomicU8 = AtomicU8::new(QER_UNREAD);
+/// [`FLASH_QER`] before it has been read.
+const QER_UNREAD: u8 = 0xFF;
+/// [`FLASH_QER`] when the chip did not answer SFDP.
+const QER_NO_SFDP: u8 = 0xFE;
+/// "SFDP" as it lands in the first read word — 'S' (0x53) in the low byte.
+const SFDP_SIGNATURE: u32 = 0x5044_4653;
 
 // The ROM's Cache_Read_Disable/Enable are **not** used, and that is the fix.
 // esp-idf replaces them, and says why in `spi_flash/cache_utils.c`:
@@ -273,6 +289,10 @@ impl FlashRegion {
     #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
     pub unsafe fn write(&self, offset: u32, data: &[u32]) -> Result<(), FlashError> {
         let addr = self.check(offset, (data.len() * 4) as u32)?;
+        // Learn the chip's quad-enable layout (from SFDP) before the write's
+        // `unlock` runs — it decides how, or whether, to clear write protection.
+        // Cheap after the first call; a separate cache-off window from the write.
+        ensure_qer();
         with_cache_off(|| spi1::write(addr, data))
     }
 
@@ -284,6 +304,8 @@ impl FlashRegion {
     #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
     pub unsafe fn erase_sector(&self, offset: u32) -> Result<(), FlashError> {
         let addr = self.check(offset - (offset % SECTOR_SIZE), SECTOR_SIZE)?;
+        // As in `write`: learn the QE layout before `unlock` runs.
+        ensure_qer();
         with_cache_off(|| spi1::erase_sector(addr))
     }
 
@@ -494,6 +516,59 @@ pub unsafe fn jedec_id() -> Result<u32, FlashError> {
     let mut out = 0u32;
     unsafe { with_cache_off(|| spi1::jedec_id().map(|v| out = v)) }?;
     Ok(out)
+}
+
+/// Read the flash's SFDP quad-enable requirement once, before the first unlock,
+/// and cache it in [`FLASH_QER`] for `spi1::unlock` to branch on.
+///
+/// Not fatal on failure: a chip that does not answer SFDP records
+/// [`QER_NO_SFDP`] and `unlock` falls back to the manufacturer gate. SFDP is a
+/// read-only opcode, so this cannot brick anything.
+///
+/// # Safety
+/// Runs flash transactions with the cache disabled, as [`jedec_id`].
+pub(crate) unsafe fn ensure_qer() {
+    if FLASH_QER.load(Ordering::Relaxed) != QER_UNREAD {
+        return;
+    }
+    let qer = unsafe { read_sfdp_qer() }.unwrap_or(QER_NO_SFDP);
+    FLASH_QER.store(qer, Ordering::Relaxed);
+}
+
+/// Read and parse the SFDP Basic Flash Parameter Table's QER (3-bit) field, or
+/// `None` if the chip has no usable SFDP.
+///
+/// SFDP's nominal read dummy is 8 clocks, but this part samples one late on user
+/// reads, so the signature check sweeps a couple of counts.
+///
+/// # Safety
+/// As [`ensure_qer`].
+unsafe fn read_sfdp_qer() -> Option<u8> {
+    // Header (dwords 0-3): find the dummy count that yields the "SFDP" signature.
+    let mut hdr = [0u32; 4];
+    let mut dummy = None;
+    for d in [9u32, 8, 7] {
+        hdr = [0; 4];
+        if unsafe { with_cache_off(|| spi1::sfdp_read(0, d, &mut hdr)) }.is_ok()
+            && hdr[0] == SFDP_SIGNATURE
+        {
+            dummy = Some(d);
+            break;
+        }
+    }
+    let dummy = dummy?;
+    // First parameter header (dwords 2-3) points at the JEDEC Basic Flash
+    // Parameter Table: dword2[31:24] = length in dwords, dword3[23:0] = pointer.
+    let len = ((hdr[2] >> 24) & 0xFF) as usize;
+    let ptr = hdr[3] & 0x00FF_FFFF;
+    if len < 15 {
+        return None; // QER lives in the 15th dword; a shorter table has none.
+    }
+    let n = len.min(16);
+    let mut bfpt = [0u32; 16];
+    unsafe { with_cache_off(|| spi1::sfdp_read(ptr, dummy, &mut bfpt[..n])) }.ok()?;
+    // QER is the 15th dword (index 14), bits [22:20].
+    Some(((bfpt[14] >> 20) & 0x7) as u8)
 }
 
 // ── Parking the other core ──────────────────────────────────────────────────

@@ -261,6 +261,10 @@ const OPCODE_MODE_RESET: u32 = 0xFF;
 /// reads with `REG_WRITE(PERIPHS_SPI_FLASH_CMD, SPI_USR)`, never with
 /// `SPI_FLASH_READ`.
 const OPCODE_READ: u32 = 0x03;
+/// SPI-NOR `Read SFDP` — the chip's Serial Flash Discoverable Parameter tables,
+/// in a separate address space. Used to learn where the quad-enable bit lives;
+/// see [`crate::read_sfdp_qer`].
+const OPCODE_SFDP: u32 = 0x5A;
 
 /// Page size. A program may not cross one — the chip wraps to the start of the
 /// page rather than continuing, silently corrupting both ends.
@@ -719,6 +723,93 @@ static UNLOCKED: core::sync::atomic::AtomicBool =
 ///
 /// Runs once per boot; repeating it would wear the status register for nothing.
 ///
+/// How to clear a chip's write protection, given where its quad-enable bit
+/// lives.
+///
+/// The QE location decides two things: which status-register-1 bits are
+/// block-protect (to clear) versus quad-enable (to keep), and whether the write
+/// is one byte or two. This is the whole content of the Macronix/ISSI hazard —
+/// on those parts, and on this Core2's, QE is SR1 bit 6, so the byte that looked
+/// like a protect bit is the thing that must *not* change.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct UnlockPlan {
+    /// SR1 bits that mean "protected": SRP0 plus this chip's block-protect bits.
+    protection: u8,
+    /// A two-byte WRSR (writes SR2 too), to keep QE when it lives in SR2 — a
+    /// one-byte WRSR can zero SR2.
+    two_byte: bool,
+    /// The SR1 byte to write once protection must be cleared.
+    new_sr1: u8,
+    /// Whether the write also asserts QE in SR2 (only for the two-byte path).
+    set_sr2_qe: bool,
+}
+
+/// Decide how to unlock, from the SFDP quad-enable requirement (`qer`), the
+/// manufacturer id (`mfr`, a fallback for when SFDP is unreadable), and the
+/// current SR1. `None` for a QE layout this driver will not write blind.
+///
+/// Pure, so the brick-critical decision is host-tested rather than reasoned
+/// about on hardware.
+///
+/// `#[inline(always)]`, deliberately: `unlock` runs with the cache off, so this
+/// must be part of `unlock`'s own IRAM body rather than a separate symbol the
+/// linker might leave in flash — a call into flash there wedges the CPU with no
+/// fault. That is why it takes plain values and returns a small `Copy` struct,
+/// with no `match` jump table (see the if/else below).
+#[inline(always)]
+fn unlock_plan(qer: u8, mfr: u32, sr1: u8) -> Option<UnlockPlan> {
+    let srp0 = STATUS_SRP0 as u8;
+    let bp_wide = STATUS_BP_MASK as u8; // [6:2], for SR2-QE and no-QE parts
+    // (block-protect mask in SR1, QE-in-SR2, keep SR1 bit 6 as QE). Written as an
+    // if/else chain, not a `match`, deliberately: a `match` on this small dense
+    // range can compile to a jump table in `.rodata` (flash), and this runs with
+    // the cache off, where reading flash wedges the CPU with no fault.
+    let bp_mask;
+    let qe_in_sr2;
+    let keep_sr1_qe;
+    if qer == 1 || qer == 4 || qer == 5 || qer == 6 {
+        // QE is SR2 bit 1. SR1 protection is [6:2]; the write is two bytes so a
+        // one-byte WRSR cannot zero SR2's QE.
+        bp_mask = bp_wide;
+        qe_in_sr2 = true;
+        keep_sr1_qe = false;
+    } else if qer == 0 {
+        // No QE bit. Clear SR1 protection [6:2] with a one-byte write.
+        bp_mask = bp_wide;
+        qe_in_sr2 = false;
+        keep_sr1_qe = false;
+    } else if qer == 2 {
+        // QE is SR1 bit 6 (Macronix/ISSI, and this Core2 part). Then block-protect
+        // is only [5:2], and bit 6 must be kept set.
+        bp_mask = 0x3C;
+        qe_in_sr2 = false;
+        keep_sr1_qe = true;
+    } else if mfr == MFR_GIGADEVICE || mfr == MFR_WINBOND {
+        // QER 3/7 (odd/reserved) or SFDP unreadable: fall back to the manufacturer
+        // gate the driver shipped with. GigaDevice/Winbond put QE in SR2 bit 1.
+        bp_mask = bp_wide;
+        qe_in_sr2 = true;
+        keep_sr1_qe = false;
+    } else {
+        return None;
+    }
+    let protection = srp0 | bp_mask;
+    // The two-byte path writes SR1 = 0 (all protection off) and SR2 = QE, the
+    // original sequence; the one-byte path preserves the rest of SR1, keeping
+    // bit 6 when it is QE.
+    let new_sr1 = if qe_in_sr2 {
+        0
+    } else {
+        let cleared = sr1 & !protection;
+        if keep_sr1_qe {
+            cleared | 0x40
+        } else {
+            cleared
+        }
+    };
+    Some(UnlockPlan { protection, two_byte: qe_in_sr2, new_sr1, set_sr2_qe: qe_in_sr2 })
+}
+
 /// # Safety
 /// Cache disabled, caller in IRAM.
 #[inline(never)]
@@ -734,35 +825,44 @@ unsafe fn unlock() -> Result<(), FlashError> {
     STATUS_TRACE[0].store(0x1001, Ordering::Relaxed);
     let st = status()?;
     STATUS_TRACE[1].store(st | 0x100, Ordering::Relaxed);
-    if st & (STATUS_SRP0 | STATUS_BP_MASK) == 0 {
-        // Nothing protected. Do not write the status register for no reason.
-        //
-        // This is also why an unrecognised chip is usable at all: the common
-        // case reaches here and never gets as far as the check below.
+
+    // Where the quad-enable bit lives decides which SR1 bits are protection.
+    // From the chip's SFDP (`crate::FLASH_QER`, read before the first unlock) —
+    // a plain RAM load, safe with the cache off. On a QER-2 part (Macronix/ISSI,
+    // this Core2 part) bit 6 is quad-enable, not block-protect, so it is excluded
+    // from the mask; otherwise protection is [6:2]. The common case is
+    // "nothing protected", handled here without reading the JEDEC id or building
+    // the full write plan — both of which the rare protected path defers to.
+    let qer = crate::FLASH_QER.load(Ordering::Relaxed);
+    let bp_mask: u32 = if qer == 2 { 0x3C } else { STATUS_BP_MASK };
+    if st & (STATUS_SRP0 | bp_mask) == 0 {
         UNLOCKED.store(true, Ordering::Relaxed);
         return Ok(());
     }
 
-    // Past this point the status register gets written, and where QE lives
-    // depends on who made the chip. Refuse rather than guess: losing the
-    // ability to *write* flash on an unrecognised board is recoverable by
-    // adding its manufacturer here, and losing QE is recoverable only with an
-    // external programmer.
+    // Protected: read the manufacturer (for the fallback) and build the write
+    // plan, which decides how to clear protection while keeping quad-enable.
     let mfr = jedec_id()? & 0xFF;
     STATUS_TRACE[3].store(mfr | 0x100, Ordering::Relaxed);
-    if mfr != MFR_GIGADEVICE && mfr != MFR_WINBOND {
+    let Some(plan) = unlock_plan(qer, mfr, (st & 0xFF) as u8) else {
+        // A QE layout this driver will not write blind. Fail closed, as before.
         return Err(FlashError::UnknownChip);
-    }
+    };
 
     STATUS_TRACE[0].store(0x1002, Ordering::Relaxed);
-    wr(CTRL, rd(CTRL) | CTRL_WRSR_2B);
+    if plan.two_byte {
+        wr(CTRL, rd(CTRL) | CTRL_WRSR_2B);
+    } else {
+        wr(CTRL, rd(CTRL) & !CTRL_WRSR_2B);
+    }
     command(CMD_FLASH_WREN)?;
     STATUS_TRACE[0].store(0x1003, Ordering::Relaxed);
-    // The value `WRSR` is about to write, not a diagnostic slot: block-protect
-    // and SRP0 cleared, and QE *kept* in status register 2. Dropping QE leaves
-    // a board that boots in QIO mode unable to boot at all, so this write is
-    // load-bearing even though nothing here reads it back.
-    wr(RD_STATUS, STATUS2_QE);
+    // The value `WRSR` writes: protection cleared, and QE kept where it lives —
+    // in SR2 for the two-byte path, in SR1 bit 6 (already folded into `new_sr1`)
+    // for the one-byte path. Dropping QE leaves a QIO-boot board unbootable, so
+    // this is load-bearing even though nothing reads it back.
+    let value = plan.new_sr1 as u32 | if plan.set_sr2_qe { STATUS2_QE } else { 0 };
+    wr(RD_STATUS, value);
     command(CMD_FLASH_WRSR)?;
     STATUS_TRACE[0].store(0x1004, Ordering::Relaxed);
     // Two bytes was for the write only. Left set, a status *read* returns two
@@ -832,6 +932,50 @@ pub unsafe fn read(addr: u32, dest: &mut [u32]) -> Result<(), FlashError> {
             // loop below then reads back the data buffer's previous contents.
             // Which is a read that returns the bytes most recently *written* --
             // it looks like a working round trip and is not one.
+            wr(ADDR, ((addr + done as u32 * 4) & ADDRESS_MASK_24BIT) << 8);
+            wr(MISO_DLEN, (n as u32 * 4) * 8 - 1);
+            command(CMD_USR)?;
+            for i in 0..n {
+                dest[done + i] = rd(W0 + (i as u32 * 4));
+            }
+            done += n;
+        }
+        Ok(())
+    })();
+    restore(&saved);
+    r
+}
+
+/// Read `dest.len()` words of the chip's SFDP parameter space at `addr`, using
+/// `dummy_cycles` dummy clocks.
+///
+/// Same shape as [`read`] but opcode `0x5A` (Read SFDP) into the separate SFDP
+/// address space. SFDP's nominal dummy is 8, but this part samples one clock
+/// late on every user read (see [`EXTRA_DUMMY`]), so the caller sweeps a couple
+/// of counts and keeps whichever yields the "SFDP" signature at offset 0.
+///
+/// This is how the driver learns the chip's quad-enable layout without guessing
+/// from the manufacturer id — see [`crate::read_sfdp_qer`] and [`unlock`].
+///
+/// # Safety
+/// As [`read`].
+#[inline(never)]
+#[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
+pub unsafe fn sfdp_read(addr: u32, dummy_cycles: u32, dest: &mut [u32]) -> Result<(), FlashError> {
+    let saved = save();
+    let r = (|| {
+        exit_continuous_read()?;
+        wait_ready()?;
+        reset_user_ctrl();
+        let mut u1 = rd(USER1) & !(0x3F << ADDR_BITLEN_SHIFT) & !DUMMY_CYCLELEN_MASK;
+        u1 |= (ADDR_BITS - 1) << ADDR_BITLEN_SHIFT;
+        u1 |= dummy_cycles.saturating_sub(1) & DUMMY_CYCLELEN_MASK;
+        wr(USER1, u1);
+        wr(USER2, COMMAND_BITLEN_8 | OPCODE_SFDP);
+        wr(USER, USR_COMMAND | USR_ADDR | USR_MISO | USR_DUMMY);
+        let mut done = 0usize;
+        while done < dest.len() {
+            let n = (dest.len() - done).min(16);
             wr(ADDR, ((addr + done as u32 * 4) & ADDRESS_MASK_24BIT) << 8);
             wr(MISO_DLEN, (n as u32 * 4) * 8 - 1);
             command(CMD_USR)?;
@@ -1060,34 +1204,61 @@ mod tests {
         }
     }
 
+    // Placeholder mfr ids for the fallback tests.
+    const MFR_MACRONIX: u32 = 0xC2;
+
     #[test]
-    fn only_chips_whose_qe_bit_is_known_may_be_unlocked() {
-        // The whole point of the gate. GigaDevice and Winbond hold QE at bit 1
-        // of status register 2, which `STATUS2_QE` addresses through a
-        // two-byte WRSR. Macronix and ISSI hold it at bit 6 of status register
-        // *one* -- inside the first byte, where `unlock`'s write would clear
-        // it and leave a QIO-boot board unbootable.
-        assert_eq!(MFR_GIGADEVICE, 0xC8);
-        assert_eq!(MFR_WINBOND, 0xEF);
-        const MFR_MACRONIX: u32 = 0xC2;
-        const MFR_ISSI: u32 = 0x9D;
-        for unknown in [MFR_MACRONIX, MFR_ISSI, 0x00, 0xFF] {
+    fn a_sr2_qe_chip_clears_protection_with_a_two_byte_write() {
+        // QER 1/4/5/6: QE in SR2 bit 1. SR1 [6:2] plus SRP0 are all protection,
+        // and the write is two bytes so the one-byte WRSR cannot zero SR2.
+        for qer in [1u8, 4, 5, 6] {
+            let p = unlock_plan(qer, 0, 0x80).expect("known");
+            assert_eq!(p.protection, 0xFC, "SRP0 | [6:2]");
+            assert!(p.two_byte && p.set_sr2_qe);
+            assert_eq!(p.new_sr1, 0, "two-byte path clears SR1 entirely");
+        }
+    }
+
+    #[test]
+    fn a_sr1_bit6_qe_chip_keeps_bit6_and_writes_one_byte() {
+        // QER 2 (Macronix/ISSI, this Core2 part): QE is SR1 bit 6, so bit 6 is
+        // NOT protection -- protection is only [5:2] plus SRP0 -- and clearing
+        // protection must keep bit 6 set.
+        let p = unlock_plan(2, 0, 0xFC).expect("known");
+        assert_eq!(p.protection, 0xBC, "SRP0 | [5:2], NOT bit 6");
+        assert!(!p.two_byte && !p.set_sr2_qe, "one-byte write, no SR2");
+        // From SR1 = 0xFC (SRP0 + all BP + QE set): clear SRP0 and [5:2], keep QE.
+        assert_eq!(p.new_sr1, 0x40, "only quad-enable survives");
+    }
+
+    #[test]
+    fn the_core2_part_reads_as_unprotected_once_qe_is_not_mistaken_for_protection() {
+        // The Core2's flash comes up SR1 = 0x40 with QER 2. Bit 6 is QE, so with
+        // the correct mask nothing is protected and no status write happens --
+        // the whole point of #137.
+        let p = unlock_plan(2, 0x20, 0x40).expect("known");
+        assert_eq!(0x40u8 & p.protection, 0, "not protected: 0x40 is quad-enable");
+    }
+
+    #[test]
+    fn a_no_qe_chip_clears_protection_with_a_one_byte_write() {
+        let p = unlock_plan(0, 0, 0x84).expect("known"); // SRP0 + one BP bit
+        assert!(!p.two_byte && !p.set_sr2_qe);
+        assert_eq!(p.new_sr1, 0, "SRP0 and BP cleared, nothing else set");
+    }
+
+    #[test]
+    fn an_unreadable_qer_falls_back_to_the_manufacturer_gate() {
+        // SFDP unreadable (sentinel) or an odd QER: known manufacturers still
+        // unlock the old way; anything else fails closed.
+        for qer in [0xFEu8, 0xFF, 3, 7] {
+            assert!(unlock_plan(qer, MFR_GIGADEVICE, 0x80).is_some(), "GigaDevice via fallback");
+            assert!(unlock_plan(qer, MFR_WINBOND, 0x80).is_some(), "Winbond via fallback");
             assert!(
-                unknown != MFR_GIGADEVICE && unknown != MFR_WINBOND,
-                "{unknown:#x} must not be treated as known"
+                unlock_plan(qer, MFR_MACRONIX, 0x80).is_none(),
+                "unknown mfr with no usable QER must fail closed"
             );
         }
-        // Macronix's QE would sit here, in the byte a one-byte WRSR writes.
-        const SR1_QE_MACRONIX: u32 = 1 << 6;
-        assert_ne!(
-            SR1_QE_MACRONIX, STATUS2_QE,
-            "the two layouts must not be confused"
-        );
-        assert_eq!(
-            SR1_QE_MACRONIX & 0xFF,
-            SR1_QE_MACRONIX,
-            "Macronix QE is in the first status byte, unlike GigaDevice's"
-        );
     }
 
     #[test]
