@@ -11,7 +11,8 @@
         feature = "diagnostics-smoke",
         feature = "dma-smoke",
         feature = "mutex-smoke",
-        feature = "race-smoke"
+        feature = "race-smoke",
+        feature = "pwm-smoke"
     ),
     allow(dead_code)
 )]
@@ -124,6 +125,27 @@ static RACE_ERRORS: AtomicU32 = AtomicU32::new(0);
 static RACE_ACTIVE_EDGE: AtomicU32 = AtomicU32::new(0);
 #[cfg(feature = "race-smoke")]
 static RACE_PREEMPTIONS: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "pwm-smoke")]
+static PWM_INPUT: api::Once<rp2040_gpio::Rp2040Pin> = api::Once::new();
+#[cfg(feature = "pwm-smoke")]
+#[no_mangle]
+static PWM_EDGE_COUNT: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "pwm-smoke")]
+#[no_mangle]
+static PWM_PERIOD_US: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "pwm-smoke")]
+#[no_mangle]
+static PWM_HIGH_US: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "pwm-smoke")]
+static PWM_RISES: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "pwm-smoke")]
+static PWM_FALLS: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "pwm-smoke")]
+static PWM_FIRST_RISE: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "pwm-smoke")]
+static PWM_LAST_RISE: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "pwm-smoke")]
+static PWM_ERRORS: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 static PI_PHASE: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
@@ -344,6 +366,8 @@ fn main() {
     #[cfg(feature = "race-smoke")]
     task::spawn_on(0, "race-producer", race_producer, Priority::Normal(2), 4096)
         .expect("physical interrupt race producer");
+    #[cfg(feature = "pwm-smoke")]
+    task::spawn_on(0, "pwm-smoke", pwm_smoke, Priority::Normal(1), 4096).expect("PWM target test");
     #[cfg(feature = "watchdog-reset")]
     task::spawn("watchdog", watchdog_reset_test, Priority::Normal(0), 2048).expect("watchdog task");
     #[cfg(feature = "expected-hardfault")]
@@ -355,7 +379,8 @@ fn main() {
         not(feature = "diagnostics-smoke"),
         not(feature = "dma-smoke"),
         not(feature = "mutex-smoke"),
-        not(feature = "race-smoke")
+        not(feature = "race-smoke"),
+        not(feature = "pwm-smoke")
     ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
@@ -762,6 +787,136 @@ fn race_producer() {
         race_fail(31);
     }
     api::log_info!("[FLINT] ARM ISR RACE PASS handled=10000 sent=10000 received=10000 nested=2500");
+    task::sleep_ms(100);
+    unsafe { soc_rp2040::test_status::pass_live() }
+}
+
+#[cfg(feature = "pwm-smoke")]
+fn pwm_gpio_isr() {
+    let Some(input) = PWM_INPUT.get() else {
+        PWM_ERRORS.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    if PWM_EDGE_COUNT.load(Ordering::Acquire) >= 2_000 {
+        let _ = input.disable_edge_interrupt();
+        return;
+    }
+    let Ok(events) = input.take_edge_events() else {
+        PWM_ERRORS.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    let now = hardware_timer_us();
+    let count = u32::from(events.rising) + u32::from(events.falling);
+    if count != 1 {
+        PWM_ERRORS.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    if events.rising {
+        let rises = PWM_RISES.fetch_add(1, Ordering::Relaxed);
+        if rises == 0 {
+            PWM_FIRST_RISE.store(now, Ordering::Relaxed);
+        }
+        PWM_LAST_RISE.store(now, Ordering::Relaxed);
+    }
+    if events.falling {
+        PWM_FALLS.fetch_add(1, Ordering::Relaxed);
+    }
+    let total = PWM_EDGE_COUNT.fetch_add(1, Ordering::AcqRel) + 1;
+    if total == 2_000 && input.disable_edge_interrupt().is_err() {
+        PWM_ERRORS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(feature = "pwm-smoke")]
+fn wait_pwm_level(input: &rp2040_gpio::Rp2040Pin, level: rp2040_gpio::PinLevel) -> u32 {
+    let start = hardware_timer_us();
+    loop {
+        if input.read() == Ok(level) {
+            return hardware_timer_us();
+        }
+        if hardware_timer_us().wrapping_sub(start) >= 2_000 {
+            fail(29);
+        }
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(feature = "pwm-smoke")]
+fn measure_pwm_level(input: &rp2040_gpio::Rp2040Pin) -> (u32, u32) {
+    let mut period_total = 0u32;
+    let mut high_total = 0u32;
+    for _ in 0..100 {
+        let _ = wait_pwm_level(input, rp2040_gpio::PinLevel::Low);
+        let rise = wait_pwm_level(input, rp2040_gpio::PinLevel::High);
+        let fall = wait_pwm_level(input, rp2040_gpio::PinLevel::Low);
+        let next_rise = wait_pwm_level(input, rp2040_gpio::PinLevel::High);
+        high_total = high_total.wrapping_add(fall.wrapping_sub(rise));
+        period_total = period_total.wrapping_add(next_rise.wrapping_sub(rise));
+    }
+    (period_total / 100, high_total / 100)
+}
+
+#[cfg(feature = "pwm-smoke")]
+fn pwm_smoke() {
+    let Ok(pwm) = rp2040_pwm::Rp2040Pwm::open(&kernel::board::active::PWM_LOOPBACK_OUT) else {
+        fail(28);
+    };
+    if rp2040_pwm::Rp2040Pwm::open(&kernel::board::active::PWM_LOOPBACK_OUT).is_ok() {
+        fail(28);
+    }
+    let Ok(input) = rp2040_gpio::Rp2040Pin::open(&kernel::board::active::GPIO_LOOPBACK_IN) else {
+        fail(28);
+    };
+    if input.set_mode(rp2040_gpio::PinMode::InputPullDown).is_err() {
+        fail(28);
+    }
+    PWM_INPUT.init(input);
+    if unsafe {
+        kernel::interrupt::connect_at(
+            soc_rp2040::IRQ_IO_BANK0,
+            soc_rp2040::IRQ_IO_BANK0,
+            pwm_gpio_isr,
+        )
+    }
+    .is_err()
+        || PWM_INPUT
+            .get()
+            .expect("PWM loopback input")
+            .enable_edge_interrupt(rp2040_gpio::Edge::Both)
+            .is_err()
+        || pwm.start(1_000, 500).is_err()
+    {
+        fail(28);
+    }
+
+    if !task::wait_until(|| PWM_EDGE_COUNT.load(Ordering::Acquire) >= 2_000, 3_000) {
+        fail(29);
+    }
+    if PWM_INPUT
+        .get()
+        .expect("PWM loopback input")
+        .disable_edge_interrupt()
+        .is_err()
+    {
+        fail(28);
+    }
+    let rises = PWM_RISES.load(Ordering::Acquire);
+    let falls = PWM_FALLS.load(Ordering::Acquire);
+    if rises != 1_000 || falls != 1_000 || PWM_ERRORS.load(Ordering::Acquire) != 0 {
+        fail(30);
+    }
+    let (period, high) = measure_pwm_level(PWM_INPUT.get().expect("PWM loopback input"));
+    pwm.stop();
+    PWM_PERIOD_US.store(period, Ordering::Release);
+    PWM_HIGH_US.store(high, Ordering::Release);
+    if !(950..=1_050).contains(&period) || !(400..=600).contains(&high) {
+        fail(31);
+    }
+    api::log_info!(
+        "[FLINT] ARM PWM PASS edges=2000 period_us={} high_us={}",
+        period,
+        high
+    );
     task::sleep_ms(100);
     unsafe { soc_rp2040::test_status::pass_live() }
 }

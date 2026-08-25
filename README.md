@@ -63,7 +63,7 @@ and open work lives in [issues] — the source of truth.
 |---|---|---|
 | UART · GPIO · pin routing | ✅ | ✅ |
 | I²C · SPI | ✅ | ⛔ |
-| PWM / LEDC · Timers (TIMG) | ✅ | ⛔ |
+| PWM / LEDC · Timers (TIMG) | ✅ | ✅ |
 | ADC1 · ADC2 † · DAC † | ✅ | ⛔ |
 | RMT pulse generator | ✅ | — |
 | Hardware RNG · Flash key/value | ✅ | ⛔ |

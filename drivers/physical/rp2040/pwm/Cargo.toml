@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "rp2040-pwm"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "RP2040 PWM slice driver"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hal = { path = "../../../../hal" }
+soc-rp2040 = { path = "../../../../soc/rp2040" }

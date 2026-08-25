@@ -19,6 +19,7 @@ portable-atomic = { version = "=1.15.0", features = ["critical-section", "requir
 soc-rp2040 = { path = "../../../soc/rp2040" }
 rp2040-uart = { path = "../../../drivers/physical/rp2040/uart" }
 rp2040-gpio = { path = "../../../drivers/physical/rp2040/gpio" }
+rp2040-pwm = { path = "../../../drivers/physical/rp2040/pwm" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }
@@ -40,3 +41,4 @@ diagnostics-smoke = []
 dma-smoke = []
 mutex-smoke = []
 race-smoke = []
+pwm-smoke = []

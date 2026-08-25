@@ -43,6 +43,7 @@ dependencies = [
  "kernel",
  "portable-atomic",
  "rp2040-gpio",
+ "rp2040-pwm",
  "rp2040-uart",
  "soc-rp2040",
 ]
@@ -544,6 +545,14 @@ dependencies = [
 
 [[package]]
 name = "rp2040-gpio"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-rp2040",
+]
+
+[[package]]
+name = "rp2040-pwm"
 version = "0.1.0"
 dependencies = [
  "hal",

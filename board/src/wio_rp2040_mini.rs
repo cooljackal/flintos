@@ -60,6 +60,8 @@ pub const USER_LED: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: USER_LED_GP
 /// Physical target-acceptance loopback: jumper GP2 (output) to GP3 (input).
 pub const GPIO_LOOPBACK_OUT: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 2 };
 pub const GPIO_LOOPBACK_IN: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 3 };
+/// PWM target acceptance reuses the physical GP2-to-GP3 jumper.
+pub const PWM_LOOPBACK_OUT: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 2 };
 
 pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
     name: "uart0",
@@ -73,13 +75,22 @@ pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
 
 pub const TARGET_DEVICES: &[BusDevice] = &[];
 
-pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[PeripheralMapping {
-    name: "gpio",
-    base_addr: soc::IO_BANK0_BASE,
-    irq: soc::IRQ_IO_BANK0,
-    dma_capable: false,
-    dma_pool_bytes: 0,
-}];
+pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[
+    PeripheralMapping {
+        name: "gpio",
+        base_addr: soc::IO_BANK0_BASE,
+        irq: soc::IRQ_IO_BANK0,
+        dma_capable: false,
+        dma_pool_bytes: 0,
+    },
+    PeripheralMapping {
+        name: "pwm",
+        base_addr: soc::PWM_BASE,
+        irq: soc::IRQ_PWM_WRAP,
+        dma_capable: true,
+        dma_pool_bytes: 0,
+    },
+];
 
 pub const TARGET_SERVICES: &[ServiceMapping] = &[];
 
@@ -126,6 +137,8 @@ mod tests {
         assert_eq!(TARGET_BUSES[0].irq, soc::IRQ_UART0);
         assert_eq!(TARGET_PERIPHERALS[0].base_addr, soc::IO_BANK0_BASE);
         assert_eq!(TARGET_PERIPHERALS[0].irq, soc::IRQ_IO_BANK0);
+        assert_eq!(TARGET_PERIPHERALS[1].base_addr, soc::PWM_BASE);
+        assert_eq!(TARGET_PERIPHERALS[1].irq, soc::IRQ_PWM_WRAP);
     }
 
     #[test]

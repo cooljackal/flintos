@@ -11,7 +11,7 @@ param(
     [string]$Uf2Path,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
-    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io', 'mutex', 'race')]
+    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io', 'mutex', 'race', 'pwm')]
     [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
@@ -80,6 +80,55 @@ function Enter-BootselViaWatchdog {
         & $ProbeRsPath write --chip RP2040 --probe $probe b32 $write[0] $write[1] | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "could not arm BOOTSEL recovery through SWD" }
     }
+}
+
+if ($Suite -eq 'pwm') {
+    if (-not $ProbeSerial) { throw '-ProbeSerial is required for the PWM suite' }
+    $probe = "2e8a:000c:$ProbeSerial"
+    $sysroot = (& rustc --print sysroot).Trim()
+    $llvmNm = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
+    $addresses = @{}
+    foreach ($symbol in @('FLINT_RP2040_TEST_STATUS', 'PWM_EDGE_COUNT', 'PWM_PERIOD_US', 'PWM_HIGH_US')) {
+        $line = @(& $llvmNm -n $elf | Where-Object { $_ -match " $symbol`$" })
+        if ($line.Count -ne 1) { throw "could not locate $symbol in the ELF" }
+        $addresses[$symbol] = '0x' + (($line[0] -split '\s+')[0])
+    }
+    & $ProbeRsPath write --chip RP2040 --probe $probe b32 `
+        $addresses['FLINT_RP2040_TEST_STATUS'] 0 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not clear the PWM test status through SWD' }
+    & $ProbeRsPath download --chip RP2040 --probe $probe --protocol swd `
+        --non-interactive --speed 100 --preverify --verify --reset $elf | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not download the PWM test image through SWD' }
+    $passed = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $status = (& $ProbeRsPath read --chip RP2040 --probe $probe `
+            b32 $addresses['FLINT_RP2040_TEST_STATUS'] 1 2>&1) -join "`n"
+        if ($LASTEXITCODE -eq 0 -and $status -match ':\s+0000600d') { $passed = $true; break }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $passed) { throw 'the PWM image did not publish its passing SWD status' }
+    $measured = @{}
+    foreach ($symbol in @('PWM_EDGE_COUNT', 'PWM_PERIOD_US', 'PWM_HIGH_US')) {
+        $raw = (& $ProbeRsPath read --chip RP2040 --probe $probe b32 $addresses[$symbol] 1 2>&1) -join "`n"
+        if ($LASTEXITCODE -ne 0 -or $raw -notmatch ':\s+([0-9a-fA-F]{8})') { throw "could not read $symbol" }
+        $measured[$symbol] = [Convert]::ToUInt32($Matches[1], 16)
+    }
+    if ($measured['PWM_EDGE_COUNT'] -ne 2000 -or
+        $measured['PWM_PERIOD_US'] -notin 950..1050 -or
+        $measured['PWM_HIGH_US'] -notin 400..600) {
+        throw "PWM measurements outside acceptance: $($measured | ConvertTo-Json -Compress)"
+    }
+    [pscustomobject]@{
+        state = 'passed'
+        evidence = 'pwm-1000-cycles-measured-frequency-and-duty'
+        edges = $measured['PWM_EDGE_COUNT']
+        period_us = $measured['PWM_PERIOD_US']
+        high_us = $measured['PWM_HIGH_US']
+        probe_serial = $ProbeSerial
+        transport = 'debugprobe-swd-download+swd-status+retained-timing'
+    } | ConvertTo-Json -Compress
+    exit 0
 }
 
 if ($Suite -eq 'race') {
