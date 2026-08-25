@@ -218,9 +218,11 @@ fn spawn_inner(
                     stack_base + stack_size,
                 )
             };
-            let prio = tcb.priority;
-            sched.ready_mask |= 1u64 << prio;
         }
+        // Publish only after the context is complete. A ready bit alone does
+        // not wake a remote idle core: make_ready also queues its reschedule
+        // notification for delivery after the scheduler lock is released.
+        sched.make_ready(id as u32);
 
         Some(TaskId(id as u32))
     })

@@ -827,6 +827,28 @@ mod affinity_tests {
     }
 
     #[test]
+    fn publishing_a_new_ready_task_notifies_its_remote_core() {
+        let _k = testsupport::lock();
+        let other = CoreId(1);
+        crate::smp::mark_joined(other);
+        let id = with(|s| {
+            let id = s.alloc_id().unwrap();
+            let task = s.tasks[id as usize].as_mut().unwrap();
+            task.affinity = Affinity::Core(other);
+            task.init_common("new-remote", || {}, 5, TaskState::Ready);
+            // This is also the final publication step in spawn_inner. Merely
+            // setting ready_mask never gives an idle ARM secondary a reason
+            // to leave idle, since only core 0 advances the scheduler tick.
+            s.make_ready(id);
+            id
+        });
+        assert_eq!(testsupport::state_of(id), TaskState::Ready);
+        testsupport::assert_ready_mask_consistent();
+        assert!(PENDING_SWITCH[other.index()].swap(false, Ordering::Acquire));
+        assert!(!take_pending_switch());
+    }
+
+    #[test]
     fn affinity_answers_who_may_run() {
         assert!(Affinity::Any.allows(CoreId(0)));
         assert!(Affinity::Any.allows(CoreId(1)));
