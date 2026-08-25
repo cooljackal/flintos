@@ -11,8 +11,6 @@
 // otherwise identical to the WROVER manifest — same SoC, same default
 // IO_MUX pins, same interrupt sources.
 
-use hal::bus::*;
-use soc_esp32::addr;
 
 pub const BOARD_NAME: &str = "ESP32-DevKitC";
 
