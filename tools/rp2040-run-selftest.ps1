@@ -11,7 +11,7 @@ param(
     [string]$Uf2Path,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
-    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma')]
+    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io')]
     [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
@@ -80,6 +80,67 @@ function Enter-BootselViaWatchdog {
         & $ProbeRsPath write --chip RP2040 --probe $probe b32 $write[0] $write[1] | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "could not arm BOOTSEL recovery through SWD" }
     }
+}
+
+if ($Suite -eq 'io') {
+    if (-not $ProbeSerial) { throw '-ProbeSerial is required for the I/O suite' }
+    if (-not $SerialPort) { throw '-SerialPort is required for the I/O suite' }
+    $probe = "2e8a:000c:$ProbeSerial"
+    $sysroot = (& rustc --print sysroot).Trim()
+    $llvmNm = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
+    $statusLine = @(& $llvmNm -n $elf | Where-Object { $_ -match ' FLINT_RP2040_TEST_STATUS$' })
+    if ($statusLine.Count -ne 1) { throw 'could not locate FLINT_RP2040_TEST_STATUS in the ELF' }
+    $statusAddress = '0x' + (($statusLine[0] -split '\s+')[0])
+    & $ProbeRsPath write --chip RP2040 --probe $probe b32 $statusAddress 0 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not clear the I/O test status through SWD' }
+    $port = [IO.Ports.SerialPort]::new($SerialPort, 115200, 'None', 8, 'One')
+    $capture = ''
+    $passed = $false
+    try {
+        $port.Open()
+        $port.DtrEnable = $true
+        Start-Sleep -Milliseconds 200
+        & $ProbeRsPath download --chip RP2040 --probe $probe --protocol swd `
+            --non-interactive --speed 100 --preverify --verify --reset $elf | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'could not download the I/O test image through SWD' }
+
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            $capture += $port.ReadExisting()
+            if (Test-ExpectedBootsel) {
+                $passed = $true
+                break
+            }
+            $status = (& $ProbeRsPath read --chip RP2040 --probe $probe `
+                b32 $statusAddress 1 2>&1) -join "`n"
+            if ($LASTEXITCODE -eq 0 -and $status -match ':\s+0000600d') {
+                $passed = $true
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        Start-Sleep -Milliseconds 200
+        $capture += $port.ReadExisting()
+    } finally {
+        if ($port.IsOpen) { $port.Dispose() }
+    }
+    if (-not $passed) {
+        throw 'the I/O image did not publish a passing status; verify the GP2-to-GP3 loopback jumper'
+    }
+    foreach ($marker in @(
+        'ARM UART LOOPBACK payloads=1000 bytes=16000',
+        'ARM GPIO LOOPBACK edges=10000'
+    )) {
+        if (-not $capture.Contains($marker)) { throw "UART output is missing '$marker'" }
+    }
+    [pscustomobject]@{
+        state = 'passed'
+        evidence = 'uart-1000-payloads+gpio-10000-exact-edges'
+        probe_serial = $ProbeSerial
+        target_bootsel_serial = $BootselSerial
+        transport = 'debugprobe-swd-download+swd-status+uart'
+    } | ConvertTo-Json -Compress
+    exit 0
 }
 
 if ($Suite -eq 'dma') {

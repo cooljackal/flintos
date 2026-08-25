@@ -720,6 +720,14 @@ test-arm-dma: ## Prove RP2040 DMA timeout cleanup and UART1 loopback through SWD
 		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
 		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite dma -TimeoutSeconds 20
 
+.PHONY: test-arm-io
+test-arm-io: ## Prove Pico UART and a physical GP2-to-GP3 edge loopback
+	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
+		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite io -TimeoutSeconds 30
+
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
 #

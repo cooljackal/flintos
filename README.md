@@ -61,7 +61,7 @@ and open work lives in [issues] — the source of truth.
 
 | Peripheral | Xtensa LX6 | ARM32 |
 |---|---|---|
-| UART · GPIO · pin routing | ✅ | ⛔ |
+| UART · GPIO · pin routing | ✅ | ✅ |
 | I²C · SPI | ✅ | ⛔ |
 | PWM / LEDC · Timers (TIMG) | ✅ | ⛔ |
 | ADC1 · ADC2 † · DAC † | ✅ | ⛔ |

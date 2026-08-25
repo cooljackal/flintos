@@ -57,6 +57,9 @@ pub const SELFTEST_UART: soc::ctrl::UartPort = soc::ctrl::UartPort {
     },
 };
 pub const USER_LED: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: USER_LED_GPIO };
+/// Physical target-acceptance loopback: jumper GP2 (output) to GP3 (input).
+pub const GPIO_LOOPBACK_OUT: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 2 };
+pub const GPIO_LOOPBACK_IN: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 3 };
 
 pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
     name: "uart0",

@@ -93,6 +93,15 @@ static DUPLICATE_RUNS: AtomicU32 = AtomicU32::new(0);
 static REMOTE_REQUEST: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 #[cfg(target_arch = "arm")]
+static GPIO_LOOPBACK_INPUT: api::Once<rp2040_gpio::Rp2040Pin> = api::Once::new();
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[cfg(target_arch = "arm")]
+static GPIO_EDGE_COUNT: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[cfg(target_arch = "arm")]
+static GPIO_EDGE_ERRORS: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[cfg(target_arch = "arm")]
 core::arch::global_asm!(
     r#"
     .syntax unified
@@ -596,6 +605,7 @@ fn tests() {
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 fn run_extended_tests() -> ! {
     uart_loopback_test();
+    gpio_edge_loopback_test();
     let timeout_start = timer::now_ms();
     let timeout_result = api::queue::recv(&ISR_QUEUE, 5);
     let timeout_elapsed = timer::now_ms().wrapping_sub(timeout_start);
@@ -807,20 +817,133 @@ fn uart_loopback_test() {
         fail(19);
     }
     uart.set_loopback(true);
-    let tx = [0x00, 0x55, 0xaa, 0xff, 0x13, 0x37, 0xc3, 0x5a];
-    if uart.write(&tx) != tx.len() {
-        fail(19);
+    for iteration in 0..1_000u32 {
+        let mut tx = [0u8; 16];
+        for (index, byte) in tx.iter_mut().enumerate() {
+            *byte = (iteration as u8)
+                .wrapping_mul(29)
+                .wrapping_add((index as u8).wrapping_mul(17));
+        }
+        if uart.write(&tx) != tx.len() {
+            fail(19);
+        }
+        let start = hardware_timer_us();
+        let mut rx = [0; 16];
+        let mut received = 0;
+        while received < rx.len() && hardware_timer_us().wrapping_sub(start) < 100_000 {
+            received += uart.read(&mut rx[received..]);
+        }
+        if received != rx.len() || rx != tx || uart.errors().any() {
+            fail(19);
+        }
     }
-    let start = hardware_timer_us();
-    let mut rx = [0; 8];
-    let mut received = 0;
-    while received < rx.len() && hardware_timer_us().wrapping_sub(start) < 100_000 {
-        received += uart.read(&mut rx[received..]);
-    }
-    if received != rx.len() || rx != tx || uart.errors().any() {
-        fail(19);
+    api::log_info!("[FLINT] ARM UART LOOPBACK payloads=1000 bytes=16000");
+}
+
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[cfg(target_arch = "arm")]
+fn gpio_edge_isr() {
+    let Some(input) = GPIO_LOOPBACK_INPUT.get() else {
+        GPIO_EDGE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    match input.take_edge_events() {
+        Ok(events) => {
+            let count = u32::from(events.falling) + u32::from(events.rising);
+            if count == 0 {
+                GPIO_EDGE_ERRORS.fetch_add(1, Ordering::Relaxed);
+            } else {
+                GPIO_EDGE_COUNT.fetch_add(count, Ordering::Relaxed);
+            }
+        }
+        Err(_) => {
+            GPIO_EDGE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
+
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[cfg(target_arch = "arm")]
+fn gpio_edge_loopback_test() {
+    let Ok(output) = rp2040_gpio::Rp2040Pin::open(&kernel::board::active::GPIO_LOOPBACK_OUT) else {
+        fail(25);
+    };
+    let Ok(input) = rp2040_gpio::Rp2040Pin::open(&kernel::board::active::GPIO_LOOPBACK_IN) else {
+        fail(25);
+    };
+    if rp2040_gpio::Rp2040Pin::open(&kernel::board::active::GPIO_LOOPBACK_OUT).is_ok()
+        || rp2040_gpio::Rp2040Pin::open(&kernel::board::active::GPIO_LOOPBACK_IN).is_ok()
+    {
+        fail(25);
+    }
+    if output.set_mode(rp2040_gpio::PinMode::Output).is_err()
+        || output.write(rp2040_gpio::PinLevel::Low).is_err()
+        || input.set_mode(rp2040_gpio::PinMode::InputPullDown).is_err()
+    {
+        fail(25);
+    }
+    GPIO_LOOPBACK_INPUT.init(input);
+    if unsafe {
+        kernel::interrupt::connect_at(
+            soc_rp2040::IRQ_IO_BANK0,
+            soc_rp2040::IRQ_IO_BANK0,
+            gpio_edge_isr,
+        )
+    }
+    .is_err()
+        || GPIO_LOOPBACK_INPUT
+            .get()
+            .expect("GPIO loopback input")
+            .enable_edge_interrupt(rp2040_gpio::Edge::Both)
+            .is_err()
+    {
+        fail(25);
+    }
+    GPIO_EDGE_COUNT.store(0, Ordering::Relaxed);
+    GPIO_EDGE_ERRORS.store(0, Ordering::Relaxed);
+    const EDGES: u32 = 10_000;
+    for expected in 1..=EDGES {
+        let level = if expected & 1 == 1 {
+            rp2040_gpio::PinLevel::High
+        } else {
+            rp2040_gpio::PinLevel::Low
+        };
+        if output.write(level).is_err() {
+            fail(26);
+        }
+        let deadline = hardware_timer_us().wrapping_add(10_000);
+        while GPIO_EDGE_COUNT.load(Ordering::Acquire) < expected {
+            if hardware_timer_us().wrapping_sub(deadline) < u32::MAX / 2 {
+                fail(26);
+            }
+            core::hint::spin_loop();
+        }
+        if GPIO_EDGE_COUNT.load(Ordering::Acquire) != expected
+            || GPIO_LOOPBACK_INPUT
+                .get()
+                .expect("GPIO loopback input")
+                .read()
+                != Ok(level)
+        {
+            fail(26);
+        }
+    }
+    if GPIO_LOOPBACK_INPUT
+        .get()
+        .expect("GPIO loopback input")
+        .disable_edge_interrupt()
+        .is_err()
+        || GPIO_EDGE_COUNT.load(Ordering::Acquire) != EDGES
+        || GPIO_EDGE_ERRORS.load(Ordering::Acquire) != 0
+    {
+        fail(27);
+    }
+    api::log_info!("[FLINT] ARM GPIO LOOPBACK edges={}", EDGES);
+}
+
+#[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
+#[cfg(not(target_arch = "arm"))]
+fn gpio_edge_loopback_test() {}
 
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 #[cfg(not(target_arch = "arm"))]

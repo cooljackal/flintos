@@ -5,9 +5,10 @@
 use soc_rp2040 as soc;
 
 pub use crate::wio_rp2040_mini::{
-    ADC_EXTERNAL_HIGH_GPIO, CONSOLE_UART, DMA_POOL_BYTES, HAS_BT, HAS_WIFI,
-    LOOPBACK_AUX_GPIOS, LOOPBACK_SCRATCH_GPIO, PHY_MAX_TX_POWER_DBM, SELFTEST_UART,
-    TARGET_BUSES, TARGET_DEVICES, TARGET_PERIPHERALS, TARGET_SERVICES, TICK_PERIOD_US,
+    ADC_EXTERNAL_HIGH_GPIO, CONSOLE_UART, DMA_POOL_BYTES, GPIO_LOOPBACK_IN, GPIO_LOOPBACK_OUT,
+    HAS_BT, HAS_WIFI, LOOPBACK_AUX_GPIOS, LOOPBACK_SCRATCH_GPIO, PHY_MAX_TX_POWER_DBM,
+    SELFTEST_UART, TARGET_BUSES, TARGET_DEVICES, TARGET_PERIPHERALS, TARGET_SERVICES,
+    TICK_PERIOD_US,
 };
 
 pub const BOARD_NAME: &str = "Raspberry Pi Pico";
@@ -27,7 +28,11 @@ pub const BOARD: crate::Board = crate::Board {
         mcpwm: None,
         adc_external_high: ADC_EXTERNAL_HIGH_GPIO,
     },
-    console: crate::ConsolePins { tx: 0, rx: 1, baud: 115_200 },
+    console: crate::ConsolePins {
+        tx: 0,
+        rx: 1,
+        baud: 115_200,
+    },
 };
 
 #[cfg(test)]
@@ -39,5 +44,6 @@ mod tests {
         assert_eq!(USER_LED.pin, 25);
         assert_eq!(CONSOLE_UART.ctrl, soc::ctrl::UartCtrl::Uart0);
         assert_eq!(SELFTEST_UART.ctrl, soc::ctrl::UartCtrl::Uart1);
+        assert_eq!((GPIO_LOOPBACK_OUT.pin, GPIO_LOOPBACK_IN.pin), (2, 3));
     }
 }
