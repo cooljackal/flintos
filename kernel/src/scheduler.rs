@@ -142,6 +142,27 @@ impl TaskControlBlock {
             heap_stack: false,
         }
     }
+
+    /// Set the fields every runnable task needs regardless of whether it owns a
+    /// stack: name, entry, both priorities, state and quantum. The caller fills
+    /// in the rest afterward — stack and context for a spawned task, affinity
+    /// for the stackless idle task. Keeping the shared set in one place means a
+    /// new mandatory field is set on every path, not just the one the author
+    /// remembered.
+    pub(crate) fn init_common(
+        &mut self,
+        name: &'static str,
+        entry: fn(),
+        prio: u8,
+        state: TaskState,
+    ) {
+        self.name = name;
+        self.entry = Some(entry);
+        self.base_prio = prio;
+        self.priority = prio;
+        self.state = state;
+        self.quantum = DEFAULT_QUANTUM_MS;
+    }
 }
 
 /// Which core(s) a task may run on.

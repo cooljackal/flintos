@@ -436,12 +436,12 @@ pub unsafe fn join_scheduler() -> ! {
             .alloc_id()
             .expect("no TCB slot for a secondary idle task");
         if let Some(tcb) = &mut sched.tasks[id as usize] {
-            tcb.name = "idle1";
-            tcb.entry = Some(idle_loop_entry);
-            tcb.base_prio = scheduler::IDLE_PRIORITY;
-            tcb.priority = scheduler::IDLE_PRIORITY;
-            tcb.state = scheduler::TaskState::Running;
-            tcb.quantum = scheduler::DEFAULT_QUANTUM_MS;
+            tcb.init_common(
+                "idle1",
+                idle_loop_entry,
+                scheduler::IDLE_PRIORITY,
+                scheduler::TaskState::Running,
+            );
             tcb.stack_size = 0;
             tcb.affinity = scheduler::Affinity::Core(me);
         }

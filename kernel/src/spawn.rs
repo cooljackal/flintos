@@ -206,16 +206,11 @@ fn spawn_inner(
         paint_stack(stack_base, stack_size);
 
         if let Some(tcb) = &mut sched.tasks[id] {
-            tcb.name = name;
-            tcb.entry = Some(entry);
-            tcb.base_prio = priority.numeric();
-            tcb.priority = priority.numeric();
+            tcb.init_common(name, entry, priority.numeric(), TaskState::Ready);
             tcb.stack_base = stack_base;
             tcb.stack_size = stack_size;
             tcb.heap_stack = stack == StackSource::Heap;
             tcb.stack_hwm = 0;
-            tcb.state = TaskState::Ready;
-            tcb.quantum = scheduler::DEFAULT_QUANTUM_MS;
             unsafe {
                 crate::arch::SelectedArch::init_context(
                     &mut tcb.context,
