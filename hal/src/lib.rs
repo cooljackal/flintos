@@ -20,6 +20,7 @@ pub mod critical_section;
 pub mod display;
 pub mod dma;
 pub mod error;
+pub mod flash;
 pub mod interrupt;
 pub mod mpu;
 pub mod pinmux;

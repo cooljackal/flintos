@@ -23,6 +23,15 @@
 
 use kvstore::{Error as KvError, Storage};
 
+#[cfg(all(target_os = "none", feature = "soc-esp32"))]
+use hal::flash::NorFlash;
+
+/// The concrete flash the kernel is built against — the one place `nvs` names a
+/// chip's flash driver. Everything below drives it through [`NorFlash`], so a
+/// second SoC's flash slots in by implementing that trait.
+#[cfg(all(target_os = "none", feature = "soc-esp32"))]
+type SelectedFlash = esp32_flash::FlashRegion;
+
 /// Largest single transfer either direction. One `kvstore` entry is at most
 /// 8 + 32 + 128 = 168 bytes; 256 leaves room without being generous.
 #[cfg_attr(
@@ -34,7 +43,7 @@ const SCRATCH_WORDS: usize = 64;
 /// A `FlashRegion` that speaks [`Storage`].
 pub struct FlashStorage {
     #[cfg(all(target_os = "none", feature = "soc-esp32"))]
-    region: esp32_flash::FlashRegion,
+    region: SelectedFlash,
 }
 
 impl FlashStorage {
@@ -51,7 +60,7 @@ impl FlashStorage {
             #[cfg(all(target_os = "none", feature = "soc-esp32"))]
             region: {
                 let (offset, len) = crate::board::active::NVS_PARTITION;
-                esp32_flash::FlashRegion::new(offset, len)
+                SelectedFlash::new(offset, len)
             },
         }
     }
@@ -59,10 +68,10 @@ impl FlashStorage {
 
 #[cfg(all(target_os = "none", feature = "soc-esp32"))]
 impl Storage for FlashStorage {
-    const SECTOR_SIZE: u32 = esp32_flash::SECTOR_SIZE;
+    const SECTOR_SIZE: u32 = <SelectedFlash as NorFlash>::SECTOR_SIZE;
 
     fn capacity(&self) -> u32 {
-        self.region.len()
+        NorFlash::len(&self.region)
     }
 
     fn read(&self, offset: u32, buf: &mut [u8]) -> Result<(), KvError> {
@@ -79,7 +88,7 @@ impl Storage for FlashStorage {
             return Err(KvError::Io);
         }
         let mut scratch = [0u32; SCRATCH_WORDS];
-        unsafe { self.region.read(start, &mut scratch[..words]) }.map_err(|_| KvError::Io)?;
+        unsafe { NorFlash::read(&self.region, start, &mut scratch[..words]) }.map_err(|_| KvError::Io)?;
 
         let bytes: &[u8] = unsafe {
             core::slice::from_raw_parts(scratch.as_ptr() as *const u8, words * 4)
@@ -111,13 +120,13 @@ impl Storage for FlashStorage {
                 scratch.as_mut_ptr() as *mut u8,
                 data.len(),
             );
-            self.region.write(offset, &scratch[..words])
+            NorFlash::write(&self.region, offset, &scratch[..words])
         }
         .map_err(|_| KvError::Io)
     }
 
     fn erase_all(&mut self) -> Result<(), KvError> {
-        unsafe { self.region.erase_all() }.map_err(|_| KvError::Io)
+        unsafe { NorFlash::erase_all(&self.region) }.map_err(|_| KvError::Io)
     }
 }
 

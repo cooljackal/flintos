@@ -323,6 +323,30 @@ impl FlashRegion {
     }
 }
 
+/// The portable NOR-flash seam, so the kernel's `nvs` joint drives this region
+/// without naming the chip. The inherent methods above are the real bodies;
+/// these forward to them.
+impl hal::flash::NorFlash for FlashRegion {
+    type Error = FlashError;
+    const SECTOR_SIZE: u32 = SECTOR_SIZE;
+
+    fn len(&self) -> u32 {
+        self.len
+    }
+
+    unsafe fn read(&self, offset: u32, out: &mut [u32]) -> Result<(), FlashError> {
+        unsafe { FlashRegion::read(self, offset, out) }
+    }
+
+    unsafe fn write(&self, offset: u32, data: &[u32]) -> Result<(), FlashError> {
+        unsafe { FlashRegion::write(self, offset, data) }
+    }
+
+    unsafe fn erase_all(&self) -> Result<(), FlashError> {
+        unsafe { FlashRegion::erase_all(self) }
+    }
+}
+
 /// Restores the interrupt level and, on target, `INTENABLE`, when it drops — on
 /// every path out of [`with_cache_off`]. The mask is the one restore easy to
 /// forget on a new early return (the CacheBusy path warns about exactly this),
