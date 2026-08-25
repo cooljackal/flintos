@@ -91,11 +91,19 @@ fn run() {
     };
     let pmic_dev = pmic.device(board::axp192::ADDR);
     let axp = board::axp192::Axp192::new(&pmic_dev);
-    if axp.configure_gpio4_output().is_err() {
+    // The M5Core2 wires the LCD's reset line to the AXP192's GPIO4 — a board
+    // fact, so the pin lives here, not in the chip-agnostic driver.
+    const LCD_RESET_GPIO: u8 = 4;
+    if axp.set_gpio_open_drain_output(LCD_RESET_GPIO).is_err() {
         api::log_error!("could not configure the LCD reset GPIO");
         return;
     }
-    if let Err(e) = lcd.init(|asserted| { let _ = axp.set_gpio4(!asserted); }, task::sleep_ms) {
+    if let Err(e) = lcd.init(
+        |asserted| {
+            let _ = axp.set_gpio(LCD_RESET_GPIO, !asserted);
+        },
+        task::sleep_ms,
+    ) {
         api::log_error!("panel init failed: {:?}", e);
         return;
     }

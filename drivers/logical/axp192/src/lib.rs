@@ -69,12 +69,19 @@ const REG_BAT_VOLTAGE_LO: u8 = 0x79;
 /// ADC enable 1: bit 7 battery voltage, bit 6 battery current.
 const REG_ADC_ENABLE_1: u8 = 0x82;
 
-/// GPIO3/4 function control, and GPIO3/4 output status. GPIO4 is the M5Core2's
-/// LCD reset line; GPIO4's status bit is bit 1 (its index, 4, minus the 3 that
-/// starts this register's pin pair).
+/// GPIO3/4 function control, and GPIO3/4 output status. This pin pair starts at
+/// index 3, so a GPIO's status bit is `1 << (index - 3)`.
 const REG_GPIO34_FUNCTION: u8 = 0x95;
 const REG_GPIO34_STATUS: u8 = 0x96;
-const GPIO4_STATUS_BIT: u8 = 1 << 1;
+/// The lowest index the REG95/REG96 pin pair covers.
+const GPIO34_BASE: u8 = 3;
+
+/// Configuring GPIO4 as an open-drain output in REG95: keep GPIO3's function
+/// bits and the reserved bits, then select open-drain output for GPIO4. The
+/// value is the AXP192's documented setting for this mode; it is named here
+/// rather than written as a bare `(v & 0x72) | 0x84`.
+const GPIO34_FUNC_PRESERVE: u8 = 0x72;
+const GPIO4_OPEN_DRAIN_OUTPUT: u8 = 0x84;
 
 /// `CHARGE_STATUS` bit 6: the charger is active.
 const CHARGE_ACTIVE: u8 = 1 << 6;
@@ -172,6 +179,9 @@ pub enum AxpError {
     /// silently clamp: an out-of-range write is a caller bug, and clamping it
     /// would hide the bug behind a wrong-but-plausible voltage.
     VoltageOutOfRange { rail: Rail, millivolts: u16 },
+    /// A GPIO index this driver cannot address. Only GPIO3 and GPIO4 (the
+    /// REG95/REG96 pin pair) are wired today.
+    UnsupportedGpio(u8),
 }
 
 impl From<BusError> for AxpError {
@@ -269,21 +279,32 @@ impl<'a> Axp192<'a> {
         Ok(())
     }
 
-    /// Configure GPIO4 as an open-drain output — the M5Core2 wires the LCD's
-    /// reset line to it. The function value is the Core2's, and it preserves
-    /// GPIO3's bits.
-    pub fn configure_gpio4_output(&self) -> AxpResult<()> {
+    /// Configure `gpio` as an open-drain output. The board decides what hangs
+    /// off it (the M5Core2 drives its LCD reset from GPIO4); the driver only
+    /// knows the AXP192 register.
+    ///
+    /// Only GPIO4 is wired for open-drain output today — the one function this
+    /// part is used for; another index returns [`AxpError::UnsupportedGpio`].
+    pub fn set_gpio_open_drain_output(&self, gpio: u8) -> AxpResult<()> {
+        if gpio != 4 {
+            return Err(AxpError::UnsupportedGpio(gpio));
+        }
         let v = self.bus.read_reg(REG_GPIO34_FUNCTION)?;
-        self.bus.write_reg(REG_GPIO34_FUNCTION, (v & 0x72) | 0x84)?;
+        self.bus
+            .write_reg(REG_GPIO34_FUNCTION, (v & GPIO34_FUNC_PRESERVE) | GPIO4_OPEN_DRAIN_OUTPUT)?;
         Ok(())
     }
 
-    /// Drive GPIO4. Open-drain: `true` floats the pin (an external pull-up takes
-    /// the line high), `false` pulls it to ground. A reset line is thus asserted
-    /// with `false` and released with `true`.
-    pub fn set_gpio4(&self, high: bool) -> AxpResult<()> {
+    /// Drive `gpio` (GPIO3 or GPIO4). Open-drain: `true` floats the pin (an
+    /// external pull-up takes the line high), `false` pulls it to ground. A
+    /// reset line is thus asserted with `false` and released with `true`.
+    pub fn set_gpio(&self, gpio: u8, high: bool) -> AxpResult<()> {
+        if !(GPIO34_BASE..=4).contains(&gpio) {
+            return Err(AxpError::UnsupportedGpio(gpio));
+        }
+        let bit = 1 << (gpio - GPIO34_BASE);
         let v = self.bus.read_reg(REG_GPIO34_STATUS)?;
-        let next = if high { v | GPIO4_STATUS_BIT } else { v & !GPIO4_STATUS_BIT };
+        let next = if high { v | bit } else { v & !bit };
         self.bus.write_reg(REG_GPIO34_STATUS, next)?;
         Ok(())
     }
@@ -406,11 +427,11 @@ mod tests {
     }
 
     #[test]
-    fn gpio4_is_bit_one_of_the_gpio34_status_register() {
-        // GPIO4 sits in the 0x96 register that pairs GPIO3 and GPIO4; its bit is
-        // its index minus 3. Getting this wrong drives GPIO3 (something else on
-        // the board) instead of the LCD reset.
-        assert_eq!(GPIO4_STATUS_BIT, 1 << 1);
+    fn gpio_status_bit_is_the_index_minus_the_pair_base() {
+        // GPIO3/4 share the 0x96 register; a GPIO's bit is `1 << (index - 3)`.
+        // Getting this wrong drives the wrong pin of the pair.
+        assert_eq!(1u8 << (3 - GPIO34_BASE), 1 << 0);
+        assert_eq!(1u8 << (4 - GPIO34_BASE), 1 << 1);
         assert_eq!(REG_GPIO34_STATUS, 0x96);
         assert_eq!(REG_GPIO34_FUNCTION, 0x95);
     }
