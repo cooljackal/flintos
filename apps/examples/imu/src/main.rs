@@ -31,7 +31,7 @@
 #![no_main]
 
 use api::bus::BusHandle;
-use api::task;
+use api::task::{self, Task};
 use api::Priority;
 
 use bmi270::{Bmi270, Identity};
@@ -57,7 +57,14 @@ kernel::flint_app!(main, abi = 2);
 use kernel::board::active as manifest;
 
 fn main() {
-    task::spawn("imu", imu, Priority::Normal(1), 4096);
+    if Task::new("imu", imu)
+        .priority(Priority::Normal(1))
+        .stack(4096)
+        .spawn()
+        .is_none()
+    {
+        api::log_error!("could not start the imu task");
+    }
 }
 
 fn imu() {

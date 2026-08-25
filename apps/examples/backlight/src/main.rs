@@ -20,7 +20,7 @@
 #![no_std]
 #![no_main]
 
-use api::task;
+use api::task::{self, Task};
 use api::Priority;
 
 use axp192::{Axp192, Rail};
@@ -42,7 +42,14 @@ const _: () = assert!(
 kernel::flint_app!(main, abi = 2);
 
 fn main() {
-    task::spawn("backlight", backlight, Priority::Normal(1), 4096);
+    if Task::new("backlight", backlight)
+        .priority(Priority::Normal(1))
+        .stack(4096)
+        .spawn()
+        .is_none()
+    {
+        api::log_error!("could not start the backlight task");
+    }
 }
 
 fn backlight() {
