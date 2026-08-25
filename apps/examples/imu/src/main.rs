@@ -32,7 +32,7 @@
 
 use api::bus::BusHandle;
 use api::task;
-use hal::types::Priority;
+use api::Priority;
 
 use bmi270::{Bmi270, Identity};
 use board::imu_bus;

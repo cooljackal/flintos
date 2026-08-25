@@ -14,7 +14,6 @@ rust-version.workspace = true
 [dependencies]
 kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
-hal = { path = "../../../hal" }
 
 # The board opens the shared internal I2C controller (the touch panel sits on it
 # with the IMU and PMIC); `board::touch_bus()` hands it back. This app names the

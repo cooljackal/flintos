@@ -21,7 +21,7 @@
 #![no_main]
 
 use api::task;
-use hal::types::Priority;
+use api::Priority;
 
 use axp192::{Axp192, Rail};
 use board::pmic_bus;

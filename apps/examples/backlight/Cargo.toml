@@ -14,7 +14,6 @@ rust-version.workspace = true
 [dependencies]
 kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
-hal = { path = "../../../hal" }
 
 # The board owns power bring-up: `board::power_init()` has already set the rails
 # at boot, and `board::pmic_bus()` hands back the shared I2C controller. This app

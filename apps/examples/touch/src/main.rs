@@ -20,7 +20,7 @@
 #![no_main]
 
 use api::task;
-use hal::types::Priority;
+use api::Priority;
 
 use board::touch_bus;
 use ft6336u::Ft6336u;
