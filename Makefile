@@ -737,6 +737,15 @@ test-arm-mutex: ## Stress RP2040 priority inheritance on both cores
 		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
 		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite mutex -TimeoutSeconds 30
 
+.PHONY: test-arm-races
+test-arm-races: ## Stress Pico task-vs-physical-ISR queue races
+	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/race-smoke"
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
+		-Suite race -TimeoutSeconds 60
+
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
 #

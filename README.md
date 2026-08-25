@@ -49,7 +49,7 @@ and open work lives in [issues] — the source of truth.
 | Tick timer, measured CPU clock | ✅ | ✅ |
 | Mutexes with priority inheritance | ✅ | ✅ |
 | Queues, task↔task and ISR→task | ✅ | ✅ |
-| Task-vs-ISR race tests | ✅ | 🧪 |
+| Task-vs-ISR race tests | ✅ | ✅ |
 | Watchdogs | ✅ | ✅ |
 | Reset-cause reporting | ✅ | ✅ |
 | Logging, metrics, panic capture | ✅ | ✅ |

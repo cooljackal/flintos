@@ -11,7 +11,7 @@ param(
     [string]$Uf2Path,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
-    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io', 'mutex')]
+    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io', 'mutex', 'race')]
     [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
@@ -80,6 +80,60 @@ function Enter-BootselViaWatchdog {
         & $ProbeRsPath write --chip RP2040 --probe $probe b32 $write[0] $write[1] | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "could not arm BOOTSEL recovery through SWD" }
     }
+}
+
+if ($Suite -eq 'race') {
+    if (-not $ProbeSerial) { throw '-ProbeSerial is required for the race suite' }
+    $probe = "2e8a:000c:$ProbeSerial"
+    $sysroot = (& rustc --print sysroot).Trim()
+    $llvmNm = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
+    $addresses = @{}
+    foreach ($symbol in @(
+        'FLINT_RP2040_TEST_STATUS', 'RACE_ISR_HANDLED', 'RACE_ISR_SENT',
+        'RACE_TASK_RECEIVED', 'RACE_NESTED_MASKED'
+    )) {
+        $line = @(& $llvmNm -n $elf | Where-Object { $_ -match " $symbol`$" })
+        if ($line.Count -ne 1) { throw "could not locate $symbol in the ELF" }
+        $addresses[$symbol] = '0x' + (($line[0] -split '\s+')[0])
+    }
+    & $ProbeRsPath write --chip RP2040 --probe $probe b32 `
+        $addresses['FLINT_RP2040_TEST_STATUS'] 0 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not clear the race test status through SWD' }
+    & $ProbeRsPath download --chip RP2040 --probe $probe --protocol swd `
+        --non-interactive --speed 100 --preverify --verify --reset $elf | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not download the race test image through SWD' }
+
+    $passed = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $status = (& $ProbeRsPath read --chip RP2040 --probe $probe `
+            b32 $addresses['FLINT_RP2040_TEST_STATUS'] 1 2>&1) -join "`n"
+        if ($LASTEXITCODE -eq 0 -and $status -match ':\s+0000600d') {
+            $passed = $true
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $passed) { throw 'the race image did not publish its passing SWD status' }
+    foreach ($expected in @(
+        @('RACE_ISR_HANDLED', '00002710'),
+        @('RACE_ISR_SENT', '00002710'),
+        @('RACE_TASK_RECEIVED', '00002710'),
+        @('RACE_NESTED_MASKED', '000009c4')
+    )) {
+        $value = (& $ProbeRsPath read --chip RP2040 --probe $probe `
+            b32 $addresses[$expected[0]] 1 2>&1) -join "`n"
+        if ($LASTEXITCODE -ne 0 -or $value -notmatch ":\s+$($expected[1])") {
+            throw "$($expected[0]) did not match $($expected[1]): $value"
+        }
+    }
+    [pscustomobject]@{
+        state = 'passed'
+        evidence = 'physical-isr-10000-exact-queue-deliveries+2500-nested-critical-exits'
+        probe_serial = $ProbeSerial
+        transport = 'debugprobe-swd-download+swd-status+retained-counts'
+    } | ConvertTo-Json -Compress
+    exit 0
 }
 
 if ($Suite -eq 'mutex') {

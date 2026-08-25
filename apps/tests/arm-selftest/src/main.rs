@@ -10,7 +10,8 @@
         feature = "reset-recovery-smoke",
         feature = "diagnostics-smoke",
         feature = "dma-smoke",
-        feature = "mutex-smoke"
+        feature = "mutex-smoke",
+        feature = "race-smoke"
     ),
     allow(dead_code)
 )]
@@ -101,6 +102,28 @@ impl PiStress {
 static PI_STRESS_CORE0: PiStress = PiStress::new();
 #[cfg(feature = "mutex-smoke")]
 static PI_STRESS_CORE1: PiStress = PiStress::new();
+#[cfg(feature = "race-smoke")]
+static RACE_QUEUE: Queue<u32, 8> = Queue::new();
+#[cfg(feature = "race-smoke")]
+static RACE_INPUT: api::Once<rp2040_gpio::Rp2040Pin> = api::Once::new();
+#[cfg(feature = "race-smoke")]
+#[no_mangle]
+static RACE_ISR_HANDLED: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "race-smoke")]
+#[no_mangle]
+static RACE_ISR_SENT: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "race-smoke")]
+#[no_mangle]
+static RACE_TASK_RECEIVED: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "race-smoke")]
+#[no_mangle]
+static RACE_NESTED_MASKED: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "race-smoke")]
+static RACE_ERRORS: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "race-smoke")]
+static RACE_ACTIVE_EDGE: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "race-smoke")]
+static RACE_PREEMPTIONS: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 static PI_PHASE: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
@@ -318,6 +341,9 @@ fn main() {
         spawn_pi_stress_low(0, pi_low_core0);
         spawn_pi_stress_low(1, pi_low_core1);
     }
+    #[cfg(feature = "race-smoke")]
+    task::spawn_on(0, "race-producer", race_producer, Priority::Normal(2), 4096)
+        .expect("physical interrupt race producer");
     #[cfg(feature = "watchdog-reset")]
     task::spawn("watchdog", watchdog_reset_test, Priority::Normal(0), 2048).expect("watchdog task");
     #[cfg(feature = "expected-hardfault")]
@@ -328,7 +354,8 @@ fn main() {
         not(feature = "reset-recovery-smoke"),
         not(feature = "diagnostics-smoke"),
         not(feature = "dma-smoke"),
-        not(feature = "mutex-smoke")
+        not(feature = "mutex-smoke"),
+        not(feature = "race-smoke")
     ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
@@ -576,6 +603,167 @@ fn pi_medium_core1() {
 #[cfg(feature = "mutex-smoke")]
 fn pi_high_core1() {
     run_pi_high(&PI_STRESS_CORE1, 1);
+}
+
+#[cfg(feature = "race-smoke")]
+fn race_fail(code: u8) -> ! {
+    RACE_ERRORS.fetch_add(1, Ordering::Relaxed);
+    fail(code)
+}
+
+#[cfg(feature = "race-smoke")]
+fn race_gpio_isr() {
+    let Some(input) = RACE_INPUT.get() else {
+        RACE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    let Ok(events) = input.take_edge_events() else {
+        RACE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    let edge_count = u32::from(events.falling) + u32::from(events.rising);
+    if edge_count != 1 {
+        RACE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    let sequence = RACE_ISR_HANDLED.fetch_add(1, Ordering::AcqRel) + 1;
+    if RACE_QUEUE.send_isr(sequence).is_ok() {
+        RACE_ISR_SENT.fetch_add(1, Ordering::Relaxed);
+    } else {
+        RACE_ERRORS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(feature = "race-smoke")]
+fn race_consumer() {
+    if kernel::smp::current_core().0 != 0 {
+        race_fail(28);
+    }
+    for expected in 1..=10_000u32 {
+        let Ok(value) = api::queue::recv(&RACE_QUEUE, 100) else {
+            race_fail(29);
+        };
+        if value != expected {
+            race_fail(30);
+        }
+        if RACE_ACTIVE_EDGE.load(Ordering::Acquire) == expected {
+            RACE_PREEMPTIONS.fetch_add(1, Ordering::Relaxed);
+        }
+        RACE_TASK_RECEIVED.store(expected, Ordering::Release);
+    }
+    task::sleep_ms(u32::MAX);
+    race_fail(31)
+}
+
+#[cfg(feature = "race-smoke")]
+fn race_producer() {
+    const EDGES: u32 = 10_000;
+    if kernel::smp::current_core().0 != 0 {
+        race_fail(28);
+    }
+    let Ok(output) = rp2040_gpio::Rp2040Pin::open(&kernel::board::active::GPIO_LOOPBACK_OUT) else {
+        race_fail(28);
+    };
+    let Ok(input) = rp2040_gpio::Rp2040Pin::open(&kernel::board::active::GPIO_LOOPBACK_IN) else {
+        race_fail(28);
+    };
+    if output.set_mode(rp2040_gpio::PinMode::Output).is_err()
+        || output.write(rp2040_gpio::PinLevel::Low).is_err()
+        || input.set_mode(rp2040_gpio::PinMode::InputPullDown).is_err()
+    {
+        race_fail(28);
+    }
+    RACE_INPUT.init(input);
+    if unsafe {
+        kernel::interrupt::connect_at(
+            soc_rp2040::IRQ_IO_BANK0,
+            soc_rp2040::IRQ_IO_BANK0,
+            race_gpio_isr,
+        )
+    }
+    .is_err()
+        || RACE_INPUT
+            .get()
+            .expect("race loopback input")
+            .enable_edge_interrupt(rp2040_gpio::Edge::Both)
+            .is_err()
+    {
+        race_fail(28);
+    }
+
+    task::spawn_on(
+        0,
+        "race-consumer",
+        race_consumer,
+        Priority::Critical(0),
+        3072,
+    )
+    .expect("physical interrupt race consumer");
+    task::sleep_ms(5);
+
+    for expected in 1..=EDGES {
+        let level = if expected & 1 == 1 {
+            rp2040_gpio::PinLevel::High
+        } else {
+            rp2040_gpio::PinLevel::Low
+        };
+        RACE_ACTIVE_EDGE.store(expected, Ordering::Release);
+        if expected % 4 == 0 {
+            let before = RACE_ISR_HANDLED.load(Ordering::Acquire);
+            let outer = unsafe { kernel::arch::cs_enter() };
+            let inner = unsafe { kernel::arch::cs_enter() };
+            if output.write(level).is_err() {
+                race_fail(28);
+            }
+            let masked_start = hardware_timer_us();
+            while hardware_timer_us().wrapping_sub(masked_start) < 20 {
+                core::hint::spin_loop();
+            }
+            if RACE_ISR_HANDLED.load(Ordering::Acquire) != before {
+                race_fail(30);
+            }
+            unsafe { kernel::arch::cs_exit(inner) };
+            if RACE_ISR_HANDLED.load(Ordering::Acquire) != before {
+                race_fail(30);
+            }
+            unsafe { kernel::arch::cs_exit(outer) };
+            RACE_NESTED_MASKED.fetch_add(1, Ordering::Relaxed);
+        } else if output.write(level).is_err() {
+            race_fail(28);
+        }
+
+        if !task::wait_until(
+            || RACE_TASK_RECEIVED.load(Ordering::Acquire) == expected,
+            100,
+        ) {
+            race_fail(29);
+        }
+        RACE_ACTIVE_EDGE.store(0, Ordering::Release);
+        if RACE_ISR_HANDLED.load(Ordering::Acquire) != expected
+            || RACE_ISR_SENT.load(Ordering::Acquire) != expected
+            || RACE_ERRORS.load(Ordering::Acquire) != 0
+        {
+            race_fail(30);
+        }
+    }
+
+    if RACE_INPUT
+        .get()
+        .expect("race loopback input")
+        .disable_edge_interrupt()
+        .is_err()
+        || RACE_ISR_HANDLED.load(Ordering::Acquire) != EDGES
+        || RACE_ISR_SENT.load(Ordering::Acquire) != EDGES
+        || RACE_TASK_RECEIVED.load(Ordering::Acquire) != EDGES
+        || RACE_NESTED_MASKED.load(Ordering::Acquire) != EDGES / 4
+        || RACE_PREEMPTIONS.load(Ordering::Acquire) == 0
+        || RACE_ERRORS.load(Ordering::Acquire) != 0
+    {
+        race_fail(31);
+    }
+    api::log_info!("[FLINT] ARM ISR RACE PASS handled=10000 sent=10000 received=10000 nested=2500");
+    task::sleep_ms(100);
+    unsafe { soc_rp2040::test_status::pass_live() }
 }
 
 #[cfg(feature = "dma-smoke")]
