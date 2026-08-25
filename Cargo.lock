@@ -60,7 +60,6 @@ dependencies = [
  "axp192",
  "board",
  "build",
- "hal",
  "i2c-bus",
  "kernel",
 ]
@@ -385,7 +384,6 @@ dependencies = [
  "bmi270",
  "board",
  "build",
- "hal",
  "i2c-bus",
  "kernel",
  "mpu6886",
@@ -698,7 +696,6 @@ dependencies = [
  "board",
  "build",
  "ft6336u",
- "hal",
  "i2c-bus",
  "kernel",
 ]
