@@ -11,7 +11,7 @@ param(
     [string]$Uf2Path,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
-    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io')]
+    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io', 'mutex')]
     [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
@@ -80,6 +80,51 @@ function Enter-BootselViaWatchdog {
         & $ProbeRsPath write --chip RP2040 --probe $probe b32 $write[0] $write[1] | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "could not arm BOOTSEL recovery through SWD" }
     }
+}
+
+if ($Suite -eq 'mutex') {
+    if (-not $ProbeSerial) { throw '-ProbeSerial is required for the mutex suite' }
+    $probe = "2e8a:000c:$ProbeSerial"
+    $sysroot = (& rustc --print sysroot).Trim()
+    $llvmNm = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
+    $statusLine = @(& $llvmNm -n $elf | Where-Object { $_ -match ' FLINT_RP2040_TEST_STATUS$' })
+    if ($statusLine.Count -ne 1) { throw 'could not locate FLINT_RP2040_TEST_STATUS in the ELF' }
+    $progressLine = @(& $llvmNm -n $elf | Where-Object { $_ -match ' MUTEX_SOAK_PROGRESS$' })
+    if ($progressLine.Count -ne 1) { throw 'could not locate MUTEX_SOAK_PROGRESS in the ELF' }
+    $statusAddress = '0x' + (($statusLine[0] -split '\s+')[0])
+    $progressAddress = '0x' + (($progressLine[0] -split '\s+')[0])
+    & $ProbeRsPath write --chip RP2040 --probe $probe b32 $statusAddress 0 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not clear the mutex test status through SWD' }
+    & $ProbeRsPath write --chip RP2040 --probe $probe b32 $progressAddress 0 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not clear the mutex progress through SWD' }
+    $passed = $false
+    & $ProbeRsPath download --chip RP2040 --probe $probe --protocol swd `
+        --non-interactive --speed 100 --preverify --verify --reset $elf | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not download the mutex test image through SWD' }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $status = (& $ProbeRsPath read --chip RP2040 --probe $probe `
+            b32 $statusAddress 1 2>&1) -join "`n"
+        if ($LASTEXITCODE -eq 0 -and $status -match ':\s+0000600d') {
+            $passed = $true
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $passed) { throw 'the mutex image did not publish its passing SWD status' }
+    $progress = (& $ProbeRsPath read --chip RP2040 --probe $probe `
+        b32 $progressAddress 1 2>&1) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or $progress -notmatch ':\s+000007d0') {
+        throw "mutex status passed without exactly 2,000 completed cycles: $progress"
+    }
+    [pscustomobject]@{
+        state = 'passed'
+        evidence = 'mutex-priority-inheritance-2-cores-2000-cycles'
+        probe_serial = $ProbeSerial
+        transport = 'debugprobe-swd-download+swd-status+retained-progress'
+    } | ConvertTo-Json -Compress
+    exit 0
 }
 
 if ($Suite -eq 'io') {

@@ -47,7 +47,7 @@ and open work lives in [issues] — the source of truth.
 | Interrupts, nesting, critical sections | ✅ | ✅ |
 | Peripheral interrupt routing | ✅ | ✅ |
 | Tick timer, measured CPU clock | ✅ | ✅ |
-| Mutexes with priority inheritance | ✅ | 🧪 |
+| Mutexes with priority inheritance | ✅ | ✅ |
 | Queues, task↔task and ISR→task | ✅ | ✅ |
 | Task-vs-ISR race tests | ✅ | 🧪 |
 | Watchdogs | ✅ | ✅ |

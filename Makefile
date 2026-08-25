@@ -728,6 +728,15 @@ test-arm-io: ## Prove Pico UART and a physical GP2-to-GP3 edge loopback
 		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
 		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite io -TimeoutSeconds 30
 
+.PHONY: test-arm-mutex
+test-arm-mutex: ## Stress RP2040 priority inheritance on both cores
+	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/mutex-smoke"
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
+		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite mutex -TimeoutSeconds 30
+
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
 #

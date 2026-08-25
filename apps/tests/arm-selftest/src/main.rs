@@ -9,7 +9,8 @@
         feature = "watchdog-reset",
         feature = "reset-recovery-smoke",
         feature = "diagnostics-smoke",
-        feature = "dma-smoke"
+        feature = "dma-smoke",
+        feature = "mutex-smoke"
     ),
     allow(dead_code)
 )]
@@ -59,6 +60,47 @@ static PI_MUTEX: Mutex<u32> = Mutex::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 #[no_mangle]
 static MUTEX_SOAK_PROGRESS: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "mutex-smoke")]
+static MUTEX_SOAK_CORES_DONE: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "mutex-smoke")]
+static MUTEX_SOAK_ERRORS: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(feature = "mutex-smoke")]
+struct PiStress {
+    mutex: Mutex<u32>,
+    cycle: AtomicU32,
+    low_id: AtomicU32,
+    medium_id: AtomicU32,
+    high_id: AtomicU32,
+    medium_ready: AtomicU32,
+    medium_finished: AtomicU32,
+    high_finished: AtomicU32,
+    medium_seen: AtomicU32,
+    high_seen: AtomicU32,
+}
+
+#[cfg(feature = "mutex-smoke")]
+impl PiStress {
+    const fn new() -> Self {
+        Self {
+            mutex: Mutex::new(0),
+            cycle: AtomicU32::new(0),
+            low_id: AtomicU32::new(u32::MAX),
+            medium_id: AtomicU32::new(u32::MAX),
+            high_id: AtomicU32::new(u32::MAX),
+            medium_ready: AtomicU32::new(0),
+            medium_finished: AtomicU32::new(0),
+            high_finished: AtomicU32::new(0),
+            medium_seen: AtomicU32::new(0),
+            high_seen: AtomicU32::new(0),
+        }
+    }
+}
+
+#[cfg(feature = "mutex-smoke")]
+static PI_STRESS_CORE0: PiStress = PiStress::new();
+#[cfg(feature = "mutex-smoke")]
+static PI_STRESS_CORE1: PiStress = PiStress::new();
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 static PI_PHASE: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
@@ -271,6 +313,11 @@ fn main() {
             .expect("diagnostics task");
         }
     }
+    #[cfg(feature = "mutex-smoke")]
+    {
+        spawn_pi_stress_low(0, pi_low_core0);
+        spawn_pi_stress_low(1, pi_low_core1);
+    }
     #[cfg(feature = "watchdog-reset")]
     task::spawn("watchdog", watchdog_reset_test, Priority::Normal(0), 2048).expect("watchdog task");
     #[cfg(feature = "expected-hardfault")]
@@ -280,7 +327,8 @@ fn main() {
         not(feature = "watchdog-reset"),
         not(feature = "reset-recovery-smoke"),
         not(feature = "diagnostics-smoke"),
-        not(feature = "dma-smoke")
+        not(feature = "dma-smoke"),
+        not(feature = "mutex-smoke")
     ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
@@ -296,6 +344,238 @@ fn main() {
         }
         task::spawn_on(0, "tests", tests, Priority::Normal(2), 4096).expect("test task");
     }
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn spawn_pi_stress_low(core: u8, low: fn()) {
+    task::spawn_on(core, "pi-low", low, Priority::Normal(2), 3072)
+        .expect("priority-inheritance low task");
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn pi_stress_fail(code: u8) -> ! {
+    MUTEX_SOAK_ERRORS.fetch_add(1, Ordering::Relaxed);
+    fail(code)
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn pi_tasks_parked(state: &'static PiStress) -> bool {
+    let medium = state.medium_id.load(Ordering::Acquire);
+    let high = state.high_id.load(Ordering::Acquire);
+    kernel::scheduler::with(|sched| {
+        [medium, high].into_iter().all(|id| {
+            sched.tasks[id as usize]
+                .as_ref()
+                .is_some_and(|task| task.state == kernel::scheduler::TaskState::BlockedSleep)
+        })
+    })
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn run_pi_low(state: &'static PiStress, expected_core: u8, medium: fn(), high: fn()) {
+    const CYCLES: u32 = 1_000;
+    if kernel::smp::current_core().0 != expected_core {
+        pi_stress_fail(28);
+    }
+    let low_id = task::current_id().0;
+    state.low_id.store(low_id, Ordering::Release);
+
+    for cycle in 1..=CYCLES {
+        if cycle > 1 && !task::wait_until(|| pi_tasks_parked(state), 100) {
+            pi_stress_fail(29);
+        }
+        let mut guard = lock(&state.mutex);
+        if *guard != cycle - 1 {
+            pi_stress_fail(28);
+        }
+        state.cycle.store(cycle, Ordering::Release);
+        if cycle == 1 {
+            let high_id =
+                task::spawn_on(expected_core, "pi-high", high, Priority::Critical(0), 2048)
+                    .expect("priority-inheritance high task");
+            state.high_id.store(high_id.0, Ordering::Release);
+            let medium_id = task::spawn_on(
+                expected_core,
+                "pi-medium",
+                medium,
+                Priority::Normal(1),
+                2048,
+            )
+            .expect("priority-inheritance medium task");
+            state.medium_id.store(medium_id.0, Ordering::Release);
+        } else {
+            let medium_id = state.medium_id.load(Ordering::Acquire);
+            let high_id = state.high_id.load(Ordering::Acquire);
+            kernel::scheduler::with(|sched| {
+                sched.unblock(medium_id);
+                sched.unblock(high_id);
+            });
+        }
+
+        // A yield is advisory and may return before a newly spawned task has
+        // taken its first exception. Blocking for one tick makes the handoff
+        // part of the test: high must queue on the mutex, boost this sleeping
+        // owner, and let it preempt medium when the timer wakes it.
+        task::sleep_ms(1);
+        let high_id = state.high_id.load(Ordering::Acquire);
+        let boost_wait_start = timer::now_ms();
+        loop {
+            let high_is_blocked = kernel::scheduler::with(|sched| {
+                sched.tasks[high_id as usize]
+                    .as_ref()
+                    .is_some_and(|task| task.state == kernel::scheduler::TaskState::BlockedMutex)
+            });
+            if high_is_blocked {
+                break;
+            }
+            if timer::now_ms().wrapping_sub(boost_wait_start) >= 100 {
+                pi_stress_fail(29);
+            }
+            task::sleep_ms(5);
+        }
+        let boosted = kernel::scheduler::with(|sched| {
+            sched.tasks[low_id as usize]
+                .as_ref()
+                .is_some_and(|task| task.priority == Priority::Critical(0).numeric())
+        });
+        if !boosted {
+            pi_stress_fail(30);
+        }
+
+        *guard = cycle;
+        drop(guard);
+        if !task::wait_until(
+            || {
+                state.high_finished.load(Ordering::Acquire) == cycle
+                    && state.medium_finished.load(Ordering::Acquire) == cycle
+            },
+            100,
+        ) {
+            pi_stress_fail(29);
+        }
+        let restored = kernel::scheduler::with(|sched| {
+            sched.tasks[low_id as usize]
+                .as_ref()
+                .is_some_and(|task| task.priority == Priority::Normal(2).numeric())
+        });
+        if !restored {
+            pi_stress_fail(30);
+        }
+        MUTEX_SOAK_PROGRESS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    let done = MUTEX_SOAK_CORES_DONE.fetch_add(1, Ordering::AcqRel) + 1;
+    if done == 2 {
+        if MUTEX_SOAK_PROGRESS.load(Ordering::Acquire) != CYCLES * 2
+            || MUTEX_SOAK_ERRORS.load(Ordering::Acquire) != 0
+        {
+            pi_stress_fail(31);
+        }
+        api::log_info!(
+            "[FLINT] ARM MUTEX PI PASS cores=2 cycles_per_core=1000 total=2000 errors=0"
+        );
+        task::sleep_ms(100);
+        unsafe { soc_rp2040::test_status::pass_live() }
+    }
+    task::exit()
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn run_pi_medium(state: &'static PiStress, expected_core: u8) {
+    while state.medium_id.load(Ordering::Acquire) == u32::MAX
+        || state.high_id.load(Ordering::Acquire) == u32::MAX
+    {
+        task::sleep_ms(10);
+    }
+    loop {
+        if kernel::smp::current_core().0 != expected_core {
+            pi_stress_fail(28);
+        }
+        let cycle = state.cycle.load(Ordering::Acquire);
+        if cycle == 0 || state.medium_seen.swap(cycle, Ordering::AcqRel) >= cycle {
+            pi_stress_fail(31);
+        }
+        state.medium_ready.store(cycle, Ordering::Release);
+        while state.high_finished.load(Ordering::Acquire) != cycle {
+            core::hint::spin_loop();
+        }
+        state.medium_finished.store(cycle, Ordering::Release);
+        task::sleep_ms(u32::MAX);
+    }
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn run_pi_high(state: &'static PiStress, expected_core: u8) {
+    while state.medium_id.load(Ordering::Acquire) == u32::MAX
+        || state.high_id.load(Ordering::Acquire) == u32::MAX
+    {
+        task::sleep_ms(10);
+    }
+    loop {
+        if kernel::smp::current_core().0 != expected_core {
+            pi_stress_fail(28);
+        }
+        let cycle = state.cycle.load(Ordering::Acquire);
+        if cycle == 0 || state.high_seen.swap(cycle, Ordering::AcqRel) >= cycle {
+            pi_stress_fail(31);
+        }
+        let wait_start = timer::now_ms();
+        while state.medium_ready.load(Ordering::Acquire) != cycle {
+            if timer::now_ms().wrapping_sub(wait_start) >= 100 {
+                pi_stress_fail(29);
+            }
+            // A one-tick sleep can expire in SysTick before its pending
+            // PendSV runs, immediately selecting this critical task again.
+            // Five ticks leave a real interval for medium to be dispatched.
+            task::sleep_ms(5);
+        }
+        let guard = lock(&state.mutex);
+        if *guard != cycle {
+            pi_stress_fail(31);
+        }
+        let low = state.low_id.load(Ordering::Acquire);
+        let low_restored = kernel::scheduler::with(|sched| {
+            sched.tasks[low as usize]
+                .as_ref()
+                .is_some_and(|task| task.priority == Priority::Normal(2).numeric())
+        });
+        if !low_restored {
+            pi_stress_fail(30);
+        }
+        drop(guard);
+        state.high_finished.store(cycle, Ordering::Release);
+        task::sleep_ms(u32::MAX);
+    }
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn pi_low_core0() {
+    run_pi_low(&PI_STRESS_CORE0, 0, pi_medium_core0, pi_high_core0);
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn pi_medium_core0() {
+    run_pi_medium(&PI_STRESS_CORE0, 0);
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn pi_high_core0() {
+    run_pi_high(&PI_STRESS_CORE0, 0);
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn pi_low_core1() {
+    run_pi_low(&PI_STRESS_CORE1, 1, pi_medium_core1, pi_high_core1);
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn pi_medium_core1() {
+    run_pi_medium(&PI_STRESS_CORE1, 1);
+}
+
+#[cfg(feature = "mutex-smoke")]
+fn pi_high_core1() {
+    run_pi_high(&PI_STRESS_CORE1, 1);
 }
 
 #[cfg(feature = "dma-smoke")]
