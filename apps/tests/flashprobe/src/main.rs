@@ -168,21 +168,20 @@ fn run() {
         }
     }
 
-    // Was core 1 asked to get out of the way, or frozen?
-    //
-    // The two look identical from outside — flash works either way and core 1
-    // survives either way — so without this the handshake could be dead code
-    // and nothing would say so. It is the only app that starts the second
-    // core, so it is the only place the question can be asked at all.
+    // How was core 1 kept out of the way — the cooperative park, or a hardware
+    // stall? The two look identical from outside (flash works and core 1
+    // survives either way), so report which ran. The flash path now *always*
+    // stalls: the park handshake was found to corrupt a flash-resident core-1
+    // task at the first cross-core flash op and is disabled (#141), so `parks`
+    // is expected to be 0 and that is not an error. The real check — that core 1
+    // survived — is made in `round_trip` above.
     {
         use core::sync::atomic::Ordering;
         let parks = esp32_flash::PARKS.load(Ordering::Relaxed);
-        let fell_back = esp32_flash::PARK_FELL_BACK.load(Ordering::Relaxed);
-        api::log_info!("core 1 parked by handshake {} times", parks);
-        if fell_back {
-            api::log_error!("and at least once it had to fall back to stalling");
-        } else if parks == 0 {
-            api::log_error!("never parked: the handshake did not run");
+        if parks == 0 {
+            api::log_info!("core 1 was frozen by hardware stall (park disabled, #141)");
+        } else {
+            api::log_info!("core 1 parked by cooperative handshake {} times", parks);
         }
     }
 

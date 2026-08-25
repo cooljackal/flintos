@@ -407,17 +407,27 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     #[cfg(target_os = "none")]
     let app_was_running = soc_esp32::appcpu::is_running();
 
-    // Ask first, stall only if asking fails. See the long note above
-    // `park_this_core`: a parked core provably holds no lock, a stalled one
-    // may hold any of them, and IRAM-safe interrupts now run in this window.
+    // Freeze the second core — do not merely ask it to park.
+    //
+    // #69 added a cooperative park (raise `FromCpu2`, core 1 spins in IRAM)
+    // to avoid stalling a core that might hold the scheduler lock. It does not
+    // survive on this silicon: a core that is *executing* when core 0 toggles
+    // the shared flash cache — even a bare IRAM spin loop that touches no flash
+    // — faults on its next flash fetch (EXCCAUSE=0), deterministically, at the
+    // first cross-core flash op. An IRAM-only core-1 task never faults; a
+    // flash-resident one always does; freezing the core (this `stall`) always
+    // works. Barriers on core 1's resume (`isync`), a settle wait, and having
+    // core 0 own the cache toggle were all tried and all failed — only the
+    // freeze does. #141.
+    //
+    // Stalling is safe here for the reason the park note already gives: the
+    // flash op below takes no lock, so core 1 being frozen — even holding the
+    // scheduler lock — cannot deadlock core 0, which asks for nothing in this
+    // window. The park path (`park_other_core`/`release_other_core`/
+    // `park_this_core`) is kept but unused pending a real cross-core cache fix.
     #[cfg(target_os = "none")]
-    let app_parked = app_was_running && park_other_core();
+    let app_stalled = app_was_running;
 
-    #[cfg(target_os = "none")]
-    let app_stalled = app_was_running && !app_parked;
-
-    // The fallback path, unchanged from when it was the only path: freeze the
-    // core and reach across to its cache registers.
     #[cfg(target_os = "none")]
     let app_saved_mask = if app_stalled {
         soc_esp32::appcpu::stall();
@@ -449,8 +459,9 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     ctrl1.write_volatile((ctrl1.read_volatile() & !PRO_CACHE_MASK) | saved_mask);
 
     // And the second core, in the reverse order: cache back first, then let it
-    // run. Released before its cache is restored, it would fetch through a
-    // disabled one.
+    // run. Unstalled before its cache is restored, it would fetch through a
+    // disabled one. `unstall_now` also waits out the RTC settle, so the core is
+    // only released once its cache is back.
     #[cfg(target_os = "none")]
     if app_stalled {
         let c = APP_CACHE_CTRL as *mut u32;
@@ -458,13 +469,6 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
         let c1 = APP_CACHE_CTRL1 as *mut u32;
         c1.write_volatile((c1.read_volatile() & !PRO_CACHE_MASK) | app_saved_mask);
         soc_esp32::appcpu::unstall_now();
-    }
-
-    // A parked core restores its own cache, so there is nothing to reach
-    // across for -- only the release, and the wait for it to be out.
-    #[cfg(target_os = "none")]
-    if app_parked {
-        release_other_core();
     }
 
     #[cfg(target_os = "none")]
@@ -658,21 +662,24 @@ pub unsafe fn park_this_core() {
 
         soc_esp32::crosscore::clear(soc_esp32::crosscore::Signal::FromCpu2);
 
-        // This core's own cache, saved and switched off by this core. Core 0
-        // used to reach across and do it; doing it here is what lets core 1
-        // choose the moment.
-        let c1 = APP_CACHE_CTRL1 as *mut u32;
-        let saved_mask = c1.read_volatile() & PRO_CACHE_MASK;
-        let c = APP_CACHE_CTRL as *mut u32;
-        c.write_volatile(c.read_volatile() & !PRO_CACHE_ENABLE);
-
+        // Park in IRAM with this core's cache left untouched. Core 0 switches
+        // it off (safe: this core spins here in IRAM and fetches no flash) and
+        // switches it back on before releasing us — the same handling the stall
+        // fallback already uses.
+        //
+        // An earlier version had *this* core disable and re-enable its own
+        // cache, then return straight into the flash-resident code it had
+        // interrupted. That faulted deterministically at the first cross-core
+        // flash op (EXCCAUSE=0 in a core-1 task sitting in `sleep_ms`): a core
+        // re-enabling its own cache and immediately fetching through it does not
+        // see it ready, and no barrier from this side fixed it — an `isync` and
+        // a spin-settle both failed. Letting core 0 own the cache toggle (with
+        // core 1 frozen-equivalent, spinning in IRAM) is what the working stall
+        // path does, so the park path now does the same. #141.
         PARKED.store(true, Ordering::SeqCst);
         while PARK_REQUESTED.load(Ordering::SeqCst) {
             core::hint::spin_loop();
         }
-
-        c.write_volatile(c.read_volatile() | PRO_CACHE_ENABLE);
-        c1.write_volatile((c1.read_volatile() & !PRO_CACHE_MASK) | saved_mask);
         PARKED.store(false, Ordering::SeqCst);
     }
 }
@@ -684,6 +691,7 @@ pub unsafe fn park_this_core() {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 #[cfg(target_os = "none")]
+#[allow(dead_code)] // unused while the flash path always stalls; see with_cache_off (#141)
 unsafe fn park_other_core() -> bool {
     use core::sync::atomic::Ordering;
 
@@ -719,6 +727,7 @@ unsafe fn park_other_core() -> bool {
 #[inline(never)]
 #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
 #[cfg(target_os = "none")]
+#[allow(dead_code)] // unused while the flash path always stalls; see with_cache_off (#141)
 unsafe fn release_other_core() {
     use core::sync::atomic::Ordering;
     PARK_REQUESTED.store(false, Ordering::SeqCst);
