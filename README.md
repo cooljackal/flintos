@@ -64,9 +64,11 @@ and open work lives in [issues] — the source of truth.
 | UART · GPIO · pin routing | ✅ | ✅ |
 | I²C · SPI | ✅ | ⛔ |
 | PWM / LEDC · Timers (TIMG) | ✅ | ✅ |
-| ADC1 · ADC2 † · DAC † | ✅ | ⛔ |
+| ADC | ✅ | ✅ |
+| Second ADC † · DAC † | ✅ | — |
 | RMT pulse generator | ✅ | — |
-| Hardware RNG · Flash key/value | ✅ | ⛔ |
+| Hardware RNG | ✅ | — |
+| Flash key/value | ✅ | ⛔ |
 | CAN (TWAI) † · I2S † | ✅ | ⛔ |
 | Wi-Fi · BLE | 🚧 | — |
 | Touch · SD/SDIO · Ethernet MAC | ⛔ | ⛔ |
@@ -75,6 +77,10 @@ and open work lives in [issues] — the source of truth.
 † Verified on a DevKitC by an on-chip loopback self-test (no external hardware):
 DAC→ADC2 readback, ADC2 refusing while the radio owns the SAR, TWAI self-receive,
 I2S DMA through a one-pad loop. Not claimed: analog accuracy, a real CAN bus.
+
+The RP2040 ADC was verified on a Pico with 1,024 internal-temperature samples.
+RP2040 entropy is a conditioned best-effort seed from spaced ring-oscillator
+samples; the chip has no cryptographic hardware RNG, and FlintOS does not claim one.
 
 ### Device drivers
 

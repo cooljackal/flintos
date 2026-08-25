@@ -755,6 +755,15 @@ test-arm-pwm: ## Measure Pico PWM frequency and duty through GP2-to-GP3 loopback
 		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
 		-Suite pwm -TimeoutSeconds 15
 
+.PHONY: test-arm-adc-entropy
+test-arm-adc-entropy: ## Measure Pico internal temperature ADC and ROSC seed health
+	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/adc-entropy-smoke"
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
+		-Suite adc-entropy -TimeoutSeconds 20
+
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
 #

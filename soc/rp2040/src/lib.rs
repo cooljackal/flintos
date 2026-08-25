@@ -30,7 +30,9 @@ pub const UART0_BASE: u32 = 0x4003_4000;
 pub const UART1_BASE: u32 = 0x4003_8000;
 pub const SPI0_BASE: u32 = 0x4003_C000;
 pub const I2C0_BASE: u32 = 0x4004_4000;
+pub const ADC_BASE: u32 = 0x4004_C000;
 pub const PWM_BASE: u32 = 0x4005_0000;
+pub const ROSC_BASE: u32 = 0x4006_0000;
 pub const SIO_BASE: u32 = 0xD000_0000;
 pub const RESETS_BASE: u32 = 0x4000_C000;
 pub const DMA_BASE: u32 = 0x5000_0000;
@@ -48,6 +50,7 @@ pub unsafe fn unreset(mask: u32) {
 }
 
 pub const RESET_IO_BANK0: u32 = 1 << 5;
+pub const RESET_ADC: u32 = 1;
 pub const RESET_DMA: u32 = 1 << 2;
 pub const RESET_PADS_BANK0: u32 = 1 << 8;
 pub const RESET_PWM: u32 = 1 << 14;
@@ -59,6 +62,30 @@ pub fn enable_peripheral_clock() {
     #[cfg(target_arch = "arm")]
     unsafe {
         CLK_PERI_CTRL.write_volatile(1 << 11);
+    }
+}
+
+/// Select the crystal for `clk_adc` and enable the clock slice.
+///
+/// The ADC's reset-done bit cannot rise while this clock is stopped. Flint's
+/// minimal clock bring-up does not configure the PLLs, so the 12 MHz crystal
+/// is the available documented auxiliary source.
+pub fn enable_adc_clock() {
+    #[cfg(target_arch = "arm")]
+    unsafe {
+        const CLK_ADC_CTRL: *mut u32 = (CLOCKS_BASE + 0x60) as *mut u32;
+        const CLK_ADC_SELECTED: *const u32 = (CLOCKS_BASE + 0x68) as *const u32;
+        const ENABLE: u32 = 1 << 11;
+        const XOSC_AUXSRC: u32 = 3 << 5;
+        CLK_ADC_CTRL.write_volatile(0);
+        for _ in 0..4 {
+            core::hint::spin_loop();
+        }
+        CLK_ADC_CTRL.write_volatile(ENABLE | XOSC_AUXSRC);
+        assert!(
+            wait_for_bits(CLK_ADC_SELECTED, 1),
+            "RP2040 clk_adc did not start"
+        );
     }
 }
 
@@ -120,6 +147,7 @@ pub const IRQ_SPI0: u8 = 18;
 pub const IRQ_UART0: u8 = 20;
 pub const IRQ_UART1: u8 = 21;
 pub const IRQ_I2C0: u8 = 23;
+pub const IRQ_ADC_FIFO: u8 = 22;
 pub const NVIC_IRQ_COUNT: u8 = 26;
 
 /// RP2040 free-running microsecond timer, independent of SysTick and PRIMASK.
@@ -246,6 +274,13 @@ mod tests {
             (IRQ_IO_BANK0, IRQ_SPI0, IRQ_UART0, IRQ_I2C0),
             (13, 18, 20, 23)
         );
+    }
+
+    #[test]
+    fn adc_clock_and_reset_facts_match_the_generated_sdk_headers() {
+        assert_eq!(ADC_BASE, 0x4004_c000);
+        assert_eq!(RESET_ADC, 1);
+        assert_eq!(IRQ_ADC_FIFO, 22);
     }
 
     #[test]

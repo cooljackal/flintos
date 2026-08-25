@@ -12,7 +12,8 @@
         feature = "dma-smoke",
         feature = "mutex-smoke",
         feature = "race-smoke",
-        feature = "pwm-smoke"
+        feature = "pwm-smoke",
+        feature = "adc-entropy-smoke"
     ),
     allow(dead_code)
 )]
@@ -146,6 +147,33 @@ static PWM_FIRST_RISE: AtomicU32 = AtomicU32::new(0);
 static PWM_LAST_RISE: AtomicU32 = AtomicU32::new(0);
 #[cfg(feature = "pwm-smoke")]
 static PWM_ERRORS: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ADC_SAMPLE_COUNT: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ADC_MIN_RAW: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ADC_MAX_RAW: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ADC_AVG_RAW: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ADC_TEMP_MILLI_C: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ENTROPY_RAW_BITS: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ENTROPY_RAW_ONES: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ENTROPY_TRANSITIONS: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "adc-entropy-smoke")]
+#[no_mangle]
+static ENTROPY_CHECKSUM: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 static PI_PHASE: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
@@ -368,6 +396,15 @@ fn main() {
         .expect("physical interrupt race producer");
     #[cfg(feature = "pwm-smoke")]
     task::spawn_on(0, "pwm-smoke", pwm_smoke, Priority::Normal(1), 4096).expect("PWM target test");
+    #[cfg(feature = "adc-entropy-smoke")]
+    task::spawn_on(
+        0,
+        "adc-entropy",
+        adc_entropy_smoke,
+        Priority::Normal(1),
+        4096,
+    )
+    .expect("ADC and entropy target test");
     #[cfg(feature = "watchdog-reset")]
     task::spawn("watchdog", watchdog_reset_test, Priority::Normal(0), 2048).expect("watchdog task");
     #[cfg(feature = "expected-hardfault")]
@@ -380,7 +417,8 @@ fn main() {
         not(feature = "dma-smoke"),
         not(feature = "mutex-smoke"),
         not(feature = "race-smoke"),
-        not(feature = "pwm-smoke")
+        not(feature = "pwm-smoke"),
+        not(feature = "adc-entropy-smoke")
     ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
@@ -396,6 +434,89 @@ fn main() {
         }
         task::spawn_on(0, "tests", tests, Priority::Normal(2), 4096).expect("test task");
     }
+}
+
+#[cfg(feature = "adc-entropy-smoke")]
+fn adc_entropy_smoke() {
+    const ADC_SAMPLES: u32 = 1_024;
+    const ENTROPY_SEEDS: u32 = 64;
+
+    let Ok(mut adc) = rp2040_adc::Rp2040Adc::open() else {
+        fail(32);
+    };
+    if rp2040_adc::Rp2040Adc::open().is_ok() {
+        fail(32);
+    }
+    let mut minimum = u16::MAX;
+    let mut maximum = 0u16;
+    let mut total = 0u64;
+    for _ in 0..ADC_SAMPLES {
+        let Ok(raw) = adc.read(rp2040_adc::Channel::Temperature) else {
+            fail(33);
+        };
+        minimum = minimum.min(raw);
+        maximum = maximum.max(raw);
+        total += u64::from(raw);
+        ADC_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+    let average = (total / u64::from(ADC_SAMPLES)) as u16;
+    let temperature = rp2040_adc::temperature_milli_celsius(average);
+    ADC_MIN_RAW.store(u32::from(minimum), Ordering::Release);
+    ADC_MAX_RAW.store(u32::from(maximum), Ordering::Release);
+    ADC_AVG_RAW.store(u32::from(average), Ordering::Release);
+    ADC_TEMP_MILLI_C.store(temperature as u32, Ordering::Release);
+    if minimum == 0
+        || maximum >= 4_095
+        || minimum >= maximum
+        || !(-40_000..=125_000).contains(&temperature)
+    {
+        fail(34);
+    }
+
+    let mut raw_bits = 0u32;
+    let mut raw_ones = 0u32;
+    let mut transitions = 0u32;
+    let mut checksum = 0u32;
+    let mut previous = [0u64; 2];
+    for index in 0..ENTROPY_SEEDS {
+        let Ok(seed) = rp2040_entropy::sample_seed() else {
+            fail(35);
+        };
+        raw_bits += u32::from(seed.health.bits);
+        raw_ones += u32::from(seed.health.ones);
+        transitions += u32::from(seed.health.transitions);
+        checksum ^= seed.words[0] as u32
+            ^ (seed.words[0] >> 32) as u32
+            ^ seed.words[1] as u32
+            ^ (seed.words[1] >> 32) as u32;
+        if index != 0 && seed.words == previous {
+            fail(36);
+        }
+        previous = seed.words;
+    }
+    ENTROPY_RAW_BITS.store(raw_bits, Ordering::Release);
+    ENTROPY_RAW_ONES.store(raw_ones, Ordering::Release);
+    ENTROPY_TRANSITIONS.store(transitions, Ordering::Release);
+    ENTROPY_CHECKSUM.store(checksum, Ordering::Release);
+    if raw_bits != ENTROPY_SEEDS * 64
+        || !(raw_bits / 4..=raw_bits * 3 / 4).contains(&raw_ones)
+        || !(raw_bits / 5..=raw_bits * 4 / 5).contains(&transitions)
+        || checksum == 0
+    {
+        fail(37);
+    }
+    api::log_info!(
+        "[FLINT] ARM ADC+ENTROPY PASS adc_samples={} raw={}..{} temp_mc={} entropy_bits={} ones={} transitions={}",
+        ADC_SAMPLES,
+        minimum,
+        maximum,
+        temperature,
+        raw_bits,
+        raw_ones,
+        transitions
+    );
+    task::sleep_ms(100);
+    unsafe { soc_rp2040::test_status::pass_live() }
 }
 
 #[cfg(feature = "mutex-smoke")]

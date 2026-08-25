@@ -11,7 +11,7 @@ param(
     [string]$Uf2Path,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
-    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io', 'mutex', 'race', 'pwm')]
+    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma', 'io', 'mutex', 'race', 'pwm', 'adc-entropy')]
     [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
@@ -80,6 +80,72 @@ function Enter-BootselViaWatchdog {
         & $ProbeRsPath write --chip RP2040 --probe $probe b32 $write[0] $write[1] | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "could not arm BOOTSEL recovery through SWD" }
     }
+}
+
+if ($Suite -eq 'adc-entropy') {
+    if (-not $ProbeSerial) { throw '-ProbeSerial is required for the ADC and entropy suite' }
+    $probe = "2e8a:000c:$ProbeSerial"
+    $sysroot = (& rustc --print sysroot).Trim()
+    $llvmNm = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
+    $symbols = @(
+        'FLINT_RP2040_TEST_STATUS', 'ADC_SAMPLE_COUNT', 'ADC_MIN_RAW', 'ADC_MAX_RAW',
+        'ADC_AVG_RAW', 'ADC_TEMP_MILLI_C', 'ENTROPY_RAW_BITS', 'ENTROPY_RAW_ONES',
+        'ENTROPY_TRANSITIONS', 'ENTROPY_CHECKSUM'
+    )
+    $addresses = @{}
+    foreach ($symbol in $symbols) {
+        $line = @(& $llvmNm -n $elf | Where-Object { $_ -match " $symbol`$" })
+        if ($line.Count -ne 1) { throw "could not locate $symbol in the ELF" }
+        $addresses[$symbol] = '0x' + (($line[0] -split '\s+')[0])
+    }
+    & $ProbeRsPath write --chip RP2040 --probe $probe b32 `
+        $addresses['FLINT_RP2040_TEST_STATUS'] 0 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not clear the ADC and entropy test status through SWD' }
+    & $ProbeRsPath download --chip RP2040 --probe $probe --protocol swd `
+        --non-interactive --speed 100 --preverify --verify --reset $elf | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not download the ADC and entropy image through SWD' }
+    $passed = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $status = (& $ProbeRsPath read --chip RP2040 --probe $probe `
+            b32 $addresses['FLINT_RP2040_TEST_STATUS'] 1 2>&1) -join "`n"
+        if ($LASTEXITCODE -eq 0 -and $status -match ':\s+0000600d') { $passed = $true; break }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $passed) { throw 'the ADC and entropy image did not publish its passing SWD status' }
+    $measured = @{}
+    foreach ($symbol in $symbols | Where-Object { $_ -ne 'FLINT_RP2040_TEST_STATUS' }) {
+        $raw = (& $ProbeRsPath read --chip RP2040 --probe $probe b32 $addresses[$symbol] 1 2>&1) -join "`n"
+        if ($LASTEXITCODE -ne 0 -or $raw -notmatch ':\s+([0-9a-fA-F]{8})') { throw "could not read $symbol" }
+        $measured[$symbol] = [Convert]::ToUInt32($Matches[1], 16)
+    }
+    $temperature = [BitConverter]::ToInt32([BitConverter]::GetBytes([uint32]$measured['ADC_TEMP_MILLI_C']), 0)
+    if ($measured['ADC_SAMPLE_COUNT'] -ne 1024 -or
+        $measured['ADC_MIN_RAW'] -eq 0 -or
+        $measured['ADC_MAX_RAW'] -ge 4095 -or
+        $measured['ADC_MIN_RAW'] -ge $measured['ADC_MAX_RAW'] -or
+        $temperature -lt -40000 -or $temperature -gt 125000 -or
+        $measured['ENTROPY_RAW_BITS'] -ne 4096 -or
+        $measured['ENTROPY_RAW_ONES'] -lt 1024 -or $measured['ENTROPY_RAW_ONES'] -gt 3072 -or
+        $measured['ENTROPY_TRANSITIONS'] -lt 819 -or $measured['ENTROPY_TRANSITIONS'] -gt 3276 -or
+        $measured['ENTROPY_CHECKSUM'] -eq 0) {
+        throw "ADC or entropy measurements outside acceptance: $($measured | ConvertTo-Json -Compress)"
+    }
+    [pscustomobject]@{
+        state = 'passed'
+        evidence = 'adc-internal-temperature-1024-samples+rosc-4096-spaced-raw-bits-conditioned-seeds'
+        adc_min_raw = $measured['ADC_MIN_RAW']
+        adc_max_raw = $measured['ADC_MAX_RAW']
+        adc_avg_raw = $measured['ADC_AVG_RAW']
+        adc_temperature_milli_c = $temperature
+        entropy_raw_bits = $measured['ENTROPY_RAW_BITS']
+        entropy_raw_ones = $measured['ENTROPY_RAW_ONES']
+        entropy_transitions = $measured['ENTROPY_TRANSITIONS']
+        probe_serial = $ProbeSerial
+        transport = 'debugprobe-swd-download+swd-status+retained-adc-and-raw-entropy-health'
+        entropy_policy = 'conditioned-best-effort-seed-not-cryptographic-hardware-rng'
+    } | ConvertTo-Json -Compress
+    exit 0
 }
 
 if ($Suite -eq 'pwm') {

@@ -42,6 +42,8 @@ dependencies = [
  "hal",
  "kernel",
  "portable-atomic",
+ "rp2040-adc",
+ "rp2040-entropy",
  "rp2040-gpio",
  "rp2040-pwm",
  "rp2040-uart",
@@ -541,6 +543,22 @@ dependencies = [
  "kernel",
  "radio-esp32",
  "soc-esp32",
+]
+
+[[package]]
+name = "rp2040-adc"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-rp2040",
+]
+
+[[package]]
+name = "rp2040-entropy"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-rp2040",
 ]
 
 [[package]]
