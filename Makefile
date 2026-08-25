@@ -183,6 +183,10 @@ FLASH_BAUD     ?= 460800
 #   make flash PORT=COM5          (Windows)
 #   make flash PORT=/dev/ttyUSB0  (Linux)
 PORT           ?=
+# The espflash `--port` flag, or empty to let it auto-detect. Named once so
+# `flash` and `monitor` pass it identically; without it a set PORT was silently
+# ignored and espflash prompted whenever a second board was attached.
+PORT_ARG       := $(if $(PORT),--port $(PORT),)
 # Must match the app's UART0 console baud (board/src/esp32_wrover.rs sets
 # 115200). espflash's flash/monitor subcommands take TWO separate baud
 # flags -- `--baud`/`-B` is the flashing/sync speed, `--monitor-baud`/`-r` is
@@ -380,7 +384,7 @@ ifeq ($(BOARD),board-wio-rp2040-mini)
 	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action flash \
 		-Architecture armv6m -Soc rp2040 -Board wio-rp2040-mini -Uf2 $(APP_UF2)
 else
-	espflash flash $(APP_BIN) \
+	espflash flash $(APP_BIN) $(PORT_ARG) \
 		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
 		--baud $(FLASH_BAUD) --monitor --monitor-baud $(MONITOR_BAUD)
 endif
@@ -452,7 +456,7 @@ erase: ## Erase the entire flash (recover from a bad/stuck prior image)
 
 .PHONY: monitor
 monitor: ## Open serial monitor (115200 8N1, matches the app console baud)
-	espflash monitor --chip $(ESPFLASH_CHIP) --monitor-baud $(MONITOR_BAUD)
+	espflash monitor $(PORT_ARG) --chip $(ESPFLASH_CHIP) --monitor-baud $(MONITOR_BAUD)
 
 # ─── Check (host target — pure Rust only, no Xtensa asm) ───────────────────────
 
