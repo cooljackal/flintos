@@ -172,3 +172,7 @@ mod tests {
         assert_eq!(Rp2040::APB_HZ, XOSC_HZ);
     }
 }
+
+/// The RP2040 has no low-power sleep FSM the kernel drives today, so it takes
+/// the [`hal::power::LowPower`] defaults: every call reports `Unsupported`.
+impl hal::power::LowPower for Rp2040 {}

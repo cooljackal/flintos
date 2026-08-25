@@ -494,6 +494,27 @@ pub unsafe fn deep_sleep(sleep_us: u64) -> Result<(), SleepError> {
     }
 }
 
+/// The ESP32's low-power sleep, behind the portable [`hal::power::LowPower`]
+/// seam so the kernel's `power` module drives it without naming this chip.
+impl hal::power::LowPower for crate::Esp32 {
+    unsafe fn light_sleep(us: u64) -> Result<u64, hal::power::SleepError> {
+        unsafe { light_sleep(us) }.map_err(to_hal_error)
+    }
+
+    unsafe fn deep_sleep(us: u64) -> Result<(), hal::power::SleepError> {
+        unsafe { deep_sleep(us) }.map_err(to_hal_error)
+    }
+}
+
+/// Map this module's `SleepError` onto the portable [`hal::power::SleepError`].
+fn to_hal_error(e: SleepError) -> hal::power::SleepError {
+    match e {
+        SleepError::NoClock => hal::power::SleepError::NoClock,
+        SleepError::Timeout => hal::power::SleepError::Timeout,
+        SleepError::Rejected => hal::power::SleepError::Rejected,
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

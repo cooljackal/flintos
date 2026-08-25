@@ -2,9 +2,11 @@
 
 //! Power management: sleep, and reconciling the kernel tick on wake.
 //!
-//! The chip-level sleep FSM lives in `soc_esp32::sleep`; this module is the
-//! kernel half — it drives that primitive and, crucially, keeps the
-//! scheduler's clock honest across a light sleep.
+//! The chip-level sleep FSM is reached through the [`hal::power::LowPower`]
+//! seam, selected with the SoC (`board::SelectedSoc`) exactly as
+//! [`crate::clock`] selects its counter; this module is the kernel half — it
+//! drives that primitive and, crucially, keeps the scheduler's clock honest
+//! across a light sleep, naming no chip to do it.
 //!
 //! # Why the tick needs reconciling
 //!
@@ -69,6 +71,7 @@ pub fn ticks_elapsed(elapsed_us: u64, period_us: u32) -> u64 {
 #[cfg(all(target_os = "none", feature = "soc-esp32"))]
 pub fn light_sleep(ms: u32) -> u64 {
     use crate::arch::Tick;
+    use hal::power::LowPower;
 
     let period_us = crate::board::active::TICK_PERIOD_US;
 
@@ -78,8 +81,11 @@ pub fn light_sleep(ms: u32) -> u64 {
     // wake — the RTC FSM drives the CPU clock directly, independent of the
     // interrupt system, and this path polls the FSM's raw flag rather than
     // taking an RTC interrupt.
+    //
+    // The SoC's sleep FSM is reached through the `LowPower` seam, so this names
+    // no chip; a SoC without one reports `Unsupported` here.
     let elapsed_us = crate::arch::cs_with(|| {
-        match unsafe { soc_esp32::sleep::light_sleep((ms as u64) * 1_000) } {
+        match unsafe { <crate::board::SelectedSoc as LowPower>::light_sleep((ms as u64) * 1_000) } {
             Ok(us) => us,
             Err(e) => crate::debug::panic::handle(&format_args!("light_sleep failed: {:?}", e)),
         }
@@ -101,9 +107,11 @@ pub fn light_sleep(ms: u32) -> u64 {
 /// As [`light_sleep`], if the RTC clock is stopped.
 #[cfg(all(target_os = "none", feature = "soc-esp32"))]
 pub fn deep_sleep(ms: u32) {
-    match unsafe { soc_esp32::sleep::deep_sleep((ms as u64) * 1_000) } {
-        // Rejected/timeout: CPU still running, no state lost, nothing to do.
-        Ok(()) | Err(soc_esp32::sleep::SleepError::Rejected) => {}
+    use hal::power::{LowPower, SleepError};
+    match unsafe { <crate::board::SelectedSoc as LowPower>::deep_sleep((ms as u64) * 1_000) } {
+        // Rejected: CPU still running, no state lost, nothing to do. Unsupported
+        // is the same shape on a SoC with no sleep FSM.
+        Ok(()) | Err(SleepError::Rejected) | Err(SleepError::Unsupported) => {}
         Err(e) => crate::debug::panic::handle(&format_args!("deep_sleep failed: {:?}", e)),
     }
 }

@@ -23,6 +23,7 @@ pub mod error;
 pub mod interrupt;
 pub mod mpu;
 pub mod pinmux;
+pub mod power;
 pub mod smp;
 pub mod soc;
 pub mod stream;
