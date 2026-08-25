@@ -72,6 +72,10 @@ pub mod wio_rp2040_mini;
 #[cfg(any(feature = "board-m5-atom-lite", feature = "board-m5-atom-matrix"))]
 mod m5_atom_common;
 
+/// Bus/device/peripheral tables shared by the WROOM-32 boards (DevKitC, WROVER).
+#[cfg(any(feature = "board-esp32-devkitc", feature = "board-esp32-wrover"))]
+mod esp32_wroom_common;
+
 // ── Exactly-one-board enforcement ───────────────────────────────────────────
 
 // `board-m5-atom` is excluded here because it has its own message below, and

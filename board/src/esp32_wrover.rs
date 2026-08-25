@@ -85,65 +85,9 @@ pub const TICK_PERIOD_US: u32 = 1000;
 /// takes the bottom of DRAM). See #140.
 pub const DMA_POOL_BYTES: usize = 12288;
 
-/// Physical bus drivers to instantiate at boot.
-pub const TARGET_BUSES: &[BusMapping] = &[
-    BusMapping {
-        name: "uart0",
-        kind: BusKind::Uart,
-        base_addr: addr::UART0_BASE,
-        irq: addr::IRQ_UART0,
-        dma_capable: true,
-        dma_pool_bytes: 512,
-        config: BusConfig::uart_8n1(1, 3, 115200),
-    },
-    BusMapping {
-        // VSPI (SPI3). GPIO 23/19/18 are VSPI's IO_MUX-native pins; pairing
-        // them with SPI2's base address at 0x3FF64000 -- as this entry used to
-        // -- describes a bus that cannot be routed without the GPIO matrix.
-        name: "spi3",
-        kind: BusKind::Spi,
-        base_addr: addr::SPI3_BASE,
-        irq: addr::IRQ_SPI3,
-        dma_capable: true,
-        dma_pool_bytes: 2048,
-        config: BusConfig::spi_mode0(23, 19, 18, BusSpeed::MHz(40)),
-    },
-    BusMapping {
-        name: "i2c0",
-        kind: BusKind::I2c,
-        base_addr: addr::I2C0_BASE,
-        irq: addr::IRQ_I2C0,
-        dma_capable: false,
-        dma_pool_bytes: 0,
-        config: BusConfig::i2c(21, 22, BusSpeed::Fast400k),
-    },
-];
-
-/// Logical device drivers attached to buses.
-pub const TARGET_DEVICES: &[BusDevice] = &[
-    BusDevice {
-        name: "temp_sensor",
-        logical_driver: "bme280",
-        bus: "spi3",
-        cs_pin: Some(15),
-        bus_speed: BusSpeed::MHz(4),
-    },
-    BusDevice {
-        name: "display",
-        logical_driver: "ssd1306",
-        bus: "i2c0",
-        cs_pin: None,
-        bus_speed: BusSpeed::Fast400k,
-    },
-];
-
-/// Direct peripheral drivers (not bus-attached).
-///
-/// UART0 is not repeated here: it is a bus in [`TARGET_BUSES`], and listing it
-/// again as a peripheral described one controller twice.
-pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[
-    PeripheralMapping { name: "gpio", base_addr: addr::GPIO_BASE, irq: addr::IRQ_GPIO, dma_capable: false, dma_pool_bytes: 0 },
-];
+/// Bus, device and peripheral tables — identical to the DevKitC manifest, so
+/// they live in one place; see [`crate::esp32_wroom_common`].
+pub use crate::esp32_wroom_common::{TARGET_BUSES, TARGET_DEVICES, TARGET_PERIPHERALS};
 
 /// This board as one value; see [`crate::Board`]. Never flashed, so no free pad
 /// is confirmed and `selftest` is all `None`.
