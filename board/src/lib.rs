@@ -184,6 +184,14 @@ pub struct RgbLed {
     pub layout: Option<led_matrix::Layout>,
 }
 
+/// A Grove/expansion port's two free pins, if the board exposes one. The
+/// `pwm` example drives one of these; a board without a port sets `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GrovePort {
+    pub sda: u8,
+    pub scl: u8,
+}
+
 /// The board's console pins and baud.
 ///
 /// Every board FlintOS runs puts its console on UART0, so the controller is
@@ -337,6 +345,8 @@ pub struct Board {
     pub display: Option<DisplayAttachment>,
     /// The onboard addressable RGB LED or panel, if any.
     pub rgb_led: Option<RgbLed>,
+    /// The Grove/expansion port, if the board exposes one.
+    pub grove: Option<GrovePort>,
     /// Free pads for the self-tests and porting examples.
     pub selftest: SelftestPads,
     /// The console pins.

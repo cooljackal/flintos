@@ -154,6 +154,7 @@ pub const BOARD: crate::Board = crate::Board {
     touch: None,
     display: None,
     rgb_led: None,
+    grove: None,
     selftest: crate::SelftestPads {
         scratch: LOOPBACK_SCRATCH_GPIO,
         aux: LOOPBACK_AUX_GPIOS,

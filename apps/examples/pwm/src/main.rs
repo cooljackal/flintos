@@ -48,40 +48,19 @@ use kernel::board::active as manifest;
 // boards route the Grove port's SDA pin this app drives; both report a name
 // with "ATOM" in it, and no other board does.
 const _: () = assert!(
-    board_name_contains("ATOM"),
+    manifest::BOARD.grove.is_some(),
     "`pwm` drives the Grove port's SDA pin, which only the M5Stack Atom boards \
      declare.\n\n\tmake flash APP=pwm BOARD=board-m5-atom-matrix\n\n\
-     To run it elsewhere, point PWM_GPIO at a free pin on your board."
+     To run it elsewhere, give that board's manifest a `grove: Some(GrovePort {{ .. }})`."
 );
 
 kernel::flint_app!(main, abi = 2);
 
-/// Substring test over `manifest::BOARD_NAME`, usable in a `const` context.
-const fn board_name_contains(needle: &str) -> bool {
-    let hay = manifest::BOARD_NAME.as_bytes();
-    let ndl = needle.as_bytes();
-    if ndl.is_empty() {
-        return true;
-    }
-    if ndl.len() > hay.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i + ndl.len() <= hay.len() {
-        let mut j = 0;
-        while j < ndl.len() && hay[i + j] == ndl[j] {
-            j += 1;
-        }
-        if j == ndl.len() {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
-
-/// The pin LEDC drives and the app reads back.
-const PWM_GPIO: u8 = manifest::GROVE_SDA_GPIO;
+/// The pin LEDC drives and the app reads back, from the board's Grove port.
+const PWM_GPIO: u8 = match manifest::BOARD.grove {
+    Some(grove) => grove.sda,
+    None => 0,
+};
 
 /// 5 kHz at 13-bit — the combination every ESP32 PWM example uses, so it is
 /// the one most easily compared against another implementation.

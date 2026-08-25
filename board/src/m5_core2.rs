@@ -198,6 +198,7 @@ pub const BOARD: crate::Board = crate::Board {
     touch: Some(crate::I2cAttachment { port: INTERNAL_I2C_PORT, addr: TOUCH_I2C_ADDR }),
     display: Some(crate::DisplayAttachment { port: LCD_PORT, dc: LCD_DC_GPIO, cs: LCD_CS_GPIO }),
     rgb_led: None,
+    grove: None,
     selftest: crate::SelftestPads {
         scratch: LOOPBACK_SCRATCH_GPIO,
         aux: LOOPBACK_AUX_GPIOS,

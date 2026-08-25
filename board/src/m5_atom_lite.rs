@@ -25,6 +25,7 @@ pub const BOARD: crate::Board = crate::Board {
     touch: None,
     display: None,
     rgb_led: Some(crate::RgbLed { gpio: RGB_LED_GPIO, count: RGB_LED_COUNT, layout: RGB_LED_LAYOUT }),
+    grove: Some(crate::GrovePort { sda: GROVE_SDA_GPIO, scl: GROVE_SCL_GPIO }),
     selftest: SELFTEST_PADS,
     console: CONSOLE,
 };

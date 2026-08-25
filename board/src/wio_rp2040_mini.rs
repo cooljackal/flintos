@@ -64,6 +64,7 @@ pub const TARGET_SERVICES: &[ServiceMapping] = &[];
 pub const BOARD: crate::Board = crate::Board {
     name: BOARD_NAME,
     rgb_led: None,
+    grove: None,
     selftest: crate::SelftestPads {
         scratch: LOOPBACK_SCRATCH_GPIO,
         aux: LOOPBACK_AUX_GPIOS,
