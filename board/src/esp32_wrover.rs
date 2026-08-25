@@ -87,7 +87,7 @@ pub const DMA_POOL_BYTES: usize = 12288;
 
 /// Bus, device and peripheral tables — identical to the DevKitC manifest, so
 /// they live in one place; see [`crate::esp32_wroom_common`].
-pub use crate::esp32_wroom_common::{TARGET_BUSES, TARGET_DEVICES, TARGET_PERIPHERALS};
+pub use crate::esp32_wroom_common::{NVS_PARTITION, TARGET_BUSES, TARGET_DEVICES, TARGET_PERIPHERALS};
 
 /// This board as one value; see [`crate::Board`]. Never flashed, so no free pad
 /// is confirmed and `selftest` is all `None`.

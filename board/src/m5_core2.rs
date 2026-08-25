@@ -210,3 +210,6 @@ pub const BOARD: crate::Board = crate::Board {
     },
     console: crate::ConsolePins { tx: 1, rx: 3, baud: 115_200 },
 };
+
+/// The `nvs` key/value partition, `(offset, len)` — espflash's default table.
+pub const NVS_PARTITION: (u32, u32) = (0x9000, 0x6000);

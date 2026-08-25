@@ -192,3 +192,6 @@ pub const CONSOLE: crate::ConsolePins = crate::ConsolePins { tx: 1, rx: 3, baud:
 /// `kernel/src/radio.rs`.
 pub const HAS_WIFI: bool = true;
 pub const HAS_BT: bool = true;
+
+/// The `nvs` key/value partition, `(offset, len)` — espflash's default table.
+pub const NVS_PARTITION: (u32, u32) = (0x9000, 0x6000);

@@ -67,3 +67,9 @@ pub const TARGET_DEVICES: &[BusDevice] = &[
 pub const TARGET_PERIPHERALS: &[PeripheralMapping] = &[
     PeripheralMapping { name: "gpio", base_addr: addr::GPIO_BASE, irq: addr::IRQ_GPIO, dma_capable: false, dma_pool_bytes: 0 },
 ];
+
+/// The `nvs` key/value partition, `(offset, len)`, as espflash's default table
+/// places it — quoted from a running board's boot log:
+/// `nvs   WiFi data  01 02 00009000 00006000`. A board that flashes a custom
+/// partition layout overrides this in its own manifest.
+pub const NVS_PARTITION: (u32, u32) = (0x9000, 0x6000);

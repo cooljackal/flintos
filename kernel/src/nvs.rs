@@ -23,31 +23,24 @@
 
 use kvstore::{Error as KvError, Storage};
 
-/// Where the second-stage bootloader puts `nvs`, read off a running board:
-///
-/// ```text
-/// I (57) boot:  0 nvs   WiFi data  01 02 00009000 00006000
-/// ```
-///
-/// espflash's default table. A build that supplies its own has to change this,
-/// and getting it wrong erases someone else's partition — which is why the
-/// number is quoted from the boot log rather than remembered.
-pub const NVS_OFFSET: u32 = 0x9000;
-pub const NVS_LEN: u32 = 0x6000;
-
 /// Largest single transfer either direction. One `kvstore` entry is at most
 /// 8 + 32 + 128 = 168 bytes; 256 leaves room without being generous.
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+#[cfg_attr(
+    not(all(target_os = "none", feature = "soc-esp32")),
+    allow(dead_code)
+)]
 const SCRATCH_WORDS: usize = 64;
 
 /// A `FlashRegion` that speaks [`Storage`].
 pub struct FlashStorage {
-    #[cfg(target_os = "none")]
+    #[cfg(all(target_os = "none", feature = "soc-esp32"))]
     region: esp32_flash::FlashRegion,
 }
 
 impl FlashStorage {
-    /// Take the `nvs` partition.
+    /// Take the `nvs` partition, its offset and length read from the active
+    /// board manifest (`board::active::NVS_PARTITION`) rather than baked in —
+    /// a board that flashes a custom partition table declares its own.
     ///
     /// # Safety
     /// Nothing else may write this partition. Also read the second-core
@@ -55,13 +48,16 @@ impl FlashStorage {
     /// cache off, and a core executing from flash during one of them stops.
     pub const unsafe fn nvs() -> Self {
         Self {
-            #[cfg(target_os = "none")]
-            region: esp32_flash::FlashRegion::new(NVS_OFFSET, NVS_LEN),
+            #[cfg(all(target_os = "none", feature = "soc-esp32"))]
+            region: {
+                let (offset, len) = crate::board::active::NVS_PARTITION;
+                esp32_flash::FlashRegion::new(offset, len)
+            },
         }
     }
 }
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "soc-esp32"))]
 impl Storage for FlashStorage {
     const SECTOR_SIZE: u32 = esp32_flash::SECTOR_SIZE;
 
@@ -127,7 +123,7 @@ impl Storage for FlashStorage {
 
 // A host build has no flash. The type still exists so callers compile, and
 // every operation refuses rather than pretending to persist.
-#[cfg(not(target_os = "none"))]
+#[cfg(not(all(target_os = "none", feature = "soc-esp32")))]
 impl Storage for FlashStorage {
     const SECTOR_SIZE: u32 = 4096;
     fn capacity(&self) -> u32 {
@@ -150,14 +146,16 @@ impl Storage for FlashStorage {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "soc-esp32")]
     #[test]
     fn the_partition_matches_what_the_bootloader_reports() {
-        // Quoted from a running board's boot log. If espflash's default table
-        // ever moves, this is the line that should fail first.
-        assert_eq!(NVS_OFFSET, 0x9000);
-        assert_eq!(NVS_LEN, 0x6000);
+        // The manifest quotes it from a running board's boot log. If espflash's
+        // default table ever moves, this is the line that should fail first.
+        let (offset, len) = crate::board::active::NVS_PARTITION;
+        assert_eq!(offset, 0x9000);
+        assert_eq!(len, 0x6000);
         // Whole sectors, or the last erase would run past the partition.
-        assert_eq!(NVS_LEN % 4096, 0);
+        assert_eq!(len % 4096, 0);
     }
 
     #[test]
