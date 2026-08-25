@@ -830,6 +830,10 @@ pub fn fold_spi_loopback() -> hal::Result<()> {
 #[cfg(feature = "esp32-drivers")]
 static CONSOLE: api::Once<esp32_uart::Esp32Uart> = api::Once::new();
 
+/// The RP2040 board console on UART0.
+#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+static CONSOLE: api::Once<rp2040_uart::Rp2040Uart> = api::Once::new();
+
 /// Bring up the console. Called once, first thing in `startup::init`.
 ///
 /// Returns whether it came up at the board's configured framing. `false` means
@@ -883,18 +887,25 @@ pub fn console() -> Option<&'static dyn hal::stream::ByteStream> {
     CONSOLE.get().map(|uart| uart as &dyn hal::stream::ByteStream)
 }
 
-/// Bring up the console. No-op on a board with no console driver yet (the
-/// RP2040 board): the kernel calls this blind, so the seam works here too — it
-/// just has nothing to write to. Returns `true` (nothing to warn about).
-#[cfg(not(feature = "esp32-drivers"))]
+/// Bring up the RP2040 UART0 console from the selected board's manifest.
+#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
 pub fn console_init() -> bool {
-    true
+    if CONSOLE.get().is_some() {
+        return true;
+    }
+    match rp2040_uart::Rp2040Uart::open(&active::CONSOLE_UART) {
+        Ok(uart) => {
+            CONSOLE.init(uart);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
-/// The board's console. `None` until this board grows a console driver.
-#[cfg(not(feature = "esp32-drivers"))]
+/// The selected RP2040 board's UART0 console.
+#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
 pub fn console() -> Option<&'static dyn hal::stream::ByteStream> {
-    None
+    CONSOLE.get().map(|uart| uart as &dyn hal::stream::ByteStream)
 }
 
 // ── Manifest invariant tests ────────────────────────────────────────────────

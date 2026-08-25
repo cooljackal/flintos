@@ -75,7 +75,7 @@ impl Esp32DisplayInterface {
         // Size the chunk from what the pool can spare across the three buffers
         // (double tx + one throwaway rx), rounded to whole RGB565 pixels and
         // held between the min-worth-it and the point of diminishing returns.
-        let chunk = (dma::available() / 3 & !1).clamp(MIN_CHUNK_BYTES, MAX_CHUNK_BYTES);
+        let chunk = ((dma::available() / 3) & !1).clamp(MIN_CHUNK_BYTES, MAX_CHUNK_BYTES);
         let tx = [dma::alloc(chunk)?, dma::alloc(chunk)?];
         let rx = dma::alloc(chunk)?;
         Ok(Self { spi, gpio, dc, cs, tx, rx, chunk_px: (chunk / 2) as usize })

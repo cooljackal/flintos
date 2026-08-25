@@ -66,22 +66,35 @@ fn pulse(code: u8) {
     }
 }
 
-/// Report a passing suite and enter ROM USB BOOTSEL.
+/// Report a passing suite and enter ROM USB BOOTSEL through a full watchdog reset.
 ///
 /// # Safety
-/// Terminates normal execution and resets USB/chip state through the RP2040
-/// mask-ROM API. Call only after all test result writes are complete.
+/// Terminates normal execution. A hardware reset stops both cores before the
+/// pre-RAM recovery handler calls ROM, avoiding a live dual-core ROM handoff.
+/// Call only after all test result writes are complete.
 pub unsafe fn pass_to_bootsel() -> ! {
     unsafe { core::ptr::write_volatile(&raw mut FLINT_RP2040_TEST_STATUS, 0x600d) };
     led_init();
     pulse(2);
-    #[cfg(target_arch = "arm")]
-    {
-        if unsafe { crate::multicore::stop_core1() }.is_err() {
-            fail(15);
-        }
+    unsafe { crate::watchdog::arm(100, false) };
+    loop {
+        core::hint::spin_loop();
     }
-    unsafe { reset_usb_boot() }
+}
+
+/// Publish a passing status for an attached SWD harness and remain readable.
+///
+/// The harness consumes the status and then uses the watchdog registers to
+/// return the target to BOOTSEL, so this path needs no unreliable live ROM call.
+///
+/// # Safety
+/// Terminates application execution and exposes the final result through a
+/// volatile global. Call only after all test output has drained.
+pub unsafe fn pass_live() -> ! {
+    unsafe { core::ptr::write_volatile(&raw mut FLINT_RP2040_TEST_STATUS, 0x600d) };
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 /// Halt with a repeating, one-to-15 pulse failure code and stay out of
@@ -105,26 +118,4 @@ pub fn fail(code: u8) -> ! {
 /// distinguishes the injected fault from ordinary assertion codes on a bench.
 pub fn hard_fault() -> ! {
     fail(15)
-}
-
-unsafe fn reset_usb_boot() -> ! {
-    const ROM_FUNC_TABLE_PTR: *const u16 = 0x0000_0014 as *const u16;
-    const ROM_TABLE_LOOKUP_PTR: *const u16 = 0x0000_0018 as *const u16;
-    const RESET_USB_BOOT_CODE: u32 = (b'U' as u32) | ((b'B' as u32) << 8);
-    type Lookup = unsafe extern "C" fn(*const u16, u32) -> usize;
-    type ResetUsbBoot = unsafe extern "C" fn(u32, u32) -> !;
-
-    let table = unsafe { ROM_FUNC_TABLE_PTR.read() as usize as *const u16 };
-    let lookup: Lookup =
-        unsafe { core::mem::transmute((ROM_TABLE_LOOKUP_PTR.read() as usize | 1) as *const ()) };
-    let reset: ResetUsbBoot = unsafe { core::mem::transmute(lookup(table, RESET_USB_BOOT_CODE)) };
-    unsafe { reset(LED, 0) }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn reset_usb_boot_uses_the_rom_ub_code() {
-        assert_eq!((b'U' as u32) | ((b'B' as u32) << 8), 0x4255);
-    }
 }

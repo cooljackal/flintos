@@ -38,8 +38,8 @@ _vector_table_start:
 .global Reset
 Reset:
     cpsid i
-    /* Arm recovery before touching RAM. If this watchdog fired, enter the
-     * RP2040 ROM USB bootloader without depending on Rust initialization. */
+    /* Arm recovery before touching RAM. A panic gets one direct flash reboot
+     * to report retained SRAM; other marked watchdogs enter ROM USB boot. */
     ldr r0, =0x40058008
     ldr r1, [r0]
     movs r2, #1
@@ -50,6 +50,16 @@ Reset:
     ldr r2, =0x6ab73121
     cmp r1, r2
     bne 8f
+    ldr r3, =0x40058020
+    ldr r1, [r3]
+    ldr r2, =0x50414e32
+    cmp r1, r2
+    bne 7f
+    movs r1, #0
+    str r1, [r3]
+    str r1, [r0]
+    b 8f
+7:
     movs r1, #0
     str r1, [r0]
     ldr r0, =0x00000014

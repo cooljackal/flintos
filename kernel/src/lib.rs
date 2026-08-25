@@ -185,8 +185,9 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 #[cfg(all(target_os = "none", feature = "arch-armv6m", not(test)))]
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {
-        <crate::arch::SelectedArch as hal::arch::Architecture>::wait_masked();
-    }
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // Same real handler as Xtensa: capture the message and location into the
+    // postmortem snapshot so the next boot can report them too.
+    let msg = format_args!("{}", info.message());
+    crate::debug::panic::handle_at(&msg, info.location())
 }

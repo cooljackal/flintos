@@ -11,8 +11,8 @@
 //! would be a guess about how far the damage spread.
 //!
 //! So: mask every interrupt, record what happened, say so on the console, and
-//! stop. The board stays stopped until it is reset — the watchdogs are disabled
-//! during boot, so nothing resets it on its own.
+//! stop. The selected SoC may arrange a delayed, snapshot-preserving recovery
+//! through [`hal::reset::PanicRecovery`]; without one the board stays halted.
 //!
 //! The previous behaviour was neither halt nor recover. It ended in a bare
 //! `loop {}` with interrupts still unmasked, which parks only the panicking
@@ -23,7 +23,7 @@
 use portable_atomic::{AtomicBool, Ordering};
 
 use crate::arch::SelectedArch;
-use hal::arch::Architecture;
+use hal::arch::{Architecture, ContextDiagnostics};
 
 use crate::scheduler::TaskState;
 
@@ -43,7 +43,7 @@ fn region() -> *mut PanicSnapshot {
     core::ptr::addr_of_mut!(_panic_region_start) as *mut PanicSnapshot
 }
 
-const PANIC_MAGIC: u32 = 0x464C_494E; // "FLIN"
+const PANIC_MAGIC: u32 = 0x464C_4932; // "FLI2"
 
 const NAME_LEN: usize = 24;
 const FILE_LEN: usize = 40;
@@ -57,10 +57,12 @@ struct PanicSnapshot {
     tick: u64,
     task_id: u32,
     task_name: [u8; NAME_LEN],
-    /// `PS` at the moment of the panic. Its INTLEVEL field says whether this
-    /// happened in task context or inside an interrupt handler, which changes
-    /// what the rest of the snapshot means.
-    ps: u32,
+    /// Last saved program counter for the panicking task.
+    pc: u32,
+    /// Architecture-owned context state: Xtensa WINDOWSTART or ARM stack pointer.
+    architecture_state: u32,
+    /// Interrupt mask before the panic handler masked interrupts: Xtensa PS or ARM PRIMASK.
+    interrupt_state: u32,
     /// Source line, or 0 when the caller supplied no location.
     line: u32,
     file: [u8; FILE_LEN],
@@ -72,6 +74,7 @@ struct PanicSnapshot {
 /// not overwrite the snapshot: the first one explains the failure, and the
 /// second is usually just its consequence.
 static PANICKING: AtomicBool = AtomicBool::new(false);
+static REPORTED_PREVIOUS: AtomicBool = AtomicBool::new(false);
 
 /// Copy `src` into a fixed-size field, truncating rather than failing.
 fn fill(dst: &mut [u8], src: &str) {
@@ -108,7 +111,7 @@ pub fn handle_at(
     // The returned PS is the one the panic happened under, which is worth
     // recording: its INTLEVEL distinguishes a panic in a task from one inside
     // an interrupt handler.
-    let ps = SelectedArch::mask_interrupts();
+    let interrupt_state = SelectedArch::mask_interrupts();
 
     // A nested panic gets the console line but not the snapshot: first wins.
     let first = !PANICKING.swap(true, Ordering::Relaxed);
@@ -117,17 +120,33 @@ pub fn handle_at(
     // scheduler lock — a fault inside a scheduler update is exactly the case
     // this report exists for — and blocking here would hang the panic handler
     // instead of printing it. Better a report with unknown task than none.
-    let (current, tick, task_name) = crate::scheduler::try_with(|sched| {
+    let (current, tick, task_name, diagnostics) = crate::scheduler::try_with(|sched| {
         let current = sched.current();
+        let diagnostics = sched.tasks[current as usize].as_ref().map_or(
+            ContextDiagnostics {
+                pc: 0,
+                architecture_state: 0,
+            },
+            |task| SelectedArch::context_diagnostics(&task.context),
+        );
         (
             current,
             sched.ticks(),
             sched.tasks[current as usize]
                 .as_ref()
                 .map_or("", |t| t.name),
+            diagnostics,
         )
     })
-    .unwrap_or((u32::MAX, 0, "<scheduler locked>"));
+    .unwrap_or((
+        u32::MAX,
+        0,
+        "<scheduler locked>",
+        ContextDiagnostics {
+            pc: 0,
+            architecture_state: 0,
+        },
+    ));
 
     // Take the panicking task out of the run set. Nothing will schedule after
     // this -- interrupts stay masked forever -- but a TCB still claiming to be
@@ -160,7 +179,9 @@ pub fn handle_at(
                 tick,
                 task_id: current,
                 task_name: [0; NAME_LEN],
-                ps,
+                pc: diagnostics.pc,
+                architecture_state: diagnostics.architecture_state,
+                interrupt_state,
                 line: location.map_or(0, |l| l.line()),
                 file: [0; FILE_LEN],
                 cause: msg,
@@ -171,6 +192,15 @@ pub fn handle_at(
             }
             region().write_volatile(snapshot);
         }
+    }
+
+    #[cfg(target_os = "none")]
+    unsafe {
+        // A panic is terminal, but a SoC that can preserve the snapshot may
+        // arrange unattended recovery. The neutral panic path names neither a
+        // chip nor its watchdog; unsupported SoCs take the trait default.
+        use hal::reset::PanicRecovery;
+        let _ = crate::board::SelectedSoc::arm_panic_recovery(1_000);
     }
 
     // Console last. The console driver is the most likely thing to fault a
@@ -224,9 +254,9 @@ pub fn has_snapshot() -> bool {
 /// nothing in the tree ever looked. Clearing the magic is what makes this "the
 /// previous boot" rather than a message that reappears on every boot until the
 /// SRAM happens to be overwritten.
-pub fn report_previous() {
+pub fn report_previous() -> bool {
     if !has_snapshot() {
-        return;
+        return false;
     }
 
     // Copy it out rather than holding a reference into the region: the fields
@@ -253,11 +283,20 @@ pub fn report_previous() {
         );
     }
     let _ = write!(console, "  Cause:  {}\r\n", as_str(&snap.cause));
-    let _ = write!(console, "  PS:     {:#010x}\r\n", snap.ps);
+    let _ = write!(console, "  PC:     {:#010x}\r\n", snap.pc);
+    let _ = write!(console, "  State:  {:#010x}\r\n", snap.architecture_state);
+    let _ = write!(console, "  Mask:   {:#010x}\r\n", snap.interrupt_state);
     let _ = write!(console, "╚════════════════════════════════════╝\r\n");
 
     // Consume it, so the next boot reports only a fresh failure.
     unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(_panic_region_start), 0) };
+    REPORTED_PREVIOUS.store(true, Ordering::Release);
+    true
+}
+
+/// Whether this boot consumed and reported a retained panic snapshot.
+pub fn previous_was_reported() -> bool {
+    REPORTED_PREVIOUS.load(Ordering::Acquire)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -276,8 +315,8 @@ mod tests {
     }
 
     #[test]
-    fn magic_spells_flin() {
-        assert_eq!(PANIC_MAGIC.to_be_bytes(), *b"FLIN");
+    fn magic_identifies_snapshot_version_two() {
+        assert_eq!(PANIC_MAGIC.to_be_bytes(), *b"FLI2");
     }
 
     #[test]

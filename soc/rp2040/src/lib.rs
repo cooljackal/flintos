@@ -66,6 +66,12 @@ pub fn uart_instance(base: u32) -> Option<u8> {
 }
 #[cfg(target_arch = "arm")]
 const TIMER_RAWL: *const u32 = 0x4005_4028 as *const u32;
+// The latched pair: reading TIMELR latches TIMEHR, so a low-then-high read is a
+// coherent 64-bit sample with no wrap-at-32-bits window.
+#[cfg(target_arch = "arm")]
+const TIMELR: *const u32 = 0x4005_400c as *const u32;
+#[cfg(target_arch = "arm")]
+const TIMEHR: *const u32 = 0x4005_4008 as *const u32;
 #[cfg(target_arch = "arm")]
 const CLOCKS_BASE: u32 = 0x4000_8000;
 #[cfg(target_arch = "arm")]
@@ -112,6 +118,20 @@ pub const NVIC_IRQ_COUNT: u8 = 26;
 #[cfg(target_arch = "arm")]
 pub fn timer_us() -> u32 {
     unsafe { TIMER_RAWL.read_volatile() }
+}
+
+/// The same free-running timer read as a coherent 64-bit microsecond count.
+///
+/// 64 bits at 1 MHz wraps after ~584,000 years, so unlike [`timer_us`] there is
+/// no wrap to compensate for. Reading `TIMELR` latches `TIMEHR`, so the
+/// low-then-high read is one consistent sample.
+#[cfg(target_arch = "arm")]
+pub fn timer_us_64() -> u64 {
+    unsafe {
+        let lo = TIMELR.read_volatile();
+        let hi = TIMEHR.read_volatile();
+        (u64::from(hi) << 32) | u64::from(lo)
+    }
 }
 
 pub struct Rp2040Dma;
@@ -183,6 +203,17 @@ impl hal::soc::SystemOnChip for Rp2040 {
     }
 }
 
+impl hal::reset::PanicRecovery for Rp2040 {
+    unsafe fn arm_panic_recovery(timeout_ms: u32) -> bool {
+        unsafe { watchdog::arm_panic_recovery(timeout_ms) };
+        true
+    }
+}
+
+/// The RP2040 has no low-power sleep FSM the kernel drives today, so it takes
+/// the [`hal::power::LowPower`] defaults: every call reports `Unsupported`.
+impl hal::power::LowPower for Rp2040 {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,7 +254,3 @@ mod tests {
         assert_eq!(Rp2040::reset_cause_name(2), "watchdog force");
     }
 }
-
-/// The RP2040 has no low-power sleep FSM the kernel drives today, so it takes
-/// the [`hal::power::LowPower`] defaults: every call reports `Unsupported`.
-impl hal::power::LowPower for Rp2040 {}

@@ -159,6 +159,11 @@ impl hal::soc::SystemOnChip for Esp32 {
     }
 }
 
+// The ESP32 port does not yet retain the panic region across an unattended
+// reboot, so the architecture-neutral panic path takes the trait default and
+// remains halted for a debugger or manual reset.
+impl hal::reset::PanicRecovery for Esp32 {}
+
 /// Serialises tests that share this crate's global hardware bookkeeping.
 ///
 /// The DMA channel table is one set of state for the whole process, so the

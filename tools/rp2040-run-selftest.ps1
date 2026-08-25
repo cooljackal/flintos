@@ -7,10 +7,11 @@ param(
     [Parameter(Mandatory)]
     [string]$ElfPath,
     [string]$ProbeSerial,
+    [string]$SerialPort,
     [string]$Uf2Path,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
-    [ValidateSet('acceptance', 'watchdog-reset')]
+    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics')]
     [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
@@ -33,6 +34,20 @@ function Test-ExpectedBootsel {
     }).Count -eq 1
 }
 
+function Get-ExpectedBootselDrive {
+    $disks = @(Get-Disk | Where-Object {
+        $_.FriendlyName -like '*RP2*' -and $_.SerialNumber -eq $BootselSerial
+    })
+    if ($disks.Count -ne 1) {
+        throw "expected one RP2 disk with serial $BootselSerial, found $($disks.Count)"
+    }
+    $partitions = @(Get-Partition -DiskNumber $disks[0].Number | Where-Object DriveLetter)
+    if ($partitions.Count -ne 1) {
+        throw "expected one mounted partition for RP2 serial $BootselSerial, found $($partitions.Count)"
+    }
+    "$($partitions[0].DriveLetter):"
+}
+
 function Write-Uf2([string]$Source, [string]$Destination) {
     $bytes = [IO.File]::ReadAllBytes($Source)
     $stream = [IO.FileStream]::new(
@@ -51,13 +66,95 @@ function Write-Uf2([string]$Source, [string]$Destination) {
     }
 }
 
+function Enter-BootselViaWatchdog {
+    $probe = "2e8a:000c:$ProbeSerial"
+    $writes = @(
+        @('0x40058020', '0'),
+        @('0x4005801c', '0x6ab73121'),
+        @('0x40010008', '0x0001fffc'),
+        @('0x4005802c', '0x0000020c'),
+        @('0x40058004', '0x00030d40'),
+        @('0x4005a000', '0x40000000')
+    )
+    foreach ($write in $writes) {
+        & $ProbeRsPath write --chip RP2040 --probe $probe b32 $write[0] $write[1] | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "could not arm BOOTSEL recovery through SWD" }
+    }
+}
+
+if ($Uf2Path -and $Suite -eq 'diagnostics') {
+    if (-not $ProbeSerial) { throw '-ProbeSerial is required for the diagnostics suite' }
+    if (-not $SerialPort) { throw '-SerialPort is required for the diagnostics suite' }
+    if (-not (Test-ExpectedBootsel)) { throw 'the selected target is not in BOOTSEL' }
+    $uf2 = (Resolve-Path -LiteralPath $Uf2Path).Path
+    $targetDrive = Get-ExpectedBootselDrive
+
+    $sysroot = (& rustc --print sysroot).Trim()
+    $llvmNm = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
+    $statusLine = @(& $llvmNm -n $elf | Where-Object { $_ -match ' FLINT_RP2040_TEST_STATUS$' })
+    if ($statusLine.Count -ne 1) { throw 'could not locate FLINT_RP2040_TEST_STATUS in the ELF' }
+    $statusAddress = '0x' + (($statusLine[0] -split '\s+')[0])
+
+    $port = [IO.Ports.SerialPort]::new($SerialPort, 115200, 'None', 8, 'One')
+    $capture = ''
+    $passed = $false
+    try {
+        $port.Open()
+        # Debugprobe/TinyUSB considers the CDC link connected only with DTR set.
+        $port.DtrEnable = $true
+        Start-Sleep -Milliseconds 300
+        Write-Uf2 $uf2 "$targetDrive\flint-diagnostics.uf2"
+
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            $capture += $port.ReadExisting()
+            $status = (& $ProbeRsPath read --chip RP2040 --probe "2e8a:000c:$ProbeSerial" `
+                b32 $statusAddress 1 2>&1) -join "`n"
+            if ($LASTEXITCODE -eq 0 -and $status -match ':\s+0000600d') {
+                $passed = $true
+                break
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        Start-Sleep -Milliseconds 300
+        $capture += $port.ReadExisting()
+    } finally {
+        if ($port.IsOpen) { $port.Dispose() }
+        if (-not (Test-ExpectedBootsel)) {
+            Enter-BootselViaWatchdog
+            $returnDeadline = [DateTime]::UtcNow.AddSeconds(10)
+            while (-not (Test-ExpectedBootsel) -and [DateTime]::UtcNow -lt $returnDeadline) {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+    }
+    if (-not $passed) { throw 'the diagnostics image did not publish its passing SWD status' }
+    foreach ($marker in @(
+        'FlintOS booting...',
+        'ARM DIAGNOSTICS counter=20000 gauge=143',
+        'FLINT PANIC',
+        'PREVIOUS BOOT PANICKED',
+        'PC:',
+        'State:',
+        'ARM DIAGNOSTICS RECOVERED'
+    )) {
+        if (-not $capture.Contains($marker)) { throw "UART output is missing '$marker'" }
+    }
+    [pscustomobject]@{
+        state = 'passed'
+        evidence = 'uart-log-metrics-panic-snapshot-and-swd-status'
+        target_bootsel_serial = $BootselSerial
+        transport = 'bootsel-uf2+debugprobe-uart+swd-status'
+    } | ConvertTo-Json -Compress
+    exit 0
+}
+
 if ($Uf2Path) {
     $uf2 = (Resolve-Path -LiteralPath $Uf2Path).Path
     for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
         if (-not (Test-ExpectedBootsel)) { throw "the selected target is not in BOOTSEL before cycle $cycle" }
-        $volumes = @(Get-Volume | Where-Object { $_.FileSystemLabel -eq 'RPI-RP2' -and $_.DriveLetter })
-        if ($volumes.Count -ne 1) { throw "expected one mounted RPI-RP2 volume, found $($volumes.Count)" }
-        Write-Uf2 $uf2 "$($volumes[0].DriveLetter):\flint-$cycle.uf2"
+        $targetDrive = Get-ExpectedBootselDrive
+        Write-Uf2 $uf2 "$targetDrive\flint-$cycle.uf2"
         $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
         $sawApplication = $false
         $returned = $false

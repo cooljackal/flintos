@@ -72,11 +72,12 @@ pub extern "C" fn _flint_armv6m_boot() {
     // lock taken below nests inside it and restores to "still masked".
     let boot_primask = unsafe { crate::arch::cs_enter() };
 
-    crate::startup::init();
     unsafe {
         use hal::soc::SystemOnChip;
         board::SelectedSoc::configure_cpu_clock();
     }
+    crate::startup::init();
+    crate::debug::panic::report_previous();
     // The linker-defined task-stack pool is consumed lazily by spawn. The
     // remaining SRAM above the static DMA pool backs runtime kernel objects.
     unsafe { crate::heap::init_from_map() };

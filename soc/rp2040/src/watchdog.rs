@@ -11,6 +11,7 @@ const CTRL: *mut u32 = WATCHDOG_BASE as *mut u32;
 const LOAD: *mut u32 = (WATCHDOG_BASE + 0x04) as *mut u32;
 const REASON: *const u32 = (WATCHDOG_BASE + 0x08) as *const u32;
 const SCRATCH4: *mut u32 = (WATCHDOG_BASE + 0x1c) as *mut u32;
+const SCRATCH5: *mut u32 = (WATCHDOG_BASE + 0x20) as *mut u32;
 const TICK: *mut u32 = (WATCHDOG_BASE + 0x2c) as *mut u32;
 // RP2040 PSM layout is FRCE_ON, FRCE_OFF, WDSEL, DONE. WDSEL is therefore
 // offset 0x08; offset 0x0c is the read-only DONE register.
@@ -21,11 +22,14 @@ const CTRL_ENABLE: u32 = 1 << 30;
 const CTRL_DEBUG_PAUSE: u32 = (1 << 26) | (1 << 25) | (1 << 24);
 const TICK_ENABLE: u32 = 1 << 9;
 const PSM_WDSEL_ALL_EXCEPT_OSCILLATORS: u32 = 0x0001_fffc;
+const PSM_WDSEL_BOTH_PROCESSORS: u32 = (1 << 16) | (1 << 15);
 const MAX_LOAD: u32 = 0x00ff_ffff;
 
 /// Pico SDK's non-reboot marker. Its intentional reboot path clears this,
 /// which distinguishes a timeout from UF2 flashing and ROM USB reboot.
 pub const FLINT_WATCHDOG_MARKER: u32 = 0x6ab7_3121;
+/// Requests one direct flash reboot so a panic snapshot remains in SRAM.
+pub const FLINT_PANIC_REBOOT_MARKER: u32 = 0x5041_4e32; // "PAN2"
 
 /// Convert milliseconds to the RP2040-E1-adjusted counter load.
 pub const fn load_for_ms(timeout_ms: u32) -> u32 {
@@ -41,7 +45,7 @@ pub const fn load_for_ms(timeout_ms: u32) -> u32 {
 ///
 /// # Safety
 /// Changes reset routing and commits the chip to resetting at the timeout.
-pub unsafe fn arm(timeout_ms: u32, pause_on_debug: bool) {
+unsafe fn arm_with_selection(timeout_ms: u32, pause_on_debug: bool, reset_selection: u32) {
     unsafe {
         let mut ctrl = CTRL.read_volatile() & !CTRL_ENABLE;
         if pause_on_debug {
@@ -50,12 +54,33 @@ pub unsafe fn arm(timeout_ms: u32, pause_on_debug: bool) {
             ctrl &= !CTRL_DEBUG_PAUSE;
         }
         CTRL.write_volatile(ctrl);
-        PSM_WDSEL.write_volatile(PSM_WDSEL_ALL_EXCEPT_OSCILLATORS);
+        PSM_WDSEL.write_volatile(reset_selection);
         // clk_tick is clk_ref / cycles. The kernel establishes 12 MHz XOSC.
         TICK.write_volatile(TICK_ENABLE | 12);
         SCRATCH4.write_volatile(FLINT_WATCHDOG_MARKER);
         LOAD.write_volatile(load_for_ms(timeout_ms));
         CTRL.write_volatile(ctrl | CTRL_ENABLE);
+    }
+}
+
+/// Start the watchdog. The debugger may optionally pause its counter.
+///
+/// # Safety
+/// Changes reset routing and commits the chip to resetting at the timeout.
+pub unsafe fn arm(timeout_ms: u32, pause_on_debug: bool) {
+    unsafe { arm_with_selection(timeout_ms, pause_on_debug, PSM_WDSEL_ALL_EXCEPT_OSCILLATORS) }
+}
+
+/// Start a watchdog reset that reboots the application once before BOOTSEL.
+///
+/// # Safety
+/// Commits the chip to resetting at the timeout and changes retained scratch state.
+pub unsafe fn arm_panic_recovery(timeout_ms: u32) {
+    unsafe {
+        SCRATCH5.write_volatile(FLINT_PANIC_REBOOT_MARKER);
+        // Reset both Cortex-M0+ cores but not SRAM. The early handler consumes
+        // the retained snapshot before arming the ordinary full-chip watchdog.
+        arm_with_selection(timeout_ms, false, PSM_WDSEL_BOTH_PROCESSORS);
     }
 }
 
@@ -106,7 +131,10 @@ pub unsafe fn flint_watchdog_caused_reset() -> bool {
 /// # Safety
 /// Writes a retained scratch register used by reset handling.
 pub unsafe fn clear_flint_watchdog_marker() {
-    unsafe { SCRATCH4.write_volatile(0) }
+    unsafe {
+        SCRATCH4.write_volatile(0);
+        SCRATCH5.write_volatile(0);
+    }
 }
 
 #[cfg(test)]
@@ -131,10 +159,13 @@ mod tests {
     #[test]
     fn watchdog_reset_selection_uses_psm_wdsel_not_done() {
         assert_eq!(PSM_WDSEL_ADDR, 0x4001_0008);
+        assert_eq!(PSM_WDSEL_BOTH_PROCESSORS, 0x0001_8000);
+        assert_eq!(PSM_WDSEL_BOTH_PROCESSORS & 0x0000_0fc0, 0);
     }
 
     #[test]
     fn timeout_marker_matches_pico_sdk_and_survives_only_timeout_reboots() {
         assert_eq!(FLINT_WATCHDOG_MARKER, 0x6ab7_3121);
+        assert_eq!(FLINT_PANIC_REBOOT_MARKER.to_be_bytes(), *b"PAN2");
     }
 }

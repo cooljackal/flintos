@@ -7,7 +7,8 @@
 #![cfg_attr(
     any(
         feature = "watchdog-reset",
-        feature = "reset-recovery-smoke"
+        feature = "reset-recovery-smoke",
+        feature = "diagnostics-smoke"
     ),
     allow(dead_code)
 )]
@@ -25,6 +26,16 @@ use hal::stream::ByteStream;
 use hal::types::Priority;
 #[cfg(not(feature = "expected-hardfault"))]
 use portable_atomic::{AtomicU32, Ordering};
+
+#[cfg(feature = "diagnostics-smoke")]
+static DIAGNOSTIC_COUNTER: api::Counter = api::Counter::new("arm_concurrent_updates");
+#[cfg(feature = "diagnostics-smoke")]
+static DIAGNOSTIC_GAUGE: api::Gauge = api::Gauge::new("arm_recovery_stage");
+#[cfg(feature = "diagnostics-smoke")]
+static DIAGNOSTIC_PEER_DONE: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "diagnostics-smoke")]
+#[no_mangle]
+static FLINT_ARM_DIAGNOSTIC_STAGE: AtomicU32 = AtomicU32::new(0);
 
 kernel::flint_app!(main, abi = 2);
 
@@ -219,6 +230,35 @@ unsafe extern "C" {
 }
 
 fn main() {
+    #[cfg(feature = "diagnostics-smoke")]
+    {
+        if kernel::debug::panic::previous_was_reported() {
+            task::spawn(
+                "diagnostics-report",
+                diagnostics_reported,
+                Priority::Normal(0),
+                2048,
+            )
+            .expect("diagnostics report task");
+        } else {
+            task::spawn_on(
+                1,
+                "diagnostics-peer",
+                diagnostics_peer,
+                Priority::Normal(1),
+                2048,
+            )
+            .expect("diagnostics peer task");
+            task::spawn_on(
+                0,
+                "diagnostics",
+                diagnostics_test,
+                Priority::Normal(1),
+                2048,
+            )
+            .expect("diagnostics task");
+        }
+    }
     #[cfg(feature = "watchdog-reset")]
     task::spawn("watchdog", watchdog_reset_test, Priority::Normal(0), 2048).expect("watchdog task");
     #[cfg(feature = "expected-hardfault")]
@@ -226,7 +266,8 @@ fn main() {
     #[cfg(all(
         not(feature = "expected-hardfault"),
         not(feature = "watchdog-reset"),
-        not(feature = "reset-recovery-smoke")
+        not(feature = "reset-recovery-smoke"),
+        not(feature = "diagnostics-smoke")
     ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
@@ -242,6 +283,52 @@ fn main() {
         }
         task::spawn_on(0, "tests", tests, Priority::Normal(2), 4096).expect("test task");
     }
+}
+
+#[cfg(feature = "diagnostics-smoke")]
+fn diagnostics_peer() {
+    for _ in 0..10_000 {
+        DIAGNOSTIC_COUNTER.increment();
+    }
+    DIAGNOSTIC_GAUGE.set(143);
+    DIAGNOSTIC_PEER_DONE.store(1, Ordering::Release);
+    loop {
+        task::sleep_ms(1_000);
+    }
+}
+
+#[cfg(feature = "diagnostics-smoke")]
+fn diagnostics_test() {
+    for _ in 0..10_000 {
+        DIAGNOSTIC_COUNTER.increment();
+    }
+    let deadline = timer::now_ms().wrapping_add(2_000);
+    while DIAGNOSTIC_PEER_DONE.load(Ordering::Acquire) == 0 {
+        if timer::now_ms().wrapping_sub(deadline) < u64::MAX / 2 {
+            panic!("ARM diagnostics peer timed out");
+        }
+        task::sleep_ms(1);
+    }
+    if DIAGNOSTIC_COUNTER.read() != 20_000 || DIAGNOSTIC_GAUGE.read() != 143 {
+        panic!("ARM diagnostics metrics mismatch");
+    }
+    FLINT_ARM_DIAGNOSTIC_STAGE.store(1, Ordering::Release);
+    api::log_info!(
+        "[FLINT] ARM DIAGNOSTICS counter={} gauge={}",
+        DIAGNOSTIC_COUNTER.read(),
+        DIAGNOSTIC_GAUGE.read()
+    );
+    FLINT_ARM_DIAGNOSTIC_STAGE.store(2, Ordering::Release);
+    task::sleep_ms(250);
+    FLINT_ARM_DIAGNOSTIC_STAGE.store(3, Ordering::Release);
+    panic!("ARM diagnostics deliberate panic");
+}
+
+#[cfg(feature = "diagnostics-smoke")]
+fn diagnostics_reported() {
+    api::log_info!("[FLINT] ARM DIAGNOSTICS RECOVERED");
+    task::sleep_ms(250);
+    unsafe { soc_rp2040::test_status::pass_live() }
 }
 
 #[cfg(feature = "watchdog-reset")]
@@ -381,13 +468,17 @@ fn isr_queue_producer() {
     ISR_PRODUCING.store(0, Ordering::Release);
 }
 
+// Read the monotonic clock through the kernel, naming no chip: on the RP2040
+// this is the same free-running timer as before (`now_us`'s low 32 bits are the
+// hardware counter), so the wrap-based interval checks below are unchanged, but
+// the self-test no longer reaches into `soc_rp2040` for it.
 #[cfg(all(
     target_arch = "arm",
     not(feature = "expected-hardfault"),
     not(feature = "minimal")
 ))]
 fn hardware_timer_us() -> u32 {
-    soc_rp2040::timer_us()
+    kernel::clock::now_us() as u32
 }
 
 #[cfg(all(
@@ -396,7 +487,7 @@ fn hardware_timer_us() -> u32 {
     not(feature = "minimal")
 ))]
 fn hardware_timer_us() -> u32 {
-    0
+    kernel::clock::now_us() as u32
 }
 
 #[cfg(not(feature = "expected-hardfault"))]

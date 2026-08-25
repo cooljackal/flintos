@@ -33,20 +33,82 @@ pub fn init() {
 
 /// Write bytes to the board's console, if it has one.
 ///
-/// Loops until every byte is queued: the board hands out a non-blocking
+/// Tries until every byte is queued: the board hands out a non-blocking
 /// [`ByteStream`](hal::stream::ByteStream) whose `write` takes what fits and
-/// returns the count, so a log line longer than the FIFO spins here until it
-/// drains rather than being truncated. A board with no console drops the bytes.
+/// returns the count, so a log line longer than the FIFO can drain without
+/// truncation. A permanently stalled console is bounded and drops the tail;
+/// a board with no console drops the whole write.
 pub fn console_write(data: &[u8]) {
     if let Some(console) = crate::board::console() {
-        let mut written = 0;
-        while written < data.len() {
-            let n = console.write(&data[written..]);
-            if n == 0 {
-                core::hint::spin_loop();
-            } else {
-                written += n;
+        write_bounded(console, data, 1_000_000);
+    }
+}
+
+fn write_bounded(console: &dyn hal::stream::ByteStream, data: &[u8], idle_limit: usize) -> usize {
+    let mut written = 0;
+    let mut idle_polls = 0;
+    while written < data.len() {
+        let n = console.write(&data[written..]);
+        if n == 0 {
+            idle_polls += 1;
+            if idle_polls == idle_limit {
+                break;
             }
+            core::hint::spin_loop();
+        } else {
+            written += n;
+            idle_polls = 0;
         }
+    }
+    written
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hal::stream::{ByteStream, StreamErrors};
+    use std::sync::Mutex;
+
+    struct FakeStream {
+        writes: Mutex<Vec<u8>>,
+        chunk: usize,
+    }
+
+    impl ByteStream for FakeStream {
+        fn write(&self, data: &[u8]) -> usize {
+            let n = data.len().min(self.chunk);
+            self.writes.lock().unwrap().extend_from_slice(&data[..n]);
+            n
+        }
+
+        fn read(&self, _buf: &mut [u8]) -> usize {
+            0
+        }
+
+        fn errors(&self) -> StreamErrors {
+            StreamErrors::default()
+        }
+    }
+
+    #[test]
+    fn bounded_write_finishes_across_partial_writes() {
+        let console = FakeStream {
+            writes: Mutex::new(Vec::new()),
+            chunk: 2,
+        };
+
+        assert_eq!(write_bounded(&console, b"flint", 3), 5);
+        assert_eq!(&*console.writes.lock().unwrap(), b"flint");
+    }
+
+    #[test]
+    fn bounded_write_drops_after_idle_limit() {
+        let console = FakeStream {
+            writes: Mutex::new(Vec::new()),
+            chunk: 0,
+        };
+
+        assert_eq!(write_bounded(&console, b"blocked", 3), 0);
+        assert!(console.writes.lock().unwrap().is_empty());
     }
 }

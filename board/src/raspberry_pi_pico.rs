@@ -17,6 +17,7 @@ pub const USER_LED: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: USER_LED_GP
 pub const BOARD: crate::Board = crate::Board {
     name: BOARD_NAME,
     rgb_led: None,
+    grove: None,
     selftest: crate::SelftestPads {
         scratch: LOOPBACK_SCRATCH_GPIO,
         aux: LOOPBACK_AUX_GPIOS,

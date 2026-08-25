@@ -549,7 +549,7 @@ ATOM_BOARD          := board-m5-atom-matrix
 # The M5Core2 bring-up apps guard on manifest features only that board declares
 # (`backlight` on `BOARD.pmic`, `lcd` on `BOARD.display`), so like the Atom apps
 # they cannot build against the default board and are checked against theirs.
-CORE2_APPS          := backlight lcd
+CORE2_APPS          := backlight lcd touch
 CORE2_BOARD         := board-m5-core2
 
 .PHONY: check-all
@@ -671,6 +671,7 @@ test-target: ## Flash and run the on-target self-tests (needs a board attached)
 
 ARM_PROBE_SERIAL   ?= 4150325537323116
 ARM_BOOTSEL_SERIAL ?= E0C912D24340
+ARM_UART_PORT      ?= COM9
 
 .PHONY: test-arm-target
 test-arm-target: ## Build, flash, and judge ARM tests through ROM BOOTSEL
@@ -694,6 +695,21 @@ test-arm-watchdog: ## Prove RP2040 watchdog reset and retained cause through ROM
 		-Uf2Path target/$(ARM_TARGET)/debug/arm-watchdog-reset.uf2 \
 		-BootselSerial $(ARM_BOOTSEL_SERIAL) \
 		-Suite watchdog-reset -Cycles 10 -TimeoutSeconds 60
+
+.PHONY: test-arm-diagnostics
+test-arm-diagnostics: ## Prove ARM logging, metrics, and retained panic recovery
+	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/diagnostics-smoke"
+	pwsh -NoProfile -File tools/rp2040-image.ps1 \
+		-Action convert -Architecture armv6m -Soc rp2040 -Board raspberry-pi-pico \
+		-Elf target/$(ARM_TARGET)/debug/arm-selftest \
+		-Uf2 target/$(ARM_TARGET)/debug/arm-diagnostics-smoke.uf2 \
+		-Bin target/$(ARM_TARGET)/debug/arm-diagnostics-smoke.bin
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-Uf2Path target/$(ARM_TARGET)/debug/arm-diagnostics-smoke.uf2 \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
+		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite diagnostics -TimeoutSeconds 30
 
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────

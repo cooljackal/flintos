@@ -323,6 +323,7 @@ mod tests {
         let data = reset.find("_sidata").expect("data initialization");
         assert!(watchdog < data);
         assert!(reset[..data].contains("0x6ab73121"));
+        assert!(reset[..data].contains("0x50414e32"));
         assert!(reset[..data].contains("0x00004255"));
         assert!(reset[..data].contains("0x4005b000"));
         assert!(reset[..data].contains("0x4005a000"));

@@ -9,10 +9,11 @@
 //! `wifi_osi_funcs_t` and the blob calls it constantly.
 //!
 //! The kernel reads the clock through [`hal::clock::MonotonicClock`], selecting
-//! one implementation with the SoC. A SoC with a spare hardware counter (the
-//! ESP32's is TIMG1/T1, below) implements it; one without takes the trait
-//! default, and [`now_us`] falls back to the scaled scheduler tick. So callers
-//! — `syscall`, the self-tests, the radio adapter — name no chip.
+//! one implementation with the SoC. A SoC with a spare hardware counter — the
+//! ESP32's is TIMG1/T1 (below), the RP2040's is its free-running 1 MHz timer —
+//! implements it; one without takes the trait default, and [`now_us`] falls
+//! back to the scaled scheduler tick. So callers — `syscall`, the self-tests,
+//! the radio adapter — name no chip.
 //!
 //! # Why the ESP32 implementation lives here, not in `soc-esp32`
 //!
@@ -44,7 +45,18 @@ impl MonotonicClock for Clock {
         {
             esp32::init()
         }
-        #[cfg(not(all(target_os = "none", feature = "soc-esp32")))]
+        // The RP2040 timer is free-running from reset once the watchdog tick is
+        // programmed (done in boot), so there is nothing to claim or start: it
+        // is already a valid 1 MHz counter. Report success so the kernel reads
+        // it rather than the coarser tick.
+        #[cfg(all(target_os = "none", feature = "soc-rp2040"))]
+        {
+            true
+        }
+        #[cfg(not(all(
+            target_os = "none",
+            any(feature = "soc-esp32", feature = "soc-rp2040")
+        )))]
         {
             false
         }
@@ -55,7 +67,16 @@ impl MonotonicClock for Clock {
         {
             Some(esp32::now_us())
         }
-        #[cfg(not(all(target_os = "none", feature = "soc-esp32")))]
+        // The SoC's own free-running microsecond timer, read as a coherent 64-bit
+        // count — no chip name reaches the caller through this trait.
+        #[cfg(all(target_os = "none", feature = "soc-rp2040"))]
+        {
+            Some(soc_rp2040::timer_us_64())
+        }
+        #[cfg(not(all(
+            target_os = "none",
+            any(feature = "soc-esp32", feature = "soc-rp2040")
+        )))]
         {
             None
         }

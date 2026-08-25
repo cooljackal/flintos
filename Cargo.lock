@@ -114,6 +114,7 @@ dependencies = [
  "hal",
  "i2c-bus",
  "led-matrix",
+ "rp2040-uart",
  "soc-esp32",
  "soc-rp2040",
  "spi-bus",

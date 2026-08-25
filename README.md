@@ -52,7 +52,7 @@ and open work lives in [issues] — the source of truth.
 | Task-vs-ISR race tests | ✅ | 🧪 |
 | Watchdogs | ✅ | ✅ |
 | Reset-cause reporting | ✅ | ✅ |
-| Logging, metrics, panic capture | ✅ | 🚧 |
+| Logging, metrics, panic capture | ✅ | ✅ |
 | Stack high-water marks | ✅ | ✅ |
 | Second core · task pinning | ✅ | ✅ |
 | DMA | ✅ | ⛔ |
