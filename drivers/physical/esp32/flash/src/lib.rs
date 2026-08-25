@@ -272,8 +272,6 @@ impl FlashRegion {
     /// # Safety
     /// Runs with the cache disabled. See the module docs: the second core must
     /// not be running.
-    #[inline(never)]
-    #[cfg_attr(target_os = "none", link_section = ".iram1.flash")]
     pub unsafe fn read(&self, offset: u32, buf: &mut [u32]) -> Result<(), FlashError> {
         let addr = self.check(offset, (buf.len() * 4) as u32)?;
         with_cache_off(|| spi1::read(addr, buf))
@@ -325,6 +323,38 @@ impl FlashRegion {
     }
 }
 
+/// Restores the interrupt level and, on target, `INTENABLE`, when it drops — on
+/// every path out of [`with_cache_off`]. The mask is the one restore easy to
+/// forget on a new early return (the CacheBusy path warns about exactly this),
+/// so it is a guard rather than a hand-written line at each exit. The cache and
+/// second-core restores stay inline in the success path: they run only there
+/// and must be ordered against each other by hand.
+///
+/// Drop runs with interrupts masked at level 5 on both exits — the early return
+/// never unmasks, and the success path re-masks after `f()` for the cache
+/// restore — so the level is already where the register write wants it.
+struct RestoreInterrupts {
+    #[cfg(target_arch = "xtensa")]
+    saved_ps: u32,
+    #[cfg(target_os = "none")]
+    saved_intenable: u32,
+}
+
+impl Drop for RestoreInterrupts {
+    fn drop(&mut self) {
+        // INTENABLE first, then the level — the order both hand-written exits
+        // used.
+        #[cfg(target_os = "none")]
+        unsafe {
+            kernel_interrupt_restore(self.saved_intenable);
+        }
+        #[cfg(target_arch = "xtensa")]
+        unsafe {
+            core::arch::asm!("wsr.ps {0}", "rsync", in(reg) self.saved_ps);
+        }
+    }
+}
+
 /// Run `f` with the instruction cache disabled and unsafe interrupts masked.
 ///
 /// The masking is not about atomicity. An interrupt handler is code, and code
@@ -363,6 +393,15 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     #[cfg(target_os = "none")]
     let saved_intenable = kernel_interrupt_mask();
 
+    // Every exit below owes the mask/level restore; this guard pays it once, in
+    // its `Drop`, so no early return can strand `INTENABLE` at the IRAM-safe set.
+    let _restore = RestoreInterrupts {
+        #[cfg(target_arch = "xtensa")]
+        saved_ps: saved,
+        #[cfg(target_os = "none")]
+        saved_intenable,
+    };
+
     // Save which windows the cache serves, wait for it to go idle, then switch
     // it off. The wait is the part that cannot be skipped.
     let ctrl1 = PRO_CACHE_CTRL1 as *mut u32;
@@ -384,15 +423,9 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
     }
     if spins >= CACHE_IDLE_SPINS {
         LAST_CACHE_STATE.store(last_state | 0x8000_0000, Ordering::Relaxed);
-        // Every exit from here on owes an `INTENABLE` restore. This one is the
-        // easiest to forget, because it is the path that does no work: leaving
-        // without it strands the mask at the IRAM-safe set -- today the empty
-        // set -- so the tick never fires again and the board goes quiet with
-        // nothing pointing back here. Any new early return needs this too.
-        #[cfg(target_os = "none")]
-        kernel_interrupt_restore(saved_intenable);
-        #[cfg(target_arch = "xtensa")]
-        core::arch::asm!("wsr.ps {0}", "rsync", in(reg) saved);
+        // The mask/level restore is `_restore`'s job now — this path does no
+        // other work (the cache is still on, the second core still running), so
+        // there is nothing else to undo.
         return Err(FlashError::CacheBusy);
     }
     // Stall the second core before its cache goes away. Order matters: a core
@@ -471,12 +504,9 @@ unsafe fn with_cache_off(f: impl FnOnce() -> Result<(), FlashError>) -> Result<(
         soc_esp32::appcpu::unstall_now();
     }
 
-    #[cfg(target_os = "none")]
-    kernel_interrupt_restore(saved_intenable);
-
-    #[cfg(target_arch = "xtensa")]
-    core::arch::asm!("wsr.ps {0}", "rsync", in(reg) saved);
-
+    // `_restore` drops here — with interrupts still masked at level 5 from the
+    // re-mask above — restoring `INTENABLE` then the caller's level, in that
+    // order, the same as the old hand-written tail.
     r
 }
 
