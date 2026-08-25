@@ -14,16 +14,14 @@
 //! data-independent, so the only question is arithmetic, and the FIPS vectors
 //! in the tests answer it.
 
+use super::block::{Block64, BLOCK};
+
 /// A streaming SHA-1 hasher.
 #[derive(Clone)]
 pub struct Sha1 {
     state: [u32; 5],
-    len: u64,
-    buf: [u8; BLOCK],
-    buf_len: usize,
+    block: Block64,
 }
-
-const BLOCK: usize = 64;
 
 /// The digest is 160 bits.
 pub const DIGEST_LEN: usize = 20;
@@ -42,64 +40,21 @@ impl Sha1 {
     pub const fn new() -> Self {
         Self {
             state: H0,
-            len: 0,
-            buf: [0u8; BLOCK],
-            buf_len: 0,
+            block: Block64::new(),
         }
     }
 
-    /// Absorb `data`. See [`super::sha256::Sha256::update`] — identical
-    /// buffering, only the block function differs.
-    pub fn update(&mut self, mut data: &[u8]) {
-        self.len = self.len.wrapping_add(data.len() as u64);
-
-        if self.buf_len > 0 {
-            let need = BLOCK - self.buf_len;
-            let take = need.min(data.len());
-            self.buf[self.buf_len..self.buf_len + take].copy_from_slice(&data[..take]);
-            self.buf_len += take;
-            data = &data[take..];
-            if self.buf_len == BLOCK {
-                let block = self.buf;
-                self.compress(&block);
-                self.buf_len = 0;
-            }
-        }
-
-        while data.len() >= BLOCK {
-            let (block, rest) = data.split_at(BLOCK);
-            self.compress(block.try_into().unwrap());
-            data = rest;
-        }
-
-        if !data.is_empty() {
-            self.buf[..data.len()].copy_from_slice(data);
-            self.buf_len = data.len();
-        }
+    /// Absorb `data`. Buffering and padding are shared with SHA-256 in
+    /// [`super::block`]; only [`compress`] differs.
+    pub fn update(&mut self, data: &[u8]) {
+        let state = &mut self.state;
+        self.block.absorb(data, |block| compress(state, block));
     }
 
     /// Finish and return the 20-byte digest.
     pub fn finish(mut self) -> [u8; DIGEST_LEN] {
-        let bit_len = self.len.wrapping_mul(8);
-
-        self.buf[self.buf_len] = 0x80;
-        self.buf_len += 1;
-
-        if self.buf_len > BLOCK - 8 {
-            for b in &mut self.buf[self.buf_len..] {
-                *b = 0;
-            }
-            let block = self.buf;
-            self.compress(&block);
-            self.buf_len = 0;
-        }
-
-        for b in &mut self.buf[self.buf_len..BLOCK - 8] {
-            *b = 0;
-        }
-        self.buf[BLOCK - 8..].copy_from_slice(&bit_len.to_be_bytes());
-        let block = self.buf;
-        self.compress(&block);
+        let state = &mut self.state;
+        self.block.finalize(|block| compress(state, block));
 
         let mut out = [0u8; DIGEST_LEN];
         for (chunk, word) in out.chunks_exact_mut(4).zip(self.state.iter()) {
@@ -114,47 +69,47 @@ impl Sha1 {
         h.update(data);
         h.finish()
     }
+}
 
-    /// The compression function, FIPS 180-4 §6.1.2.
-    fn compress(&mut self, block: &[u8; BLOCK]) {
-        let mut w = [0u32; 80];
-        for (i, word) in w[..16].iter_mut().enumerate() {
-            let j = i * 4;
-            *word = u32::from_be_bytes([block[j], block[j + 1], block[j + 2], block[j + 3]]);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-
-        let [mut a, mut b, mut c, mut d, mut e] = self.state;
-
-        for (i, &word) in w.iter().enumerate() {
-            // The round function and constant change every twenty rounds.
-            let (f, k) = match i {
-                0..=19 => ((b & c) | ((!b) & d), 0x5a827999),
-                20..=39 => (b ^ c ^ d, 0x6ed9eba1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1bbcdc),
-                _ => (b ^ c ^ d, 0xca62c1d6),
-            };
-            let t = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(word);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = t;
-        }
-
-        self.state[0] = self.state[0].wrapping_add(a);
-        self.state[1] = self.state[1].wrapping_add(b);
-        self.state[2] = self.state[2].wrapping_add(c);
-        self.state[3] = self.state[3].wrapping_add(d);
-        self.state[4] = self.state[4].wrapping_add(e);
+/// The compression function, FIPS 180-4 §6.1.2.
+fn compress(state: &mut [u32; 5], block: &[u8; BLOCK]) {
+    let mut w = [0u32; 80];
+    for (i, word) in w[..16].iter_mut().enumerate() {
+        let j = i * 4;
+        *word = u32::from_be_bytes([block[j], block[j + 1], block[j + 2], block[j + 3]]);
     }
+    for i in 16..80 {
+        w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+    }
+
+    let [mut a, mut b, mut c, mut d, mut e] = *state;
+
+    for (i, &word) in w.iter().enumerate() {
+        // The round function and constant change every twenty rounds.
+        let (f, k) = match i {
+            0..=19 => ((b & c) | ((!b) & d), 0x5a827999),
+            20..=39 => (b ^ c ^ d, 0x6ed9eba1),
+            40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1bbcdc),
+            _ => (b ^ c ^ d, 0xca62c1d6),
+        };
+        let t = a
+            .rotate_left(5)
+            .wrapping_add(f)
+            .wrapping_add(e)
+            .wrapping_add(k)
+            .wrapping_add(word);
+        e = d;
+        d = c;
+        c = b.rotate_left(30);
+        b = a;
+        a = t;
+    }
+
+    state[0] = state[0].wrapping_add(a);
+    state[1] = state[1].wrapping_add(b);
+    state[2] = state[2].wrapping_add(c);
+    state[3] = state[3].wrapping_add(d);
+    state[4] = state[4].wrapping_add(e);
 }
 
 #[cfg(test)]
@@ -206,10 +161,7 @@ mod tests {
             h.update(&chunk[..n]);
             sent += n;
         }
-        assert_eq!(
-            h.finish(),
-            hex(b"34aa973cd4c4daa4f61eeb2bdbad27316534016f")
-        );
+        assert_eq!(h.finish(), hex(b"34aa973cd4c4daa4f61eeb2bdbad27316534016f"));
     }
 
     #[test]

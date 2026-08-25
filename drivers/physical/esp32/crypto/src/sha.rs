@@ -179,6 +179,12 @@ unsafe fn wait_idle(kind: ShaKind) -> Result<(), CryptoError> {
 /// Pure: no register touched, which is the point — the off-by-one that eats
 /// the length field or the case where padding spills a second block are both
 /// checkable on a host.
+///
+/// The same spill edge is exercised by the software hashers' shared
+/// `crypto::block::Block64` (the `the_length_that_crosses_a_block_boundary`
+/// vectors); this driver keeps its own copy because it pads into an output
+/// buffer for the DMA/register path rather than streaming through a block
+/// buffer, but the boundary rule is identical.
 fn pad_tail(rem: &[u8], total_len: u64, out: &mut [u8]) -> usize {
     debug_assert!(rem.len() < BLOCK_BYTES);
     let n = rem.len();

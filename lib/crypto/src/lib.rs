@@ -31,6 +31,7 @@
 #![forbid(unsafe_code)]
 
 pub mod aes;
+mod block;
 pub mod ccm;
 pub mod cmac;
 pub mod hmac;

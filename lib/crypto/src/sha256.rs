@@ -29,18 +29,11 @@
 pub struct Sha256 {
     /// The eight working hash words, `H0..H7`.
     state: [u32; 8],
-    /// Total message length in bytes, for the length suffix. 64-bit as the
-    /// standard requires; a `usize` would cap a hash at 4 GiB on this target,
-    /// which no handshake reaches but the format still specifies.
-    len: u64,
-    /// Bytes not yet absorbed into a full 64-byte block.
-    buf: [u8; BLOCK],
-    /// How many of `buf` are filled.
-    buf_len: usize,
+    /// The streaming block buffer and padding, shared with SHA-1.
+    block: Block64,
 }
 
-/// SHA-256 processes the message in 512-bit (64-byte) blocks.
-const BLOCK: usize = 64;
+use super::block::{Block64, BLOCK};
 
 /// The digest is 256 bits.
 pub const DIGEST_LEN: usize = 32;
@@ -75,43 +68,16 @@ impl Sha256 {
     pub const fn new() -> Self {
         Self {
             state: H0,
-            len: 0,
-            buf: [0u8; BLOCK],
-            buf_len: 0,
+            block: Block64::new(),
         }
     }
 
     /// Absorb `data`. May be called any number of times; the result is as if
-    /// every `data` had been concatenated.
-    pub fn update(&mut self, mut data: &[u8]) {
-        self.len = self.len.wrapping_add(data.len() as u64);
-
-        // Top up a partial block first, and process it once full.
-        if self.buf_len > 0 {
-            let need = BLOCK - self.buf_len;
-            let take = need.min(data.len());
-            self.buf[self.buf_len..self.buf_len + take].copy_from_slice(&data[..take]);
-            self.buf_len += take;
-            data = &data[take..];
-            if self.buf_len == BLOCK {
-                let block = self.buf;
-                self.compress(&block);
-                self.buf_len = 0;
-            }
-        }
-
-        // Whole blocks straight from the input, no copy.
-        while data.len() >= BLOCK {
-            let (block, rest) = data.split_at(BLOCK);
-            self.compress(block.try_into().unwrap());
-            data = rest;
-        }
-
-        // Whatever is left is a partial block for next time.
-        if !data.is_empty() {
-            self.buf[..data.len()].copy_from_slice(data);
-            self.buf_len = data.len();
-        }
+    /// every `data` had been concatenated. Buffering and padding are shared
+    /// with SHA-1 in [`super::block`]; only [`compress`] differs.
+    pub fn update(&mut self, data: &[u8]) {
+        let state = &mut self.state;
+        self.block.absorb(data, |block| compress(state, block));
     }
 
     /// Finish and return the 32-byte digest.
@@ -120,29 +86,8 @@ impl Sha256 {
     /// zeros, then the 64-bit big-endian bit length, arranged so the whole
     /// message is a multiple of 64 bytes.
     pub fn finish(mut self) -> [u8; DIGEST_LEN] {
-        let bit_len = self.len.wrapping_mul(8);
-
-        // The 0x80 always fits: buf_len < BLOCK on entry.
-        self.buf[self.buf_len] = 0x80;
-        self.buf_len += 1;
-
-        // If the length suffix will not fit in this block, pad this one out
-        // with zeros, compress it, and start a fresh block for the suffix.
-        if self.buf_len > BLOCK - 8 {
-            for b in &mut self.buf[self.buf_len..] {
-                *b = 0;
-            }
-            let block = self.buf;
-            self.compress(&block);
-            self.buf_len = 0;
-        }
-
-        for b in &mut self.buf[self.buf_len..BLOCK - 8] {
-            *b = 0;
-        }
-        self.buf[BLOCK - 8..].copy_from_slice(&bit_len.to_be_bytes());
-        let block = self.buf;
-        self.compress(&block);
+        let state = &mut self.state;
+        self.block.finalize(|block| compress(state, block));
 
         let mut out = [0u8; DIGEST_LEN];
         for (chunk, word) in out.chunks_exact_mut(4).zip(self.state.iter()) {
@@ -157,58 +102,58 @@ impl Sha256 {
         h.update(data);
         h.finish()
     }
+}
 
-    /// The compression function, FIPS 180-4 §6.2.2, over one 64-byte block.
-    fn compress(&mut self, block: &[u8; BLOCK]) {
-        // Message schedule. The first sixteen words are the block, big-endian;
-        // the rest are derived.
-        let mut w = [0u32; 64];
-        for (i, word) in w[..16].iter_mut().enumerate() {
-            let j = i * 4;
-            *word = u32::from_be_bytes([block[j], block[j + 1], block[j + 2], block[j + 3]]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-        }
-
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.state;
-
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ ((!e) & g);
-            let t1 = h
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let t2 = s0.wrapping_add(maj);
-
-            h = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(t1);
-            d = c;
-            c = b;
-            b = a;
-            a = t1.wrapping_add(t2);
-        }
-
-        self.state[0] = self.state[0].wrapping_add(a);
-        self.state[1] = self.state[1].wrapping_add(b);
-        self.state[2] = self.state[2].wrapping_add(c);
-        self.state[3] = self.state[3].wrapping_add(d);
-        self.state[4] = self.state[4].wrapping_add(e);
-        self.state[5] = self.state[5].wrapping_add(f);
-        self.state[6] = self.state[6].wrapping_add(g);
-        self.state[7] = self.state[7].wrapping_add(h);
+/// The compression function, FIPS 180-4 §6.2.2, over one 64-byte block.
+fn compress(state: &mut [u32; 8], block: &[u8; BLOCK]) {
+    // Message schedule. The first sixteen words are the block, big-endian;
+    // the rest are derived.
+    let mut w = [0u32; 64];
+    for (i, word) in w[..16].iter_mut().enumerate() {
+        let j = i * 4;
+        *word = u32::from_be_bytes([block[j], block[j + 1], block[j + 2], block[j + 3]]);
     }
+    for i in 16..64 {
+        let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+        let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16]
+            .wrapping_add(s0)
+            .wrapping_add(w[i - 7])
+            .wrapping_add(s1);
+    }
+
+    let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
+
+    for i in 0..64 {
+        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let ch = (e & f) ^ ((!e) & g);
+        let t1 = h
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(K[i])
+            .wrapping_add(w[i]);
+        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let maj = (a & b) ^ (a & c) ^ (b & c);
+        let t2 = s0.wrapping_add(maj);
+
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(t1);
+        d = c;
+        c = b;
+        b = a;
+        a = t1.wrapping_add(t2);
+    }
+
+    state[0] = state[0].wrapping_add(a);
+    state[1] = state[1].wrapping_add(b);
+    state[2] = state[2].wrapping_add(c);
+    state[3] = state[3].wrapping_add(d);
+    state[4] = state[4].wrapping_add(e);
+    state[5] = state[5].wrapping_add(f);
+    state[6] = state[6].wrapping_add(g);
+    state[7] = state[7].wrapping_add(h);
 }
 
 #[cfg(test)]
