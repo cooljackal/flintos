@@ -40,7 +40,27 @@ fn main() {
         arch_xtensa::appcpu::prepare(second_core);
         soc_esp32::appcpu::start(arch_xtensa::appcpu::_flint_appcpu_entry);
     }
-    task::spawn_on(1, "core1", core1_counter, Priority::Normal(2), 4096);
+
+    // `appcpu::start` only *releases* core 1; it joins the scheduler
+    // asynchronously, some microseconds later, and `spawn_on` returns `None`
+    // until it has (`is_pinnable(1)` is false). `main` runs with interrupts
+    // masked so it cannot sleep — spin on the join, bounded, so a core that
+    // genuinely never joins fails loudly at the spawn below rather than hanging.
+    //
+    // Without this wait the spawn raced the join: on boards where the join lost
+    // the race (Core2, rev-1 WROOM) `spawn_on` returned `None`, the counter task
+    // was never created, and the discarded `None` made it look exactly like
+    // "core 1 never started" — when core 1 was in fact up and taking interrupts.
+    // That was #141; the same fix already landed in `apps/tests/smp`.
+    for _ in 0..20_000_000u32 {
+        if kernel::smp::is_pinnable(1) {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if task::spawn_on(1, "core1", core1_counter, Priority::Normal(2), 4096).is_none() {
+        api::log_error!("core 1 never joined the scheduler — cannot pin the counter task");
+    }
     task::spawn("probe", run, Priority::Normal(2), 4096);
 }
 
