@@ -149,19 +149,16 @@ radio-ble = ["radio-bt"]
 radio-bt-classic = ["radio-bt"]
 
 debug-level-0 = []
-debug-level-1 = ["flint-log", "flint-metrics", "flint-panic"]
-debug-level-2 = ["debug-level-1", "flint-trace"]
-debug-level-3 = ["debug-level-2", "flint-timing", "flint-cpu-util"]
+# See api/Cargo.toml: only `flint-log` gates code; the other markers were inert
+# and removed. Levels 2/3 keep their names but add nothing over level 1 today.
+debug-level-1 = ["flint-log"]
+debug-level-2 = ["debug-level-1"]
+debug-level-3 = ["debug-level-2"]
 
 # Debug features forward to `api` so the gated macros in user/kernel code
 # actually emit (plan W7.3). Without this, enabling logging on the kernel had no
 # effect because `api`'s own feature stayed off.
 flint-log = ["api/flint-log"]
-flint-metrics = ["api/flint-metrics"]
-flint-panic = ["api/flint-panic"]
-flint-trace = ["api/flint-trace"]
-flint-timing = ["api/flint-timing"]
-flint-cpu-util = ["api/flint-cpu-util"]
 
 # Boot-time self-test: drives a deep windowed recursion after interrupts are
 # unmasked and checks the result, so a trap that corrupts the interrupted

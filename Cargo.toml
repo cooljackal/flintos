@@ -36,7 +36,7 @@ resolver = "2"
 #     drivers/physical/esp32/i2c/   -> esp32-i2c
 #
 # Cargo *feature* names are a separate namespace and do keep the prefix:
-# `flint-log`, `flint-trace`, `flint-metrics` and the rest are written on a
+# `flint-log` and the like are written on a
 # dependency line, where they sit among features belonging to other crates.
 members = [
     "hal",

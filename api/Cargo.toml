@@ -16,13 +16,14 @@ portable-atomic = { version = "=1.15.0", features = ["critical-section", "requir
 [features]
 default = []
 debug-level-0 = []
-debug-level-1 = ["flint-log", "flint-metrics", "flint-panic"]
-debug-level-2 = ["debug-level-1", "flint-trace"]
-debug-level-3 = ["debug-level-2", "flint-timing", "flint-cpu-util"]
+# Only `flint-log` gates real code today: it compiles the log output in or out.
+# Metrics (`api::Counter`/`Gauge`) and panic capture (`flint_panic!`) are part
+# of the always-available API, so the old `flint-metrics`/`flint-panic`/
+# `flint-trace`/`flint-timing`/`flint-cpu-util` markers gated nothing and were
+# removed. Levels 2 and 3 keep their names for build compatibility and are
+# reserved for future gated diagnostics; today they add nothing over level 1.
+debug-level-1 = ["flint-log"]
+debug-level-2 = ["debug-level-1"]
+debug-level-3 = ["debug-level-2"]
 
 flint-log = []
-flint-metrics = []
-flint-panic = []
-flint-trace = []
-flint-timing = []
-flint-cpu-util = []
