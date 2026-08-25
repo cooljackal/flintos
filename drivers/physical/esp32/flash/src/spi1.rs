@@ -181,6 +181,10 @@ const CTRL_WRSR_2B: u32 = 1 << 22;
 const STATUS_SRP0: u32 = 1 << 7;
 const STATUS_BP_MASK: u32 = 0x7C;
 
+/// Block-protect mask for QER-2 parts (Macronix/ISSI, and this Core2 part),
+/// where `QE` takes SR1 bit 6 so block-protect is only `[5:2]`.
+const STATUS_BP_MASK_QER2: u32 = 0x3C;
+
 /// Status register 2's `QE`, at bit 1 — bit 9 of the two-byte value.
 ///
 /// Preserved deliberately. A one-byte `WRSR` on a GigaDevice part can zero
@@ -781,7 +785,7 @@ fn unlock_plan(qer: u8, mfr: u32, sr1: u8) -> Option<UnlockPlan> {
     } else if qer == 2 {
         // QE is SR1 bit 6 (Macronix/ISSI, and this Core2 part). Then block-protect
         // is only [5:2], and bit 6 must be kept set.
-        bp_mask = 0x3C;
+        bp_mask = STATUS_BP_MASK_QER2 as u8;
         qe_in_sr2 = false;
         keep_sr1_qe = true;
     } else if mfr == MFR_GIGADEVICE || mfr == MFR_WINBOND {
@@ -834,7 +838,7 @@ unsafe fn unlock() -> Result<(), FlashError> {
     // "nothing protected", handled here without reading the JEDEC id or building
     // the full write plan — both of which the rare protected path defers to.
     let qer = crate::FLASH_QER.load(Ordering::Relaxed);
-    let bp_mask: u32 = if qer == 2 { 0x3C } else { STATUS_BP_MASK };
+    let bp_mask: u32 = if qer == 2 { STATUS_BP_MASK_QER2 } else { STATUS_BP_MASK };
     if st & (STATUS_SRP0 | bp_mask) == 0 {
         UNLOCKED.store(true, Ordering::Relaxed);
         return Ok(());
