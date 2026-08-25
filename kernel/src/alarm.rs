@@ -43,7 +43,14 @@
 //! rather than a closure: whatever is behind it has to be in IRAM.
 
 #[cfg(target_os = "none")]
-use esp32_timg::{lact::Lact, Group};
+use hal::timer::CompareTimer;
+
+/// The compare timer the kernel is built against, behind the [`CompareTimer`]
+/// seam — the one place `alarm` names a chip's timer driver. Everything else
+/// drives it through the trait, so a second SoC's compare timer slots in by
+/// implementing it (and giving `SelectedTimer` a `#[cfg]` arm).
+#[cfg(target_os = "none")]
+type SelectedTimer = esp32::EspAlarmTimer;
 
 /// The CPU interrupt input the alarm is routed to.
 ///
@@ -53,13 +60,6 @@ use esp32_timg::{lact::Lact, Group};
 #[cfg(target_os = "none")]
 const ALARM_CPU_INT: u8 = 9;
 
-/// The APB clock, in MHz. Fixed on this chip in every configuration FlintOS
-/// builds — there is no dynamic frequency scaling (#38). Derived from the one
-/// authority (`soc_esp32::APB_HZ`) rather than restated, so the two cannot
-/// drift; a future arch takes this from its own SoC.
-#[cfg(target_os = "none")]
-const APB_MHZ: u32 = soc_esp32::APB_HZ / 1_000_000;
-
 /// The timer, once `init` has run.
 ///
 /// A `static mut` on the same argument [`crate::clock`] makes: written exactly
@@ -68,7 +68,7 @@ const APB_MHZ: u32 = soc_esp32::APB_HZ / 1_000_000;
 /// trap context, and a reader spinning on a lock held by the task it
 /// interrupted deadlocks that core.
 #[cfg(target_os = "none")]
-static mut ALARM: Option<Lact> = None;
+static mut ALARM: Option<SelectedTimer> = None;
 
 /// What to call when the alarm fires. `None` until [`set_handler`].
 static HANDLER: crate::smp::Spinlock<Option<fn()>> = crate::smp::Spinlock::new(None);
@@ -84,22 +84,18 @@ static HANDLER: crate::smp::Spinlock<Option<fn()>> = crate::smp::Spinlock::new(N
 /// [`ALARM_CPU_INT`]. Call once, from boot.
 #[cfg(target_os = "none")]
 pub unsafe fn init() -> bool {
-    let Some(lact) = (unsafe { Lact::new(Group::Timg0, APB_MHZ) }) else {
+    let Some(timer) = (unsafe { SelectedTimer::claim() }) else {
         return false;
     };
-    lact.enable_interrupt();
-    unsafe { ALARM = Some(lact) };
+    timer.enable_interrupt();
+    let source = timer.interrupt_source();
+    unsafe { ALARM = Some(timer) };
 
     // IRAM-safe: `on_alarm` and everything it calls is in IRAM, so the alarm
     // survives a flash operation. A radio timer that stopped for the tens of
     // milliseconds of a sector erase would drop the link.
-    let routed = unsafe {
-        crate::interrupt::connect_iram_safe_at(
-            esp32_timg::lact::TG0_LACT_INTR_SOURCE,
-            ALARM_CPU_INT,
-            on_alarm,
-        )
-    };
+    let routed =
+        unsafe { crate::interrupt::connect_iram_safe_at(source, ALARM_CPU_INT, on_alarm) };
     if routed.is_err() {
         unsafe { ALARM = None };
         return false;
@@ -180,8 +176,7 @@ pub fn set_handler(f: Option<fn()>) -> Option<fn()> {
 pub fn set_after_us(after_us: u64) {
     #[cfg(target_os = "none")]
     if let Some(t) = unsafe { (*core::ptr::addr_of!(ALARM)).as_ref() } {
-        let now = t.now_ticks();
-        t.set_alarm(now + after_us * esp32_timg::lact::TICKS_PER_US);
+        t.set_after_us(after_us);
     }
     #[cfg(not(target_os = "none"))]
     let _ = after_us;
@@ -204,6 +199,63 @@ pub fn is_available() -> bool {
     #[cfg(not(target_os = "none"))]
     {
         false
+    }
+}
+
+/// The ESP32's compare timer behind the [`CompareTimer`] seam: TG0's LAC counter
+/// (see the module header for why this one). Kernel-local, not in `esp32-timg`,
+/// because claiming it needs the APB frequency from `soc_esp32` — a Layer-0 fact
+/// a Layer-1 driver may not reach — exactly as [`crate::clock`]'s ESP32 body is.
+#[cfg(target_os = "none")]
+mod esp32 {
+    use esp32_timg::lact::{Lact, TG0_LACT_INTR_SOURCE, TICKS_PER_US};
+    use esp32_timg::Group;
+    use hal::timer::CompareTimer;
+
+    /// Wraps the LAC timer so it speaks the portable seam.
+    pub struct EspAlarmTimer(Lact);
+
+    impl CompareTimer for EspAlarmTimer {
+        unsafe fn claim() -> Option<Self> {
+            // APB in MHz from the one authority; the LAC divider needs it. There
+            // is no dynamic frequency scaling on this chip (#38), so it is fixed.
+            let apb_mhz = soc_esp32::APB_HZ / 1_000_000;
+            unsafe { Lact::new(Group::Timg0, apb_mhz) }.map(EspAlarmTimer)
+        }
+
+        fn interrupt_source(&self) -> u8 {
+            TG0_LACT_INTR_SOURCE
+        }
+
+        fn enable_interrupt(&self) {
+            self.0.enable_interrupt();
+        }
+
+        fn set_after_us(&self, after_us: u64) {
+            // Absolute deadline in ticks, exactly as before the seam: sample the
+            // counter and add the delay converted to the LAC's ticks.
+            let now = self.0.now_ticks();
+            self.0.set_alarm(now + after_us * TICKS_PER_US);
+        }
+
+        // `clear_alarm` and `clear_interrupt` run from the IRAM-safe `on_alarm`
+        // handler while a flash op has the cache off, so they must be in RAM
+        // rather than a flash-resident forwarder. `#[inline]` folds them into
+        // the IRAM caller; the `.iram1.alarm` section is belt-and-suspenders in
+        // case the inliner declines, since this path only materialises once the
+        // Wi-Fi blob arms a timer and cannot be checked in a probe build. The
+        // LAC methods underneath are already in `.iram1.lact`.
+        #[inline]
+        #[link_section = ".iram1.alarm"]
+        fn clear_alarm(&self) {
+            self.0.clear_alarm();
+        }
+
+        #[inline]
+        #[link_section = ".iram1.alarm"]
+        fn clear_interrupt(&self) {
+            self.0.clear_interrupt();
+        }
     }
 }
 

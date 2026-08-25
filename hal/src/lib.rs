@@ -29,6 +29,7 @@ pub mod smp;
 pub mod soc;
 pub mod stream;
 pub mod tick;
+pub mod timer;
 pub mod types;
 pub mod wifi;
 
