@@ -78,6 +78,13 @@ extern "C" fn _flint_armv6m_sio_irq(irq: u32) {
 }
 
 #[no_mangle]
+extern "C" fn _flint_armv6m_external_irq(irq: u32) {
+    if irq < 32 {
+        crate::interrupt::dispatch(irq as u8);
+    }
+}
+
+#[no_mangle]
 extern "C" fn _flint_armv6m_request_reschedule(core: u32) -> bool {
     if core >= u32::from(crate::smp::cores()) || core == u32::from(crate::smp::current_core().0) {
         return false;

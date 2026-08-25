@@ -55,7 +55,7 @@ and open work lives in [issues] — the source of truth.
 | Logging, metrics, panic capture | ✅ | ✅ |
 | Stack high-water marks | ✅ | ✅ |
 | Second core · task pinning | ✅ | ✅ |
-| DMA | ✅ | ⛔ |
+| DMA | ✅ | ✅ |
 
 ### Peripherals
 

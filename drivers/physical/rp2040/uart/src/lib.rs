@@ -4,15 +4,17 @@
 
 #![no_std]
 
+pub mod dma;
+
 use hal::bus::{
     BusConfig, BusError, BusResult, BusSpeed, UartConfig, UartDataBits, UartParity, UartStopBits,
 };
 use hal::pinmux::{PinConfig, PinMux, PinPull, Signal};
 use hal::stream::{ByteStream, StreamErrors};
 use soc_rp2040::{
-    RESET_UART0, RESET_UART1, Rp2040PinMux, XOSC_HZ,
     ctrl::{self, UartPort},
-    enable_peripheral_clock, uart_instance, unreset,
+    enable_peripheral_clock, uart_instance, unreset, Rp2040PinMux, RESET_UART0, RESET_UART1,
+    XOSC_HZ,
 };
 
 const DR: u32 = 0x00;
@@ -24,12 +26,15 @@ const LCR_H: u32 = 0x2c;
 const CR: u32 = 0x30;
 const IMSC: u32 = 0x38;
 const ICR: u32 = 0x44;
+const DMACR: u32 = 0x48;
 const FR_RXFE: u32 = 1 << 4;
 const FR_TXFF: u32 = 1 << 5;
 const CR_UARTEN: u32 = 1;
 const CR_LBE: u32 = 1 << 7;
 const CR_TXE: u32 = 1 << 8;
 const CR_RXE: u32 = 1 << 9;
+const DMACR_RXDMAE: u32 = 1;
+const DMACR_TXDMAE: u32 = 1 << 1;
 
 pub struct Rp2040Uart {
     base: u32,
@@ -213,8 +218,8 @@ mod tests {
     #[test]
     fn register_offsets_match_pl011_map() {
         assert_eq!(
-            (DR, FR, IBRD, FBRD, LCR_H, CR),
-            (0, 0x18, 0x24, 0x28, 0x2c, 0x30)
+            (DR, FR, IBRD, FBRD, LCR_H, CR, DMACR),
+            (0, 0x18, 0x24, 0x28, 0x2c, 0x30, 0x48)
         );
     }
 }

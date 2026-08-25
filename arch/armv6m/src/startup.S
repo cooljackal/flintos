@@ -25,12 +25,12 @@ _vector_table_start:
     .word PendSV
     .word SysTick
     .rept 15
-    .word DefaultHandler
+    .word ExternalIrq
     .endr
     .word SioIrq15
     .word SioIrq16
     .rept 15
-    .word DefaultHandler
+    .word ExternalIrq
     .endr
 
 .section .text.Reset, "ax", %progbits
@@ -207,6 +207,15 @@ PendSV:
 SysTick:
     push {r0, lr}
     bl _flint_armv6m_systick
+    pop {r0, pc}
+
+.thumb_func
+.global ExternalIrq
+ExternalIrq:
+    push {r0, lr}
+    mrs r0, ipsr
+    subs r0, #16
+    bl _flint_armv6m_external_irq
     pop {r0, pc}
 
 .thumb_func

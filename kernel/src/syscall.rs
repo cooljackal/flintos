@@ -232,6 +232,15 @@ pub fn _flint_sys_dma_begin(
     crate::dma_broker::begin(handle)
 }
 
+/// Begin one full-duplex transfer over two owned buffers.
+#[no_mangle]
+pub fn _flint_sys_dma_begin_pair(
+    source: &hal::DmaHandle,
+    destination: &hal::DmaHandle,
+) -> Result<hal::DmaTransferId, hal::DmaError> {
+    crate::dma_broker::begin_pair(source, destination)
+}
+
 /// Block until `id` completes or `timeout_ms` elapses. Backs
 /// [`api::dma::await_transfer`].
 #[no_mangle]

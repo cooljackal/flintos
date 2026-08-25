@@ -11,7 +11,7 @@ param(
     [string]$Uf2Path,
     [Parameter(Mandatory)]
     [string]$BootselSerial,
-    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics')]
+    [ValidateSet('acceptance', 'watchdog-reset', 'diagnostics', 'dma')]
     [string]$Suite = 'acceptance',
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 30,
@@ -80,6 +80,59 @@ function Enter-BootselViaWatchdog {
         & $ProbeRsPath write --chip RP2040 --probe $probe b32 $write[0] $write[1] | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "could not arm BOOTSEL recovery through SWD" }
     }
+}
+
+if ($Suite -eq 'dma') {
+    if (-not $ProbeSerial) { throw '-ProbeSerial is required for the DMA suite' }
+    if (-not $SerialPort) { throw '-SerialPort is required for the DMA suite' }
+
+    $sysroot = (& rustc --print sysroot).Trim()
+    $llvmNm = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
+    $statusLine = @(& $llvmNm -n $elf | Where-Object { $_ -match ' FLINT_RP2040_TEST_STATUS$' })
+    if ($statusLine.Count -ne 1) { throw 'could not locate FLINT_RP2040_TEST_STATUS in the ELF' }
+    $statusAddress = '0x' + (($statusLine[0] -split '\s+')[0])
+    $probe = "2e8a:000c:$ProbeSerial"
+    & $ProbeRsPath write --chip RP2040 --probe $probe b32 $statusAddress 0 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not clear the DMA test status through SWD' }
+
+    $port = [IO.Ports.SerialPort]::new($SerialPort, 115200, 'None', 8, 'One')
+    $capture = ''
+    $passed = $false
+    try {
+        $port.Open()
+        $port.DtrEnable = $true
+        Start-Sleep -Milliseconds 200
+        & $ProbeRsPath download --chip RP2040 --probe $probe --protocol swd `
+            --non-interactive --speed 100 --preverify --verify --reset $elf | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'could not download the DMA test image through SWD' }
+
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            $capture += $port.ReadExisting()
+            $status = (& $ProbeRsPath read --chip RP2040 --probe $probe `
+                b32 $statusAddress 1 2>&1) -join "`n"
+            if ($LASTEXITCODE -eq 0 -and $status -match ':\s+0000600d') {
+                $passed = $true
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        Start-Sleep -Milliseconds 200
+        $capture += $port.ReadExisting()
+    } finally {
+        if ($port.IsOpen) { $port.Dispose() }
+    }
+    if (-not $passed) { throw 'the DMA image did not publish its passing SWD status' }
+    if (-not $capture.Contains('ARM DMA PASS rounds=100 bytes=512 timeout=ok')) {
+        throw 'UART output is missing the DMA pass marker'
+    }
+    [pscustomobject]@{
+        state = 'passed'
+        evidence = 'dma-timeout-recovery-and-100x512-byte-uart-loopback'
+        probe_serial = $ProbeSerial
+        transport = 'debugprobe-swd-download+swd-status+uart'
+    } | ConvertTo-Json -Compress
+    exit 0
 }
 
 if ($Uf2Path -and $Suite -eq 'diagnostics') {

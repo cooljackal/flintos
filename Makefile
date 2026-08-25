@@ -711,6 +711,15 @@ test-arm-diagnostics: ## Prove ARM logging, metrics, and retained panic recovery
 		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
 		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite diagnostics -TimeoutSeconds 30
 
+.PHONY: test-arm-dma
+test-arm-dma: ## Prove RP2040 DMA timeout cleanup and UART1 loopback through SWD
+	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/dma-smoke"
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
+		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite dma -TimeoutSeconds 20
+
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
 #

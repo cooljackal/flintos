@@ -139,6 +139,24 @@ pub fn begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError> {
     ))
 }
 
+/// Begin one transfer spanning two owned buffers.
+///
+/// Full-duplex engines read one broker allocation while writing another. Both
+/// ownership checks happen before the id is minted, so a driver cannot start
+/// half of a transfer over another task's memory.
+pub fn begin_pair(
+    source: &DmaHandle,
+    destination: &DmaHandle,
+) -> Result<DmaTransferId, DmaError> {
+    let current = crate::scheduler::with(|s| s.current());
+    if source.owner_task() != current || destination.owner_task() != current {
+        return Err(DmaError::NotOwner);
+    }
+    Ok(DmaTransferId::from_raw(
+        NEXT_TRANSFER_ID.fetch_add(1, Ordering::SeqCst),
+    ))
+}
+
 /// Signal that `id` has finished. **Call from a driver's top-half.**
 ///
 /// The queue's ISR path, which wakes a blocked receiver. A full queue drops
@@ -296,5 +314,32 @@ mod tests {
         let a = begin(&h).unwrap();
         let b = begin(&h).unwrap();
         assert_ne!(a, b, "two transfers were given the same id");
+    }
+
+    #[test]
+    fn a_pair_requires_both_buffers_to_belong_to_the_caller() {
+        let _k = testsupport::lock();
+        rewind();
+        let source = alloc(32).unwrap();
+        let destination = alloc(32).unwrap();
+        let foreign_source = DmaHandle::new(
+            source.addr(),
+            source.size(),
+            source.owner_task().wrapping_add(1),
+        );
+        let foreign_destination = DmaHandle::new(
+            destination.addr(),
+            destination.size(),
+            destination.owner_task().wrapping_add(1),
+        );
+        assert_eq!(
+            begin_pair(&foreign_source, &destination).unwrap_err(),
+            DmaError::NotOwner
+        );
+        assert_eq!(
+            begin_pair(&source, &foreign_destination).unwrap_err(),
+            DmaError::NotOwner
+        );
+        assert!(begin_pair(&source, &destination).is_ok());
     }
 }

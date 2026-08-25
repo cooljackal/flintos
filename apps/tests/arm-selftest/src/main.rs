@@ -8,7 +8,8 @@
     any(
         feature = "watchdog-reset",
         feature = "reset-recovery-smoke",
-        feature = "diagnostics-smoke"
+        feature = "diagnostics-smoke",
+        feature = "dma-smoke"
     ),
     allow(dead_code)
 )]
@@ -230,6 +231,8 @@ unsafe extern "C" {
 }
 
 fn main() {
+    #[cfg(feature = "dma-smoke")]
+    task::spawn("dma", dma_test, Priority::Normal(0), 4096).expect("DMA test task");
     #[cfg(feature = "diagnostics-smoke")]
     {
         if kernel::debug::panic::previous_was_reported() {
@@ -267,7 +270,8 @@ fn main() {
         not(feature = "expected-hardfault"),
         not(feature = "watchdog-reset"),
         not(feature = "reset-recovery-smoke"),
-        not(feature = "diagnostics-smoke")
+        not(feature = "diagnostics-smoke"),
+        not(feature = "dma-smoke")
     ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
@@ -283,6 +287,76 @@ fn main() {
         }
         task::spawn_on(0, "tests", tests, Priority::Normal(2), 4096).expect("test task");
     }
+}
+
+#[cfg(feature = "dma-smoke")]
+fn dma_irq() {
+    if let Some(id) = rp2040_uart::Rp2040Uart::take_pending_dma() {
+        kernel::dma_broker::signal_complete(id);
+    }
+}
+
+#[cfg(feature = "dma-smoke")]
+fn dma_test() {
+    const BYTES: usize = 512;
+    const ROUNDS: u32 = 100;
+
+    if unsafe {
+        kernel::interrupt::connect_at(soc_rp2040::IRQ_DMA_0, soc_rp2040::IRQ_DMA_0, dma_irq)
+    }
+    .is_err()
+    {
+        fail(25);
+    }
+
+    let Ok(uart) = rp2040_uart::Rp2040Uart::open(&kernel::board::active::SELFTEST_UART) else {
+        fail(25);
+    };
+    let Ok(tx_handle) = api::dma::alloc(BYTES as u32) else {
+        fail(25);
+    };
+    let Ok(rx_handle) = api::dma::alloc(BYTES as u32) else {
+        fail(25);
+    };
+    let tx = unsafe { core::slice::from_raw_parts_mut(tx_handle.addr() as *mut u8, BYTES) };
+    let rx = unsafe { core::slice::from_raw_parts_mut(rx_handle.addr() as *mut u8, BYTES) };
+
+    uart.set_loopback(false);
+    tx[..16].fill(0xa5);
+    rx[..16].fill(0);
+    let Ok(timeout_transfer) = uart.exchange_dma(&tx_handle, &rx_handle, 16) else {
+        fail(26);
+    };
+    if !matches!(
+        timeout_transfer.await_done(),
+        Err(hal::Error::Dma(hal::DmaError::Timeout))
+    ) {
+        fail(26);
+    }
+
+    uart.set_loopback(true);
+    for round in 0..ROUNDS {
+        for (index, byte) in tx.iter_mut().enumerate() {
+            *byte = (index as u8)
+                .wrapping_mul(37)
+                .wrapping_add(round as u8)
+                .wrapping_add(11);
+        }
+        rx.fill(0);
+        let Ok(transfer) = uart.exchange_dma(&tx_handle, &rx_handle, BYTES) else {
+            fail(27);
+        };
+        if transfer.await_done().is_err() || rx != tx {
+            fail(28);
+        }
+    }
+    api::log_info!(
+        "[FLINT] ARM DMA PASS rounds={} bytes={} timeout=ok",
+        ROUNDS,
+        BYTES
+    );
+    task::sleep_ms(250);
+    unsafe { soc_rp2040::test_status::pass_live() }
 }
 
 #[cfg(feature = "diagnostics-smoke")]

@@ -48,6 +48,20 @@ pub fn begin(handle: &DmaHandle) -> Result<DmaTransferId, DmaError> {
     unsafe { _flint_sys_dma_begin(handle) }
 }
 
+/// Begin one full-duplex transfer over two buffers owned by the calling task.
+pub fn begin_pair(
+    source: &DmaHandle,
+    destination: &DmaHandle,
+) -> Result<DmaTransferId, DmaError> {
+    extern "Rust" {
+        fn _flint_sys_dma_begin_pair(
+            source: &DmaHandle,
+            destination: &DmaHandle,
+        ) -> Result<DmaTransferId, DmaError>;
+    }
+    unsafe { _flint_sys_dma_begin_pair(source, destination) }
+}
+
 /// Block until `id` completes, or `timeout_ms` passes.
 ///
 /// A real block: the task is descheduled and woken by the transfer's

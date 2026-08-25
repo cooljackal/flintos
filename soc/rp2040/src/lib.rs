@@ -10,6 +10,7 @@
 
 pub mod boot2;
 pub mod ctrl;
+pub mod dma;
 pub mod multicore;
 pub mod pinmux;
 pub mod test_status;
@@ -31,6 +32,7 @@ pub const SPI0_BASE: u32 = 0x4003_C000;
 pub const I2C0_BASE: u32 = 0x4004_4000;
 pub const SIO_BASE: u32 = 0xD000_0000;
 pub const RESETS_BASE: u32 = 0x4000_C000;
+pub const DMA_BASE: u32 = 0x5000_0000;
 
 /// Release peripherals from reset through the atomic clear alias.
 ///
@@ -45,6 +47,7 @@ pub unsafe fn unreset(mask: u32) {
 }
 
 pub const RESET_IO_BANK0: u32 = 1 << 5;
+pub const RESET_DMA: u32 = 1 << 2;
 pub const RESET_PADS_BANK0: u32 = 1 << 8;
 pub const RESET_UART0: u32 = 1 << 22;
 pub const RESET_UART1: u32 = 1 << 23;
@@ -108,6 +111,8 @@ fn wait_for_bits(register: *const u32, mask: u32) -> bool {
 pub const XOSC_HZ: u32 = 12_000_000;
 
 pub const IRQ_IO_BANK0: u8 = 13;
+pub const IRQ_DMA_0: u8 = 11;
+pub const IRQ_DMA_1: u8 = 12;
 pub const IRQ_SPI0: u8 = 18;
 pub const IRQ_UART0: u8 = 20;
 pub const IRQ_UART1: u8 = 21;

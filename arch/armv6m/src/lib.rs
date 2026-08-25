@@ -353,8 +353,10 @@ mod tests {
         assert_eq!(entries[17], "SioIrq15");
         assert_eq!(entries[18], "SioIrq16");
         assert!(table.contains(
-            ".rept 15\n    .word DefaultHandler\n    .endr\n    .word SioIrq15\n    .word SioIrq16"
+            ".rept 15\n    .word ExternalIrq\n    .endr\n    .word SioIrq15\n    .word SioIrq16"
         ));
+        assert_eq!(table.matches(".word ExternalIrq").count(), 2);
+        assert!(startup.contains("bl _flint_armv6m_external_irq"));
     }
 
     #[test]
