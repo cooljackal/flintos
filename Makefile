@@ -571,14 +571,16 @@ check-all: ## Full check including Xtensa and ARM architectures
 			-p $$a --no-default-features \
 			--features "kernel/$(CORE2_BOARD),kernel/debug-level-1" || exit 1; \
 	done
-	@echo "== arm-selftest (board-wio-rp2040-mini)"
 	@# Plain `cargo`, not $(CARGO): the ARM port builds on the stable toolchain
 	@# with a prebuilt core, so this needs `rustup target add $(ARM_TARGET)`
 	@# on that toolchain rather than build-std. ci.yml installs it.
-	cargo check --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "kernel/board-wio-rp2040-mini,kernel/debug-level-1"
-	cargo check --target $(ARM_TARGET) -p usb-selftest --no-default-features \
-		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1"
+	@for b in $(ARM_BOARDS); do \
+		for a in arm-selftest usb-selftest; do \
+			echo "== $$a ($$b)"; \
+			cargo check --target $(ARM_TARGET) -p $$a --no-default-features \
+				--features "kernel/$$b,kernel/debug-level-1" || exit 1; \
+		done; \
+	done
 
 # Feature combinations that gate real code, and which nothing else builds.
 #
@@ -650,7 +652,8 @@ endif
 # for the board that is selected, so testing the default board alone leaves
 # every other manifest unchecked -- which is how a pin or a panel layout stays
 # wrong until someone flashes it.
-BOARDS := board-esp32-wrover board-esp32-devkitc board-m5-atom-lite board-m5-atom-matrix board-m5-core2
+ARM_BOARDS := $(RP2040_BOARDS)
+BOARDS := board-esp32-wrover board-esp32-devkitc board-m5-atom-lite board-m5-atom-matrix board-m5-core2 $(ARM_BOARDS)
 
 .PHONY: test-boards
 test-boards: ## Run each board manifest's invariant tests, one board at a time

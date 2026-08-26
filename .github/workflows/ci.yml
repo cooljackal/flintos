@@ -270,21 +270,22 @@ jobs:
           . "$HOME/export-esp.sh"
           # Every application names a board, because none is a default any more.
           # blink, imu and pwm drive hardware only the Atoms declare and refuse
-          # any other manifest; backlight and lcd likewise need the Core2 (its
-          # PMIC and SPI display); arm-selftest is the RP2040 suite and declares
-          # only the Wio, so it builds for thumbv6m on the stable toolchain
-          # (installed above) instead of for Xtensa; the rest build against the
+          # any other manifest; backlight, lcd and touch need the Core2.
+          # arm-selftest and usb-selftest are RP2040 suites, built for thumbv6m
+          # on the stable toolchain (installed above); check-all also checks
+          # both suites against both ARM boards. The rest build against the
           # board the on-target suite is verified on.
           status=0
           for app in apps/examples/*/ apps/tests/*/; do
             name=$(basename "$app")
             case "$name" in
               blink|imu|pwm) board=board-m5-atom-matrix ;;
-              backlight|lcd) board=board-m5-core2 ;;
+              backlight|lcd|touch) board=board-m5-core2 ;;
               arm-selftest)  board=board-wio-rp2040-mini ;;
+              usb-selftest)  board=board-raspberry-pi-pico ;;
               *)             board=board-esp32-devkitc ;;
             esac
-            if [ "$name" = arm-selftest ]; then
+            if [ "$name" = arm-selftest ] || [ "$name" = usb-selftest ]; then
               build=(cargo build --target thumbv6m-none-eabi)
             else
               build=(cargo +esp build --target xtensa-esp32-none-elf

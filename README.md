@@ -147,7 +147,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 
 | Check | Status |
 |---|---|
-| Host unit tests | ✅ 1,019 passing, kernel included — `make test-host` |
+| Host unit tests | ✅ 1,046 passing, kernel included — `make test-host` |
 | On-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
 | Layer boundary + package naming | ✅ enforced in CI |
 | Image size, per region | `make size` |

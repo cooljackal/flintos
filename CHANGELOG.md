@@ -21,6 +21,28 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Added
 
+- **RP2040 boards and owned peripheral drivers** (#125, #143, #168–#172).
+  Select `BOARD=board-raspberry-pi-pico` or `board-wio-rp2040-mini`; applications
+  keep ABI 2 and use board construction rather than naming physical drivers.
+  UART/GPIO, DMA, PWM/timers, ADC, best-effort entropy, I²C/SPI and flash/KV have
+  Pico acceptance coverage. `board::expansion_i2c()` / `expansion_spi()` return
+  the existing portable bus wrappers; initialize once during board setup.
+  Transfers are polled, SPI chip-select is caller-managed, and address-only
+  I²C scans are unsupported. See [bus acceptance](doc/rp2040-bus-acceptance.md).
+- **Native RP2040 USB CDC and development reset/update transport** (#172).
+  Enable `board/native-usb`, use `board::usb_init(UsbIdentity)`, and service the
+  returned `UsbSerial` at least every millisecond from a boot-core task. Reset
+  permission is opt-in; act on an acknowledged request through `board::usb_reset`
+  in task context. `hal::usb::DeviceController` (also `api::usb`) separates packet
+  hardware from the portable device layer. USB CDC uses `ByteStream`, where a
+  zero write can mean disconnected as well as full. USB selects a configured
+  125 MHz CPU profile and reserves GPIO15/16 on B0/B1 silicon; it cannot share
+  GP16 with expansion SPI. USB host and other classes remain unimplemented.
+  See [USB acceptance](doc/rp2040-usb-acceptance.md) for identity and safety limits.
+- **`api::dma::begin_pair`** checks ownership of both transfer buffers before
+  assigning a completion ID. It does not program hardware; the peripheral
+  driver still owns that operation.
+
 - **`api::sync::Once<T>` and `api::sync::CsCell<T>`** (#104). `Once` is a
   write-once static: `init` returns a `&'static T` and panics on a second
   init; `get` and `get_or_try_init` for the other shapes. `CsCell::with`
@@ -118,6 +140,15 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Breaking
 
+- **RP2040 images reserve the last 16 KiB of their 2 MiB flash for NVS** (#171).
+  Keep firmware/custom partitions out of offsets `0x1fc000..0x200000` and follow
+  the [flash acceptance contract](doc/rp2040-flash-acceptance.md). The destructive
+  fixture erases that region; normal image installation does not migrate old
+  user data. `kernel::nvs::FlashStorage::nvs()` is now runtime-only, not `const`:
+  move any constant construction into initialization. `board::nvs_flash()` owns
+  driver selection and can refuse an open; duplicate RP2040 opens are rejected.
+  ESP32 retains its existing partition and physical flash implementation.
+
 - **ABI 2. `BusConfig`'s variants are now named structs, and `PhysicalBus`
   split into `PhysicalTransfer` (`&self` traffic) + `PhysicalBus` (`&mut init`).**
   An application that builds a bus config or names the physical trait must
@@ -191,6 +222,20 @@ A kernel that provides a different one refuses to build and points here.
   work.
 
 ### Fixed
+
+- **ARM integration gates** (#149): `make test-host` includes Pico and Wio
+  manifests; `make check-all` checks both ARM test applications against both
+  boards. CI links `usb-selftest` for ARM and `touch` for its required Core2.
+- **Remote task publication and timer scanning**: spawning now notifies the
+  destination core after publishing the complete context; timer processing
+  snapshots due callbacks under one lock and invokes them outside that lock.
+  Host tests and RP2040 task/ISR fixtures cover these shared kernel paths.
+- **RP2040 watchdog routing and retained panic reporting**: panic recovery
+  uses the SoC's `hal::reset::PanicRecovery` contract; the unsupported default
+  leaves ESP32 halted as before. Console writes give up after bounded stalled
+  polling. Watchdog fault fixtures prove explicit recovery paths, not continuous
+  supervision of every application. CPU measurement and MPU isolation remain
+  unimplemented; see the [capability audit](doc/rp2040-capability-audit.md).
 
 - **A register read over SPI returned one byte, whatever was asked for**
   (#97). `BusHandle::read_reg` and the drivers' `transfer(&[reg], buf)`
