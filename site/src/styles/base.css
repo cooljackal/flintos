@@ -30,11 +30,21 @@
 	font-size: var(--sl-text-body-lg, 1.125rem);
 	line-height: 1.5;
 }
-/* The hero image (the spark mark): cap its size so it reads as a logo, not art. */
+/* The hero image is a terminal, not a small logo — let it fill its grid column
+   (Starlight otherwise caps hero images at 12rem) up to a comfortable size. */
 .hero > img,
 .hero .hero-html {
-	max-width: 12rem;
+	width: 100%;
+	max-width: 36rem;
 	margin-inline: auto;
+}
+/* Give the terminal a bit more of the two-column hero than Starlight's default
+   (~64/36), so it reads at a comfortable size. Only in the wide, side-by-side
+   layout — the single-column stack below Starlight's breakpoint is untouched. */
+@media (min-width: 50rem) {
+	.hero {
+		grid-template-columns: 11fr 10fr;
+	}
 }
 /* A touch more air under the hero before the card grid. */
 .hero + .sl-markdown-content {
