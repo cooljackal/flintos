@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "usb-selftest"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Board-owned USB echo, fresh-run proof and recovery fixture"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+board = { path = "../../../board", default-features = false, features = ["native-usb"] }
+[build-dependencies]
+build = { path = "../../../tools/build" }

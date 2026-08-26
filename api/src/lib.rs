@@ -69,6 +69,9 @@ pub use hal::bus::{
 pub use hal::stream;
 pub use hal::stream::{ByteStream, StreamErrors};
 
+/// USB packet-controller contract for portable device/class transports.
+pub use hal::usb;
+
 /// Display transport contract, re-exported from `hal::display` the same way
 /// `bus` and `stream` are — so a Layer-3 panel driver names it through `api`.
 pub use hal::display;

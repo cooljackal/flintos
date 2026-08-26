@@ -32,6 +32,7 @@ pub mod stream;
 pub mod tick;
 pub mod timer;
 pub mod types;
+pub mod usb;
 pub mod wifi;
 
 pub use arch::{Architecture, TaskContext};

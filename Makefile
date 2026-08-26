@@ -495,7 +495,7 @@ docs: ## Build rustdoc locally (a doc-comment sanity check; the site is `apidoc`
 # Output lands in a git-ignored content dir; it is a build artifact regenerated
 # in CI before the site build, never committed.
 APIDOC_OUT     := site/src/content/docs/api
-API_SELECT     := $(HOST_SELECT) --exclude build --exclude size --exclude apidoc
+API_SELECT     := $(HOST_SELECT) --exclude build --exclude size --exclude apidoc --exclude usb-control
 # An isolated target dir: the JSON pass and the ordinary embedded build must not
 # share a cache, or the other's artifacts (built with a different core) leak in.
 API_TARGET_DIR := target/apidoc
@@ -555,7 +555,7 @@ CORE2_BOARD         := board-m5-core2
 .PHONY: check-all
 check-all: ## Full check including Xtensa and ARM architectures
 	$(CARGO) check --target $(XTENSA_TARGET) -Z build-std=core,compiler_builtins \
-		--workspace --exclude build --exclude size --exclude apidoc \
+		--workspace --exclude build --exclude size --exclude apidoc --exclude usb-control \
 		$(addprefix --exclude ,$(BOARD_SPECIFIC_APPS)) \
 		$(addprefix --exclude ,$(CORE2_APPS)) \
 		$(XTENSA_BOARD_FEATURES)
@@ -577,6 +577,8 @@ check-all: ## Full check including Xtensa and ARM architectures
 	@# on that toolchain rather than build-std. ci.yml installs it.
 	cargo check --target $(ARM_TARGET) -p arm-selftest --no-default-features \
 		--features "kernel/board-wio-rp2040-mini,kernel/debug-level-1"
+	cargo check --target $(ARM_TARGET) -p usb-selftest --no-default-features \
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1"
 
 # Feature combinations that gate real code, and which nothing else builds.
 #
@@ -640,6 +642,9 @@ check-names: ## Enforce the package naming and layout convention
 .PHONY: test-host
 test-host: test-boards ## Run host-side unit tests (every board manifest included)
 	cargo test $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
+ifdef WINDOWS
+	pwsh -NoProfile -File tools/rp2040-usb-selftest.ps1
+endif
 
 # Every board this tree can build for. A manifest's invariant tests only run
 # for the board that is selected, so testing the default board alone leaves
@@ -672,6 +677,20 @@ test-target: ## Flash and run the on-target self-tests (needs a board attached)
 ARM_PROBE_SERIAL   ?= 4150325537323116
 ARM_BOOTSEL_SERIAL ?= E0C912D24340
 ARM_UART_PORT      ?= COM9
+ARM_USB_LOCATION   ?=
+ARM_USB_CYCLES     ?= 1
+ARM_USB_IMAGE_ID   ?= 17200001
+
+.PHONY: test-arm-usb
+test-arm-usb: ## Prove native Pico USB and unattended recovery; requires ARM_USB_LOCATION
+	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }
+	FLINT_USB_IMAGE_ID=$(ARM_USB_IMAGE_ID) $(MAKE) build APP=usb-selftest BOARD=board-raspberry-pi-pico
+	cargo build --target $(HOST_TARGET) -p usb-control
+	pwsh -NoProfile -File tools/rp2040-run-usb-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/usb-selftest \
+		-Uf2Path target/$(ARM_TARGET)/debug/usb-selftest.uf2 -ImageId $(ARM_USB_IMAGE_ID) \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
+		-LocationPath "$(ARM_USB_LOCATION)" -Cycles $(ARM_USB_CYCLES) -FaultTests
 
 .PHONY: test-arm-target
 test-arm-target: ## Build, flash, and judge ARM tests through ROM BOOTSEL

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "usb-control"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Topology-bound native USB control acceptance and reset helper"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+[dependencies]
+nusb = "=0.2.7"

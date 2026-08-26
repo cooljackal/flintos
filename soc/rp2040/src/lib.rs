@@ -39,6 +39,34 @@ pub const ROSC_BASE: u32 = 0x4006_0000;
 pub const SIO_BASE: u32 = 0xD000_0000;
 pub const RESETS_BASE: u32 = 0x4000_C000;
 pub const DMA_BASE: u32 = 0x5000_0000;
+pub const USB_DPRAM_BASE: u32 = 0x5010_0000;
+pub const USB_REGS_BASE: u32 = 0x5011_0000;
+pub const IRQ_USBCTRL: u8 = 5;
+pub const RESET_USBCTRL: u32 = 1 << 24;
+
+/// Start the dedicated 48 MHz USB clock. CPU, UART, ADC and timer stay unchanged.
+/// Pico SDK hardware_clocks defaults: 12 MHz * 100 / 5 / 5 = 48 MHz.
+/// # Safety
+/// Call once while the USB controller is reset, with no other PLL_USB consumer.
+#[cfg(target_arch = "arm")]
+pub unsafe fn enable_usb_clock() -> bool {
+    const PLL: u32 = 0x4002_c000;
+    const PLL_RESET: u32 = 1 << 13;
+    let usb_ctrl = (CLOCKS_BASE + 0x54) as *mut u32;
+    usb_ctrl.write_volatile(0);
+    reset(PLL_RESET);
+    ((RESETS_BASE + 0x3000) as *mut u32).write_volatile(PLL_RESET);
+    if !wait_for_bits((RESETS_BASE + 8) as *const u32, PLL_RESET) { return false; }
+    (PLL as *mut u32).write_volatile(1); // Reference divider.
+    ((PLL + 8) as *mut u32).write_volatile(100); // SDK's 1200 MHz VCO, within specified range.
+    ((PLL + 4) as *mut u32).write_volatile(12); // DSM and post-divider powered down.
+    if !wait_for_bits(PLL as *const u32, 1 << 31) { return false; }
+    ((PLL + 12) as *mut u32).write_volatile((5 << 16) | (5 << 12));
+    ((PLL + 4) as *mut u32).write_volatile(4); // Integer mode, DSM powered down.
+    ((CLOCKS_BASE + 0x58) as *mut u32).write_volatile(1 << 8);
+    usb_ctrl.write_volatile(1 << 11); // AUX=PLL_USB, enable.
+    wait_for_bits((CLOCKS_BASE + 0x5c) as *const u32, 1)
+}
 
 /// Release peripherals from reset through the atomic clear alias.
 ///
@@ -73,19 +101,23 @@ pub const RESET_I2C1: u32 = 1 << 4;
 pub const RESET_UART0: u32 = 1 << 22;
 pub const RESET_UART1: u32 = 1 << 23;
 
-/// Select clk_sys for clk_peri and enable it.
+/// Keep peripherals on the 12 MHz crystal even when USB raises the CPU clock.
 pub fn enable_peripheral_clock() {
     #[cfg(target_arch = "arm")]
     unsafe {
-        CLK_PERI_CTRL.write_volatile(1 << 11);
+        const PERI_XOSC: u32 = (1 << 11) | (4 << 5);
+        if CLK_PERI_CTRL.read_volatile() != PERI_XOSC {
+            CLK_PERI_CTRL.write_volatile(0);
+            for _ in 0..16 { core::hint::spin_loop(); }
+            CLK_PERI_CTRL.write_volatile(PERI_XOSC);
+        }
     }
 }
 
 /// Select the crystal for `clk_adc` and enable the clock slice.
 ///
-/// The ADC's reset-done bit cannot rise while this clock is stopped. Flint's
-/// minimal clock bring-up does not configure the PLLs, so the 12 MHz crystal
-/// is the available documented auxiliary source.
+/// The ADC's reset-done bit cannot rise while this clock is stopped. Keep its
+/// 12 MHz crystal source independent of the optional USB/CPU PLL profile.
 pub fn enable_adc_clock() {
     #[cfg(target_arch = "arm")]
     unsafe {
@@ -152,8 +184,12 @@ fn wait_for_bits(register: *const u32, mask: u32) -> bool {
     false
 }
 
-/// Wio board crystal and the frequency selected for the first kernel boot.
+/// Crystal shared by the supported Wio RP2040 and Raspberry Pi Pico boards.
 pub const XOSC_HZ: u32 = 12_000_000;
+#[cfg(feature = "usb-clock")]
+pub const CPU_HZ: u32 = 125_000_000;
+#[cfg(not(feature = "usb-clock"))]
+pub const CPU_HZ: u32 = XOSC_HZ;
 
 pub const IRQ_IO_BANK0: u8 = 13;
 pub const IRQ_PWM_WRAP: u8 = 4;
@@ -202,7 +238,7 @@ impl hal::soc::SystemOnChip for Rp2040 {
     type Dma = Rp2040Dma;
 
     const DMA: Self::Dma = Rp2040Dma;
-    const DEFAULT_CPU_HZ: u32 = XOSC_HZ;
+    const DEFAULT_CPU_HZ: u32 = CPU_HZ;
     const APB_HZ: u32 = XOSC_HZ;
     const CAPABILITIES: hal::soc::SocCapabilities = hal::soc::SocCapabilities {
         cores: 2,
@@ -241,6 +277,26 @@ impl hal::soc::SystemOnChip for Rp2040 {
                 wait_for_bits(CLK_REF_SELECTED, 1 << 2),
                 "RP2040 clk_ref did not select XOSC"
             );
+            enable_peripheral_clock();
+            #[cfg(feature = "usb-clock")]
+            {
+                // E16 affects every RP2040 revision: missed USB status events
+                // at clk_sys <= clk_usb. SDK's 1500 MHz / 6 / 2 = 125 MHz.
+                const PLL: u32 = 0x4002_8000;
+                const MASK: u32 = 1 << 12;
+                reset(MASK);
+                ((RESETS_BASE + 0x3000) as *mut u32).write_volatile(MASK);
+                assert!(wait_for_bits((RESETS_BASE + 8) as *const u32, MASK));
+                (PLL as *mut u32).write_volatile(1);
+                ((PLL + 8) as *mut u32).write_volatile(125);
+                ((PLL + 4) as *mut u32).write_volatile(12);
+                assert!(wait_for_bits(PLL as *const u32, 1 << 31));
+                ((PLL + 12) as *mut u32).write_volatile((6 << 16) | (2 << 12));
+                ((PLL + 4) as *mut u32).write_volatile(4);
+                ((CLOCKS_BASE + 0x40) as *mut u32).write_volatile(1 << 8);
+                CLK_SYS_CTRL.write_volatile(1); // AUX=PLL_SYS, glitchless select.
+                assert!(wait_for_bits(CLK_SYS_SELECTED, 2));
+            }
         }
     }
 
@@ -302,10 +358,13 @@ mod tests {
     }
 
     #[test]
-    fn first_kernel_clock_is_the_wio_crystal_frequency() {
+    fn cpu_profile_keeps_peripherals_on_the_crystal() {
         use hal::soc::SystemOnChip;
-        assert_eq!(Rp2040::DEFAULT_CPU_HZ, XOSC_HZ);
+        assert_eq!(Rp2040::DEFAULT_CPU_HZ, CPU_HZ);
         assert_eq!(Rp2040::APB_HZ, XOSC_HZ);
+        if cfg!(feature = "usb-clock") {
+            assert!(core::hint::black_box(CPU_HZ) >= 52_800_000);
+        }
     }
 
     #[test]

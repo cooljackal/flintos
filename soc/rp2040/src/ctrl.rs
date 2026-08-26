@@ -62,6 +62,20 @@ pub fn release_uart(ctrl: UartCtrl) {
     UART_CLAIMS.fetch_and(mask, core::sync::atomic::Ordering::Release);
 }
 
+/// USB uses bit 7 of the peripheral ownership word; UARTs occupy bits 0/1.
+pub fn claim_usb() -> bool {
+    #[cfg(target_arch = "arm")]
+    { with_claims(|claims, _| { let free = *claims & 0x80 == 0; *claims |= 0x80; free }) }
+    #[cfg(not(target_arch = "arm"))]
+    { UART_CLAIMS.fetch_or(0x80, core::sync::atomic::Ordering::AcqRel) & 0x80 == 0 }
+}
+pub fn release_usb() {
+    #[cfg(target_arch = "arm")]
+    with_claims(|claims, _| *claims &= !0x80);
+    #[cfg(not(target_arch = "arm"))]
+    UART_CLAIMS.fetch_and(!0x80, core::sync::atomic::Ordering::Release);
+}
+
 pub fn claim_gpio(pin: u8) -> bool {
     if pin >= 30 {
         return false;

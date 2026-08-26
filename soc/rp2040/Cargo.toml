@@ -14,3 +14,7 @@ rust-version.workspace = true
 [dependencies]
 hal = { path = "../../hal" }
 
+[features]
+default = []
+# RP2040-E16: USB needs clk_sys > 1.1 * 48 MHz, before the tick is calibrated.
+usb-clock = []

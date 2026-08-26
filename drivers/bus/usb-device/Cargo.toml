@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "usb-device"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "Portable USB device control and CDC serial transport"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+[dependencies]
+api = { path = "../../../api" }

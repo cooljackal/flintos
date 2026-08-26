@@ -25,12 +25,12 @@
 //!
 //! | Traffic | Peripheral | The shape it wants |
 //! |---|---|---|
-//! | stream | UART | [`ByteStream`] — non-blocking byte counts, line errors |
+//! | stream | UART / USB CDC | [`ByteStream`] — non-blocking byte counts, line errors |
 //! | block | SD / SDIO | addressed 512-byte LBA sectors, not a byte payload |
 //! | audio | I²S | continuous ping-pong DMA, no per-call transaction |
 //! | timing | WS2812 / RMT | pulse-width symbols locked to a clock |
 //!
-//! Only the UART's `ByteStream` lives here today; the others are named so the
+//! UART and USB CDC share `ByteStream`; the others are named so the
 //! boundary is a decision on record, not a gap someone fills by reaching for
 //! `Bus` again. Reference kernels sometimes do reach — Linux hangs a tty
 //! discipline off a `uart_port`, Zephyr keeps `uart` entirely separate from its
@@ -59,7 +59,7 @@ impl StreamErrors {
     }
 }
 
-/// A byte-oriented, non-blocking stream: a UART, not an addressed bus.
+/// A byte-oriented, non-blocking stream: UART or USB CDC, not an addressed bus.
 ///
 /// [`write`](ByteStream::write) and [`read`](ByteStream::read) move as many
 /// bytes as fit or are waiting **right now** and return the count — the caller
@@ -68,7 +68,7 @@ impl StreamErrors {
 /// [`errors`](ByteStream::errors) rather than folded into a read count.
 pub trait ByteStream: Send + Sync {
     /// Write as many of `data` as fit in the transmit buffer now; return how
-    /// many were taken. `0` means the buffer is full — try again later.
+    /// many were taken. `0` means full or not connected — try again later.
     fn write(&self, data: &[u8]) -> usize;
 
     /// Read what has arrived into `buf`, up to its length; return the count.

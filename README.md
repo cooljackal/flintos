@@ -23,7 +23,7 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` →
 ## Status
 
 **Pre-alpha. Don't ship it.** FlintOS boots, schedules and preempts on real
-silicon — Xtensa (ESP32-WROOM, ESP32-PICO) and ARM (Wio RP2040 Mini) — but it
+silicon — Xtensa (ESP32-WROOM, ESP32-PICO) and ARM (Wio RP2040 Mini, Raspberry Pi Pico) — but it
 is young, most drivers are thin, and the API will change.
 
 Wi-Fi runs as a station: it scans, associates, and completes a WPA2-PSK
@@ -72,7 +72,7 @@ and open work lives in [issues] — the source of truth.
 | CAN (TWAI) † · I2S † | ✅ | ⛔ |
 | Wi-Fi · BLE | 🚧 | — |
 | Touch · SD/SDIO · Ethernet MAC | ⛔ | ⛔ |
-| USB | — | ⛔ |
+| USB | — | ✅ |
 
 † Verified on a DevKitC by an on-chip loopback self-test (no external hardware):
 DAC→ADC2 readback, ADC2 refusing while the radio owns the SAR, TWAI self-receive,
@@ -93,6 +93,12 @@ partition, including writes from both cores, reset persistence, torn-tail
 recovery and automatic watchdog recovery while flash execution is disabled.
 Existing whole-store compaction is not power-loss atomic. See
 [flash acceptance](doc/rp2040-flash-acceptance.md) before running the destructive test.
+
+RP2040 USB device mode was verified on the Pico: CDC byte streaming, native
+reset/UF2 update/reconnect and fresh-result checks, with watchdog and bounded
+SWD fallback tests. USB host mode and other device classes are not provided.
+See [USB acceptance](doc/rp2040-usb-acceptance.md) for the private-test identity,
+optional 125 MHz CPU profile and old-silicon GPIO15/16 reservation.
 
 ### Device drivers
 
@@ -122,7 +128,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 
 | Check | Status |
 |---|---|
-| Host unit tests | ✅ 925 passing, kernel included — `make test-host` |
+| Host unit tests | ✅ 1,019 passing, kernel included — `make test-host` |
 | On-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
 | Layer boundary + package naming | ✅ enforced in CI |
 | Image size, per region | `make size` |
@@ -139,6 +145,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 | M5Stack Atom Lite | Xtensa LX6 / ESP32-PICO | ✅ verified — one LED |
 | M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — boots on AXP192 power rails + battery status; onboard IMU and FT6336U touch wired; LCD pending |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
+| Raspberry Pi Pico | ARMv6-M / RP2040 | ✅ verified — kernel, peripherals and native USB device transport |
 | ESP32-WROVER | Xtensa LX6 / ESP32 | 🟡 manifest written, never flashed |
 
 Full list, pinouts and register maps in the [docs][boards]. Adding a board is one

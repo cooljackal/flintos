@@ -45,6 +45,9 @@
 
 mod nvs;
 pub use nvs::{nvs_flash, NvsFlash};
+mod usb;
+pub use usb::{usb_init, usb_reset};
+pub use usb_device::{Identity as UsbIdentity, Serial as UsbSerial};
 
 #[cfg(feature = "board-esp32-wrover")]
 pub mod esp32_wrover;
