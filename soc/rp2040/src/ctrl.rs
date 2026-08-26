@@ -2,9 +2,13 @@
 
 //! Typed RP2040 peripheral identities and cross-core ownership claims.
 
-use hal::bus::UartConfig;
+use hal::bus::{I2cConfig, SpiConfig, UartConfig};
 
-use crate::{IRQ_UART0, IRQ_UART1, RESET_UART0, RESET_UART1, UART0_BASE, UART1_BASE};
+use crate::{
+    I2C0_BASE, I2C1_BASE, IRQ_I2C0, IRQ_I2C1, IRQ_SPI0, IRQ_SPI1, IRQ_UART0, IRQ_UART1,
+    RESET_I2C0, RESET_I2C1, RESET_SPI0, RESET_SPI1, RESET_UART0, RESET_UART1, SPI0_BASE,
+    SPI1_BASE, UART0_BASE, UART1_BASE,
+};
 
 #[cfg(target_arch = "arm")]
 static mut UART_CLAIMS: u8 = 0;
@@ -143,6 +147,47 @@ pub struct GpioPort {
     pub pin: u8,
 }
 
+macro_rules! controller {
+    ($name:ident, $port:ident, $zero:ident, $one:ident, $base0:ident, $base1:ident,
+     $irq0:ident, $irq1:ident, $reset0:ident, $reset1:ident, $cfg:ty) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum $name {
+            $zero,
+            $one,
+        }
+
+        impl $name {
+            pub const fn base(self) -> u32 {
+                match self { Self::$zero => $base0, Self::$one => $base1 }
+            }
+            pub const fn irq(self) -> u8 {
+                match self { Self::$zero => $irq0, Self::$one => $irq1 }
+            }
+            pub const fn reset_mask(self) -> u32 {
+                match self { Self::$zero => $reset0, Self::$one => $reset1 }
+            }
+            pub const fn instance(self) -> u8 {
+                match self { Self::$zero => 0, Self::$one => 1 }
+            }
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct $port {
+            pub ctrl: $name,
+            pub cfg: $cfg,
+        }
+    };
+}
+
+controller!(
+    SpiCtrl, SpiPort, Spi0, Spi1, SPI0_BASE, SPI1_BASE, IRQ_SPI0, IRQ_SPI1,
+    RESET_SPI0, RESET_SPI1, SpiConfig
+);
+controller!(
+    I2cCtrl, I2cPort, I2c0, I2c1, I2C0_BASE, I2C1_BASE, IRQ_I2C0, IRQ_I2C1,
+    RESET_I2C0, RESET_I2C1, I2cConfig
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +220,13 @@ mod tests {
         release_uart(UartCtrl::Uart1);
         release_gpio(13);
         release_gpio(14);
+    }
+
+    #[test]
+    fn spi_and_i2c_controller_facts_are_typed() {
+        assert_eq!((SpiCtrl::Spi0.base(), SpiCtrl::Spi1.base()), (SPI0_BASE, SPI1_BASE));
+        assert_eq!((I2cCtrl::I2c0.irq(), I2cCtrl::I2c1.irq()), (IRQ_I2C0, IRQ_I2C1));
+        assert_ne!(SpiCtrl::Spi0.reset_mask(), SpiCtrl::Spi1.reset_mask());
+        assert_ne!(I2cCtrl::I2c0.reset_mask(), I2cCtrl::I2c1.reset_mask());
     }
 }

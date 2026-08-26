@@ -764,6 +764,15 @@ test-arm-adc-entropy: ## Measure Pico internal temperature ADC and ROSC seed hea
 		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
 		-Suite adc-entropy -TimeoutSeconds 20
 
+.PHONY: test-arm-buses
+test-arm-buses: ## Prove Pico SPI internal loopback and dual-controller I2C loopback
+	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/bus-smoke"
+	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
+		-Suite bus -TimeoutSeconds 30
+
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
 #

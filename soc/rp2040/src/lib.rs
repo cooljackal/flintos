@@ -29,7 +29,9 @@ pub const PADS_BANK0_BASE: u32 = 0x4001_C000;
 pub const UART0_BASE: u32 = 0x4003_4000;
 pub const UART1_BASE: u32 = 0x4003_8000;
 pub const SPI0_BASE: u32 = 0x4003_C000;
+pub const SPI1_BASE: u32 = 0x4004_0000;
 pub const I2C0_BASE: u32 = 0x4004_4000;
+pub const I2C1_BASE: u32 = 0x4004_8000;
 pub const ADC_BASE: u32 = 0x4004_C000;
 pub const PWM_BASE: u32 = 0x4005_0000;
 pub const ROSC_BASE: u32 = 0x4006_0000;
@@ -49,11 +51,24 @@ pub unsafe fn unreset(mask: u32) {
     }
 }
 
+/// Assert reset for one or more peripheral blocks through the atomic set alias.
+///
+/// # Safety
+/// The caller must exclusively own the selected blocks and ensure no other
+/// core or interrupt uses them. Any in-flight operation is discarded.
+pub unsafe fn reset(mask: u32) {
+    ((RESETS_BASE + 0x2000) as *mut u32).write_volatile(mask);
+}
+
 pub const RESET_IO_BANK0: u32 = 1 << 5;
 pub const RESET_ADC: u32 = 1;
 pub const RESET_DMA: u32 = 1 << 2;
 pub const RESET_PADS_BANK0: u32 = 1 << 8;
 pub const RESET_PWM: u32 = 1 << 14;
+pub const RESET_SPI0: u32 = 1 << 16;
+pub const RESET_SPI1: u32 = 1 << 17;
+pub const RESET_I2C0: u32 = 1 << 3;
+pub const RESET_I2C1: u32 = 1 << 4;
 pub const RESET_UART0: u32 = 1 << 22;
 pub const RESET_UART1: u32 = 1 << 23;
 
@@ -144,9 +159,11 @@ pub const IRQ_PWM_WRAP: u8 = 4;
 pub const IRQ_DMA_0: u8 = 11;
 pub const IRQ_DMA_1: u8 = 12;
 pub const IRQ_SPI0: u8 = 18;
+pub const IRQ_SPI1: u8 = 19;
 pub const IRQ_UART0: u8 = 20;
 pub const IRQ_UART1: u8 = 21;
 pub const IRQ_I2C0: u8 = 23;
+pub const IRQ_I2C1: u8 = 24;
 pub const IRQ_ADC_FIFO: u8 = 22;
 pub const NVIC_IRQ_COUNT: u8 = 26;
 

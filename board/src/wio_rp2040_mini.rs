@@ -62,16 +62,46 @@ pub const GPIO_LOOPBACK_OUT: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 2 
 pub const GPIO_LOOPBACK_IN: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 3 };
 /// PWM target acceptance reuses the physical GP2-to-GP3 jumper.
 pub const PWM_LOOPBACK_OUT: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 2 };
+/// Three-wire expansion SPI0. Chip select is caller-managed.
+pub const EXPANSION_SPI: soc::ctrl::SpiPort = soc::ctrl::SpiPort {
+    ctrl: soc::ctrl::SpiCtrl::Spi0,
+    cfg: SpiConfig {
+        mosi: 19,
+        miso: 16,
+        sck: 18,
+        max_speed: BusSpeed::MHz(1),
+        mode: SpiMode::Mode0,
+    },
+};
+/// Expansion I2C0. External pull-ups are required for a normal attached bus.
+pub const EXPANSION_I2C: soc::ctrl::I2cPort = soc::ctrl::I2cPort {
+    ctrl: soc::ctrl::I2cCtrl::I2c0,
+    cfg: I2cConfig { sda: 4, scl: 5, speed: BusSpeed::Standard100k },
+};
+/// SPI target acceptance uses the expansion port's internal PL022 loopback.
+pub const SPI_SELFTEST: soc::ctrl::SpiPort = EXPANSION_SPI;
+/// I2C target loopback: GP4↔GP6 (SDA) and GP5↔GP7 (SCL).
+pub const I2C_SELFTEST_MASTER: soc::ctrl::I2cPort = EXPANSION_I2C;
+pub const I2C_SELFTEST_SLAVE: soc::ctrl::I2cPort = soc::ctrl::I2cPort {
+    ctrl: soc::ctrl::I2cCtrl::I2c1,
+    cfg: I2cConfig { sda: 6, scl: 7, speed: BusSpeed::Standard100k },
+};
 
-pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
-    name: "uart0",
-    kind: BusKind::Uart,
-    base_addr: soc::UART0_BASE,
-    irq: soc::IRQ_UART0,
-    dma_capable: true,
-    dma_pool_bytes: 512,
-    config: BusConfig::uart_8n1(0, 1, 115_200),
-}];
+pub const TARGET_BUSES: &[BusMapping] = &[
+    BusMapping {
+        name: "uart0", kind: BusKind::Uart, base_addr: soc::UART0_BASE, irq: soc::IRQ_UART0,
+        dma_capable: true, dma_pool_bytes: 512,
+        config: BusConfig::uart_8n1(0, 1, 115_200),
+    },
+    BusMapping {
+        name: "spi0", kind: BusKind::Spi, base_addr: soc::SPI0_BASE, irq: soc::IRQ_SPI0,
+        dma_capable: false, dma_pool_bytes: 0, config: BusConfig::Spi(EXPANSION_SPI.cfg),
+    },
+    BusMapping {
+        name: "i2c0", kind: BusKind::I2c, base_addr: soc::I2C0_BASE, irq: soc::IRQ_I2C0,
+        dma_capable: false, dma_pool_bytes: 0, config: BusConfig::I2c(EXPANSION_I2C.cfg),
+    },
+];
 
 pub const TARGET_DEVICES: &[BusDevice] = &[];
 
@@ -139,13 +169,14 @@ mod tests {
         assert_eq!(TARGET_PERIPHERALS[0].irq, soc::IRQ_IO_BANK0);
         assert_eq!(TARGET_PERIPHERALS[1].base_addr, soc::PWM_BASE);
         assert_eq!(TARGET_PERIPHERALS[1].irq, soc::IRQ_PWM_WRAP);
+        assert_eq!(TARGET_BUSES[1].base_addr, soc::SPI0_BASE);
+        assert_eq!(TARGET_BUSES[2].base_addr, soc::I2C0_BASE);
     }
 
     #[test]
     fn the_soc_drives_no_radio() {
         // The ESP8285 is a UART-attached module; `radio-wifi` must not be
         // able to select this board and try to bring up a PHY.
-        assert!(!HAS_WIFI);
-        assert!(!HAS_BT);
+        const { assert!(!HAS_WIFI); assert!(!HAS_BT); }
     }
 }

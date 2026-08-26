@@ -18,12 +18,14 @@ soc-rp2040 = { path = "../soc/rp2040", optional = true }
 # wraps it in a bus (Layer 2), handing an application a ready `&'static`
 # controller instead of a pin map to bring up by hand. `api` carries the
 # `Once` these accessors cache into. All optional and pulled in by the ESP32
-# board features -- the RP2040 board needs none of them yet.
+# board features, with the corresponding RP2040 drivers selected on ARM.
 api = { path = "../api", optional = true }
 esp32-i2c = { path = "../drivers/physical/esp32/i2c", optional = true }
 esp32-spi = { path = "../drivers/physical/esp32/spi", optional = true }
 esp32-uart = { path = "../drivers/physical/esp32/uart", optional = true }
 rp2040-uart = { path = "../drivers/physical/rp2040/uart", optional = true }
+rp2040-i2c = { path = "../drivers/physical/rp2040/i2c", optional = true }
+rp2040-spi = { path = "../drivers/physical/rp2040/spi", optional = true }
 esp32-ledc = { path = "../drivers/physical/esp32/ledc", optional = true }
 esp32-rmt = { path = "../drivers/physical/esp32/rmt", optional = true }
 esp32-gpio = { path = "../drivers/physical/esp32/gpio", optional = true }
@@ -56,7 +58,7 @@ default = []
 # The ESP32 boards pull in the drivers their device accessors construct. Named
 # once as `esp32-drivers` so a new ESP32 board is still a one-line feature.
 esp32-drivers = ["dep:api", "dep:esp32-i2c", "dep:esp32-spi", "dep:esp32-uart", "dep:esp32-ledc", "dep:esp32-rmt", "dep:esp32-gpio", "dep:i2c-bus", "dep:spi-bus", "dep:axp192"]
-rp2040-drivers = ["dep:api", "dep:rp2040-uart"]
+rp2040-drivers = ["dep:api", "dep:rp2040-uart", "dep:rp2040-i2c", "dep:rp2040-spi", "dep:i2c-bus", "dep:spi-bus"]
 board-esp32-wrover = ["dep:soc-esp32", "esp32-drivers"]
 board-esp32-devkitc = ["dep:soc-esp32", "esp32-drivers"]
 board-m5-atom-lite = ["dep:soc-esp32", "esp32-drivers"]

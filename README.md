@@ -62,7 +62,7 @@ and open work lives in [issues] — the source of truth.
 | Peripheral | Xtensa LX6 | ARM32 |
 |---|---|---|
 | UART · GPIO · pin routing | ✅ | ✅ |
-| I²C · SPI | ✅ | ⛔ |
+| I²C · SPI | ✅ | ✅ |
 | PWM / LEDC · Timers (TIMG) | ✅ | ✅ |
 | ADC | ✅ | ✅ |
 | Second ADC † · DAC † | ✅ | — |
@@ -81,6 +81,12 @@ I2S DMA through a one-pad loop. Not claimed: analog accuracy, a real CAN bus.
 The RP2040 ADC was verified on a Pico with 1,024 internal-temperature samples.
 RP2040 entropy is a conditioned best-effort seed from spaced ring-oscillator
 samples; the chip has no cryptographic hardware RNG, and FlintOS does not claim one.
+
+RP2040 buses were verified on a Pico: 4,096 SPI internal-loopback bytes and
+1,001 wired I²C write/repeated-start/read transactions (8,008 payload bytes),
+including recovery after a missing-device response and forced timeouts on both
+controllers. These are polled drivers; SPI chip-select, peripheral DMA and I²C
+address-only scans are not provided. See [bus acceptance](doc/rp2040-bus-acceptance.md).
 
 ### Device drivers
 

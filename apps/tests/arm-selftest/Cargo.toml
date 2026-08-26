@@ -14,6 +14,7 @@ rust-version.workspace = true
 [dependencies]
 kernel = { path = "../../../kernel", default-features = false }
 api = { path = "../../../api" }
+board = { path = "../../../board", default-features = false }
 hal = { path = "../../../hal" }
 portable-atomic = { version = "=1.15.0", features = ["critical-section", "require-cas"] }
 soc-rp2040 = { path = "../../../soc/rp2040" }
@@ -22,6 +23,8 @@ rp2040-gpio = { path = "../../../drivers/physical/rp2040/gpio" }
 rp2040-pwm = { path = "../../../drivers/physical/rp2040/pwm" }
 rp2040-adc = { path = "../../../drivers/physical/rp2040/adc" }
 rp2040-entropy = { path = "../../../drivers/physical/rp2040/entropy" }
+rp2040-i2c = { path = "../../../drivers/physical/rp2040/i2c" }
+rp2040-spi = { path = "../../../drivers/physical/rp2040/spi" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }
@@ -45,3 +48,4 @@ mutex-smoke = []
 race-smoke = []
 pwm-smoke = []
 adc-entropy-smoke = []
+bus-smoke = []

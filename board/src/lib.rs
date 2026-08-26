@@ -386,7 +386,39 @@ pub use active::BOARD;
 // in its Layer-2 bus, and caches the whole stack in an `api::sync::Once` so
 // later calls hand back the same `&'static`. An application asks the board for
 // a ready bus instead of open-coding `new(base) + init + static mut`. Gated on
-// `esp32-drivers`: only the ESP32 boards pull the drivers these construct.
+// the selected chip's driver feature; no application needs a physical driver.
+
+/// RP2040 expansion I2C0 on GP4 (SDA) and GP5 (SCL), configured for 100 kHz.
+///
+/// Call during single-threaded board setup, then share the cached controller
+/// between tasks. Each `.device(address)` shares its priority-inheritance
+/// mutex. Transfers are polled; address-only scans are unsupported by this
+/// physical controller and do not silently read a device.
+#[cfg(feature = "rp2040-drivers")]
+pub fn expansion_i2c() -> hal::Result<&'static i2c_bus::I2cController<rp2040_i2c::Rp2040I2c>> {
+    static BUS: api::Once<i2c_bus::I2cController<rp2040_i2c::Rp2040I2c>> = api::Once::new();
+    if let Some(bus) = BUS.get() {
+        return Ok(bus);
+    }
+    BUS.get_or_try_init(|| Ok(i2c_bus::I2cController::new(
+        rp2040_i2c::Rp2040I2c::open(&active::EXPANSION_I2C)?,
+    )))
+}
+
+/// RP2040 expansion SPI0: GP19 MOSI, GP16 MISO, GP18 SCK, mode 0 at 1 MHz.
+///
+/// Initialize at board setup and share the cached bus between tasks. Chip
+/// select is caller-managed; this three-wire port does not route hardware CS.
+#[cfg(feature = "rp2040-drivers")]
+pub fn expansion_spi() -> hal::Result<&'static spi_bus::SpiBus<rp2040_spi::Rp2040Spi>> {
+    static BUS: api::Once<spi_bus::SpiBus<rp2040_spi::Rp2040Spi>> = api::Once::new();
+    if let Some(bus) = BUS.get() {
+        return Ok(bus);
+    }
+    BUS.get_or_try_init(|| Ok(spi_bus::SpiBus::new(
+        rp2040_spi::Rp2040Spi::open(&active::EXPANSION_SPI)?,
+    )))
+}
 
 /// The board's I2C controller for `port.ctrl`, opened once and cached.
 ///

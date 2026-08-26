@@ -13,7 +13,8 @@
         feature = "mutex-smoke",
         feature = "race-smoke",
         feature = "pwm-smoke",
-        feature = "adc-entropy-smoke"
+        feature = "adc-entropy-smoke",
+        feature = "bus-smoke"
     ),
     allow(dead_code)
 )]
@@ -174,6 +175,39 @@ static ENTROPY_TRANSITIONS: AtomicU32 = AtomicU32::new(0);
 #[cfg(feature = "adc-entropy-smoke")]
 #[no_mangle]
 static ENTROPY_CHECKSUM: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+static BUS_I2C_SLAVE: api::Once<rp2040_i2c::Rp2040I2c> = api::Once::new();
+#[cfg(feature = "bus-smoke")]
+static BUS_SLAVE_READY: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_MASTER_STAGE: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_SLAVE_STAGE: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+static BUS_FAULTS_DONE: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_SPI_TIMEOUT_US: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_I2C_TIMEOUT_US: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_SPI_BYTES: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_SPI_CHECKSUM: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_I2C_TRANSACTIONS: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_I2C_BYTES: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "bus-smoke")]
+#[no_mangle]
+static BUS_I2C_NACK_RECOVERED: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
 static PI_PHASE: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(not(feature = "expected-hardfault"), not(feature = "minimal")))]
@@ -405,6 +439,19 @@ fn main() {
         4096,
     )
     .expect("ADC and entropy target test");
+    #[cfg(feature = "bus-smoke")]
+    {
+        let slave = rp2040_i2c::Rp2040I2c::open_slave(
+            &kernel::board::active::I2C_SELFTEST_SLAVE,
+            0x42,
+        )
+        .expect("I2C1 slave");
+        BUS_I2C_SLAVE.init(slave);
+        board::expansion_i2c().expect("I2C0 master bus");
+        board::expansion_spi().expect("SPI0 bus");
+        task::spawn_on(0, "bus-master", bus_master, Priority::Normal(1), 4096)
+            .expect("SPI and I2C master task");
+    }
     #[cfg(feature = "watchdog-reset")]
     task::spawn("watchdog", watchdog_reset_test, Priority::Normal(0), 2048).expect("watchdog task");
     #[cfg(feature = "expected-hardfault")]
@@ -418,7 +465,8 @@ fn main() {
         not(feature = "mutex-smoke"),
         not(feature = "race-smoke"),
         not(feature = "pwm-smoke"),
-        not(feature = "adc-entropy-smoke")
+        not(feature = "adc-entropy-smoke"),
+        not(feature = "bus-smoke")
     ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");
@@ -434,6 +482,147 @@ fn main() {
         }
         task::spawn_on(0, "tests", tests, Priority::Normal(2), 4096).expect("test task");
     }
+}
+
+#[cfg(feature = "bus-smoke")]
+fn bus_i2c_slave() {
+    const CYCLES: u32 = 1_001;
+    BUS_SLAVE_STAGE.store(1, Ordering::Release);
+    // SPI setup and loopback run first. Do not spend the slave's bounded
+    // transaction timeout waiting for unrelated work on the other core.
+    if !task::wait_until(|| BUS_SPI_BYTES.load(Ordering::Acquire) == 4_096, 5_000) {
+        fail(41);
+    }
+    BUS_SLAVE_READY.store(1, Ordering::Release);
+    BUS_SLAVE_STAGE.store(2, Ordering::Release);
+    for cycle in 0..CYCLES {
+        if cycle == 1_000 {
+            // The master deliberately stalls SCL for a full timeout. This
+            // responder is not serving a transaction during fault injection.
+            if !task::wait_until(|| BUS_FAULTS_DONE.load(Ordering::Acquire) == 1, 1_000) {
+                fail(41);
+            }
+            BUS_SLAVE_STAGE.store(3, Ordering::Release);
+        }
+        let mut request = [0u8; 4];
+        let response = [cycle as u8, (cycle >> 8) as u8, 0x5a, 0xa5];
+        let Ok(count) = BUS_I2C_SLAVE
+            .get()
+            .expect("I2C slave")
+            .serve_once(&mut request, &response)
+        else {
+            fail(41);
+        };
+        let expected = [cycle as u8, (cycle >> 8) as u8, 0x33, 0xcc];
+        if count != expected.len() || request != expected {
+            fail(42);
+        }
+    }
+    BUS_SLAVE_STAGE.store(4, Ordering::Release);
+    loop { task::sleep_ms(1_000); }
+}
+
+#[cfg(feature = "bus-smoke")]
+fn bus_master() {
+    use hal::bus::{Bus as _, BusError, Op};
+
+    BUS_MASTER_STAGE.store(1, Ordering::Release);
+    let Ok(spi) = board::expansion_spi() else {
+        fail(38);
+    };
+    if !core::ptr::eq(spi, board::expansion_spi().expect("cached SPI")) { fail(38); }
+    if rp2040_spi::Rp2040Spi::open(&kernel::board::active::SPI_SELFTEST).is_ok() {
+        fail(38);
+    }
+    // Disable the shifter while leaving queued FIFO data. The physical
+    // driver must time out, reset the FIFOs, and restore the configuration.
+    let cr1 = (kernel::board::active::SPI_SELFTEST.ctrl.base() + 4) as *mut u32;
+    unsafe { cr1.write_volatile((cr1.read_volatile() | 1) & !2); }
+    let start = soc_rp2040::timer_us();
+    let timeout = spi.transfer(&mut [Op::exchange(&[0xee; 16], &mut [0u8; 16])]);
+    let elapsed = soc_rp2040::timer_us().wrapping_sub(start);
+    if timeout != Err(BusError::Timeout) || !(50_000..100_000).contains(&elapsed) { fail(46); }
+    BUS_SPI_TIMEOUT_US.store(elapsed, Ordering::Release);
+    let mut checksum = 0u32;
+    for round in 0..64u32 {
+        let mut tx = [0u8; 64];
+        let mut rx = [0u8; 64];
+        for (index, byte) in tx.iter_mut().enumerate() {
+            *byte = (round as u8).wrapping_mul(17).wrapping_add(index as u8);
+        }
+        if spi.transfer(&mut [Op::exchange(&tx, &mut rx)]).is_err() || rx != tx {
+            fail(39);
+        }
+        for &byte in &rx { checksum = checksum.wrapping_add(u32::from(byte)); }
+        BUS_SPI_BYTES.fetch_add(64, Ordering::Relaxed);
+    }
+    BUS_SPI_CHECKSUM.store(checksum, Ordering::Release);
+    BUS_MASTER_STAGE.store(2, Ordering::Release);
+    if BUS_SPI_BYTES.load(Ordering::Acquire) != 4_096 || checksum == 0 { fail(40); }
+
+    task::spawn_on(1, "bus-slave", bus_i2c_slave, Priority::Normal(1), 3072)
+        .expect("I2C slave task");
+    if !task::wait_until(|| BUS_SLAVE_READY.load(Ordering::Acquire) == 1, 1_000) {
+        fail(41);
+    }
+    let controller = board::expansion_i2c().expect("I2C master bus");
+    if !core::ptr::eq(controller, board::expansion_i2c().expect("cached I2C")) { fail(38); }
+    if rp2040_i2c::Rp2040I2c::open(&kernel::board::active::I2C_SELFTEST_MASTER).is_ok() {
+        fail(38);
+    }
+    BUS_MASTER_STAGE.store(3, Ordering::Release);
+    let device = controller.device(0x42);
+    for cycle in 0..1_000u32 {
+        let request = [cycle as u8, (cycle >> 8) as u8, 0x33, 0xcc];
+        let expected = [cycle as u8, (cycle >> 8) as u8, 0x5a, 0xa5];
+        let mut response = [0u8; 4];
+        if device.transfer(&mut [Op::exchange(&request, &mut response)]).is_err()
+            || response != expected
+        {
+            fail(43);
+        }
+        BUS_I2C_TRANSACTIONS.fetch_add(1, Ordering::Relaxed);
+        BUS_I2C_BYTES.fetch_add(8, Ordering::Relaxed);
+    }
+    let absent = controller.device(0x43);
+    // Force the receiver's SCL pad low through the documented GPIO overrides.
+    // Always restore it before checking the result, even if the driver fails.
+    let scl = kernel::board::active::I2C_SELFTEST_SLAVE.cfg.scl;
+    let control = (soc_rp2040::IO_BANK0_BASE + 4 + u32::from(scl) * 8) as *mut u32;
+    let saved = unsafe { control.read_volatile() };
+    unsafe { control.write_volatile((saved & !0x3300) | (2 << 8) | (3 << 12)); }
+    let start = soc_rp2040::timer_us();
+    let timeout = absent.transfer(&mut [Op::write(&[0x11])]);
+    let elapsed = soc_rp2040::timer_us().wrapping_sub(start);
+    unsafe { control.write_volatile(saved); }
+    if timeout != Err(BusError::Timeout) || !(50_000..100_000).contains(&elapsed) { fail(47); }
+    BUS_I2C_TIMEOUT_US.store(elapsed, Ordering::Release);
+    if absent.transfer(&mut [Op::write(&[0x11])]) != Err(BusError::DeviceNotResponding) {
+        fail(44);
+    }
+    BUS_FAULTS_DONE.store(1, Ordering::Release);
+    if !task::wait_until(|| BUS_SLAVE_STAGE.load(Ordering::Acquire) == 3, 1_000) {
+        fail(41);
+    }
+    let request = [0xe8, 0x03, 0x33, 0xcc];
+    let mut response = [0u8; 4];
+    if device.transfer(&mut [Op::exchange(&request, &mut response)]).is_err()
+        || response != [0xe8, 0x03, 0x5a, 0xa5]
+    {
+        fail(45);
+    }
+    BUS_I2C_TRANSACTIONS.fetch_add(1, Ordering::Relaxed);
+    BUS_I2C_BYTES.fetch_add(8, Ordering::Relaxed);
+    BUS_I2C_NACK_RECOVERED.store(1, Ordering::Release);
+    if !task::wait_until(|| BUS_SLAVE_STAGE.load(Ordering::Acquire) == 4, 1_000) {
+        fail(42);
+    }
+    BUS_MASTER_STAGE.store(4, Ordering::Release);
+    api::log_info!(
+        "[FLINT] ARM BUS PASS spi_bytes=4096 i2c_transactions=1001 i2c_bytes=8008 nack_recovered=1"
+    );
+    task::sleep_ms(100);
+    unsafe { soc_rp2040::test_status::pass_live() }
 }
 
 #[cfg(feature = "adc-entropy-smoke")]

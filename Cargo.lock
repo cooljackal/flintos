@@ -38,6 +38,7 @@ name = "arm-selftest"
 version = "0.1.0"
 dependencies = [
  "api",
+ "board",
  "build",
  "hal",
  "kernel",
@@ -45,7 +46,9 @@ dependencies = [
  "rp2040-adc",
  "rp2040-entropy",
  "rp2040-gpio",
+ "rp2040-i2c",
  "rp2040-pwm",
+ "rp2040-spi",
  "rp2040-uart",
  "soc-rp2040",
 ]
@@ -117,6 +120,8 @@ dependencies = [
  "hal",
  "i2c-bus",
  "led-matrix",
+ "rp2040-i2c",
+ "rp2040-spi",
  "rp2040-uart",
  "soc-esp32",
  "soc-rp2040",
@@ -570,7 +575,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rp2040-i2c"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-rp2040",
+]
+
+[[package]]
 name = "rp2040-pwm"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-rp2040",
+]
+
+[[package]]
+name = "rp2040-spi"
 version = "0.1.0"
 dependencies = [
  "hal",
