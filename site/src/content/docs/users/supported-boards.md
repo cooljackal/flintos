@@ -32,9 +32,8 @@ like broken hardware, so the build refuses to guess.
   critical sections, queues, faults, both cores) **and** the peripheral drivers:
   GPIO, UART, SPI, I²C, ADC and conditioned entropy, DMA, PIO, flash KV, native
   USB CDC, per-core MPU task isolation, and the measured CPU clock — each with an
-  on-target acceptance test driven over SWD (`make test-arm-*`). One gap: PWM
-  edge-counting passes but its duty/period timing capture reads zero on hardware
-  and is still under investigation.
+  on-target acceptance test driven over SWD (`make test-arm-*`), including PWM
+  frequency and duty measured through a physical GP2→GP3 loopback.
 
 RP2040 boards flash over USB with no debug probe — `make flash` enters BOOTSEL
 automatically (a 1200bps touch) when the board already runs FlintOS with USB
