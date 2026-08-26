@@ -45,6 +45,18 @@ extern "C" {
 /// same stack.
 static mut STACK_ALLOC_OFFSET: u32 = 0;
 
+/// Atomically reserve two aligned private regions from the stack pool. Caller
+/// holds the scheduler lock; an exhausted/invalid request consumes no memory.
+#[cfg(all(feature = "task-isolation", target_os = "none"))]
+pub(crate) fn allocate_private(stack: u32, data: u32) -> Option<(u32, u32)> {
+    let start = core::ptr::addr_of!(_task_stack_start) as u32;
+    let end = core::ptr::addr_of!(_task_stack_end) as u32;
+    let cursor = start.checked_add(unsafe { STACK_ALLOC_OFFSET })?;
+    let (stack_base, data_base, next) = crate::isolation::reserve(cursor, end, stack, data)?;
+    unsafe { STACK_ALLOC_OFFSET = next - start };
+    Some((stack_base, data_base))
+}
+
 pub(crate) fn paint_stack(base: u32, size: u32) {
     let words = (size / 4) as usize;
     let ptr = base as *mut u32;

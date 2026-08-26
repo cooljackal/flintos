@@ -2,11 +2,13 @@
 
 //! Kernel dispatch ABI (plan W5.1, Option A).
 //!
-//! FlintOS is a single protection domain: `api` calls these `#[no_mangle]`
+//! The trusted-task API calls these `#[no_mangle]`
 //! functions directly via `extern "Rust"` linkage — there is no `syscall`
 //! instruction. Each function that mutates scheduler/IPC state does so inside a
 //! critical section (`scheduler::with` / `cs_with`) so it cannot race the trap
 //! handler (plan W2.2).
+//! Opt-in unprivileged tasks cannot execute these functions. They use the
+//! separate, pointer-free `api::isolated` supervisor ABI instead.
 
 use crate::debug;
 use crate::queue as kqueue;

@@ -580,7 +580,7 @@ check-all: ## Full check including Xtensa and ARM architectures
 			cargo check --target $(ARM_TARGET) -p $$a --no-default-features \
 				--features "kernel/$$b,kernel/debug-level-1" || exit 1; \
 		done; \
-		for f in arm-selftest/clock-smoke arm-selftest/clock-smoke,board/native-usb arm-selftest/pio-smoke arm-selftest/pio-smoke,board/native-usb; do \
+		for f in arm-selftest/clock-smoke arm-selftest/clock-smoke,board/native-usb arm-selftest/pio-smoke arm-selftest/pio-smoke,board/native-usb arm-selftest/isolation-smoke arm-selftest/isolation-smoke,board/native-usb arm-selftest/isolation-fault-smoke; do \
 			echo "== arm-selftest ($$b, $$f)"; \
 			cargo check --target $(ARM_TARGET) -p arm-selftest --no-default-features \
 				--features "kernel/$$b,kernel/debug-level-1,$$f" || exit 1; \
@@ -649,10 +649,13 @@ check-names: ## Enforce the package naming and layout convention
 .PHONY: test-host
 test-host: test-boards ## Run host-side unit tests (every board manifest included)
 	cargo test $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
+	cargo test -p kernel --no-default-features --target $(HOST_TARGET) \
+		--features board-raspberry-pi-pico,task-isolation
 ifdef WINDOWS
 	pwsh -NoProfile -File tools/rp2040-usb-selftest.ps1
 	pwsh -NoProfile -File tools/rp2040-clock-selftest.ps1
 	pwsh -NoProfile -File tools/rp2040-pio-selftest.ps1
+	pwsh -NoProfile -File tools/rp2040-isolation-selftest.ps1
 endif
 
 # Every board this tree can build for. A manifest's invariant tests only run
@@ -814,6 +817,28 @@ test-arm-buses: ## Prove Pico SPI internal loopback and dual-controller I2C loop
 
 ARM_CLOCK_HZ ?= 12000000
 ARM_PIO_HZ ?= 12000000
+ARM_ISOLATION_HZ ?= 12000000
+ARM_ISOLATION_FAULT_CORE ?= 0
+.PHONY: test-arm-isolation test-arm-isolation-fault
+test-arm-isolation: ## Prove MPU denial and per-core domain switching on the Pico
+	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }
+	@test "$(ARM_ISOLATION_HZ)" = 12000000 -o "$(ARM_ISOLATION_HZ)" = 125000000
+	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico DEBUG=debug-level-1 \
+		EXTRA_FEATURES="arm-selftest/isolation-smoke$(if $(filter 125000000,$(ARM_ISOLATION_HZ)),$(COMMA)board/native-usb,)"
+	pwsh -NoProfile -File tools/rp2040-run-isolation-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
+		-BootselSerial $(ARM_BOOTSEL_SERIAL) -LocationPath "$(ARM_USB_LOCATION)"
+
+test-arm-isolation-fault: ## Prove an unrelated user HardFault takes the production panic/reboot path
+	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }
+	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico DEBUG=debug-level-1 \
+		EXTRA_FEATURES=arm-selftest/isolation-fault-smoke
+	pwsh -NoProfile -File tools/rp2040-run-isolation-selftest.ps1 -UnexpectedFault -FaultCore $(ARM_ISOLATION_FAULT_CORE) \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
+		-BootselSerial $(ARM_BOOTSEL_SERIAL) -LocationPath "$(ARM_USB_LOCATION)"
+
 .PHONY: test-arm-pio
 test-arm-pio: ## Prove owned programmed I/O through the GP2-to-GP3 physical loopback
 	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }

@@ -57,11 +57,13 @@ and open work lives in [issues] — the source of truth.
 | Stack high-water marks | ✅ | ✅ |
 | Second core · task pinning | ✅ | ✅ |
 | DMA | ✅ | ✅ |
-| Task memory isolation | ⛔ | ⛔ [#139](https://github.com/cooljackal/flintos/issues/139) |
+| Task memory isolation | ⛔ | ✅ [Opt-in compute tasks](doc/rp2040-isolation-acceptance.md) |
 
 RP2040 CPU frequency is measured against its nominal crystal reference, not
-independently calibrated. Its eight-region MPU exists, but FlintOS does not yet
-enforce task isolation. See the
+independently calibrated. Opt-in isolated compute tasks have private guarded
+stacks/data and a restricted supervisor-call API, verified on both Pico cores.
+Ordinary tasks/drivers remain trusted; general userspace IPC and DMA are not
+provided. See [isolation limits](doc/rp2040-isolation-acceptance.md) and the
 [capability audit](doc/rp2040-capability-audit.md) for hardware sources and gaps.
 
 ### Peripherals
@@ -148,7 +150,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 
 | Check | Status |
 |---|---|
-| Host unit tests | ✅ 1,076 passing, kernel included — `make test-host` |
+| Host unit tests | ✅ 1,216 passing test executions, kernel included — `make test-host` |
 | On-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
 | Layer boundary + package naming | ✅ enforced in CI |
 | Image size, per region | `make size` |
@@ -253,11 +255,12 @@ Full tutorial: [Tutorial: Hello World][tutorial].
   build if the two ever touch. See [Architecture][arch].
 - **Debugging at zero release cost** — levelled logging, metrics, high-water
   marks and postmortem capture, all compiled out when the feature is off.
-- **Not POSIX, not memory-isolated, not 64-bit.** One protection domain, tasks
-  cooperatively trusted; 32-bit only, by design and for good.
+- **Not POSIX, not 64-bit.** Ordinary tasks share a trusted protection domain.
+  RP2040 additionally supports explicit isolated compute tasks with a restricted
+  API; it does not transparently isolate existing applications or drivers.
 
-**Skip it if** you need memory isolation between untrusted tasks, a network
-stack or filesystem today, or something production-proven — reach for
+**Skip it if** you need general-purpose userspace isolation, a filesystem
+today, or something production-proven — reach for
 [FreeRTOS](https://www.freertos.org), [Zephyr](https://zephyrproject.org) or
 [Embassy](https://embassy.dev).
 

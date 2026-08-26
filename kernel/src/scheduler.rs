@@ -89,6 +89,8 @@ pub enum TaskState {
 /// Per-task control block.
 #[repr(C)]
 pub struct TaskControlBlock {
+    #[cfg(feature = "task-isolation")]
+    pub isolation: Option<hal::isolation::TaskMemory>,
     pub id: u32,
     pub name: &'static str,
     pub entry: Option<fn()>,
@@ -124,6 +126,8 @@ pub struct TaskControlBlock {
 impl TaskControlBlock {
     const fn zeroed() -> Self {
         Self {
+            #[cfg(feature = "task-isolation")]
+            isolation: None,
             id: u32::MAX,
             name: "",
             entry: None,

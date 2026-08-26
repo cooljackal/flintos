@@ -21,6 +21,15 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Added
 
+- **Opt-in RP2040 compute-task isolation** (#139). `kernel/task-isolation`
+  enables explicitly created private-stack/private-data tasks with a shared RX
+  code page, stack guard and pointer-free `api::isolated` supervisor calls.
+  Both cores replace MPU grants on domain switches; invalid layouts fail
+  closed. Pico denial tests pass at 12 and 125 MHz. Ordinary tasks/drivers
+  remain trusted; no general userspace IPC, DMA, allocation or task restart is
+  implied. Unsupported architecture backends reject the feature at compile
+  time. See [isolation acceptance](doc/rp2040-isolation-acceptance.md).
+
 - **Owned RP2040 programmed I/O** (#175). A portable instruction/state-machine
   contract and `board::programmable_io` construction keep native instructions
   and registers inside the physical driver. The initial polled implementation

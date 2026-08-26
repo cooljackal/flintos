@@ -61,6 +61,8 @@ pub extern "C" fn _flint_armv6m_boot() {
     // claimed. Pico SDK resets all 32 before its runtime enters main; Flint
     // releases its one owned lock before attempting the outer boot section.
     unsafe { crate::arch::init_boot_core() };
+    #[cfg(feature = "task-isolation")]
+    crate::isolation::init_core();
 
     #[cfg(not(feature = "rp2040-test-recovery"))]
     unsafe {

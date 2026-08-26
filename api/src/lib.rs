@@ -36,6 +36,8 @@ pub const ABI: u32 = 2;
 pub mod debug;
 pub mod dma;
 pub mod interrupt;
+#[cfg(feature = "task-isolation")]
+pub mod isolated;
 pub mod mutex;
 pub mod prelude;
 pub mod queue;

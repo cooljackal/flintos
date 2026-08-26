@@ -2,12 +2,14 @@
 
 //! MPU (Memory Protection Unit) manager trait.
 //!
-//! Contract for future task isolation using hardware protection regions.
-//! The kernel does not yet call these hooks at boot or on context switches;
-//! the existing Xtensa implementation is a no-op. This trait alone provides
-//! no isolation. Integration and supported-processor enforcement are #139.
+//! Legacy hooks, not the active isolated-task contract. The kernel does not
+//! call these hooks at boot or on context switches; the existing Xtensa
+//! implementation is a no-op. See `crate::isolation` for validated task grants.
 
 use crate::types::*;
+
+// The opt-in isolated-task path uses `crate::isolation` and a fallible geometry
+// contract. These legacy infallible hooks do not establish an isolation domain.
 
 /// Manages the hardware MPU regions for task isolation.
 pub trait MpuManager {

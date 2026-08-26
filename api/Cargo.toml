@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "api"
 publish = false
@@ -14,6 +16,7 @@ hal = { path = "../hal" }
 portable-atomic = { version = "=1.15.0", features = ["critical-section", "require-cas"] }
 
 [features]
+task-isolation = []
 default = []
 debug-level-0 = []
 # Only `flint-log` gates real code today: it compiles the log output in or out.

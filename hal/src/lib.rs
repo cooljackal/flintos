@@ -22,6 +22,7 @@ pub mod dma;
 pub mod error;
 pub mod flash;
 pub mod interrupt;
+pub mod isolation;
 pub mod mpu;
 pub mod pinmux;
 pub mod pio;

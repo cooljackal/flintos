@@ -21,6 +21,8 @@ extern "C" fn _flint_armv6m_first_stack() -> u32 {
     scheduler::with(|sched| {
         let current = sched.current();
         if current != u32::MAX {
+            #[cfg(feature = "task-isolation")]
+            crate::isolation::activate(current, sched.tasks[current as usize].as_ref().unwrap().isolation);
             return sched.tasks[current as usize]
                 .as_ref()
                 .expect("current task has no TCB")
@@ -30,6 +32,8 @@ extern "C" fn _flint_armv6m_first_stack() -> u32 {
         let next = sched.schedule();
         assert!(next != u32::MAX, "ARM first launch needs one ready task");
         sched.set_current(next);
+        #[cfg(feature = "task-isolation")]
+        crate::isolation::activate(next, sched.tasks[next as usize].as_ref().unwrap().isolation);
         sched.tasks[next as usize]
             .as_ref()
             .expect("scheduled task has a TCB")
@@ -40,6 +44,8 @@ extern "C" fn _flint_armv6m_first_stack() -> u32 {
 
 #[no_mangle]
 extern "C" fn _flint_armv6m_core1_boot() {
+    #[cfg(feature = "task-isolation")]
+    crate::isolation::init_core();
     assert_eq!(crate::smp::current_core().0, 1, "core-1 hook ran on core 0");
     let idle = crate::boot::CORE1_IDLE.load(portable_atomic::Ordering::Acquire);
     assert_ne!(idle, u32::MAX, "core-1 idle was not prepared");
@@ -149,6 +155,8 @@ extern "C" fn _flint_armv6m_switch(stack_pointer: u32) -> u32 {
             }
         }
         sched.set_current(next);
+        #[cfg(feature = "task-isolation")]
+        crate::isolation::activate(next, sched.tasks[next as usize].as_ref().unwrap().isolation);
         sched.tasks[next as usize]
             .as_ref()
             .expect("scheduled task has a TCB")

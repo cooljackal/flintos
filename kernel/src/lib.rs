@@ -91,7 +91,13 @@ pub mod scheduler;
 pub mod selftest;
 pub mod smp;
 
+#[cfg(feature = "task-isolation")]
+pub mod isolation;
 pub mod spawn;
+#[cfg(all(feature = "task-isolation", not(feature = "arch-armv6m")))]
+compile_error!(
+    "task-isolation is not implemented for this architecture; refusing unprotected execution"
+);
 pub mod startup;
 pub mod syscall;
 #[cfg(test)]

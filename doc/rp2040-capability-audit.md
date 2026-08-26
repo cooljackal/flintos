@@ -20,7 +20,7 @@ the Wio's ESP8285 companion][wio-module], which is separate from its RP2040.
 | Mutexes / inheritance; task and ISR queues; race tests | Keep verified status from the kernel/ARM task and interrupt fixtures; no new scheduling claim in this audit. |
 | Watchdogs; reset cause; logging / metrics / panic; stack watermarks | Keep verified status. Recovery tests arm specific watchdog paths; this is not a claim that a system-wide watchdog supervises every application. See [USB recovery limits](rp2040-usb-acceptance.md). |
 | Second core / task pinning; DMA | Keep verified status from the SMP and DMA fixtures. This does not imply every peripheral has a DMA driver; I²C/SPI are polled. |
-| Task memory isolation | **Unimplemented, [#139].** The RP2040 has an eight-region MPU (datasheet §2.4.6). Neither the ARM context-switch path nor boot configures it. `hal::mpu::MpuManager` is an unwired contract, not protection. The README reports software isolation absent on both architectures, not identical protection hardware. |
+| Task memory isolation | **Opt-in compute tasks implemented and Pico-verified, [#139].** Boot and context switches configure each core's eight-region MPU; private stack/data, stack guards and restricted supervisor calls deny kernel/other-task/MMIO access. Repeated negative tests pass at 12/125 MHz on both cores. Ordinary tasks remain trusted; no userspace IPC/DMA or automatic task restart. See [isolation acceptance](rp2040-isolation-acceptance.md). The legacy `hal::mpu::MpuManager` remains unwired. |
 
 The original [ARM target matrix](../tools/rp2040-target-matrix.md) is a planning
 contract, not evidence that every proposed test or fixture has been completed.
@@ -71,9 +71,10 @@ impossible using programmable I/O, bit-banging or an external device.
   frames or socket offload; a socket-only interface cannot be passed off as an
   Ethernet frame interface. The attached Wio is also the debug probe: do not
   overwrite its firmware to develop Wi-Fi without a separate fixture or consent.
-- [#139] needs actual privilege/region enforcement and negative access tests,
-  including scheduling on both cores and explicit DMA limits. MPU presence alone
-  is not task isolation.
+- [#139]'s RP2040 path enforces explicit grants and privilege on both cores,
+  with negative access tests and no untrusted DMA authority. Its classic ESP32
+  backend remains unimplemented and rejects the feature at compile time; the
+  inventory does not claim that processor has no protection hardware.
 
 [datasheet]: https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
 [wio-module]: https://www.seeedstudio.com/Wio-RP2040-Module-p-4932.html

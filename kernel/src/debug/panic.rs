@@ -4,8 +4,8 @@
 //!
 //! # Semantics: a panic halts the system
 //!
-//! FlintOS runs in a single protection domain. Every task shares one address
-//! space with no MPU enforcement, so a task that panicked may already have
+//! Ordinary FlintOS tasks run in a single protection domain. A trusted task
+//! that panicked may already have
 //! written through a bad pointer, left a mutex held, or corrupted a queue
 //! another task is about to read. Killing just the offender and carrying on
 //! would be a guess about how far the damage spread.
@@ -13,6 +13,8 @@
 //! So: mask every interrupt, record what happened, say so on the console, and
 //! stop. The selected SoC may arrange a delayed, snapshot-preserving recovery
 //! through [`hal::reset::PanicRecovery`]; without one the board stays halted.
+//! Opt-in isolated compute tasks also use this fail-stop policy on unexpected
+//! faults; isolation does not imply automatic task restart or resource repair.
 //!
 //! The previous behaviour was neither halt nor recover. It ended in a bare
 //! `loop {}` with interrupts still unmasked, which parks only the panicking
@@ -102,6 +104,20 @@ pub fn handle_at(
     args: &core::fmt::Arguments<'_>,
     location: Option<&core::panic::Location<'_>>,
 ) -> ! {
+    handle_with_context(args, location, None)
+}
+
+/// Fatal exception with the actual interrupted PC/stack, rather than the last
+/// software context save (which may be stale or already reused on this stack).
+pub fn handle_trap(args: &core::fmt::Arguments<'_>, context: ContextDiagnostics) -> ! {
+    handle_with_context(args, None, Some(context))
+}
+
+fn handle_with_context(
+    args: &core::fmt::Arguments<'_>,
+    location: Option<&core::panic::Location<'_>>,
+    fault_context: Option<ContextDiagnostics>,
+) -> ! {
     use core::fmt::Write;
 
     // First, before any scheduler state is read and before the panic region is
@@ -147,6 +163,7 @@ pub fn handle_at(
             architecture_state: 0,
         },
     ));
+    let diagnostics = fault_context.unwrap_or(diagnostics);
 
     // Take the panicking task out of the run set. Nothing will schedule after
     // this -- interrupts stay masked forever -- but a TCB still claiming to be
@@ -156,7 +173,9 @@ pub fn handle_at(
     // task is a courtesy to a debugger, and hanging the panic handler to
     // deliver it would be a poor trade.
     let _ = crate::scheduler::try_with(|sched| {
-        if let Some(tcb) = &mut sched.tasks[current as usize] {
+        // The first try-lock may have failed even if this one succeeds. An
+        // unknown task ID must not turn fault reporting into a nested panic.
+        if let Some(tcb) = sched.tasks.get_mut(current as usize).and_then(Option::as_mut) {
             tcb.state = TaskState::Faulted;
         }
         sched.recompute_ready_mask();

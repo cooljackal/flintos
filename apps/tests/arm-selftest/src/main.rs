@@ -17,6 +17,8 @@
         feature = "bus-smoke",
         feature = "clock-smoke",
         feature = "pio-smoke",
+        feature = "isolation-smoke",
+        feature = "isolation-fault-smoke",
         feature = "flash-smoke"
     ),
     allow(dead_code)
@@ -56,6 +58,12 @@ mod clock_test;
 
 #[cfg(all(feature = "pio-smoke", target_arch = "arm"))]
 mod pio_test;
+
+#[cfg(all(feature = "isolation-smoke", target_arch = "arm"))]
+mod isolation_test;
+
+#[cfg(all(feature = "isolation-fault-smoke", target_arch = "arm"))]
+mod isolation_fault_test;
 
 #[cfg(not(feature = "expected-hardfault"))]
 static PEER_RUNS: AtomicU32 = AtomicU32::new(0);
@@ -401,6 +409,12 @@ unsafe extern "C" {
 }
 
 fn main() {
+    #[cfg(all(feature = "isolation-fault-smoke", target_arch = "arm"))]
+    task::spawn_on(0, "isolation-fault", isolation_fault_test::run, Priority::Normal(1), 4096)
+        .expect("isolation fault controller");
+    #[cfg(all(feature = "isolation-smoke", target_arch = "arm"))]
+    task::spawn_on(0, "isolation", isolation_test::run, Priority::Normal(1), 4096)
+        .expect("isolation test controller");
     #[cfg(all(feature = "pio-smoke", target_arch = "arm"))]
     task::spawn_on(0, "pio", pio_test::run, Priority::Normal(1), 8192)
         .expect("PIO test task");
@@ -494,6 +508,8 @@ fn main() {
         not(feature = "bus-smoke"),
         not(feature = "clock-smoke"),
         not(feature = "pio-smoke"),
+        not(feature = "isolation-smoke"),
+        not(feature = "isolation-fault-smoke"),
         not(feature = "flash-smoke")
     ))]
     {

@@ -22,6 +22,17 @@ SECTIONS
     KEEP(*(.vector_table));
   } > FLASH
 
+  /* Explicit user-only input sections. Kernel code and constants never fall
+   * into this grant, including when the user image is smaller than a region. */
+  .user_text : ALIGN(4096)
+  {
+    _user_text_start = .;
+    KEEP(*(.user.text .user.text.* .user.rodata .user.rodata.*));
+    _user_text_payload_end = .;
+    . = _user_text_start + 4096;
+    _user_text_end = .;
+  } > FLASH
+
   .text :
   {
     *(.text .text.*);
@@ -85,6 +96,7 @@ SECTIONS
 }
 
 ASSERT(SIZEOF(.boot2) == 0x100, "RP2040 boot2 must be exactly 256 bytes");
+ASSERT(_user_text_payload_end <= _user_text_end, "RP2040 isolated code exceeds its 4K grant");
 ASSERT(ADDR(.vector_table) == 0x10000100, "RP2040 vectors must follow boot2");
 ASSERT(SIZEOF(.vector_table) >= 0xC0, "RP2040 vector table is incomplete");
 ASSERT(_dma_pool_end <= _stack_top, "RP2040 RAM image overlaps reset stacks");

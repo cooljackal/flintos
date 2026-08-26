@@ -157,6 +157,18 @@ _flint_armv6m_core1_entry:
 .thumb_func
 .global SVC
 SVC:
+    .if FLINT_ISOLATION
+    /* Only reset's privileged MSP exception may launch the scheduler. User
+     * SVC 0 must never enter the old boot-only path. */
+    mrs r0, control
+    movs r1, #1
+    tst r0, r1
+    bne UserSVC
+    mov r0, lr
+    ldr r1, =0xfffffff9
+    cmp r0, r1
+    bne UserSVC
+    .endif
     bl _flint_armv6m_start_tick
     bl _flint_armv6m_first_stack
     mov r1, r0
@@ -173,11 +185,37 @@ SVC:
     cpsie i
     bx lr
 
+    .if FLINT_ISOLATION
+UserSVC:
+    mrs r0, psp
+    mov r1, lr
+    push {r2, lr}
+    bl _flint_armv6m_user_svc
+    pop {r2, pc}
+
+.section .user.text.return, "ax", %progbits
+.thumb_func
+.global _flint_user_return
+_flint_user_return:
+    movs r0, #1
+    svc 1
+11: b 11b
+.section .text.PendSV, "ax", %progbits
+    .endif
+
 .thumb_func
 .global PendSV
 PendSV:
     cpsid i
     mrs r0, psp
+    .if FLINT_ISOLATION
+    /* The user controls PSP. Validate before a privileged software save can
+     * turn it into an arbitrary kernel-memory write. */
+    push {r3, lr}
+    bl _flint_armv6m_validate_psp
+    pop {r2, r3}
+    mov lr, r3
+    .endif
     subs r0, #32
     stmia r0!, {r4-r7}
     mov r4, r8
@@ -246,7 +284,9 @@ HardFault:
     b 8f
 7:  mrs r0, msp
 8:  mov r1, r2
+    push {r2, lr}
     bl _flint_armv6m_hard_fault
+    pop {r2, pc}
 
 .thumb_func
 .global DefaultHandler

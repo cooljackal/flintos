@@ -8,10 +8,21 @@
 
 #![no_std]
 
-#[cfg(target_arch = "arm")]
-core::arch::global_asm!(include_str!("startup.S"), options(raw));
+#[cfg(all(target_arch = "arm", feature = "task-isolation"))]
+core::arch::global_asm!(
+    ".set FLINT_ISOLATION, 1",
+    include_str!("startup.S"),
+    options(raw)
+);
+#[cfg(all(target_arch = "arm", not(feature = "task-isolation")))]
+core::arch::global_asm!(
+    ".set FLINT_ISOLATION, 0",
+    include_str!("startup.S"),
+    options(raw)
+);
 
 mod critical_section;
+pub mod mpu;
 pub mod smp;
 pub mod tick;
 
@@ -34,6 +45,32 @@ use hal::arch::{
 #[repr(C)]
 pub struct TaskContext {
     pub stack_pointer: u32,
+}
+
+/// Replace the initial return target with the user-page exit veneer.
+///
+/// # Safety
+/// `context` is a freshly initialized, exclusively owned task stack.
+#[cfg(all(target_arch = "arm", feature = "task-isolation"))]
+pub unsafe fn init_isolated_return(context: &TaskContext) {
+    unsafe extern "C" {
+        fn _flint_user_return();
+    }
+    unsafe {
+        ((context.stack_pointer + 13 * 4) as *mut u32).write(_flint_user_return as *const () as u32)
+    };
+}
+
+/// Set the privilege used on the next exception return, never from a task.
+///
+/// # Safety
+/// Called in handler mode with a matching MPU map and interrupts masked.
+#[cfg(all(target_arch = "arm", feature = "task-isolation"))]
+pub unsafe fn set_thread_unprivileged(user: bool) {
+    let control = if user { 3u32 } else { 2u32 };
+    unsafe {
+        core::arch::asm!("msr CONTROL, {value}", "isb", value = in(reg) control, options(nostack))
+    };
 }
 
 impl TaskContextTrait for TaskContext {
@@ -234,7 +271,16 @@ pub static mut FLINT_ARMV6M_HARD_FAULT: FaultInfo = FaultInfo {
 
 #[cfg(target_arch = "arm")]
 #[no_mangle]
-unsafe extern "C" fn _flint_armv6m_hard_fault(frame: *const u32, exc_return: u32) -> ! {
+unsafe extern "C" fn _flint_armv6m_hard_fault(frame: *const u32, exc_return: u32) {
+    #[cfg(feature = "task-isolation")]
+    {
+        unsafe extern "C" {
+            fn _flint_armv6m_isolation_fault(frame: *const u32, exc_return: u32) -> bool;
+        }
+        if unsafe { _flint_armv6m_isolation_fault(frame, exc_return) } {
+            return;
+        }
+    }
     let captured = unsafe { fault_info(frame, 3, exc_return) };
     unsafe { core::ptr::write_volatile(&raw mut FLINT_ARMV6M_HARD_FAULT, captured) };
     unsafe extern "C" {
