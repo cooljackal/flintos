@@ -361,9 +361,7 @@ endif
 build: ## Build the selected app (APP=demo BOARD=board-esp32-devkitc DEBUG=debug-level-1)
 	@$(LOAD_ENV) $(CARGO) build $(APP_FLAGS)
 ifneq ($(filter $(BOARD),$(RP2040_BOARDS)),)
-	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action convert \
-		-Architecture armv6m -Soc rp2040 -Board $(RP2040_BOARD_NAME) \
-		-Elf $(APP_BIN) -Bin $(APP_RAW_BIN) -Uf2 $(APP_UF2)
+	$(BASH) tools/rp2040-uf2.sh $(APP_BIN) $(APP_RAW_BIN) $(APP_UF2)
 else
 	@$(MAKE) --no-print-directory size
 endif
@@ -384,8 +382,10 @@ build-trace: ## Build with kernel event tracing
 .PHONY: flash
 flash: build ## Build + flash + monitor via espflash (USB serial)
 ifneq ($(filter $(BOARD),$(RP2040_BOARDS)),)
-	pwsh -NoProfile -File tools/rp2040-image.ps1 -Action flash \
-		-Architecture armv6m -Soc rp2040 -Board $(RP2040_BOARD_NAME) -Uf2 $(APP_UF2)
+	# RP2040: enter BOOTSEL automatically via the 1200bps touch (no button/probe
+	# needed when the board already runs FlintOS USB with allow_reset), then copy
+	# the UF2. Falls back to a held-BOOTSEL board or an already-mounted drive.
+	$(PY) tools/rp2040-flash.py $(APP_UF2)
 else
 	espflash flash $(APP_BIN) $(PORT_ARG) \
 		--chip $(ESPFLASH_CHIP) --flash-mode $(FLASH_MODE) \
@@ -694,6 +694,19 @@ ARM_USB_LOCATION   ?=
 ARM_USB_CYCLES     ?= 1
 ARM_USB_IMAGE_ID   ?= 17200001
 
+# The RP2040 on-target self-tests run over SWD through a bash + probe-rs harness
+# (tools/rp2040-run-*-selftest.sh, tools/rp2040-run-selftest.sh, sharing
+# tools/rp2040-swd-lib.sh). It is cross-platform -- no PowerShell -- and the one
+# thing bash cannot do portably, read a COM port, is delegated to a small
+# pyserial helper. FLINT_* carries the probe serial and the debugprobe's UART.
+ARM_SELFTEST_ELF := target/$(ARM_TARGET)/debug/arm-selftest
+ARM_SWD_ENV := FLINT_PROBE_SERIAL=$(ARM_PROBE_SERIAL) FLINT_UART_PORT=$(ARM_UART_PORT) FLINT_PY=$(PY)
+# Build one arm-selftest image for the Pico. $(1) is the extra suite feature
+# (empty for the default I/O image). The SWD path flashes the ELF directly, so
+# this skips the UF2 conversion `make build` does for the BOOTSEL path.
+arm_build_suite = cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+	--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1$(if $(1),$(COMMA)$(1))"
+
 .PHONY: test-arm-usb
 test-arm-usb: ## Prove native Pico USB and unattended recovery; requires ARM_USB_LOCATION
 	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }
@@ -745,56 +758,33 @@ test-arm-diagnostics: ## Prove ARM logging, metrics, and retained panic recovery
 
 .PHONY: test-arm-dma
 test-arm-dma: ## Prove RP2040 DMA timeout cleanup and UART1 loopback through SWD
-	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/dma-smoke"
-	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
-		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite dma -TimeoutSeconds 20
+	$(call arm_build_suite,arm-selftest/dma-smoke)
+	$(ARM_SWD_ENV) FLINT_TIMEOUT=20 $(BASH) tools/rp2040-run-selftest.sh $(ARM_SELFTEST_ELF) dma
 
 .PHONY: test-arm-io
 test-arm-io: ## Prove Pico UART and a physical GP2-to-GP3 edge loopback
-	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico
-	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
-		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite io -TimeoutSeconds 30
+	$(call arm_build_suite,)
+	$(ARM_SWD_ENV) FLINT_TIMEOUT=30 $(BASH) tools/rp2040-run-selftest.sh $(ARM_SELFTEST_ELF) io
 
 .PHONY: test-arm-mutex
 test-arm-mutex: ## Stress RP2040 priority inheritance on both cores
-	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/mutex-smoke"
-	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
-		-BootselSerial $(ARM_BOOTSEL_SERIAL) -Suite mutex -TimeoutSeconds 30
+	$(call arm_build_suite,arm-selftest/mutex-smoke)
+	$(ARM_SWD_ENV) FLINT_TIMEOUT=30 $(BASH) tools/rp2040-run-selftest.sh $(ARM_SELFTEST_ELF) mutex
 
 .PHONY: test-arm-races
 test-arm-races: ## Stress Pico task-vs-physical-ISR queue races
-	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/race-smoke"
-	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
-		-Suite race -TimeoutSeconds 60
+	$(call arm_build_suite,arm-selftest/race-smoke)
+	$(ARM_SWD_ENV) FLINT_TIMEOUT=70 $(BASH) tools/rp2040-run-selftest.sh $(ARM_SELFTEST_ELF) race
 
 .PHONY: test-arm-pwm
 test-arm-pwm: ## Measure Pico PWM frequency and duty through GP2-to-GP3 loopback
-	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/pwm-smoke"
-	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
-		-Suite pwm -TimeoutSeconds 15
+	$(call arm_build_suite,arm-selftest/pwm-smoke)
+	$(ARM_SWD_ENV) FLINT_TIMEOUT=15 $(BASH) tools/rp2040-run-selftest.sh $(ARM_SELFTEST_ELF) pwm
 
 .PHONY: test-arm-adc-entropy
 test-arm-adc-entropy: ## Measure Pico internal temperature ADC and ROSC seed health
-	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/adc-entropy-smoke"
-	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
-		-Suite adc-entropy -TimeoutSeconds 20
+	$(call arm_build_suite,arm-selftest/adc-entropy-smoke)
+	$(ARM_SWD_ENV) FLINT_TIMEOUT=20 $(BASH) tools/rp2040-run-selftest.sh $(ARM_SELFTEST_ELF) adc-entropy
 
 .PHONY: test-arm-flash
 test-arm-flash: ## DESTRUCTIVE: test Pico reserved NVS, persistence and XIP-off recovery
@@ -808,12 +798,8 @@ test-arm-flash: ## DESTRUCTIVE: test Pico reserved NVS, persistence and XIP-off 
 
 .PHONY: test-arm-buses
 test-arm-buses: ## Prove Pico SPI internal loopback and dual-controller I2C loopback
-	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
-		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/bus-smoke"
-	pwsh -NoProfile -File tools/rp2040-run-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
-		-Suite bus -TimeoutSeconds 30
+	$(call arm_build_suite,arm-selftest/bus-smoke)
+	$(ARM_SWD_ENV) FLINT_TIMEOUT=30 $(BASH) tools/rp2040-run-selftest.sh $(ARM_SELFTEST_ELF) bus
 
 ARM_CLOCK_HZ ?= 12000000
 ARM_PIO_HZ ?= 12000000
@@ -821,15 +807,14 @@ ARM_ISOLATION_HZ ?= 12000000
 ARM_ISOLATION_FAULT_CORE ?= 0
 .PHONY: test-arm-isolation test-arm-isolation-fault
 test-arm-isolation: ## Prove MPU denial and per-core domain switching on the Pico
-	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }
 	@test "$(ARM_ISOLATION_HZ)" = 12000000 -o "$(ARM_ISOLATION_HZ)" = 125000000
-	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico DEBUG=debug-level-1 \
-		EXTRA_FEATURES="arm-selftest/isolation-smoke$(if $(filter 125000000,$(ARM_ISOLATION_HZ)),$(COMMA)board/native-usb,)"
-	pwsh -NoProfile -File tools/rp2040-run-isolation-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
-		-BootselSerial $(ARM_BOOTSEL_SERIAL) -LocationPath "$(ARM_USB_LOCATION)"
+	$(call arm_build_suite,arm-selftest/isolation-smoke$(if $(filter 125000000,$(ARM_ISOLATION_HZ)),$(COMMA)board/native-usb,))
+	$(ARM_SWD_ENV) FLINT_TIMEOUT=30 $(BASH) tools/rp2040-run-isolation-selftest.sh $(ARM_SELFTEST_ELF)
 
+# Still on PowerShell: the unexpected-fault variant proves a retained panic
+# survives a reboot, which needs the target's own USB (ROM BOOTSEL) to reflash
+# between boots. The SWD-only bash harness cannot drive that; port it once a rig
+# exposes the Pico's native USB.
 test-arm-isolation-fault: ## Prove an unrelated user HardFault takes the production panic/reboot path
 	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }
 	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico DEBUG=debug-level-1 \
@@ -841,25 +826,16 @@ test-arm-isolation-fault: ## Prove an unrelated user HardFault takes the product
 
 .PHONY: test-arm-pio
 test-arm-pio: ## Prove owned programmed I/O through the GP2-to-GP3 physical loopback
-	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }
 	@test "$(ARM_PIO_HZ)" = 12000000 -o "$(ARM_PIO_HZ)" = 125000000
-	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico \
-		EXTRA_FEATURES="arm-selftest/pio-smoke$(if $(filter 125000000,$(ARM_PIO_HZ)),$(COMMA)board/native-usb,)"
-	pwsh -NoProfile -File tools/rp2040-run-pio-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
-		-LocationPath '$(ARM_USB_LOCATION)' -ExpectedHz $(ARM_PIO_HZ)
+	$(call arm_build_suite,arm-selftest/pio-smoke$(if $(filter 125000000,$(ARM_PIO_HZ)),$(COMMA)board/native-usb,))
+	$(ARM_SWD_ENV) $(BASH) tools/rp2040-run-pio-selftest.sh $(ARM_SELFTEST_ELF) $(ARM_PIO_HZ)
 
 ARM_CLOCK_FEATURES = $(if $(filter 125000000,$(ARM_CLOCK_HZ)),$(COMMA)board/native-usb,)
 .PHONY: test-arm-clock
 test-arm-clock: ## Measure Pico CPU clock on both cores (ARM_CLOCK_HZ=12000000|125000000)
 	@test "$(ARM_CLOCK_HZ)" = 12000000 -o "$(ARM_CLOCK_HZ)" = 125000000
-	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico \
-		EXTRA_FEATURES="arm-selftest/clock-smoke$(ARM_CLOCK_FEATURES)"
-	pwsh -NoProfile -File tools/rp2040-run-clock-selftest.ps1 \
-		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
-		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
-		-LocationPath '$(ARM_USB_LOCATION)' -ExpectedHz $(ARM_CLOCK_HZ)
+	$(call arm_build_suite,arm-selftest/clock-smoke$(ARM_CLOCK_FEATURES))
+	$(ARM_SWD_ENV) $(BASH) tools/rp2040-run-clock-selftest.sh $(ARM_SELFTEST_ELF) $(ARM_CLOCK_HZ)
 
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────
