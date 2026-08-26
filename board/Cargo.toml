@@ -28,6 +28,7 @@ rp2040-i2c = { path = "../drivers/physical/rp2040/i2c", optional = true }
 rp2040-spi = { path = "../drivers/physical/rp2040/spi", optional = true }
 rp2040-flash = { path = "../drivers/physical/rp2040/flash", optional = true }
 rp2040-usb = { path = "../drivers/physical/rp2040/usb", optional = true }
+rp2040-pio = { path = "../drivers/physical/rp2040/pio", optional = true }
 usb-device = { path = "../drivers/bus/usb-device" }
 esp32-flash = { path = "../drivers/physical/esp32/flash", optional = true }
 esp32-ledc = { path = "../drivers/physical/esp32/ledc", optional = true }
@@ -62,7 +63,7 @@ default = []
 # The ESP32 boards pull in the drivers their device accessors construct. Named
 # once as `esp32-drivers` so a new ESP32 board is still a one-line feature.
 esp32-drivers = ["dep:api", "dep:esp32-i2c", "dep:esp32-spi", "dep:esp32-uart", "dep:esp32-ledc", "dep:esp32-rmt", "dep:esp32-gpio", "dep:esp32-flash", "dep:i2c-bus", "dep:spi-bus", "dep:axp192"]
-rp2040-drivers = ["dep:api", "dep:rp2040-uart", "dep:rp2040-i2c", "dep:rp2040-spi", "dep:rp2040-flash", "dep:i2c-bus", "dep:spi-bus"]
+rp2040-drivers = ["dep:api", "dep:rp2040-uart", "dep:rp2040-i2c", "dep:rp2040-spi", "dep:rp2040-flash", "dep:rp2040-pio", "dep:i2c-bus", "dep:spi-bus"]
 # Opt-in: also chooses the USB-safe CPU clock before kernel/tick initialization.
 native-usb = ["dep:rp2040-usb"]
 board-esp32-wrover = ["dep:soc-esp32", "esp32-drivers"]

@@ -580,7 +580,7 @@ check-all: ## Full check including Xtensa and ARM architectures
 			cargo check --target $(ARM_TARGET) -p $$a --no-default-features \
 				--features "kernel/$$b,kernel/debug-level-1" || exit 1; \
 		done; \
-		for f in arm-selftest/clock-smoke arm-selftest/clock-smoke,board/native-usb; do \
+		for f in arm-selftest/clock-smoke arm-selftest/clock-smoke,board/native-usb arm-selftest/pio-smoke arm-selftest/pio-smoke,board/native-usb; do \
 			echo "== arm-selftest ($$b, $$f)"; \
 			cargo check --target $(ARM_TARGET) -p arm-selftest --no-default-features \
 				--features "kernel/$$b,kernel/debug-level-1,$$f" || exit 1; \
@@ -652,6 +652,7 @@ test-host: test-boards ## Run host-side unit tests (every board manifest include
 ifdef WINDOWS
 	pwsh -NoProfile -File tools/rp2040-usb-selftest.ps1
 	pwsh -NoProfile -File tools/rp2040-clock-selftest.ps1
+	pwsh -NoProfile -File tools/rp2040-pio-selftest.ps1
 endif
 
 # Every board this tree can build for. A manifest's invariant tests only run
@@ -812,6 +813,18 @@ test-arm-buses: ## Prove Pico SPI internal loopback and dual-controller I2C loop
 		-Suite bus -TimeoutSeconds 30
 
 ARM_CLOCK_HZ ?= 12000000
+ARM_PIO_HZ ?= 12000000
+.PHONY: test-arm-pio
+test-arm-pio: ## Prove owned programmed I/O through the GP2-to-GP3 physical loopback
+	@test -n "$(ARM_USB_LOCATION)" || { echo "Set ARM_USB_LOCATION to the Pico USB parent location path"; exit 1; }
+	@test "$(ARM_PIO_HZ)" = 12000000 -o "$(ARM_PIO_HZ)" = 125000000
+	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico \
+		EXTRA_FEATURES="arm-selftest/pio-smoke$(if $(filter 125000000,$(ARM_PIO_HZ)),$(COMMA)board/native-usb,)"
+	pwsh -NoProfile -File tools/rp2040-run-pio-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
+		-LocationPath '$(ARM_USB_LOCATION)' -ExpectedHz $(ARM_PIO_HZ)
+
 ARM_CLOCK_FEATURES = $(if $(filter 125000000,$(ARM_CLOCK_HZ)),$(COMMA)board/native-usb,)
 .PHONY: test-arm-clock
 test-arm-clock: ## Measure Pico CPU clock on both cores (ARM_CLOCK_HZ=12000000|125000000)

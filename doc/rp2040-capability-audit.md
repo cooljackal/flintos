@@ -51,7 +51,7 @@ impossible using programmable I/O, bit-banging or an external device.
 | Dedicated SD/SDIO controller | No dedicated block | Raspberry Pi's [PIO SD-card implementation][pico-extras] is a possible alternative, not current support. |
 | SD card over SPI | Supported route, no card driver | Reuse cross-architecture [#28]; requires board-owned chip-select, a known card/socket and bounded read/write/removal tests. A working SPI controller is not an SD-card PASS. |
 | Ethernet MAC | No dedicated block | An external network controller would need selected hardware, a board transport and its own driver/acceptance scope. Do not claim the ESP32 MAC path works on RP2040. |
-| PIO engine | Hardware present, no FlintOS driver | [#175] covers resource ownership and bounded loopback. Protocol implementations such as I2S/CAN/SDIO are later work, not included in that driver's acceptance. |
+| PIO engine | Implemented / Pico-verified polled subset | [#175]: exclusive blocks/pins, machine/program allocation, validated portable instruction lowering and bounded FIFO exchange. Each CPU profile passes 2,000 ordered words total (1,000 per block), timeout recovery, collision rejection and reopen checks on GP2→GP3. See [PIO acceptance](rp2040-pio-acceptance.md). No IRQ/DMA transfers, arbitrary parallel pins or I2S/CAN/SDIO protocol claim. |
 | USB device (CDC) | Implemented / existing target evidence | [#172 USB acceptance](rp2040-usb-acceptance.md): native data/reset/update/reconnect, soak and bounded fault recovery. Other device classes are not claimed. |
 | USB host | Hardware present, no FlintOS driver | [#177]; needs a separate host contract and a safe, verified VBUS fixture before target testing. A PC-to-Pico device cable is not a host fixture. |
 
@@ -61,9 +61,9 @@ impossible using programmable I/O, bit-banging or an external device.
   [Pico SDK counter sequence][sdk-clocks] with exclusive ownership and bounded
   waits. Its [Pico acceptance](rp2040-clock-acceptance.md) supersedes the original
   audit's configured-only clock finding.
-- [#175], [#176] and [#177] require physical resource ownership at HAL/SoC level,
-  board construction and portable contracts above it. No chip register access
-  belongs in an application or logical driver.
+- Completed [#175] owns physical resources below a portable contract, with board
+  construction. [#176] and [#177] must retain that boundary: no chip register
+  access belongs in an application or logical driver.
 - [#28] is shared storage work, not an ARM-only duplicate. A filesystem is a
   separate layer from the card/block driver.
 - [#176] must reuse the shared IP work ([#68]) and applicable connection/recovery

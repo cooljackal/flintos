@@ -21,6 +21,14 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Added
 
+- **Owned RP2040 programmed I/O** (#175). A portable instruction/state-machine
+  contract and `board::programmable_io` construction keep native instructions
+  and registers inside the physical driver. The initial polled implementation
+  owns each block, program memory and the board's GP2/GP3 pair; it rejects
+  collisions and cancels timed-out work before resources are reused. Pico
+  loopback passes at 12 and 125 MHz. This does not add CAN, I²S, SDIO, DMA/IRQ
+  transfers or arbitrary parallel-pin programs. See [PIO acceptance](doc/rp2040-pio-acceptance.md).
+
 - **RP2040 CPU frequency measurement** (#174, Pico-verified at 12 and 125 MHz).
   The existing SoC contract now uses an exclusively owned, bounded
   hardware counter; ARM boot uses its result for SysTick and labels a failed

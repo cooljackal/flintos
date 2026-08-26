@@ -16,6 +16,7 @@
         feature = "adc-entropy-smoke",
         feature = "bus-smoke",
         feature = "clock-smoke",
+        feature = "pio-smoke",
         feature = "flash-smoke"
     ),
     allow(dead_code)
@@ -52,6 +53,9 @@ mod flash_test;
 
 #[cfg(all(feature = "clock-smoke", target_arch = "arm"))]
 mod clock_test;
+
+#[cfg(all(feature = "pio-smoke", target_arch = "arm"))]
+mod pio_test;
 
 #[cfg(not(feature = "expected-hardfault"))]
 static PEER_RUNS: AtomicU32 = AtomicU32::new(0);
@@ -397,6 +401,9 @@ unsafe extern "C" {
 }
 
 fn main() {
+    #[cfg(all(feature = "pio-smoke", target_arch = "arm"))]
+    task::spawn_on(0, "pio", pio_test::run, Priority::Normal(1), 8192)
+        .expect("PIO test task");
     #[cfg(all(feature = "clock-smoke", target_arch = "arm"))]
     {
         task::spawn_on(0, "clock", clock_test::run, Priority::Normal(1), 4096)
@@ -486,6 +493,7 @@ fn main() {
         not(feature = "adc-entropy-smoke"),
         not(feature = "bus-smoke"),
         not(feature = "clock-smoke"),
+        not(feature = "pio-smoke"),
         not(feature = "flash-smoke")
     ))]
     {

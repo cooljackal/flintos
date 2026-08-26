@@ -67,6 +67,12 @@ pub const GPIO_LOOPBACK_OUT: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 2 
 pub const GPIO_LOOPBACK_IN: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 3 };
 /// PWM target acceptance reuses the physical GP2-to-GP3 jumper.
 pub const PWM_LOOPBACK_OUT: soc::ctrl::GpioPort = soc::ctrl::GpioPort { pin: 2 };
+/// Programmed-I/O expansion pair, shared with GPIO/PWM physical loopback.
+/// Either block can own it, but they cannot drive the pair concurrently.
+pub const PIO_PORTS: [rp2040_pio::Port; 2] = [
+    rp2040_pio::Port { block: 0, input: Some(3), output: Some(2) },
+    rp2040_pio::Port { block: 1, input: Some(3), output: Some(2) },
+];
 /// Three-wire expansion SPI0. Chip select is caller-managed.
 pub const EXPANSION_SPI: soc::ctrl::SpiPort = soc::ctrl::SpiPort {
     ctrl: soc::ctrl::SpiCtrl::Spi0,

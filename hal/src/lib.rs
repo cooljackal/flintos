@@ -24,6 +24,7 @@ pub mod flash;
 pub mod interrupt;
 pub mod mpu;
 pub mod pinmux;
+pub mod pio;
 pub mod power;
 pub mod reset;
 pub mod smp;

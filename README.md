@@ -86,7 +86,7 @@ A dash does not rule out a future PIO or external-device implementation.
 | Dedicated SD/SDIO controller | ⛔ | — |
 | SD card over SPI | ⛔ | ⛔ [#28](https://github.com/cooljackal/flintos/issues/28) |
 | Ethernet MAC | ⛔ | — |
-| Programmable I/O (PIO) engine | — | ⛔ [#175](https://github.com/cooljackal/flintos/issues/175) |
+| Programmable I/O (PIO) engine | — | ✅ [Polled subset](doc/rp2040-pio-acceptance.md) |
 | USB device (CDC) | — | ✅ |
 | USB host | — | ⛔ [#177](https://github.com/cooljackal/flintos/issues/177) |
 
@@ -148,7 +148,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 
 | Check | Status |
 |---|---|
-| Host unit tests | ✅ 1,058 passing, kernel included — `make test-host` |
+| Host unit tests | ✅ 1,076 passing, kernel included — `make test-host` |
 | On-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
 | Layer boundary + package naming | ✅ enforced in CI |
 | Image size, per region | `make size` |

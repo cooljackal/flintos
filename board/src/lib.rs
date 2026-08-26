@@ -49,6 +49,14 @@ mod usb;
 pub use usb::{usb_init, usb_reset};
 pub use usb_device::{Identity as UsbIdentity, Serial as UsbSerial};
 
+/// Own a programmed-I/O engine with the board's expansion input/output pair.
+/// This returns a portable contract, not native instructions or registers.
+#[cfg(feature = "rp2040-drivers")]
+pub fn programmable_io(index: u8) -> Result<impl hal::pio::ProgrammableIo, hal::pio::Error> {
+    let port = active::PIO_PORTS.get(usize::from(index)).ok_or(hal::pio::Error::Invalid)?;
+    rp2040_pio::Rp2040Pio::open(*port)
+}
+
 #[cfg(feature = "board-esp32-wrover")]
 pub mod esp32_wrover;
 

@@ -131,6 +131,7 @@ dependencies = [
  "led-matrix",
  "rp2040-flash",
  "rp2040-i2c",
+ "rp2040-pio",
  "rp2040-spi",
  "rp2040-uart",
  "rp2040-usb",
@@ -734,6 +735,14 @@ dependencies = [
 
 [[package]]
 name = "rp2040-i2c"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-rp2040",
+]
+
+[[package]]
+name = "rp2040-pio"
 version = "0.1.0"
 dependencies = [
  "hal",
