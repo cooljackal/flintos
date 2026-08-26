@@ -12,6 +12,7 @@ feature that matches your hardware; `BOARD` has no default.
 | [M5Stack Atom Matrix](/hardware/board-m5stack-atom/) | Xtensa LX6 / ESP32-PICO | `board-m5-atom-matrix` | 🟢 verified — LED panel, IMU, ADC |
 | [M5Stack Atom Lite](/hardware/board-m5stack-atom/) | Xtensa LX6 / ESP32-PICO | `board-m5-atom-lite` | 🟢 verified — one LED |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | `board-wio-rp2040-mini` | 🟢 verified — kernel suite, both cores |
+| Raspberry Pi Pico | ARMv6-M / RP2040 | `board-raspberry-pi-pico` | 🟢 verified — kernel + peripheral suite over SWD |
 | [ESP32-WROVER](/hardware/board-esp32-wrover/) | Xtensa LX6 / ESP32 | `board-esp32-wrover` | 🟡 manifest written, never flashed |
 
 🟢 checked on real silicon · 🟡 should work, nobody has flashed it
@@ -27,9 +28,17 @@ like broken hardware, so the build refuses to guess.
 
 - **Xtensa boards** — the full on-target self-test suite (`make test-target`),
   flash round-trip, and both cores scheduling.
-- **Wio RP2040 Mini** — the ARMv6-M kernel suite: boot, preemption, context
-  switch, critical sections, queues, faults, and both RP2040 cores. Peripheral
-  drivers are Xtensa-only for now.
+- **RP2040 boards** — the ARMv6-M kernel suite (boot, preemption, context switch,
+  critical sections, queues, faults, both cores) **and** the peripheral drivers:
+  GPIO, UART, SPI, I²C, ADC and conditioned entropy, DMA, PIO, flash KV, native
+  USB CDC, per-core MPU task isolation, and the measured CPU clock — each with an
+  on-target acceptance test driven over SWD (`make test-arm-*`). One gap: PWM
+  edge-counting passes but its duty/period timing capture reads zero on hardware
+  and is still under investigation.
+
+RP2040 boards flash over USB with no debug probe — `make flash` enters BOOTSEL
+automatically (a 1200bps touch) when the board already runs FlintOS with USB
+enabled, or you hold **BOOTSEL** for the first flash.
 
 The 🟡 WROVER row is the honest one: its tests pass but no one has held the
 board. **Flashing a board we haven't is the contribution we want most** — a

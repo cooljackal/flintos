@@ -6,6 +6,11 @@ This quickstart targets the **ESP32-DevKitC** — the reference board. Every ste
 is the same shape on any board; where a command depends on your board or CPU, a
 link points to the [alternatives](/users/other-targets/).
 
+:::note[Set up your machine first]
+This assumes the [prerequisites](/prerequisites/) — Rust, `make`, a POSIX shell
+and Python — are already installed for your OS.
+:::
+
 ## 1. Toolchain
 
 The ESP32 is an Xtensa chip, which needs Espressif's Rust fork.

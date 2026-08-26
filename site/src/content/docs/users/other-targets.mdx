@@ -25,12 +25,16 @@ Boards: ESP32-DevKitC, ESP32-WROVER, M5Stack Atom Matrix, M5Stack Atom Lite.
 
 ### Arm Cortex-M0+ — RP2040 boards
 
-Stock Rust — just add the target. Building the flashable RP2040 image uses the
-bundled PowerShell tooling, so PowerShell needs to be on your PATH.
+Stock Rust — add the target, plus `elf2uf2-rs` to pack the flashable image.
 
 ```bash
 rustup target add thumbv6m-none-eabi
+cargo install elf2uf2-rs
 ```
+
+`make flash` enters BOOTSEL automatically over USB (a 1200bps touch) when the
+board is already running FlintOS with USB enabled — no button, no probe. For a
+first flash of a blank board, hold **BOOTSEL** while plugging in.
 
 Boards: Wio RP2040 Mini.
 

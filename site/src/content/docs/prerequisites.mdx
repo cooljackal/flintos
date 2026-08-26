@@ -1,0 +1,105 @@
+---
+title: Prerequisites
+description: The tools flintOS needs to build, flash and test — by operating system.
+---
+
+import { Tabs, TabItem, Aside, LinkCard } from '@astrojs/starlight/components';
+
+Before the [Quickstart](/users/quickstart/), get these on your machine. The list
+is short and the same everywhere; only *how* you install them changes by OS.
+
+## The short list
+
+| Tool | What it's for |
+| --- | --- |
+| **Rust** (via [rustup](https://rustup.rs)) | Compiles the kernel and your app. The per-CPU toolchain (Espressif fork for ESP32, a stock target for RP2040) is added in step 1 of the Quickstart. |
+| **make** + a **POSIX shell** (bash) | Drives every build, flash and test. Native on Linux and macOS; on Windows it comes from MSYS2. |
+| **Python 3** | Build helpers and the RP2040 on-target self-test harness. **Standard library only** — nothing to `pip install`. |
+| **git** | Clone the repository. |
+
+Plus the bits for the board you flash. Every board uses the same tools as the
+rest of its chip family, so this is grouped by family — the two below cover every
+supported board (see [Supported boards](/users/supported-boards/) for which board
+is which):
+
+| Chip family | To flash | Notes |
+| --- | --- | --- |
+| **ESP32** (Xtensa) | `espflash` + a USB cable | Installed with the toolchain (`cargo install espup espflash`). Flashes over USB serial. |
+| **RP2040** (Arm) | a USB cable + `elf2uf2-rs` | `cargo install elf2uf2-rs`. `make flash` builds a UF2 and copies it over USB — **no debug probe needed**. If the board already runs FlintOS with USB enabled it enters BOOTSEL on its own (a 1200bps touch); otherwise hold **BOOTSEL** while plugging in for the first flash. |
+
+<Aside type="tip" title="When you do want a debug probe (RP2040)">
+A **CMSIS-DAP probe** with [`probe-rs`](https://probe.rs) is optional — you need
+it only to run the on-target self-tests (`make test-arm-*`) or to debug over SWD,
+not to flash and run your app.
+</Aside>
+
+## By operating system
+
+<Tabs syncKey="os">
+<TabItem label="Linux">
+
+```bash
+# Debian/Ubuntu; use your distro's equivalent elsewhere
+sudo apt install build-essential python3 git
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+`build-essential` brings `make`, a C toolchain and bash. For USB access without
+`sudo`, add yourself to the serial group (`sudo usermod -aG dialout $USER`, then
+re-login) and install probe-rs's udev rules if you use a debug probe.
+
+</TabItem>
+<TabItem label="macOS">
+
+```bash
+xcode-select --install          # make, git, a C toolchain
+brew install python             # or use the system python3
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+macOS ships bash-compatible shells; nothing else is needed for the build system.
+
+</TabItem>
+<TabItem label="Windows">
+
+The build is `make` + shell scripts, so you need Unix tools. **[MSYS2](https://www.msys2.org)**
+provides them — `make`, `bash`, the coreutils and `cygpath`:
+
+```bash
+pacman -S make          # bash + coreutils come with MSYS2's base install
+```
+
+Add MSYS2's `usr\bin` to your `PATH` so `make` runs from a normal Command Prompt
+or PowerShell console, not only the MSYS2 shell. Then install the rest with their
+native Windows installers:
+
+- **Rust** — [rustup](https://rustup.rs) (the MSVC toolchain).
+- **Python 3** — [python.org](https://www.python.org/downloads/); tick *Add python.exe to PATH*.
+- **git** — [Git for Windows](https://git-scm.com/download/win).
+
+<Aside type="note" title="Why MSYS2, and why it just works">
+The self-test harness runs the same bash scripts as Linux and macOS. A few
+Windows-only quirks of running native tools under `make` (path forms, output
+redirection) are handled inside the scripts, so you don't have to think about
+them — you just need `make`, `bash` and `python` on your `PATH`.
+</Aside>
+
+</TabItem>
+</Tabs>
+
+## Check it worked
+
+```bash
+make --version
+rustc --version
+python --version      # or python3 --version
+git --version
+```
+
+Each should print a version. If `make` or `python` isn't found on Windows, your
+`PATH` is missing MSYS2's `usr\bin` or the Python install directory.
+
+## Next
+
+<LinkCard title="Quickstart" href="/users/quickstart/"
+	description="Bare toolchain to a running board in a few minutes." />

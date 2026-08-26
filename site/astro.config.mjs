@@ -36,6 +36,7 @@ export default defineConfig({
 			],
 			sidebar: [
 				{ label: 'Introduction', slug: 'introduction' },
+				{ label: 'Prerequisites', slug: 'prerequisites' },
 				{
 					label: 'Users',
 					items: [
