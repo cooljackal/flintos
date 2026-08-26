@@ -764,6 +764,16 @@ test-arm-adc-entropy: ## Measure Pico internal temperature ADC and ROSC seed hea
 		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
 		-Suite adc-entropy -TimeoutSeconds 20
 
+.PHONY: test-arm-flash
+test-arm-flash: ## DESTRUCTIVE: test Pico reserved NVS, persistence and XIP-off recovery
+	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+		--features "kernel/board-raspberry-pi-pico,kernel/debug-level-1,arm-selftest/flash-smoke"
+	pwsh -NoProfile -File tools/rp2040-check-ram-code.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest
+	pwsh -NoProfile -File tools/rp2040-run-flash-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) -EraseReservedNvs
+
 .PHONY: test-arm-buses
 test-arm-buses: ## Prove Pico SPI internal loopback and dual-controller I2C loopback
 	cargo build --target $(ARM_TARGET) -p arm-selftest --no-default-features \

@@ -43,6 +43,9 @@
 
 #![no_std]
 
+mod nvs;
+pub use nvs::{nvs_flash, NvsFlash};
+
 #[cfg(feature = "board-esp32-wrover")]
 pub mod esp32_wrover;
 

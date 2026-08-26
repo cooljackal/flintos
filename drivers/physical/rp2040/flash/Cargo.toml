@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "rp2040-flash"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "RP2040 ROM-safe reserved NOR flash region"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hal = { path = "../../../../hal" }
+soc-rp2040 = { path = "../../../../soc/rp2040" }
+
+[features]
+# Deliberate SRAM stall with XIP disabled, used only by the destructive suite.
+flash-fault-injection = []

@@ -55,8 +55,8 @@ soc-rp2040 = { path = "../soc/rp2040", optional = true }
 [target.'cfg(target_os = "none")'.dependencies]
 arch-xtensa = { path = "../arch/xtensa", optional = true }
 arch-armv6m = { path = "../arch/armv6m", optional = true }
-# Target-only: it calls ROM routines at fixed addresses and runs with the
-# instruction cache off, neither of which means anything on a host.
+# ESP32 boot still installs the legacy flash interrupt hooks. NVS driver
+# selection and construction live in board; hook migration is tracked by #156.
 esp32-flash = { path = "../drivers/physical/esp32/flash", optional = true }
 # Driven by the on-target self-tests; not used by the kernel proper.
 esp32-timg = { path = "../drivers/physical/esp32/timg", optional = true }

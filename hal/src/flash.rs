@@ -5,7 +5,7 @@
 //! The kernel's `nvs` module is the joint between `kvstore` (the format) and a
 //! SoC's flash driver (the registers). It drives the flash through this trait
 //! so the joint's read/write/erase logic names no chip: a SoC's driver
-//! implements [`NorFlash`], and the kernel selects one concrete type with the
+//! implements [`NorFlash`], and the board selects one concrete type with the
 //! build. The word-oriented API (`&[u32]`, not `&[u8]`) is deliberate — the
 //! ESP32's SPI1 controller takes word pointers and counts, and pretending
 //! otherwise at this layer only hides the alignment the caller must respect.

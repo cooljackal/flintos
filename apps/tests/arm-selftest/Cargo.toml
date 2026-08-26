@@ -25,6 +25,8 @@ rp2040-adc = { path = "../../../drivers/physical/rp2040/adc" }
 rp2040-entropy = { path = "../../../drivers/physical/rp2040/entropy" }
 rp2040-i2c = { path = "../../../drivers/physical/rp2040/i2c" }
 rp2040-spi = { path = "../../../drivers/physical/rp2040/spi" }
+rp2040-flash = { path = "../../../drivers/physical/rp2040/flash" }
+kvstore = { path = "../../../lib/kvstore" }
 
 [build-dependencies]
 build = { path = "../../../tools/build" }
@@ -49,3 +51,4 @@ race-smoke = []
 pwm-smoke = []
 adc-entropy-smoke = []
 bus-smoke = []
+flash-smoke = ["rp2040-flash/flash-fault-injection"]

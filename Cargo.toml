@@ -69,6 +69,7 @@ members = [
     "drivers/physical/rp2040/gpio",
     "drivers/physical/rp2040/adc",
     "drivers/physical/rp2040/entropy",
+    "drivers/physical/rp2040/flash",
     "drivers/physical/rp2040/i2c",
     "drivers/physical/rp2040/pwm",
     "drivers/physical/rp2040/spi",

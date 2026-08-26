@@ -19,6 +19,11 @@
 use hal::bus::*;
 use soc_rp2040 as soc;
 
+/// Both supported RP2040 board images reserve the final four 4 KiB sectors.
+/// Must match the FLASH extent in arch/armv6m/rp2040.ld.
+pub const FLASH_BYTES: u32 = 2 * 1024 * 1024;
+pub const NVS_PARTITION: (u32, u32) = (FLASH_BYTES - 16 * 1024, 16 * 1024);
+
 pub const BOARD_NAME: &str = "Seeed Wio RP2040 Mini";
 pub const HAS_WIFI: bool = false; // ESP8285 over UART, not a PHY the RP2040 drives
 pub const HAS_BT: bool = false;

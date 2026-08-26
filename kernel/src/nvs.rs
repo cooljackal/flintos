@@ -2,16 +2,14 @@
 
 //! The `nvs` partition, as a key/value store.
 //!
-//! `lib/kvstore` has the format and the recovery; `esp32-flash` has the
-//! registers. This is the joint between them, and it lives in the kernel for a
-//! reason that is not architectural taste: `Storage` belongs to `kvstore` and
-//! `FlashRegion` belongs to `esp32-flash`, so neither crate may implement the
-//! one for the other. A newtype here can, and a physical driver could not
-//! depend on a `lib/` crate anyway.
+//! `lib/kvstore` has the format and recovery; the board selects and opens the
+//! physical flash driver. This adapter joins them through `NorFlash`, without
+//! making the portable format depend on a chip or a physical driver depend on
+//! a storage format.
 //!
 //! # Alignment
 //!
-//! The SPI1 driver takes word-aligned addresses and word counts. `kvstore` reads
+//! The flash trait takes word-aligned addresses and word counts. `kvstore` reads
 //! at whatever offset an entry happens to start at, for whatever length a key
 //! or a value happens to be. [`FlashStorage`] is where those two facts are
 //! reconciled: reads are widened to the enclosing words and the result sliced
@@ -23,26 +21,21 @@
 
 use kvstore::{Error as KvError, Storage};
 
-#[cfg(all(target_os = "none", feature = "soc-esp32"))]
+#[cfg(target_os = "none")]
 use hal::flash::NorFlash;
 
-/// The concrete flash the kernel is built against — the one place `nvs` names a
-/// chip's flash driver. Everything below drives it through [`NorFlash`], so a
-/// second SoC's flash slots in by implementing that trait.
-#[cfg(all(target_os = "none", feature = "soc-esp32"))]
-type SelectedFlash = esp32_flash::FlashRegion;
+/// The board owns selection and construction; this adapter names no vendor.
+#[cfg(target_os = "none")]
+type SelectedFlash = board::NvsFlash;
 
 /// Largest single transfer either direction. One `kvstore` entry is at most
 /// 8 + 32 + 128 = 168 bytes; 256 leaves room without being generous.
-#[cfg_attr(
-    not(all(target_os = "none", feature = "soc-esp32")),
-    allow(dead_code)
-)]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const SCRATCH_WORDS: usize = 64;
 
 /// A `FlashRegion` that speaks [`Storage`].
 pub struct FlashStorage {
-    #[cfg(all(target_os = "none", feature = "soc-esp32"))]
+    #[cfg(target_os = "none")]
     region: SelectedFlash,
 }
 
@@ -52,21 +45,18 @@ impl FlashStorage {
     /// a board that flashes a custom partition table declares its own.
     ///
     /// # Safety
-    /// Nothing else may write this partition. Also read the second-core
-    /// warning on `esp32_flash` — these operations run with the instruction
-    /// cache off, and a core executing from flash during one of them stops.
-    pub const unsafe fn nvs() -> Self {
+    /// Nothing else may access this partition. Obey `board::nvs_flash` and the
+    /// selected driver's cache/XIP-off requirements, including debugger access.
+    /// Panics if the partition cannot be opened (including duplicate RP2040 opens).
+    pub unsafe fn nvs() -> Self {
         Self {
-            #[cfg(all(target_os = "none", feature = "soc-esp32"))]
-            region: {
-                let (offset, len) = crate::board::active::NVS_PARTITION;
-                SelectedFlash::new(offset, len)
-            },
+            #[cfg(target_os = "none")]
+            region: board::nvs_flash().expect("NVS partition unavailable or already owned"),
         }
     }
 }
 
-#[cfg(all(target_os = "none", feature = "soc-esp32"))]
+#[cfg(target_os = "none")]
 impl Storage for FlashStorage {
     const SECTOR_SIZE: u32 = <SelectedFlash as NorFlash>::SECTOR_SIZE;
 
@@ -78,7 +68,7 @@ impl Storage for FlashStorage {
         if buf.is_empty() {
             return Ok(());
         }
-        // Widen to whole words: the SPI1 driver cannot start mid-word, and a
+        // Widen to whole words: the flash trait cannot start mid-word, and a
         // read that silently rounded the offset down would return the right
         // number of bytes from the wrong place.
         let start = offset & !3;
@@ -112,7 +102,7 @@ impl Storage for FlashStorage {
             return Err(KvError::Io);
         }
         // Through a word-aligned buffer: `data` is a byte slice and may not be
-        // aligned, and the SPI1 driver takes a `*const u32`.
+        // aligned, and the flash trait takes a `*const u32`.
         let mut scratch = [0u32; SCRATCH_WORDS];
         unsafe {
             core::ptr::copy_nonoverlapping(
@@ -132,7 +122,7 @@ impl Storage for FlashStorage {
 
 // A host build has no flash. The type still exists so callers compile, and
 // every operation refuses rather than pretending to persist.
-#[cfg(not(all(target_os = "none", feature = "soc-esp32")))]
+#[cfg(not(target_os = "none"))]
 impl Storage for FlashStorage {
     const SECTOR_SIZE: u32 = 4096;
     fn capacity(&self) -> u32 {

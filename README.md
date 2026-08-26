@@ -68,7 +68,7 @@ and open work lives in [issues] — the source of truth.
 | Second ADC † · DAC † | ✅ | — |
 | RMT pulse generator | ✅ | — |
 | Hardware RNG | ✅ | — |
-| Flash key/value | ✅ | ⛔ |
+| Flash key/value | ✅ | ✅ |
 | CAN (TWAI) † · I2S † | ✅ | ⛔ |
 | Wi-Fi · BLE | 🚧 | — |
 | Touch · SD/SDIO · Ethernet MAC | ⛔ | ⛔ |
@@ -87,6 +87,12 @@ RP2040 buses were verified on a Pico: 4,096 SPI internal-loopback bytes and
 including recovery after a missing-device response and forced timeouts on both
 controllers. These are polled drivers; SPI chip-select, peripheral DMA and I²C
 address-only scans are not provided. See [bus acceptance](doc/rp2040-bus-acceptance.md).
+
+RP2040 flash/key-value storage was verified on the Pico in a reserved 16 KiB
+partition, including writes from both cores, reset persistence, torn-tail
+recovery and automatic watchdog recovery while flash execution is disabled.
+Existing whole-store compaction is not power-loss atomic. See
+[flash acceptance](doc/rp2040-flash-acceptance.md) before running the destructive test.
 
 ### Device drivers
 

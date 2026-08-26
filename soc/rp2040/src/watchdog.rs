@@ -137,6 +137,71 @@ pub unsafe fn clear_flint_watchdog_marker() {
     }
 }
 
+/// Fail-closed deadline for an XIP-off ROM call. An existing watchdog is never
+/// stopped or fed: CTRL.TIME is broken on RP2040 (pico-sdk issue #1492), so its
+/// remaining time cannot be saved/restored. A 1 MHz existing timer is bounded
+/// by the hardware's 24-bit maximum load (~8.4 seconds); a new guard uses 3 s.
+#[cfg(target_arch = "arm")]
+pub struct FlashDeadline {
+    ctrl: u32,
+    tick: u32,
+    selection: u32,
+    scratch4: u32,
+    scratch5: u32,
+}
+
+#[cfg(target_arch = "arm")]
+impl FlashDeadline {
+    /// Bound one ROM operation to 3 s, or the already-running watchdog deadline.
+    ///
+    /// # Safety
+    /// Both cores must be excluded from watchdog access until this is dropped.
+    /// XIP must already be restored when dropped. clk_ref must be 12 MHz.
+    pub unsafe fn begin() -> Option<Self> {
+        let ctrl = CTRL.read_volatile();
+        let tick = TICK.read_volatile() & 0x3ff;
+        // Cannot preserve an unknown existing time base without feeding it.
+        if ctrl & CTRL_ENABLE != 0 && tick != (TICK_ENABLE | 12) {
+            return None;
+        }
+        let saved = Self {
+            ctrl,
+            tick,
+            selection: PSM_WDSEL.read_volatile(),
+            scratch4: SCRATCH4.read_volatile(),
+            scratch5: SCRATCH5.read_volatile(),
+        };
+        // Atomic aliases do not stop/reload an already-running counter.
+        (0x4005_b000 as *mut u32).write_volatile(CTRL_DEBUG_PAUSE);
+        PSM_WDSEL.write_volatile(PSM_WDSEL_ALL_EXCEPT_OSCILLATORS);
+        SCRATCH4.write_volatile(FLINT_WATCHDOG_MARKER);
+        // A flash failure must not reboot into the same destructive operation.
+        SCRATCH5.write_volatile(0);
+        if ctrl & CTRL_ENABLE == 0 {
+            TICK.write_volatile(TICK_ENABLE | 12);
+            LOAD.write_volatile(load_for_ms(3_000));
+            (0x4005_a000 as *mut u32).write_volatile(CTRL_ENABLE);
+        }
+        Some(saved)
+    }
+}
+
+#[cfg(target_arch = "arm")]
+impl Drop for FlashDeadline {
+    fn drop(&mut self) {
+        unsafe {
+            if self.ctrl & CTRL_ENABLE == 0 {
+                (0x4005_b000 as *mut u32).write_volatile(CTRL_ENABLE);
+                TICK.write_volatile(self.tick);
+            }
+            PSM_WDSEL.write_volatile(self.selection);
+            SCRATCH4.write_volatile(self.scratch4);
+            SCRATCH5.write_volatile(self.scratch5);
+            (0x4005_a000 as *mut u32).write_volatile(self.ctrl & CTRL_DEBUG_PAUSE);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

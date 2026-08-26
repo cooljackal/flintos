@@ -46,7 +46,6 @@ pub mod dynobj;
 pub mod heap;
 pub mod interrupt;
 pub mod mutex;
-#[cfg(feature = "soc-esp32")]
 pub mod nvs;
 #[cfg(feature = "soc-esp32")]
 pub mod radio;

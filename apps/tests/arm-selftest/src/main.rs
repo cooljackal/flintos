@@ -14,7 +14,8 @@
         feature = "race-smoke",
         feature = "pwm-smoke",
         feature = "adc-entropy-smoke",
-        feature = "bus-smoke"
+        feature = "bus-smoke",
+        feature = "flash-smoke"
     ),
     allow(dead_code)
 )]
@@ -44,6 +45,9 @@ static DIAGNOSTIC_PEER_DONE: AtomicU32 = AtomicU32::new(0);
 static FLINT_ARM_DIAGNOSTIC_STAGE: AtomicU32 = AtomicU32::new(0);
 
 kernel::flint_app!(main, abi = 2);
+
+#[cfg(feature = "flash-smoke")]
+mod flash_test;
 
 #[cfg(not(feature = "expected-hardfault"))]
 static PEER_RUNS: AtomicU32 = AtomicU32::new(0);
@@ -389,6 +393,9 @@ unsafe extern "C" {
 }
 
 fn main() {
+    #[cfg(feature = "flash-smoke")]
+    task::spawn_on(0, "flash-smoke", flash_test::run, Priority::Normal(1), 8192)
+        .expect("flash target test");
     #[cfg(feature = "dma-smoke")]
     task::spawn("dma", dma_test, Priority::Normal(0), 4096).expect("DMA test task");
     #[cfg(feature = "diagnostics-smoke")]
@@ -466,7 +473,8 @@ fn main() {
         not(feature = "race-smoke"),
         not(feature = "pwm-smoke"),
         not(feature = "adc-entropy-smoke"),
-        not(feature = "bus-smoke")
+        not(feature = "bus-smoke"),
+        not(feature = "flash-smoke")
     ))]
     {
         task::spawn_on(0, "peer", peer, Priority::Normal(2), 2048).expect("peer task");

@@ -42,9 +42,11 @@ dependencies = [
  "build",
  "hal",
  "kernel",
+ "kvstore",
  "portable-atomic",
  "rp2040-adc",
  "rp2040-entropy",
+ "rp2040-flash",
  "rp2040-gpio",
  "rp2040-i2c",
  "rp2040-pwm",
@@ -111,6 +113,7 @@ version = "0.1.0"
 dependencies = [
  "api",
  "axp192",
+ "esp32-flash",
  "esp32-gpio",
  "esp32-i2c",
  "esp32-ledc",
@@ -120,6 +123,7 @@ dependencies = [
  "hal",
  "i2c-bus",
  "led-matrix",
+ "rp2040-flash",
  "rp2040-i2c",
  "rp2040-spi",
  "rp2040-uart",
@@ -560,6 +564,14 @@ dependencies = [
 
 [[package]]
 name = "rp2040-entropy"
+version = "0.1.0"
+dependencies = [
+ "hal",
+ "soc-rp2040",
+]
+
+[[package]]
+name = "rp2040-flash"
 version = "0.1.0"
 dependencies = [
  "hal",

@@ -5,7 +5,8 @@ ENTRY(Reset)
 
 MEMORY
 {
-  FLASH (rx)  : ORIGIN = 0x10000000, LENGTH = 2048K
+  /* Final four sectors belong to board::active::NVS_PARTITION, not firmware. */
+  FLASH (rx)  : ORIGIN = 0x10000000, LENGTH = 2032K
   RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 264K
 }
 
@@ -31,9 +32,16 @@ SECTIONS
   {
     _sdata = .;
     *(.data .data.*);
+    . = ALIGN(4);
+    _sram_func_start = .;
+    *(.ram_func .ram_func.*);
+    _sram_func_end = .;
+    . = ALIGN(4);
     _edata = .;
   } > RAM
   _sidata = LOADADDR(.data);
+  _nvs_partition_start = ORIGIN(FLASH) + LENGTH(FLASH);
+  _nvs_partition_end = 0x10200000;
 
   .bss (NOLOAD) :
   {
@@ -80,3 +88,5 @@ ASSERT(SIZEOF(.boot2) == 0x100, "RP2040 boot2 must be exactly 256 bytes");
 ASSERT(ADDR(.vector_table) == 0x10000100, "RP2040 vectors must follow boot2");
 ASSERT(SIZEOF(.vector_table) >= 0xC0, "RP2040 vector table is incomplete");
 ASSERT(_dma_pool_end <= _stack_top, "RP2040 RAM image overlaps reset stacks");
+ASSERT(LOADADDR(.data) + SIZEOF(.data) <= ORIGIN(FLASH) + LENGTH(FLASH),
+       "RP2040 firmware overlaps reserved NVS sectors");

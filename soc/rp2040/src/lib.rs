@@ -15,6 +15,7 @@ pub mod multicore;
 pub mod pinmux;
 pub mod test_status;
 pub mod watchdog;
+pub mod xip;
 
 pub use pinmux::Rp2040PinMux;
 

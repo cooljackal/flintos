@@ -74,6 +74,7 @@ extern "C" fn _flint_armv6m_sio_irq(irq: u32) {
     assert_eq!(irq as u8, expected, "SIO FIFO IRQ reached the wrong core");
     while soc_rp2040::multicore::fifo_try_pop().is_some() {}
     soc_rp2040::multicore::fifo_clear_errors();
+    soc_rp2040::xip::service_request();
     scheduler::request_switch();
 }
 
