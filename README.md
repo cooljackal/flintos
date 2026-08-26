@@ -26,7 +26,7 @@ No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` →
 silicon — Xtensa (ESP32-WROOM, ESP32-PICO) and ARM (Wio RP2040 Mini, Raspberry Pi Pico) — but it
 is young, most drivers are thin, and the API will change.
 
-Wi-Fi runs as a station: it scans, associates, and completes a WPA2-PSK
+On ESP32, Wi-Fi runs as a station: it scans, associates, and completes a WPA2-PSK
 handshake in a first-party Rust supplicant, then brings up an IP stack (smoltcp)
 over the link — a DHCP lease, DNS resolution and an outbound TCP connection, on
 hardware ([#68]). BLE is groundwork only. See
@@ -35,18 +35,19 @@ hardware ([#68]). BLE is groundwork only. See
 Full docs are at [flintos.dev][wiki], the API reference is at [flintos.dev/api][apidocs],
 and open work lives in [issues] — the source of truth.
 
-✅ verified on hardware · 🧪 host-tested, not yet on silicon · 🚧 partial · ⛔ not started · — n/a
+✅ verified on hardware · 🧪 host-tested, not yet on silicon · 🚧 partial · ⛔ not implemented · — n/a
 
 ### Kernel
 
-| Feature | Xtensa LX6 | ARM32 |
+| Feature | Xtensa LX6 | ARM32 (RP2040) |
 |---|---|---|
 | Boots | ✅ | ✅ |
 | Preemptive scheduling, 48 priorities | ✅ | ✅ |
 | Context switch | ✅ | ✅ |
 | Interrupts, nesting, critical sections | ✅ | ✅ |
 | Peripheral interrupt routing | ✅ | ✅ |
-| Tick timer, measured CPU clock | ✅ | ✅ |
+| Tick timer | ✅ | ✅ |
+| Measured CPU clock | ✅ | ⛔ [#174](https://github.com/cooljackal/flintos/issues/174) |
 | Mutexes with priority inheritance | ✅ | ✅ |
 | Queues, task↔task and ISR→task | ✅ | ✅ |
 | Task-vs-ISR race tests | ✅ | ✅ |
@@ -56,23 +57,41 @@ and open work lives in [issues] — the source of truth.
 | Stack high-water marks | ✅ | ✅ |
 | Second core · task pinning | ✅ | ✅ |
 | DMA | ✅ | ✅ |
+| Task memory isolation | ⛔ | ⛔ [#139](https://github.com/cooljackal/flintos/issues/139) |
+
+RP2040 clocks are configured, not measured. Its eight-region MPU exists, but
+FlintOS does not yet enforce task isolation. See the
+[capability audit](doc/rp2040-capability-audit.md) for hardware sources and gaps.
 
 ### Peripherals
 
-| Peripheral | Xtensa LX6 | ARM32 |
+Dedicated on-chip peripherals unless a row explicitly names another route.
+A dash does not rule out a future PIO or external-device implementation.
+
+| Peripheral | Xtensa LX6 | ARM32 (RP2040) |
 |---|---|---|
 | UART · GPIO · pin routing | ✅ | ✅ |
 | I²C · SPI | ✅ | ✅ |
-| PWM / LEDC · Timers (TIMG) | ✅ | ✅ |
+| PWM · Hardware timers | ✅ | ✅ |
 | ADC | ✅ | ✅ |
 | Second ADC † · DAC † | ✅ | — |
 | RMT pulse generator | ✅ | — |
-| Hardware RNG | ✅ | — |
+| Cryptographic hardware RNG | ✅ | — |
 | Flash key/value | ✅ | ✅ |
-| CAN (TWAI) † · I2S † | ✅ | ⛔ |
+| Dedicated CAN (TWAI) † · I2S † | ✅ | — |
 | Wi-Fi · BLE | 🚧 | — |
-| Touch · SD/SDIO · Ethernet MAC | ⛔ | ⛔ |
-| USB | — | ✅ |
+| Wio ESP8285 Wi-Fi companion | — | ⛔ [#176](https://github.com/cooljackal/flintos/issues/176) |
+| Touch controller | ⛔ | — |
+| Dedicated SD/SDIO controller | ⛔ | — |
+| SD card over SPI | ⛔ | ⛔ [#28](https://github.com/cooljackal/flintos/issues/28) |
+| Ethernet MAC | ⛔ | — |
+| Programmable I/O (PIO) engine | — | ⛔ [#175](https://github.com/cooljackal/flintos/issues/175) |
+| USB device (CDC) | — | ✅ |
+| USB host | — | ⛔ [#177](https://github.com/cooljackal/flintos/issues/177) |
+
+The Wio companion row applies only to that board, not the plain Pico. It needs
+its own driver and integration with the shared networking work; it is not a
+native RP2040 radio. No ARM network path is currently verified.
 
 † Verified on a DevKitC by an on-chip loopback self-test (no external hardware):
 DAC→ADC2 readback, ADC2 refusing while the radio owns the SAR, TWAI self-receive,

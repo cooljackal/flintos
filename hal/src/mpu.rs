@@ -2,9 +2,10 @@
 
 //! MPU (Memory Protection Unit) manager trait.
 //!
-//! Provides task isolation by configuring hardware memory-protection
-//! regions.  The kernel calls `configure_region` at boot and
-//! `activate_task_regions` / `clear_user_regions` on context switches.
+//! Contract for future task isolation using hardware protection regions.
+//! The kernel does not yet call these hooks at boot or on context switches;
+//! the existing Xtensa implementation is a no-op. This trait alone provides
+//! no isolation. Integration and supported-processor enforcement are #139.
 
 use crate::types::*;
 
