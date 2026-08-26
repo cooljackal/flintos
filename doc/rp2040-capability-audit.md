@@ -3,8 +3,9 @@
 # RP2040 capability audit (#173)
 
 This audits the README against the RP2040 and the two supported board manifests.
-It adds no runtime support and no new hardware PASS result. Existing green rows
-retain their bounded acceptance evidence; capability in a datasheet is not a
+The original audit added no runtime support or new hardware PASS result; later
+completed follow-ups are identified below. Green rows retain their bounded
+acceptance evidence; capability in a datasheet is not a
 FlintOS test result. The plain Raspberry Pi Pico is not a Pico W. [Seeed identifies
 the Wio's ESP8285 companion][wio-module], which is separate from its RP2040.
 
@@ -15,7 +16,7 @@ the Wio's ESP8285 companion][wio-module], which is separate from its RP2040.
 | Boots; preemption / 48 priorities; context switch | Keep verified status: ARM startup, PendSV and scheduler paths, exercised by `apps/tests/arm-selftest`. |
 | Interrupts / nesting / critical sections; peripheral routing | Keep verified status: ARM exception/PRIMASK handling and RP2040 NVIC routing, with target IRQ and race fixtures. |
 | Tick timer | Keep verified status: SysTick and timer-alarm tests. This does not establish CPU frequency-counter support. |
-| Measured CPU clock | **Unimplemented, [#174].** `soc/rp2040/src/lib.rs::measure_cpu_hz` returns `None`; `kernel/src/boot_rp2040.rs` initializes SysTick from `DEFAULT_CPU_HZ`. The 12/125 MHz profiles are settings, not measurements. The SDK provides a frequency-counter implementation to reference. |
+| Measured CPU clock | **Implemented and Pico-verified, [#174].** The SoC owns the bounded frequency counter; ARM boot initializes SysTick from its result and explicitly labels an unavailable measurement's fallback. Both cores measured the 12/125 MHz profiles against the nominal crystal reference, not an independently calibrated source. See [clock acceptance](rp2040-clock-acceptance.md). |
 | Mutexes / inheritance; task and ISR queues; race tests | Keep verified status from the kernel/ARM task and interrupt fixtures; no new scheduling claim in this audit. |
 | Watchdogs; reset cause; logging / metrics / panic; stack watermarks | Keep verified status. Recovery tests arm specific watchdog paths; this is not a claim that a system-wide watchdog supervises every application. See [USB recovery limits](rp2040-usb-acceptance.md). |
 | Second core / task pinning; DMA | Keep verified status from the SMP and DMA fixtures. This does not imply every peripheral has a DMA driver; I²C/SPI are polled. |
@@ -56,9 +57,10 @@ impossible using programmable I/O, bit-banging or an external device.
 
 ## Follow-up boundaries
 
-- [#174] measures the CPU clock through the existing SoC contract; use the
-  [Pico SDK counter sequence][sdk-clocks] with bounded waits rather than copying
-  its unbounded polling.
+- [#174] now measures the CPU clock through the existing SoC contract, using the
+  [Pico SDK counter sequence][sdk-clocks] with exclusive ownership and bounded
+  waits. Its [Pico acceptance](rp2040-clock-acceptance.md) supersedes the original
+  audit's configured-only clock finding.
 - [#175], [#176] and [#177] require physical resource ownership at HAL/SoC level,
   board construction and portable contracts above it. No chip register access
   belongs in an application or logical driver.

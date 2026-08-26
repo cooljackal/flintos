@@ -47,7 +47,7 @@ and open work lives in [issues] — the source of truth.
 | Interrupts, nesting, critical sections | ✅ | ✅ |
 | Peripheral interrupt routing | ✅ | ✅ |
 | Tick timer | ✅ | ✅ |
-| Measured CPU clock | ✅ | ⛔ [#174](https://github.com/cooljackal/flintos/issues/174) |
+| Measured CPU clock | ✅ | ✅ [Pico evidence](doc/rp2040-clock-acceptance.md) |
 | Mutexes with priority inheritance | ✅ | ✅ |
 | Queues, task↔task and ISR→task | ✅ | ✅ |
 | Task-vs-ISR race tests | ✅ | ✅ |
@@ -59,8 +59,9 @@ and open work lives in [issues] — the source of truth.
 | DMA | ✅ | ✅ |
 | Task memory isolation | ⛔ | ⛔ [#139](https://github.com/cooljackal/flintos/issues/139) |
 
-RP2040 clocks are configured, not measured. Its eight-region MPU exists, but
-FlintOS does not yet enforce task isolation. See the
+RP2040 CPU frequency is measured against its nominal crystal reference, not
+independently calibrated. Its eight-region MPU exists, but FlintOS does not yet
+enforce task isolation. See the
 [capability audit](doc/rp2040-capability-audit.md) for hardware sources and gaps.
 
 ### Peripherals
@@ -147,7 +148,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 
 | Check | Status |
 |---|---|
-| Host unit tests | ✅ 1,046 passing, kernel included — `make test-host` |
+| Host unit tests | ✅ 1,058 passing, kernel included — `make test-host` |
 | On-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
 | Layer boundary + package naming | ✅ enforced in CI |
 | Image size, per region | `make size` |

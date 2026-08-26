@@ -580,6 +580,11 @@ check-all: ## Full check including Xtensa and ARM architectures
 			cargo check --target $(ARM_TARGET) -p $$a --no-default-features \
 				--features "kernel/$$b,kernel/debug-level-1" || exit 1; \
 		done; \
+		for f in arm-selftest/clock-smoke arm-selftest/clock-smoke,board/native-usb; do \
+			echo "== arm-selftest ($$b, $$f)"; \
+			cargo check --target $(ARM_TARGET) -p arm-selftest --no-default-features \
+				--features "kernel/$$b,kernel/debug-level-1,$$f" || exit 1; \
+		done; \
 	done
 
 # Feature combinations that gate real code, and which nothing else builds.
@@ -646,6 +651,7 @@ test-host: test-boards ## Run host-side unit tests (every board manifest include
 	cargo test $(HOST_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 ifdef WINDOWS
 	pwsh -NoProfile -File tools/rp2040-usb-selftest.ps1
+	pwsh -NoProfile -File tools/rp2040-clock-selftest.ps1
 endif
 
 # Every board this tree can build for. A manifest's invariant tests only run
@@ -804,6 +810,18 @@ test-arm-buses: ## Prove Pico SPI internal loopback and dual-controller I2C loop
 		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
 		-ProbeSerial $(ARM_PROBE_SERIAL) -BootselSerial $(ARM_BOOTSEL_SERIAL) \
 		-Suite bus -TimeoutSeconds 30
+
+ARM_CLOCK_HZ ?= 12000000
+ARM_CLOCK_FEATURES = $(if $(filter 125000000,$(ARM_CLOCK_HZ)),$(COMMA)board/native-usb,)
+.PHONY: test-arm-clock
+test-arm-clock: ## Measure Pico CPU clock on both cores (ARM_CLOCK_HZ=12000000|125000000)
+	@test "$(ARM_CLOCK_HZ)" = 12000000 -o "$(ARM_CLOCK_HZ)" = 125000000
+	$(MAKE) build APP=arm-selftest BOARD=board-raspberry-pi-pico \
+		EXTRA_FEATURES="arm-selftest/clock-smoke$(ARM_CLOCK_FEATURES)"
+	pwsh -NoProfile -File tools/rp2040-run-clock-selftest.ps1 \
+		-ElfPath target/$(ARM_TARGET)/debug/arm-selftest \
+		-ProbeSerial $(ARM_PROBE_SERIAL) -SerialPort $(ARM_UART_PORT) \
+		-LocationPath '$(ARM_USB_LOCATION)' -ExpectedHz $(ARM_CLOCK_HZ)
 
 # The judging half of the harness, checked without hardware. It is the part
 # ── Watchdog verification ─────────────────────────────────────────────────────

@@ -11,6 +11,7 @@
 pub mod boot2;
 pub mod ctrl;
 pub mod dma;
+mod frequency;
 pub mod multicore;
 pub mod pinmux;
 pub mod test_status;
@@ -277,6 +278,11 @@ impl hal::soc::SystemOnChip for Rp2040 {
                 wait_for_bits(CLK_REF_SELECTED, 1 << 2),
                 "RP2040 clk_ref did not select XOSC"
             );
+            // Normalize inherited dividers only after selecting the slower
+            // crystal path. FC0's reference and the timer use this known rate.
+            ((CLOCKS_BASE + 0x34) as *mut u32).write_volatile(1 << 8);
+            ((CLOCKS_BASE + 0x40) as *mut u32).write_volatile(1 << 8);
+            frequency::init();
             enable_peripheral_clock();
             #[cfg(feature = "usb-clock")]
             {
@@ -309,7 +315,7 @@ impl hal::soc::SystemOnChip for Rp2040 {
     }
 
     fn measure_cpu_hz(_cycle_count: fn() -> Option<u32>) -> Option<u32> {
-        None
+        frequency::measure_cpu_hz()
     }
 }
 

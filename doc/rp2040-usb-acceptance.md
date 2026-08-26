@@ -34,8 +34,11 @@ the driver follows the vendor's best-effort control-buffer clear on those chips.
 
 USB builds opt into a configured 125 MHz CPU clock and a dedicated 48 MHz USB
 clock. Non-USB builds retain 12 MHz CPU. UART/SPI/I2C peripherals and ADC remain
-on the 12 MHz crystal; the timer/watchdog reference is unchanged. These are
-configured frequencies, not frequency-counter measurements. Datasheet E16
+on the 12 MHz crystal; the timer/watchdog reference is unchanged. The original
+#172 evidence established configured frequencies, not frequency-counter
+measurements. [#174 clock acceptance](rp2040-clock-acceptance.md) subsequently
+measured both CPU profiles and repeated USB/update/watchdog regressions.
+Datasheet E16
 requires the CPU clock to be at least 10% faster than USB. This Pico missed USB
 events with the original 12 MHz profile and enumerated with 125 MHz. That
 measurement does not establish the cause of every earlier reset problem.

@@ -55,6 +55,9 @@ pub trait SystemOnChip {
     fn reset_cause_name(cause: u32) -> &'static str;
 
     /// Measure the CPU clock against a chip-owned reference clock.
+    ///
+    /// `None` means unmeasured (unsupported, busy, failed, or implausible),
+    /// never a configured frequency disguised as a measurement. A backend
+    /// with its own frequency counter need not call `cycle_count`.
     fn measure_cpu_hz(cycle_count: fn() -> Option<u32>) -> Option<u32>;
 }
-

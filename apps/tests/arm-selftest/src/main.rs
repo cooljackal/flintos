@@ -15,6 +15,7 @@
         feature = "pwm-smoke",
         feature = "adc-entropy-smoke",
         feature = "bus-smoke",
+        feature = "clock-smoke",
         feature = "flash-smoke"
     ),
     allow(dead_code)
@@ -48,6 +49,9 @@ kernel::flint_app!(main, abi = 2);
 
 #[cfg(feature = "flash-smoke")]
 mod flash_test;
+
+#[cfg(all(feature = "clock-smoke", target_arch = "arm"))]
+mod clock_test;
 
 #[cfg(not(feature = "expected-hardfault"))]
 static PEER_RUNS: AtomicU32 = AtomicU32::new(0);
@@ -393,6 +397,13 @@ unsafe extern "C" {
 }
 
 fn main() {
+    #[cfg(all(feature = "clock-smoke", target_arch = "arm"))]
+    {
+        task::spawn_on(0, "clock", clock_test::run, Priority::Normal(1), 4096)
+            .expect("clock test task");
+        task::spawn_on(1, "clock-peer", clock_test::peer, Priority::Normal(1), 2048)
+            .expect("clock peer task");
+    }
     #[cfg(feature = "flash-smoke")]
     task::spawn_on(0, "flash-smoke", flash_test::run, Priority::Normal(1), 8192)
         .expect("flash target test");
@@ -474,6 +485,7 @@ fn main() {
         not(feature = "pwm-smoke"),
         not(feature = "adc-entropy-smoke"),
         not(feature = "bus-smoke"),
+        not(feature = "clock-smoke"),
         not(feature = "flash-smoke")
     ))]
     {

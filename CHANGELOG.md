@@ -21,6 +21,13 @@ A kernel that provides a different one refuses to build and points here.
 
 ### Added
 
+- **RP2040 CPU frequency measurement** (#174, Pico-verified at 12 and 125 MHz).
+  The existing SoC contract now uses an exclusively owned, bounded
+  hardware counter; ARM boot uses its result for SysTick and labels a failed
+  measurement's configured fallback explicitly. No application API change.
+  `make test-arm-clock` runs a dual-core nonce-judged fixture; set `ARM_CLOCK_HZ`
+  to `12000000` or `125000000`. See [clock acceptance](doc/rp2040-clock-acceptance.md).
+
 - **RP2040 boards and owned peripheral drivers** (#125, #143, #168–#172).
   Select `BOARD=board-raspberry-pi-pico` or `board-wio-rp2040-mini`; applications
   keep ABI 2 and use board construction rather than naming physical drivers.

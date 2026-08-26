@@ -82,10 +82,15 @@ pub extern "C" fn _flint_armv6m_boot() {
     // remaining SRAM above the static DMA pool backs runtime kernel objects.
     unsafe { crate::heap::init_from_map() };
 
-    Tick::init(
-        board::active::TICK_PERIOD_US,
-        <board::SelectedSoc as hal::soc::SystemOnChip>::DEFAULT_CPU_HZ,
+    let (cpu_hz, provenance) = select_cpu_clock(
+        <board::SelectedSoc as hal::soc::SystemOnChip>::measure_cpu_hz(
+            crate::arch::SelectedArch::cycle_count,
+        ),
     );
+    // The console is already initialized and board-owned. The raw fault
+    // reporter is ESP32-specific and must not be used from this ARM path.
+    report_cpu_clock(&mut crate::debug::console::Console, cpu_hz, provenance);
+    Tick::init(board::active::TICK_PERIOD_US, cpu_hz);
     install_idle_task();
     let core1_idle = install_core1_idle_task();
     CORE1_IDLE.store(core1_idle, Ordering::Release);
@@ -95,6 +100,22 @@ pub extern "C" fn _flint_armv6m_boot() {
     unsafe { crate::arch::cs_exit(boot_primask) };
     launch_core1();
     unsafe { flint_app_main() };
+}
+
+#[cfg(any(target_os = "none", test))]
+fn select_cpu_clock(measured: Option<u32>) -> (u32, &'static str) {
+    match measured.filter(|hz| *hz != 0) {
+        Some(hz) => (hz, " (measured against crystal-backed reference)\r\n"),
+        None => (
+            <board::SelectedSoc as hal::soc::SystemOnChip>::DEFAULT_CPU_HZ,
+            " (ASSUMED: measurement unavailable; configured fallback, not measured)\r\n",
+        ),
+    }
+}
+
+#[cfg(any(target_os = "none", test))]
+fn report_cpu_clock(console: &mut impl core::fmt::Write, hz: u32, provenance: &str) {
+    let _ = write!(console, "[FLINT] cpu_hz={hz}{provenance}");
 }
 
 #[cfg(target_os = "none")]
@@ -212,5 +233,36 @@ mod tests {
             * u64::from(board::active::TICK_PERIOD_US)
             / 1_000_000;
         assert!((1..=0x0100_0000).contains(&ticks));
+    }
+
+    #[test]
+    fn measured_clock_is_used_and_labelled_as_measured() {
+        for hz in [12_001_000, 124_999_000] {
+            let (selected, label) = select_cpu_clock(Some(hz));
+            assert_eq!(selected, hz);
+            assert!(label.starts_with(" (measured against"));
+        }
+    }
+
+    #[test]
+    fn missing_or_zero_measurement_is_explicitly_assumed() {
+        use hal::soc::SystemOnChip;
+        for sample in [None, Some(0)] {
+            let (selected, label) = select_cpu_clock(sample);
+            assert_eq!(selected, board::SelectedSoc::DEFAULT_CPU_HZ);
+            assert!(label.contains("ASSUMED"));
+            assert!(label.contains("not measured"));
+        }
+    }
+
+    #[test]
+    fn clock_report_uses_the_console_writer_with_measured_or_assumed_provenance() {
+        for measurement in [Some(12_001_000), None] {
+            let (hz, provenance) = select_cpu_clock(measurement);
+            let mut console = std::string::String::new();
+            report_cpu_clock(&mut console, hz, provenance);
+            assert_eq!(console, std::format!("[FLINT] cpu_hz={hz}{provenance}"));
+            assert_eq!(console.contains("ASSUMED:"), measurement.is_none());
+        }
     }
 }
