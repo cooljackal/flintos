@@ -134,6 +134,7 @@ Real parts you attach — one part number each, MCU-agnostic (`drivers/logical/`
 | BMI270 | 6-axis IMU | 🧪 |
 | BME280 | Temperature / humidity / pressure sensor | 🧪 |
 | SSD1306 | 128×64 monochrome OLED display | 🧪 |
+| ILI9342C | 320×240 RGB565 SPI LCD (M5Core2) | ✅ |
 | FT6336U | Capacitive touchscreen controller | 🧪 |
 
 ### Logical drivers
@@ -151,7 +152,8 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 | Check | Status |
 |---|---|
 | Host unit tests | ✅ 1,216 passing test executions, kernel included — `make test-host` |
-| On-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
+| Xtensa on-target self-tests | ✅ 32 pass, 1 skip on a WROOM — `make test-target` |
+| RP2040 on-target self-tests | ✅ 10 suites over SWD on a Pico — the `test-arm-*` targets (clock, PIO, MPU isolation, mutex, races, PWM, ADC/entropy, DMA, I/O, buses) |
 | Layer boundary + package naming | ✅ enforced in CI |
 | Image size, per region | `make size` |
 | ABI versioning + upgrade path | `make upgrade` |
@@ -165,7 +167,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 | ESP32-DevKitC / WROOM-32 | Xtensa LX6 / ESP32 | ✅ verified — reference board; rev 1 & rev 3, full self-test suite + Wi-Fi/IP stack |
 | M5Stack Atom Matrix | Xtensa LX6 / ESP32-PICO | ✅ verified — LED panel, IMU, ADC |
 | M5Stack Atom Lite | Xtensa LX6 / ESP32-PICO | ✅ verified — one LED |
-| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — boots on AXP192 power rails + battery status; onboard IMU and FT6336U touch wired; LCD pending |
+| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — boots on AXP192 power rails + battery status; ILI9342C LCD driven over SPI DMA (fills, blits, throughput) verified on hardware; onboard IMU and FT6336U touch wired |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
 | Raspberry Pi Pico | ARMv6-M / RP2040 | ✅ verified — kernel, peripherals and native USB device transport |
 | ESP32-WROVER | Xtensa LX6 / ESP32 | 🟡 manifest written, never flashed |
