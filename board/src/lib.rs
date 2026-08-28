@@ -960,6 +960,47 @@ pub fn console() -> Option<&'static dyn hal::stream::ByteStream> {
     CONSOLE.get().map(|uart| uart as &dyn hal::stream::ByteStream)
 }
 
+/// A simple on/off LED the board owns and opens for the app.
+///
+/// The board does the Layer-1 GPIO bring-up so the application never names the
+/// GPIO driver: it gets a ready `Led` from [`user_led`] and just turns it on and
+/// off. See the `blinky` example.
+#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+pub struct Led {
+    pin: rp2040_gpio::Rp2040Pin,
+}
+
+#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+impl Led {
+    /// Turn the LED on.
+    pub fn on(&self) -> hal::Result<()> {
+        self.pin.write(rp2040_gpio::PinLevel::High)
+    }
+
+    /// Turn the LED off.
+    pub fn off(&self) -> hal::Result<()> {
+        self.pin.write(rp2040_gpio::PinLevel::Low)
+    }
+
+    /// Drive the LED on (`true`) or off (`false`).
+    pub fn set(&self, on: bool) -> hal::Result<()> {
+        let level = if on {
+            rp2040_gpio::PinLevel::High
+        } else {
+            rp2040_gpio::PinLevel::Low
+        };
+        self.pin.write(level)
+    }
+}
+
+/// Open this board's onboard user LED (`USER_LED`) as a push-pull output.
+#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+pub fn user_led() -> hal::Result<Led> {
+    let pin = rp2040_gpio::Rp2040Pin::open(&active::USER_LED)?;
+    pin.set_mode(rp2040_gpio::PinMode::Output)?;
+    Ok(Led { pin })
+}
+
 // ── Manifest invariant tests ────────────────────────────────────────────────
 //
 // Run against whichever board is currently selected (`crate::active`), so

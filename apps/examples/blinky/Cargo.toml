@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "blinky"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "FlintOS blink example — one task toggling the onboard LED on a delay"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+# `blinky` drives the onboard LED, which the board opens for it (`board::user_led`),
+# so unlike `hello` this app depends on `board`. It touches no GPIO driver
+# itself — the board owns that Layer-1 bring-up.
+board = { path = "../../../board" }
+
+[build-dependencies]
+build = { path = "../../../tools/build" }
+
+[features]
+default = ["kernel/debug-level-1"]
+
+# See hello/Cargo.toml: `build::link()` reads this to size the DRAM map.
+radio-bt = []

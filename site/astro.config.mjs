@@ -46,6 +46,7 @@ export default defineConfig({
 					label: 'Tutorials',
 					items: [
 						{ label: 'Hello, world', slug: 'tutorials/hello-world' },
+						{ label: 'Blinky', slug: 'tutorials/blinky' },
 					],
 				},
 				{
