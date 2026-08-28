@@ -3,11 +3,33 @@ title: Hello, world
 ---
 
 
-The kernel is a library. The thing you flash is an application in `apps/`. This
-walks through the smallest one, `apps/examples/hello` — one task that logs a tick.
+This is the smallest useful FlintOS program — the "does my toolchain work and
+does the board boot?" check. It shows how to write a basic app with a **single
+task** that logs the word `tick` once a second, forever.
 
-Copy `apps/examples/hello/`, rename it, add it to `members` in the workspace
-`Cargo.toml`. That's the setup — `make flash APP=<name>` works from there.
+**What you should see.** Once it's flashed, your debug (serial) console prints
+one `tick` line per second — the timestamp (milliseconds since boot) climbs by
+about 1000 each time:
+
+```
+[ 1000][worker] INFO  tick
+[ 2000][worker] INFO  tick
+[ 3000][worker] INFO  tick
+```
+
+The kernel is a library; the thing you flash is an application under `apps/`.
+This walks through that app, `apps/examples/hello`.
+
+To start your own, scaffold a copy of this template:
+
+```bash
+make new-app NAME=<name>
+```
+
+That creates `apps/examples/<name>/` from `hello` with the name filled in. The
+workspace picks it up automatically — `members` globs `apps/examples/*`, so
+there's no `Cargo.toml` to edit — and `make flash APP=<name> BOARD=<board>`
+works right away.
 
 An application is three files.
 
