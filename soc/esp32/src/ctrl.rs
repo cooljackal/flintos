@@ -29,100 +29,89 @@ use hal::bus::{I2cConfig, SpiConfig, UartConfig};
 use crate::addr;
 use crate::dport::ClockBit;
 
-/// One of the two I2C controllers.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum I2cCtrl {
-    I2c0,
-    I2c1,
+/// Define a peripheral-controller enum whose every attribute is a `const fn` of
+/// the variant, from one list of variants. `base`/`irq`/`clock`/`instance`
+/// become `match`es, and `from_base` is their inverse — so the map and its
+/// inverse are written once and cannot drift (the round-trip is still checked in
+/// the tests below). A controller with an extra attribute (SPI's `dma_host`)
+/// adds it in its own `impl` block.
+macro_rules! controller_enum {
+    (
+        $(#[$emeta:meta])*
+        $name:ident {
+            $(
+                $(#[$vmeta:meta])*
+                $variant:ident => {
+                    base: $base:expr,
+                    irq: $irq:expr,
+                    clock: $clock:expr,
+                    instance: $inst:expr $(,)?
+                }
+            ),+ $(,)?
+        }
+    ) => {
+        $(#[$emeta])*
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        pub enum $name {
+            $( $(#[$vmeta])* $variant, )+
+        }
+
+        impl $name {
+            /// Register block base address.
+            pub const fn base(self) -> u32 {
+                match self { $( Self::$variant => $base, )+ }
+            }
+
+            /// Peripheral interrupt source, for the interrupt matrix.
+            pub const fn irq(self) -> u8 {
+                match self { $( Self::$variant => $irq, )+ }
+            }
+
+            /// DPORT clock-enable / reset bit.
+            pub const fn clock(self) -> ClockBit {
+                match self { $( Self::$variant => $clock, )+ }
+            }
+
+            /// Controller instance number, as the matching `Signal(n)` names it.
+            pub const fn instance(self) -> u8 {
+                match self { $( Self::$variant => $inst, )+ }
+            }
+
+            /// The controller at a base address, if there is one. A base no
+            /// variant claims (an unknown address, or SPI1's boot-flash base)
+            /// yields `None`.
+            pub const fn from_base(base: u32) -> Option<Self> {
+                // An `if` chain, not a `match`: a macro `:expr` fragment cannot
+                // appear in pattern position, and these bases are `const`s, not
+                // literals.
+                $( if base == $base { return Some(Self::$variant); } )+
+                None
+            }
+        }
+    };
 }
 
-impl I2cCtrl {
-    /// Register block base address.
-    pub const fn base(self) -> u32 {
-        match self {
-            Self::I2c0 => addr::I2C0_BASE,
-            Self::I2c1 => addr::I2C1_BASE,
-        }
-    }
-
-    /// Peripheral interrupt source, for the interrupt matrix.
-    pub const fn irq(self) -> u8 {
-        match self {
-            Self::I2c0 => addr::IRQ_I2C0,
-            Self::I2c1 => addr::IRQ_I2C1,
-        }
-    }
-
-    /// DPORT clock-enable / reset bit.
-    pub const fn clock(self) -> ClockBit {
-        match self {
-            Self::I2c0 => ClockBit::I2C0,
-            Self::I2c1 => ClockBit::I2C1,
-        }
-    }
-
-    /// Controller instance number, as `Signal::I2cSda(n)` names it.
-    pub const fn instance(self) -> u8 {
-        match self {
-            Self::I2c0 => 0,
-            Self::I2c1 => 1,
-        }
-    }
-
-    /// The controller at a base address, if there is one.
-    pub const fn from_base(base: u32) -> Option<Self> {
-        match base {
-            addr::I2C0_BASE => Some(Self::I2c0),
-            addr::I2C1_BASE => Some(Self::I2c1),
-            _ => None,
-        }
+controller_enum! {
+    /// One of the two I2C controllers.
+    I2cCtrl {
+        I2c0 => { base: addr::I2C0_BASE, irq: addr::IRQ_I2C0, clock: ClockBit::I2C0, instance: 0 },
+        I2c1 => { base: addr::I2C1_BASE, irq: addr::IRQ_I2C1, clock: ClockBit::I2C1, instance: 1 },
     }
 }
 
-/// One of the two general-purpose SPI controllers.
-///
-/// SPI1 is absent on purpose: it is wired to the boot flash.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum SpiCtrl {
-    /// "HSPI".
-    Spi2,
-    /// "VSPI".
-    Spi3,
+controller_enum! {
+    /// One of the two general-purpose SPI controllers.
+    ///
+    /// SPI1 is absent on purpose: it is wired to the boot flash.
+    SpiCtrl {
+        /// "HSPI".
+        Spi2 => { base: addr::SPI2_BASE, irq: addr::IRQ_SPI2, clock: ClockBit::SPI2, instance: 2 },
+        /// "VSPI".
+        Spi3 => { base: addr::SPI3_BASE, irq: addr::IRQ_SPI3, clock: ClockBit::SPI3, instance: 3 },
+    }
 }
 
 impl SpiCtrl {
-    /// Register block base address.
-    pub const fn base(self) -> u32 {
-        match self {
-            Self::Spi2 => addr::SPI2_BASE,
-            Self::Spi3 => addr::SPI3_BASE,
-        }
-    }
-
-    /// Peripheral interrupt source, for the interrupt matrix.
-    pub const fn irq(self) -> u8 {
-        match self {
-            Self::Spi2 => addr::IRQ_SPI2,
-            Self::Spi3 => addr::IRQ_SPI3,
-        }
-    }
-
-    /// DPORT clock-enable / reset bit.
-    pub const fn clock(self) -> ClockBit {
-        match self {
-            Self::Spi2 => ClockBit::SPI2,
-            Self::Spi3 => ClockBit::SPI3,
-        }
-    }
-
-    /// Controller instance number, as `Signal::SpiMosi(n)` names it.
-    pub const fn instance(self) -> u8 {
-        match self {
-            Self::Spi2 => 2,
-            Self::Spi3 => 3,
-        }
-    }
-
     /// The DMA crossbar host this controller is served by.
     pub const fn dma_host(self) -> crate::dma::Host {
         match self {
@@ -130,71 +119,14 @@ impl SpiCtrl {
             Self::Spi3 => crate::dma::Host::Spi3,
         }
     }
-
-    /// The controller at a base address, if there is one. SPI1's base yields
-    /// `None`, as [`addr::spi_instance`] does.
-    pub const fn from_base(base: u32) -> Option<Self> {
-        match base {
-            addr::SPI2_BASE => Some(Self::Spi2),
-            addr::SPI3_BASE => Some(Self::Spi3),
-            _ => None,
-        }
-    }
 }
 
-/// One of the three UART controllers.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum UartCtrl {
-    Uart0,
-    Uart1,
-    Uart2,
-}
-
-impl UartCtrl {
-    /// Register block base address.
-    pub const fn base(self) -> u32 {
-        match self {
-            Self::Uart0 => addr::UART0_BASE,
-            Self::Uart1 => addr::UART1_BASE,
-            Self::Uart2 => addr::UART2_BASE,
-        }
-    }
-
-    /// Peripheral interrupt source, for the interrupt matrix.
-    pub const fn irq(self) -> u8 {
-        match self {
-            Self::Uart0 => addr::IRQ_UART0,
-            Self::Uart1 => addr::IRQ_UART1,
-            Self::Uart2 => addr::IRQ_UART2,
-        }
-    }
-
-    /// DPORT clock-enable / reset bit.
-    pub const fn clock(self) -> ClockBit {
-        match self {
-            Self::Uart0 => ClockBit::UART0,
-            Self::Uart1 => ClockBit::UART1,
-            Self::Uart2 => ClockBit::UART2,
-        }
-    }
-
-    /// Controller instance number, as `Signal::UartTx(n)` names it.
-    pub const fn instance(self) -> u8 {
-        match self {
-            Self::Uart0 => 0,
-            Self::Uart1 => 1,
-            Self::Uart2 => 2,
-        }
-    }
-
-    /// The controller at a base address, if there is one.
-    pub const fn from_base(base: u32) -> Option<Self> {
-        match base {
-            addr::UART0_BASE => Some(Self::Uart0),
-            addr::UART1_BASE => Some(Self::Uart1),
-            addr::UART2_BASE => Some(Self::Uart2),
-            _ => None,
-        }
+controller_enum! {
+    /// One of the three UART controllers.
+    UartCtrl {
+        Uart0 => { base: addr::UART0_BASE, irq: addr::IRQ_UART0, clock: ClockBit::UART0, instance: 0 },
+        Uart1 => { base: addr::UART1_BASE, irq: addr::IRQ_UART1, clock: ClockBit::UART1, instance: 1 },
+        Uart2 => { base: addr::UART2_BASE, irq: addr::IRQ_UART2, clock: ClockBit::UART2, instance: 2 },
     }
 }
 
