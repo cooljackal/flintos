@@ -147,6 +147,10 @@ pub const PMIC_RAILS: &[crate::RailSetup] = &[
 /// the `imu` app that logs them. M5 shipped the Core2 with an MPU6886; the app
 /// probes for that and a BMI270 (both answer here) and drives whichever replied.
 /// The pins are the internal bus's — the IMU and PMIC share it.
+///
+/// The address must equal `mpu6886::ADDR` (0x68). It is duplicated rather than
+/// referenced because the board tier may not depend on a Layer-3 device driver
+/// (`make check-layers`); keep the two in sync.
 pub const IMU_I2C_ADDR: u8 = 0x68;
 pub const IMU_SDA_GPIO: u8 = INTERNAL_I2C_SDA;
 pub const IMU_SCL_GPIO: u8 = INTERNAL_I2C_SCL;
@@ -154,6 +158,9 @@ pub const IMU_SCL_GPIO: u8 = INTERNAL_I2C_SCL;
 /// The FT6336U capacitive-touch controller's I2C address, on the same internal
 /// bus. The touch area is taller than the 320×240 screen — the three capacitive
 /// buttons below it — so reported y runs past 240.
+///
+/// The address must equal `ft6336u::ADDR` (0x38), duplicated rather than
+/// referenced for the same layer reason as [`IMU_I2C_ADDR`]; keep them in sync.
 pub const TOUCH_I2C_ADDR: u8 = 0x38;
 
 /// Logical devices on the internal I2C bus. The IMU is powered off LDO2, which
