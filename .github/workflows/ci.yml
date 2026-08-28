@@ -9,7 +9,6 @@ on:
 
 # Three pushes to a PR should not run three full matrices; the later one carries
 # the newer code and wins. Keyed by ref so a PR never cancels main's run.
-# `wiki.yml` has done this since it was written -- this file had not.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

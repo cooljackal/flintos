@@ -1,29 +1,21 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Wiki source
+# Wiki source (archived)
 
-These files are the source of truth for the
-[wiki](https://github.com/cooljackal/flintos/wiki). Edit them here, not on the
-wiki — changes made on the wiki directly will be overwritten on the next sync.
+These pages were the source for the project's GitHub wiki. The reader-facing
+documentation now lives in the Astro site under [`site/`](../../site), published
+to [flintos.dev](https://flintos.dev). These files are kept as the migrated
+source; edit the site for anything published.
 
 Docs live in the repo so they can be reviewed in a PR alongside the change that
 made them wrong, and so a checkout carries its own documentation.
 
 ## Publishing
 
-Automatic. `.github/workflows/wiki.yml` pushes to the wiki on every merge to
-`main` that touches this directory. Nothing to run.
-
-It also deletes wiki pages that no longer exist here, so a renamed page doesn't
-linger.
-
-**One-time setup:** GitHub doesn't create a wiki until it has a page. Open
-[the wiki](https://github.com/cooljackal/flintos/wiki), save anything, and the
-workflow takes over from there — the placeholder gets overwritten. Until then
-the job fails with that instruction.
-
-To publish without waiting for a merge, run the **Wiki** workflow manually from
-the Actions tab.
+Nothing here publishes automatically. An earlier `.github/workflows/wiki.yml`
+synced this directory to the GitHub wiki on merge; it was retired when the docs
+moved to the Astro site (`site/`, built and deployed by
+`.github/workflows/site.yml`).
 
 ## Adding a page
 
