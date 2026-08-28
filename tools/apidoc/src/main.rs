@@ -968,7 +968,3 @@ fn build_sidebar(crates: &[CrateDoc]) -> String {
 
     serde_json::to_string_pretty(&Value::Array(items)).unwrap_or_else(|_| "[]".to_string())
 }
-
-// Silence unused-import churn while the related-items model grows.
-#[allow(dead_code)]
-fn _touch(_: &HashMap<Id, Item>) {}
