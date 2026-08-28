@@ -14,20 +14,38 @@ An application is three files.
 ## `src/main.rs`
 
 ```rust
+// No standard library: this is bare-metal firmware, no OS beneath.
 #![no_std]
+// Don't generate a normal `main`; the kernel owns the startup path
+// and calls into the app itself.
 #![no_main]
 
+// One line brings in the whole everyday API: Task, log_info!,
+// sleep_ms, Priority — nothing below needs its own `use`.
 use api::prelude::*;
 
+// Register the `main` below as this app's entry point. `abi = 2`
+// is the app-to-kernel contract version, checked at link time so a
+// stale app cannot boot against a newer kernel.
 kernel::flint_app!(main, abi = 2);
 
+// Runs once at startup: after the console, tick and idle task are
+// up, but *before* interrupts unmask. Spawn tasks here, then return.
 fn main() {
+    // Create a task named "worker" that runs the `worker` function,
+    // then start it. `.spawn()` returns `None` if the task pool is
+    // full; `.expect(...)` turns that into a clear panic instead of
+    // a task that silently never runs.
     Task::new("worker", worker).spawn().expect("spawn");
 }
 
+// The task body — each spawned task is its own thread of execution.
 fn worker() {
+    // Loop forever.
     loop {
+        // Print a line over the console UART.
         log_info!("tick");
+        // Sleep one second, letting other tasks run meanwhile.
         sleep_ms(1000);
     }
 }
