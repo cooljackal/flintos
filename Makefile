@@ -208,8 +208,8 @@ FLASH_MODE     := dio
 # apps/examples/ or apps/tests/. Pick one, a board, and how much debug output
 # you want:
 #
-#   make flash                                    # apps/examples/demo on a WROVER
-#   make flash APP=hello                          # apps/examples/hello
+#   make flash BOARD=board-esp32-devkitc             # apps/examples/demo on a DevKitC
+#   make flash APP=hello BOARD=board-esp32-devkitc   # apps/examples/hello
 #   make flash APP=blink BOARD=board-m5-atom-matrix  # apps/examples/blink, 5x5 panel
 #   make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
 #   make flash APP=hello DEBUG=debug-level-0      # no logging at all
@@ -520,12 +520,13 @@ apidoc: ## Generate the site API reference (Starlight pages) from rustdoc JSON
 		cargo doc --no-deps $(API_SELECT) --target $(HOST_TARGET) $(HOST_BOARD_FEATURES)
 	cargo run -q -p apidoc --target $(HOST_TARGET) -- $(API_JSON_DIR) $(APIDOC_OUT)
 
-# Applications that refuse to build for the default board, and the board each
-# one wants. `blink`, `imu` and `pwm` need hardware only the Atoms declare, and
-# they say so with a `compile_error!` naming the board -- which is good
+# Applications that refuse to build for the workspace check board, and the board
+# each one wants. `blink`, `imu` and `pwm` need hardware only the Atoms declare,
+# and they say so with a `compile_error!` naming the board -- which is good
 # behaviour that made this target permanently red, because a plain `--workspace`
-# builds every app against the default WROVER. It had been failing for exactly
-# that reason, which is the trouble with a check nobody can ever see pass.
+# builds every app against the check board (`$(XTENSA_BOARD)`, the DevKitC). It
+# had been failing for exactly that reason, which is the trouble with a check
+# nobody can ever see pass.
 #
 # So: everything else against the default, then each of these against the board
 # it asks for. Coverage goes up, not down -- before this they were excluded from
