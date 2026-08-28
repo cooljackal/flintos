@@ -1,17 +1,17 @@
 ---
 title: Introduction
-description: What flintOS is, who it's for, and where to start.
+description: What FlintOS is, who it's for, and where to start.
 ---
 
 import { Card, CardGrid, LinkCard, Aside } from '@astrojs/starlight/components';
 
-flintOS is a tiny real-time operating system for small 32-bit chips — the kind
+FlintOS is a tiny real-time operating system for small 32-bit chips — the kind
 inside an ESP32 or a Raspberry Pi Pico. You write your app in plain Rust: start
-a task, blink an LED, read a sensor. flintOS quietly handles the hard parts
+a task, blink an LED, read a sensor. FlintOS quietly handles the hard parts
 underneath — scheduling, timing, talking to the hardware.
 
 <Aside type="tip" title="The whole point">
-**flintOS is meant to be dead-simple to use.** No build-system yak-shaving, no
+**FlintOS is meant to be dead-simple to use.** No build-system yak-shaving, no
 hundred-line startup dance, no fighting the borrow checker to turn on an LED.
 Pick a board, write a little Rust, flash it. That's the bar we hold everything to.
 </Aside>
@@ -56,7 +56,7 @@ a chip with no screen and no debugger attached.
 
 ## What runs today
 
-flintOS runs on two chip families right now, with a portable core that keeps the
+FlintOS runs on two chip families right now, with a portable core that keeps the
 chip- and CPU-specific bits at the edges:
 
 <CardGrid>
@@ -65,8 +65,10 @@ chip- and CPU-specific bits at the edges:
 		- ESP32-WROVER
 		- M5Stack Atom Matrix
 		- M5Stack Atom Lite
+		- M5Stack Core2 (bring-up)
 	</Card>
 	<Card title="Arm Cortex-M0+ · RP2040">
+		- Raspberry Pi Pico
 		- Wio RP2040 Mini (both cores)
 	</Card>
 </CardGrid>
@@ -84,7 +86,7 @@ The full matrix, with what's verified on hardware, is in
 	<LinkCard title="Hello, world" href="/tutorials/hello-world/"
 		description="Write and flash your first app." />
 	<LinkCard title="Architecture" href="/developers/architecture/"
-		description="How flintOS is put together, and why." />
+		description="How FlintOS is put together, and why." />
 	<LinkCard title="Writing a driver" href="/developers/writing-a-driver/"
 		description="Add support for a new part." />
 	<LinkCard title="API reference" href="/api/"

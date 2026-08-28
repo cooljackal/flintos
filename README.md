@@ -207,8 +207,8 @@ make flash APP=smp   BOARD=board-m5-atom-matrix    # starts the second core
 
 `DEBUG` defaults to `debug-level-1` (dev). `debug-level-0` compiles logging out
 entirely. Board features: `board-esp32-devkitc`, `board-m5-atom-lite`,
-`board-m5-atom-matrix`, `board-m5-core2`, `board-wio-rp2040-mini`,
-`board-esp32-wrover`.
+`board-m5-atom-matrix`, `board-m5-core2`, `board-raspberry-pi-pico`,
+`board-wio-rp2040-mini`, `board-esp32-wrover`.
 
 ---
 

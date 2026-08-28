@@ -21,7 +21,7 @@ espup install
 . $HOME/export-esp.sh          # PowerShell: . $env:USERPROFILE\export-esp.ps1
 ```
 
-Boards: ESP32-DevKitC, ESP32-WROVER, M5Stack Atom Matrix, M5Stack Atom Lite.
+Boards: ESP32-DevKitC, ESP32-WROVER, M5Stack Atom Matrix, M5Stack Atom Lite, M5Stack Core2.
 
 ### Arm Cortex-M0+ — RP2040 boards
 
@@ -36,7 +36,7 @@ cargo install elf2uf2-rs
 board is already running FlintOS with USB enabled — no button, no probe. For a
 first flash of a blank board, hold **BOOTSEL** while plugging in.
 
-Boards: Wio RP2040 Mini.
+Boards: Raspberry Pi Pico, Wio RP2040 Mini.
 
 ## Build & flash
 
@@ -50,6 +50,8 @@ make flash APP=demo BOARD=board-esp32-devkitc    # ESP32-DevKitC (reference)
 make flash APP=demo BOARD=board-esp32-wrover     # ESP32-WROVER
 make flash APP=demo BOARD=board-m5-atom-matrix   # M5Stack Atom Matrix
 make flash APP=demo BOARD=board-m5-atom-lite     # M5Stack Atom Lite
+make flash APP=demo BOARD=board-m5-core2         # M5Stack Core2
+make flash APP=demo BOARD=board-raspberry-pi-pico # Raspberry Pi Pico (Arm)
 make flash APP=demo BOARD=board-wio-rp2040-mini  # Wio RP2040 Mini (Arm)
 ```
 
