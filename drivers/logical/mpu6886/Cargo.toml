@@ -13,3 +13,6 @@ rust-version.workspace = true
 
 [dependencies]
 api = { path = "../../../api" }
+
+[dev-dependencies]
+api = { path = "../../../api", features = ["test-support"] }

@@ -404,6 +404,12 @@ mod tests {
     //
     // `Bus` requires `Send + Sync`, so recorded writes use a `Mutex`
     // rather than a `RefCell` (which is not `Sync`).
+    //
+    // Unlike the sensors that share `api::testing::RegBus`, this mock answers
+    // structured blocks — the two calibration windows and the burst data — as
+    // named arrays, which the compensation-math tests set and read as arrays.
+    // A flat register file would make those tests spell each calibration byte
+    // by address, so this fake stays bespoke on purpose.
 
     struct MockBmeBus {
         chip_id: u8,

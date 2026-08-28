@@ -285,45 +285,12 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusKind, BusResult, Op};
-    use std::sync::Mutex;
+    use api::testing::WriteLog;
     use std::vec::Vec;
-
-    // `Bus` requires `Send + Sync`, so recorded writes use a `Mutex`
-    // rather than a `RefCell` (which is not `Sync`). Each transaction is kept
-    // whole: a command is `[0x00, cmd]` and a GRAM run is `[0x40, data..]`, and
-    // batching means a data run is no longer a fixed two bytes.
-    struct MockDisplayBus {
-        transactions: Mutex<Vec<Vec<u8>>>,
-    }
-
-    impl Default for MockDisplayBus {
-        fn default() -> Self {
-            Self { transactions: Mutex::new(Vec::new()) }
-        }
-    }
-
-    impl Bus for MockDisplayBus {
-        fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
-            for op in ops.iter_mut() {
-                // The display is write-only; record each transaction whole.
-                if let Some(tx) = op.tx {
-                    self.transactions.lock().unwrap().push(tx.to_vec());
-                }
-            }
-            Ok(())
-        }
-        fn max_transfer(&self) -> usize {
-            64
-        }
-        fn kind(&self) -> BusKind {
-            BusKind::I2c
-        }
-    }
 
     #[test]
     fn ssd1306_init_ok() {
-        let bus = MockDisplayBus::default();
+        let bus = WriteLog::new();
         let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.init().is_ok());
@@ -331,12 +298,12 @@ mod tests {
 
     #[test]
     fn ssd1306_init_command_sequence_matches_datasheet() {
-        let bus = MockDisplayBus::default();
+        let bus = WriteLog::new();
         let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.init().is_ok());
 
-        let txns = bus.transactions.lock().unwrap();
+        let txns = bus.transactions();
         // A command transaction is [0x00, cmd]; a GRAM run is [0x40, data..].
         // Pull out just the command stream (skip the GRAM-clear data, covered
         // by `ssd1306_clear`) and check the documented power-up sequence up
@@ -369,7 +336,7 @@ mod tests {
 
     #[test]
     fn ssd1306_clear() {
-        let bus = MockDisplayBus::default();
+        let bus = WriteLog::new();
         let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.clear().is_ok());
@@ -377,7 +344,7 @@ mod tests {
 
     #[test]
     fn ssd1306_print_temp_positive() {
-        let bus = MockDisplayBus::default();
+        let bus = WriteLog::new();
         let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.print_temp(25.5).is_ok());
@@ -385,7 +352,7 @@ mod tests {
 
     #[test]
     fn ssd1306_print_temp_negative() {
-        let bus = MockDisplayBus::default();
+        let bus = WriteLog::new();
         let handle = BusHandle::new(&bus);
         let display = Ssd1306::new(handle);
         assert!(display.print_temp(-12.3).is_ok());

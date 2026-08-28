@@ -37,6 +37,11 @@ pub mod types;
 pub mod usb;
 pub mod wifi;
 
+/// Test-only bus mocks shared by the device-driver unit tests. Off by default;
+/// enabled for host test builds via the `test-support` feature.
+#[cfg(feature = "test-support")]
+pub mod testing;
+
 pub use arch::{Architecture, TaskContext};
 pub use bus::*;
 pub use clock::MonotonicClock;

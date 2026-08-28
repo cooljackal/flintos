@@ -18,6 +18,8 @@ portable-atomic = { version = "=1.15.0", features = ["critical-section", "requir
 [features]
 task-isolation = []
 default = []
+# Re-export hal::testing (shared bus mocks) for the logical drivers' unit tests.
+test-support = ["hal/test-support"]
 debug-level-0 = []
 # Only `flint-log` gates real code today: it compiles the log output in or out.
 # Metrics (`api::Counter`/`Gauge`) and panic capture (`flint_panic!`) are part

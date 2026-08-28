@@ -12,3 +12,6 @@ rust-version.workspace = true
 [dependencies]
 # Layer-3: depend ONLY on api (plan W7.1).
 api = { path = "../../../api" }
+
+[dev-dependencies]
+api = { path = "../../../api", features = ["test-support"] }

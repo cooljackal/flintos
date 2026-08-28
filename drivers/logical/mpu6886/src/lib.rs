@@ -248,63 +248,12 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusError, BusKind, Op};
+    use api::testing::RegBus;
     use std::boxed::Box;
-    use std::sync::Mutex;
     use std::vec::Vec;
 
-    struct Fake {
-        regs: Mutex<Vec<(u8, u8)>>,
-        writes: Mutex<Vec<(u8, u8)>>,
-    }
-
-    impl Fake {
-        fn get(&self, reg: u8) -> Option<u8> {
-            self.regs.lock().unwrap().iter().find(|(r, _)| *r == reg).map(|(_, v)| *v)
-        }
-    }
-
-    impl Bus for Fake {
-        fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
-            for op in ops.iter_mut() {
-                match (op.tx, op.rx.as_deref_mut()) {
-                    // Register read starting at `tx[0]`.
-                    (Some(tx), Some(rx)) => {
-                        let start = *tx.first().ok_or(BusError::InvalidConfig)?;
-                        for (i, out) in rx.iter_mut().enumerate() {
-                            *out = self.get(start + i as u8).ok_or(BusError::DeviceNotResponding)?;
-                        }
-                    }
-                    // Register write: [reg, value].
-                    (Some(data), None) if data.len() == 2 => {
-                        self.writes.lock().unwrap().push((data[0], data[1]));
-                        let mut regs = self.regs.lock().unwrap();
-                        match regs.iter_mut().find(|(r, _)| *r == data[0]) {
-                            Some(e) => e.1 = data[1],
-                            None => regs.push((data[0], data[1])),
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Ok(())
-        }
-        fn max_transfer(&self) -> usize {
-            64
-        }
-        // The mock answers like an addressed I2C device: the bytes from the
-        // register named in `tx[0]` on. The handle's SPI framing (an extra
-        // address slot in the reply) is covered by the tests in `hal::bus`.
-        fn kind(&self) -> BusKind {
-            BusKind::I2c
-        }
-    }
-
-    fn imu(regs: &[(u8, u8)]) -> (Mpu6886<'static>, &'static Fake) {
-        let f: &'static Fake = Box::leak(Box::new(Fake {
-            regs: Mutex::new(regs.to_vec()),
-            writes: Mutex::new(Vec::new()),
-        }));
+    fn imu(regs: &[(u8, u8)]) -> (Mpu6886<'static>, &'static RegBus) {
+        let f: &'static RegBus = Box::leak(Box::new(RegBus::new(regs)));
         (Mpu6886::new(BusHandle::new(f)), f)
     }
 
@@ -361,7 +310,7 @@ mod tests {
         m.reset().unwrap();
         m.wake().unwrap();
 
-        let writes = f.writes.lock().unwrap();
+        let writes = f.writes();
         let pwr: Vec<u8> = writes.iter().filter(|(r, _)| *r == REG_PWR_MGMT_1).map(|(_, v)| *v).collect();
         assert_eq!(pwr, [0x00, PWR_DEVICE_RESET, PWR_CLK_PLL], "clear sleep, reset, then PLL");
     }
@@ -378,7 +327,7 @@ mod tests {
         assert_eq!(waits, [10, 10]);
         // Power register saw clear-sleep, reset, then PLL — reset before the
         // first wait, wake before the second.
-        let writes = f.writes.lock().unwrap();
+        let writes = f.writes();
         let pwr: Vec<u8> = writes.iter().filter(|(r, _)| *r == REG_PWR_MGMT_1).map(|(_, v)| *v).collect();
         assert_eq!(pwr, [0x00, PWR_DEVICE_RESET, PWR_CLK_PLL]);
         // And configure ran: the full scales are set.

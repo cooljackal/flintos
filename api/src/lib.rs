@@ -65,6 +65,11 @@ pub use hal::bus::{
     Bus, BusError, BusHandle, BusResult, BusSpeed, CsHold, Op, PhysicalBus, PhysicalTransfer,
 };
 
+/// Shared test-only bus mocks ([`testing::RegBus`], [`testing::WriteLog`]) for
+/// device-driver unit tests. Enabled by the `test-support` feature.
+#[cfg(feature = "test-support")]
+pub use hal::testing;
+
 /// Byte-stream subsystem surface (UART), re-exported like `bus` so Layer-2/3
 /// drivers depend only on `api`. A UART is a stream, not a `Bus` — see
 /// `hal::stream`.

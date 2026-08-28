@@ -127,49 +127,11 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use api::bus::{Bus, BusError, BusKind, Op};
+    use api::testing::RegBus;
     use std::boxed::Box;
-    use std::sync::Mutex;
-    use std::vec::Vec;
 
-    /// A bus that answers from a tiny register file and records what was asked.
-    struct FakeDevice {
-        regs: Vec<(u8, u8)>,
-        asked: Mutex<Vec<u8>>,
-    }
-
-    impl Bus for FakeDevice {
-        fn transfer(&self, ops: &mut [Op]) -> BusResult<()> {
-            for op in ops.iter_mut() {
-                if let (Some(tx), Some(rx)) = (op.tx, op.rx.as_deref_mut()) {
-                    let reg = *tx.first().ok_or(BusError::InvalidConfig)?;
-                    self.asked.lock().unwrap().push(reg);
-                    let val = self.regs.iter().find(|(r, _)| *r == reg).map(|(_, v)| *v);
-                    // A real device NAKs an address it does not implement;
-                    // returning zeros would let a driver read a plausible value
-                    // out of nothing.
-                    rx[0] = val.ok_or(BusError::InvalidConfig)?;
-                }
-                // Writes (register configuration) are accepted silently.
-            }
-            Ok(())
-        }
-        fn max_transfer(&self) -> usize {
-            64
-        }
-        // The mock answers like an addressed I2C device: the bytes from the
-        // register named in `tx[0]` on. The handle's SPI framing (an extra
-        // address slot in the reply) is covered by the tests in `hal::bus`.
-        fn kind(&self) -> BusKind {
-            BusKind::I2c
-        }
-    }
-
-    fn device(regs: &[(u8, u8)]) -> (Bmi270<'static>, &'static FakeDevice) {
-        let d: &'static FakeDevice = Box::leak(Box::new(FakeDevice {
-            regs: regs.to_vec(),
-            asked: Mutex::new(Vec::new()),
-        }));
+    fn device(regs: &[(u8, u8)]) -> (Bmi270<'static>, &'static RegBus) {
+        let d: &'static RegBus = Box::leak(Box::new(RegBus::new(regs)));
         (Bmi270::new(BusHandle::new(d)), d)
     }
 
@@ -208,7 +170,7 @@ mod tests {
         // the present part does not implement and NAK on a healthy board.
         let (imu, dev) = device(&[(REG_CHIP_ID, CHIP_ID)]);
         imu.probe().unwrap();
-        assert_eq!(&dev.asked.lock().unwrap()[..], &[REG_CHIP_ID]);
+        assert_eq!(dev.reads(), [REG_CHIP_ID]);
     }
 
     #[test]

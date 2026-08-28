@@ -11,3 +11,8 @@ rust-version.workspace = true
 
 # Must never depend on any arch or board crate
 [dependencies]
+
+[features]
+# Test-only bus mocks (hal::testing), for the logical drivers' host unit tests.
+# Pulls in std; never enabled for a target build.
+test-support = []
