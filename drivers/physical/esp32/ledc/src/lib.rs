@@ -137,9 +137,6 @@ pub const fn divider_for(freq_hz: u32, res_bits: u8) -> Option<u32> {
     // 64-bit throughout: APB << 8 already overflows nothing, but freq << res
     // does for large resolutions.
     let period_ticks = (freq_hz as u64) << res_bits;
-    if period_ticks == 0 {
-        return None;
-    }
     let div = ((APB_HZ as u64) << DIV_FRAC_BITS) / period_ticks;
     // Below 256 the divider is under 1.0, which the hardware cannot do.
     if div < (1 << DIV_FRAC_BITS) || div > DIV_MAX as u64 {
