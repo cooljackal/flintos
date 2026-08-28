@@ -41,7 +41,7 @@
 pub mod lact;
 
 use soc_esp32::addr::{TIMG0_BASE, TIMG1_BASE};
-use soc_esp32::reg;
+use soc_esp32::{reg, APB_HZ};
 
 /// Which timer group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,9 +75,6 @@ pub enum TimerError {
     /// or is zero.
     UnsupportedPeriod,
 }
-
-/// APB clock feeding the prescaler.
-const APB_HZ: u32 = 80_000_000;
 
 // Per-timer register offsets, from the timer's own base.
 const CONFIG: u32 = 0x00;
