@@ -220,7 +220,7 @@ This holds only for **symmetric** cores. See [Multicore](/developers/multicore/)
 ## The kernel is a library
 
 The binary is an application in `apps/`. See
-[Tutorial: Hello World](/users/hello-world/).
+[Tutorial: Hello World](/tutorials/hello-world/).
 
 That's why board and debug features are selected by the app: it's the only crate
 that can choose without the choice leaking into everything else that links the

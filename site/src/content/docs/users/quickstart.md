@@ -95,4 +95,4 @@ Per region, not per section — IRAM or DRAM runs out long before flash.
 
 ## Next
 
-[Supported Boards](/users/supported-boards/) · [Tutorial: Hello World](/users/hello-world/).
+[Supported Boards](/users/supported-boards/) · [Tutorial: Hello World](/tutorials/hello-world/).

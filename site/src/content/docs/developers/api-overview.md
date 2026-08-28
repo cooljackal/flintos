@@ -28,7 +28,7 @@ Everything an application calls lives in the [`api`](/api/api/) crate.
 | `api::Error` / `api::Result` | The one error type an application `?`s into (re-exported from `hal`) |
 | [`api::debug`](/api/api/debug/) | `log_error!`…`log_trace!`, metrics, stack high-water marks, panic capture |
 
-Start with [Tutorial: Hello World](/users/hello-world/).
+Start with [Tutorial: Hello World](/tutorials/hello-world/).
 
 ## Writing a driver — the layer contracts
 

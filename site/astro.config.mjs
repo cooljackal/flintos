@@ -15,6 +15,11 @@ const apiGroups = existsSync(API_SIDEBAR)
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://flintos.dev',
+	// Hello World moved from Users into the new Tutorials section; keep the old
+	// URL working for external links and bookmarks.
+	redirects: {
+		'/users/hello-world/': '/tutorials/hello-world/',
+	},
 	integrations: [
 		starlight({
 			title: 'flintOS',
@@ -38,10 +43,15 @@ export default defineConfig({
 				{ label: 'Introduction', slug: 'introduction' },
 				{ label: 'Prerequisites', slug: 'prerequisites' },
 				{
+					label: 'Tutorials',
+					items: [
+						{ label: 'Hello, world', slug: 'tutorials/hello-world' },
+					],
+				},
+				{
 					label: 'Users',
 					items: [
 						{ label: 'Quickstart', slug: 'users/quickstart' },
-						{ label: 'Hello, world', slug: 'users/hello-world' },
 						{ label: 'Supported boards', slug: 'users/supported-boards' },
 						{ label: 'Other boards & toolchains', slug: 'users/other-targets' },
 						{ label: 'Debug levels', slug: 'users/debug-levels' },

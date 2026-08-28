@@ -316,7 +316,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) — commits need a DCO sign-off
 [issues]: https://github.com/cooljackal/flintos/issues
 [boards]: https://flintos.dev/users/supported-boards/
 [quickstart]: https://flintos.dev/users/quickstart/
-[tutorial]: https://flintos.dev/users/hello-world/
+[tutorial]: https://flintos.dev/tutorials/hello-world/
 [arch]: https://flintos.dev/developers/architecture/
 [add-board]: https://flintos.dev/developers/adding-a-board/
 [#68]: https://github.com/cooljackal/flintos/issues/68
