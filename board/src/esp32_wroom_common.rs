@@ -22,7 +22,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         irq: addr::IRQ_UART0,
         dma_capable: true,
         dma_pool_bytes: 512,
-        config: BusConfig::uart_8n1(1, 3, 115200),
+        config: BusConfig::uart_8n1(crate::ESP32_CONSOLE.tx, crate::ESP32_CONSOLE.rx, crate::ESP32_CONSOLE.baud),
     },
     BusMapping {
         // VSPI (SPI3). GPIO 23/19/18 are VSPI's IO_MUX-native pins; pairing

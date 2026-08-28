@@ -233,6 +233,12 @@ pub struct ConsolePins {
     pub baud: u32,
 }
 
+/// The ESP32 console: UART0 on GPIO1 (TXD0) / GPIO3 (RXD0) at 115200 8N1 — the
+/// same on every ESP32 board here. The one source of truth for both a manifest's
+/// `console` field and its UART0 `BusConfig::uart_8n1(..)`, so the pins and baud
+/// cannot drift between the two.
+pub const ESP32_CONSOLE: ConsolePins = ConsolePins { tx: 1, rx: 3, baud: 115_200 };
+
 /// Electrically-free pads a board offers the on-chip loopback self-tests and
 /// the bus/stream porting examples.
 ///

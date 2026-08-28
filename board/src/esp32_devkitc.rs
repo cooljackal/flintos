@@ -168,5 +168,5 @@ pub const BOARD: crate::Board = crate::Board {
         mcpwm: MCPWM_SELFTEST_GPIOS,
         adc_external_high: ADC_EXTERNAL_HIGH_GPIO,
     },
-    console: crate::ConsolePins { tx: 1, rx: 3, baud: 115_200 },
+    console: crate::ESP32_CONSOLE,
 };

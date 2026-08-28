@@ -144,7 +144,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[BusMapping {
     irq: addr::IRQ_UART0,
     dma_capable: true,
     dma_pool_bytes: 512,
-    config: BusConfig::uart_8n1(1, 3, 115200),
+    config: BusConfig::uart_8n1(crate::ESP32_CONSOLE.tx, crate::ESP32_CONSOLE.rx, crate::ESP32_CONSOLE.baud),
 }];
 
 /// Logical device drivers attached to buses.
@@ -177,7 +177,7 @@ pub const SELFTEST_PADS: crate::SelftestPads = crate::SelftestPads {
 };
 
 /// The console pins shared by both Atom variants.
-pub const CONSOLE: crate::ConsolePins = crate::ConsolePins { tx: 1, rx: 3, baud: 115_200 };
+pub const CONSOLE: crate::ConsolePins = crate::ESP32_CONSOLE;
 
 /// Radios this board's module physically carries.
 ///

@@ -108,7 +108,7 @@ pub const TARGET_BUSES: &[BusMapping] = &[
         irq: addr::IRQ_UART0,
         dma_capable: true,
         dma_pool_bytes: 512,
-        config: BusConfig::uart_8n1(1, 3, 115200),
+        config: BusConfig::uart_8n1(crate::ESP32_CONSOLE.tx, crate::ESP32_CONSOLE.rx, crate::ESP32_CONSOLE.baud),
     },
     BusMapping {
         name: "i2c0",
@@ -215,7 +215,7 @@ pub const BOARD: crate::Board = crate::Board {
         mcpwm: MCPWM_SELFTEST_GPIOS,
         adc_external_high: ADC_EXTERNAL_HIGH_GPIO,
     },
-    console: crate::ConsolePins { tx: 1, rx: 3, baud: 115_200 },
+    console: crate::ESP32_CONSOLE,
 };
 
 /// The `nvs` key/value partition, `(offset, len)` — espflash's default table.
