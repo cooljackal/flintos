@@ -35,6 +35,7 @@
 //! claim about behaviour nobody can check.
 
 use soc_esp32::addr::{TIMG0_BASE, TIMG1_BASE};
+use soc_esp32::reg;
 
 use crate::Group;
 
@@ -128,18 +129,13 @@ impl Lact {
     }
 
     #[inline]
-    fn reg(&self, offset: u32) -> *mut u32 {
-        (self.base + offset) as *mut u32
-    }
-
-    #[inline]
     unsafe fn read(&self, offset: u32) -> u32 {
-        unsafe { self.reg(offset).read_volatile() }
+        unsafe { reg::at(self.base, offset).read_volatile() }
     }
 
     #[inline]
     unsafe fn write(&self, offset: u32, value: u32) {
-        unsafe { self.reg(offset).write_volatile(value) }
+        unsafe { reg::at(self.base, offset).write_volatile(value) }
     }
 
     /// The counter, in ticks.

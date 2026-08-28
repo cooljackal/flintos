@@ -149,16 +149,12 @@ impl Timg {
         Ok(t)
     }
 
-    fn reg(&self, offset: u32) -> *mut u32 {
-        (self.base + offset) as *mut u32
-    }
-
     unsafe fn write(&self, offset: u32, value: u32) {
-        self.reg(offset).write_volatile(value);
+        reg::at(self.base, offset).write_volatile(value);
     }
 
     unsafe fn read(&self, offset: u32) -> u32 {
-        self.reg(offset).read_volatile()
+        reg::at(self.base, offset).read_volatile()
     }
 
     /// The counter, in the units `resolution_hz` asked for.

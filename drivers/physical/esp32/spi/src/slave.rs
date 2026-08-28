@@ -117,10 +117,6 @@ impl Esp32SpiSlave {
         Self { base: base_addr, ck_i_edge: false }
     }
 
-    fn reg(&self, offset: u32) -> *mut u32 {
-        (self.base + offset) as *mut u32
-    }
-
     /// Configure the controller as a slave in `mode`. Registers only — the
     /// caller routes the pins (see the module docs).
     ///
@@ -141,33 +137,33 @@ impl Esp32SpiSlave {
         unsafe {
             // spi_ll_slave_init: zero clock/user/ctrl, select slave mode with the
             // buffer enabled, then pulse the core reset with the config in place.
-            self.reg(SPI_CLOCK).write_volatile(0);
-            self.reg(SPI_USER).write_volatile(0);
-            self.reg(SPI_CTRL).write_volatile(0);
+            reg::at(self.base, SPI_CLOCK).write_volatile(0);
+            reg::at(self.base, SPI_USER).write_volatile(0);
+            reg::at(self.base, SPI_CTRL).write_volatile(0);
 
-            let slave = self.reg(SPI_SLAVE);
+            let slave = reg::at(self.base, SPI_SLAVE);
             slave.write_volatile(SPI_WR_RD_BUF_EN | SPI_SLAVE_MODE);
             reg::set(slave, SPI_SYNC_RESET);
             reg::clear(slave, SPI_SYNC_RESET);
 
             // Full duplex. usr_miso_highpart / usr_mosi_highpart stay 0 (whole
             // 64-byte buffer) from the SPI_USER = 0 above.
-            reg::set(self.reg(SPI_USER), SPI_DOUTDIN);
+            reg::set(reg::at(self.base, SPI_USER), SPI_DOUTDIN);
 
             // spi_ll_slave_set_mode(mode, dma_used = false).
             let (ck_idle, ck_i, ctrl2) = slave_mode_timing(mode);
             self.ck_i_edge = ck_i;
 
-            let pin = self.reg(SPI_PIN);
+            let pin = reg::at(self.base, SPI_PIN);
             if ck_idle {
                 reg::set(pin, SPI_CK_IDLE_EDGE);
             } else {
                 reg::clear(pin, SPI_CK_IDLE_EDGE);
             }
             if ck_i {
-                reg::set(self.reg(SPI_USER), SPI_CK_I_EDGE);
+                reg::set(reg::at(self.base, SPI_USER), SPI_CK_I_EDGE);
             }
-            self.reg(SPI_CTRL2).write_volatile(ctrl2);
+            reg::at(self.base, SPI_CTRL2).write_volatile(ctrl2);
         }
 
         Ok(())
@@ -191,7 +187,7 @@ impl Esp32SpiSlave {
             // Reset the transfer FSM before loading the buffer, exactly as
             // esp-idf does — a slave left mid-shift would otherwise begin the
             // next transfer partway through a byte.
-            let slave = self.reg(SPI_SLAVE);
+            let slave = reg::at(self.base, SPI_SLAVE);
             reg::set(slave, SPI_SYNC_RESET);
             reg::clear(slave, SPI_SYNC_RESET);
 
@@ -201,27 +197,27 @@ impl Esp32SpiSlave {
             for w in 0..nwords {
                 let start = w * 4;
                 let end = (start + 4).min(len);
-                self.reg(SPI_W0 + (w as u32 * 4)).write_volatile(pack_word(&tx[start..end]));
+                reg::at(self.base, SPI_W0 + (w as u32 * 4)).write_volatile(pack_word(&tx[start..end]));
             }
 
             // Lengths are (bits - 1). RDBUF is the input (MOSI) length, WRBUF the
             // output (MISO) length; for a full-duplex exchange they are equal.
             let bits = (len as u32) * 8 - 1;
-            self.reg(SPI_SLV_RDBUF_DLEN).write_volatile(bits);
-            self.reg(SPI_SLV_WRBUF_DLEN).write_volatile(bits);
+            reg::at(self.base, SPI_SLV_RDBUF_DLEN).write_volatile(bits);
+            reg::at(self.base, SPI_SLV_WRBUF_DLEN).write_volatile(bits);
 
             // Enable both data phases (full duplex), reasserting the mode's
             // clock-input edge that this whole-register write would otherwise
             // drop.
             let ck_i = if self.ck_i_edge { SPI_CK_I_EDGE } else { 0 };
-            self.reg(SPI_USER)
+            reg::at(self.base, SPI_USER)
                 .write_volatile(SPI_DOUTDIN | ck_i | SPI_USR_MOSI | SPI_USR_MISO);
 
             // Clear the previous completion, then arm. For the slave, SPI_USR
             // does not start a transfer — it enables one that the master's clock
             // then drives.
             reg::clear(slave, SPI_TRANS_DONE);
-            self.reg(SPI_CMD).write_volatile(SPI_CMD_USR);
+            reg::at(self.base, SPI_CMD).write_volatile(SPI_CMD_USR);
         }
 
         Ok(())
@@ -238,7 +234,7 @@ impl Esp32SpiSlave {
         // SAFETY: single-owner register block, a transfer armed by `arm`.
         unsafe {
             let mut deadline = poll::Deadline::new(SPI_TIMEOUT_US);
-            while self.reg(SPI_SLAVE).read_volatile() & SPI_TRANS_DONE == 0 {
+            while reg::at(self.base, SPI_SLAVE).read_volatile() & SPI_TRANS_DONE == 0 {
                 if deadline.expired() {
                     return Err(BusError::Timeout);
                 }
@@ -248,7 +244,7 @@ impl Esp32SpiSlave {
             for w in 0..nwords {
                 let start = w * 4;
                 let end = (start + 4).min(len);
-                let word = self.reg(SPI_W0 + (w as u32 * 4)).read_volatile();
+                let word = reg::at(self.base, SPI_W0 + (w as u32 * 4)).read_volatile();
                 unpack_word(word, &mut rx[start..end]);
             }
         }

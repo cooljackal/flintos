@@ -301,7 +301,7 @@ impl Esp32I2c {
         // Master mode, and drive both lines. esp-idf's `i2c_ll_master_init`
         // sets all three; without the FORCE_OUT bits the controller never
         // drives the bus.
-        self.reg(I2C_CTR)
+        reg::at(self.base, I2C_CTR)
             .write_volatile(I2C_MS_MODE | I2C_SCL_FORCE_OUT | I2C_SDA_FORCE_OUT);
 
         // FIFO mode, nothing held in reset. This register used to be written
@@ -309,25 +309,25 @@ impl Esp32I2c {
         // Bit 13 is I2C_TX_FIFO_RST: the transmit FIFO was pinned in reset for
         // the life of the program, so no byte could ever leave the controller.
         // Interrupt enables live in I2C_INT_ENA_REG, a different register.
-        self.reg(I2C_FIFO_CONF).write_volatile(0);
+        reg::at(self.base, I2C_FIFO_CONF).write_volatile(0);
 
-        self.reg(I2C_SCL_LOW).write_volatile(half);
-        self.reg(I2C_SCL_HIGH).write_volatile(half);
+        reg::at(self.base, I2C_SCL_LOW).write_volatile(half);
+        reg::at(self.base, I2C_SCL_HIGH).write_volatile(half);
 
         // START/STOP shaping. Left at reset values these do not describe a
         // valid bus, and a device sees a malformed start rather than an address.
-        self.reg(I2C_SDA_HOLD).write_volatile(quarter);
-        self.reg(I2C_SDA_SAMPLE_REG).write_volatile(quarter);
-        self.reg(I2C_SCL_START_HOLD).write_volatile(half.saturating_sub(1).max(1));
-        self.reg(I2C_SCL_RSTART_SETUP).write_volatile(half);
-        self.reg(I2C_SCL_STOP_HOLD).write_volatile(half);
-        self.reg(I2C_SCL_STOP_SETUP).write_volatile(half);
+        reg::at(self.base, I2C_SDA_HOLD).write_volatile(quarter);
+        reg::at(self.base, I2C_SDA_SAMPLE_REG).write_volatile(quarter);
+        reg::at(self.base, I2C_SCL_START_HOLD).write_volatile(half.saturating_sub(1).max(1));
+        reg::at(self.base, I2C_SCL_RSTART_SETUP).write_volatile(half);
+        reg::at(self.base, I2C_SCL_STOP_HOLD).write_volatile(half);
+        reg::at(self.base, I2C_SCL_STOP_SETUP).write_volatile(half);
 
-        self.reg(I2C_SCL_FILTER_CFG).write_volatile(I2C_FILTER_EN | 7);
-        self.reg(I2C_SDA_FILTER_CFG).write_volatile(I2C_FILTER_EN | 7);
+        reg::at(self.base, I2C_SCL_FILTER_CFG).write_volatile(I2C_FILTER_EN | 7);
+        reg::at(self.base, I2C_SDA_FILTER_CFG).write_volatile(I2C_FILTER_EN | 7);
 
         // Zero is the shortest bus timeout, not none.
-        self.reg(I2C_TOUT).write_volatile(I2C_TOUT_MAX);
+        reg::at(self.base, I2C_TOUT).write_volatile(I2C_TOUT_MAX);
 
         self.reset_fifo();
     }
@@ -350,7 +350,7 @@ impl Esp32I2c {
         // Clear the command list first: a half-executed sequence left in place
         // can resume against the rebuilt controller.
         for slot in 0..I2C_COMD_SLOTS as u32 {
-            self.reg(I2C_COMD_BASE + slot * 4).write_volatile(0);
+            reg::at(self.base, I2C_COMD_BASE + slot * 4).write_volatile(0);
         }
         if let Some(bit) = dport::clock_bit(self.base) {
             dport::disable(bit);
@@ -359,14 +359,10 @@ impl Esp32I2c {
         self.program();
     }
 
-    fn reg(&self, offset: u32) -> *mut u32 {
-        (self.base + offset) as *mut u32
-    }
-
     /// Set `I2C_TRANS_START` without disturbing the rest of `I2C_CTR_REG`
     /// (in particular, `I2C_MS_MODE` set during `init`).
     unsafe fn start_transfer(&self) {
-        let ctr = self.reg(I2C_CTR);
+        let ctr = reg::at(self.base, I2C_CTR);
         reg::set(ctr, I2C_TRANS_START);
     }
 
@@ -381,12 +377,12 @@ impl Esp32I2c {
     /// # Safety
     /// Writes this controller's FIFO and interrupt registers.
     unsafe fn reset_fifo(&self) {
-        let conf = self.reg(I2C_FIFO_CONF);
+        let conf = reg::at(self.base, I2C_FIFO_CONF);
         let base = conf.read_volatile() & !(I2C_TX_FIFO_RST | I2C_RX_FIFO_RST);
         // Pulsed, not left set: held in reset, the FIFOs accept nothing.
         conf.write_volatile(base | I2C_TX_FIFO_RST | I2C_RX_FIFO_RST);
         conf.write_volatile(base);
-        self.reg(I2C_INT_CLR).write_volatile(I2C_INT_ALL);
+        reg::at(self.base, I2C_INT_CLR).write_volatile(I2C_INT_ALL);
     }
 
     /// Wait for the transaction to finish, and say what happened.
@@ -398,7 +394,7 @@ impl Esp32I2c {
     fn wait_done(&self) -> BusResult<()> {
         let mut deadline = poll::Deadline::new(I2C_TIMEOUT_US);
         loop {
-            let raw = unsafe { self.reg(I2C_INT_RAW).read_volatile() };
+            let raw = unsafe { reg::at(self.base, I2C_INT_RAW).read_volatile() };
 
             if raw & I2C_ACK_ERR != 0 {
                 // Rebuild before returning: the next caller must not inherit a
@@ -419,7 +415,7 @@ impl Esp32I2c {
                 return Err(BusError::Busy);
             }
             if raw & I2C_TRANS_COMPLETE != 0 {
-                unsafe { self.reg(I2C_INT_CLR).write_volatile(I2C_INT_ALL) };
+                unsafe { reg::at(self.base, I2C_INT_CLR).write_volatile(I2C_INT_ALL) };
                 return Ok(());
             }
 
@@ -442,27 +438,27 @@ impl Esp32I2c {
 
             // Command 0: RSTART. No address payload -- the address goes in
             // the FIFO, sent by the WRITE command that follows.
-            self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_RSTART);
+            reg::at(self.base, I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_RSTART);
             slot += 1;
 
             // Command 1: WRITE 1 byte (the slave address + R/W=0), from the
             // FIFO.
-            self.reg(I2C_FIFO_DATA)
+            reg::at(self.base, I2C_FIFO_DATA)
                 .write_volatile(((addr as u32) << 1) | I2C_RW_WRITE);
-            self.reg(I2C_COMD_BASE + slot * 4)
+            reg::at(self.base, I2C_COMD_BASE + slot * 4)
                 .write_volatile(I2C_CMD_OP_WRITE | I2C_CMD_ACK_CHECK_EN | 1);
             slot += 1;
 
             // Commands 2..N+1: write data bytes.
             for &byte in data {
-                self.reg(I2C_FIFO_DATA).write_volatile(byte as u32);
-                self.reg(I2C_COMD_BASE + slot * 4)
+                reg::at(self.base, I2C_FIFO_DATA).write_volatile(byte as u32);
+                reg::at(self.base, I2C_COMD_BASE + slot * 4)
                 .write_volatile(I2C_CMD_OP_WRITE | I2C_CMD_ACK_CHECK_EN | 1);
                 slot += 1;
             }
 
             // Last command: STOP.
-            self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_STOP);
+            reg::at(self.base, I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_STOP);
 
             self.start_transfer();
         }
@@ -489,14 +485,14 @@ impl Esp32I2c {
             let mut slot = 0u32;
 
             // Command 0: RSTART.
-            self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_RSTART);
+            reg::at(self.base, I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_RSTART);
             slot += 1;
 
             // Command 1: WRITE 1 byte (the slave address + R/W=1), from the
             // FIFO.
-            self.reg(I2C_FIFO_DATA)
+            reg::at(self.base, I2C_FIFO_DATA)
                 .write_volatile(((addr as u32) << 1) | I2C_RW_READ);
-            self.reg(I2C_COMD_BASE + slot * 4)
+            reg::at(self.base, I2C_COMD_BASE + slot * 4)
                 .write_volatile(I2C_CMD_OP_WRITE | I2C_CMD_ACK_CHECK_EN | 1);
             slot += 1;
 
@@ -507,12 +503,12 @@ impl Esp32I2c {
                 if i == len - 1 {
                     cmd |= I2C_CMD_ACK_VALUE_NAK;
                 }
-                self.reg(I2C_COMD_BASE + slot * 4).write_volatile(cmd);
+                reg::at(self.base, I2C_COMD_BASE + slot * 4).write_volatile(cmd);
                 slot += 1;
             }
 
             // Last command: STOP.
-            self.reg(I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_STOP);
+            reg::at(self.base, I2C_COMD_BASE + slot * 4).write_volatile(I2C_CMD_OP_STOP);
 
             self.start_transfer();
         }
@@ -522,7 +518,7 @@ impl Esp32I2c {
         // are simply dropped.
         unsafe {
             for byte in buf.iter_mut() {
-                *byte = (self.reg(I2C_FIFO_DATA).read_volatile() & 0xFF) as u8;
+                *byte = (reg::at(self.base, I2C_FIFO_DATA).read_volatile() & 0xFF) as u8;
             }
         }
         Ok(())

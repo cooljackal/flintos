@@ -10,6 +10,7 @@ use hal::bus::{
 use hal::pinmux::{PinConfig, PinMux, Signal};
 use hal::stream::{ByteStream, StreamErrors};
 use soc_esp32::addr;
+use soc_esp32::reg;
 use soc_esp32::ctrl::{UartCtrl, UartPort};
 use soc_esp32::{dport, Esp32PinMux, APB_HZ};
 
@@ -99,7 +100,6 @@ const CLKDIV_INT_MASK: u32 = 0x000F_FFFF; // [19:0]  integer divisor
 const CLKDIV_FRAG_SHIFT: u32 = 20; // [23:20] fractional divisor, in 1/16ths
 const CLKDIV_FRAG_MASK: u32 = 0xF << CLKDIV_FRAG_SHIFT;
 
-
 // ── Pin routing ──────────────────────────────────────────────────────────────
 //
 // Bases, native pads, and the IO_MUX offset table all live in
@@ -167,32 +167,28 @@ impl Esp32Uart {
         Ok(uart)
     }
 
-    fn reg(&self, offset: u32) -> *mut u32 {
-        (self.base + offset) as *mut u32
-    }
-
     /// Write a single byte (polled). Blocks until the TX FIFO has room.
     pub fn putc(&self, c: u8) {
         while self.tx_fifo_count() >= UART_TXFIFO_DEPTH {
             core::hint::spin_loop();
         }
         unsafe {
-            self.reg(UART_FIFO).write_volatile(c as u32);
+            reg::at(self.base, UART_FIFO).write_volatile(c as u32);
         }
     }
 
     /// Number of bytes currently queued in the TX FIFO.
     fn tx_fifo_count(&self) -> u32 {
-        let status = unsafe { self.reg(UART_STATUS).read_volatile() };
+        let status = unsafe { reg::at(self.base, UART_STATUS).read_volatile() };
         (status & UART_TXFIFO_CNT_MASK) >> UART_TXFIFO_CNT_SHIFT
     }
 
     /// Read a single byte (polled). `None` if the RX FIFO is empty.
     pub fn getc(&self) -> Option<u8> {
-        let status = unsafe { self.reg(UART_STATUS).read_volatile() };
+        let status = unsafe { reg::at(self.base, UART_STATUS).read_volatile() };
         let count = (status & UART_RXFIFO_CNT_MASK) >> UART_RXFIFO_CNT_SHIFT;
         if count > 0 {
-            Some(unsafe { self.reg(UART_FIFO).read_volatile() } as u8)
+            Some(unsafe { reg::at(self.base, UART_FIFO).read_volatile() } as u8)
         } else {
             None
         }
@@ -223,7 +219,7 @@ impl Esp32Uart {
     /// clean digital signal, so a self-test round-trips byte-for-byte.
     pub fn set_loopback(&self, on: bool) {
         unsafe {
-            let conf0 = self.reg(UART_CONF0);
+            let conf0 = reg::at(self.base, UART_CONF0);
             let mut val = conf0.read_volatile();
             if on {
                 val |= CONF0_LOOPBACK;
@@ -249,7 +245,7 @@ impl Esp32Uart {
             return Err(BusError::InvalidConfig);
         }
         let val = (int_div & CLKDIV_INT_MASK) | ((frag << CLKDIV_FRAG_SHIFT) & CLKDIV_FRAG_MASK);
-        unsafe { self.reg(UART_CLKDIV).write_volatile(val) };
+        unsafe { reg::at(self.base, UART_CLKDIV).write_volatile(val) };
         Ok(())
     }
 
@@ -257,7 +253,7 @@ impl Esp32Uart {
     /// and then cleared again, or the FIFOs stay held in reset.
     fn reset_fifos(&self) {
         unsafe {
-            let conf0 = self.reg(UART_CONF0);
+            let conf0 = reg::at(self.base, UART_CONF0);
             let val = conf0.read_volatile();
             conf0.write_volatile(val | CONF0_RXFIFO_RST | CONF0_TXFIFO_RST);
             conf0.write_volatile(val & !(CONF0_RXFIFO_RST | CONF0_TXFIFO_RST));
@@ -311,7 +307,7 @@ impl Esp32Uart {
         };
 
         unsafe {
-            let conf0 = self.reg(UART_CONF0);
+            let conf0 = reg::at(self.base, UART_CONF0);
             let mut val = conf0.read_volatile();
 
             val &= !(CONF0_BIT_NUM_MASK | CONF0_STOP_BIT_NUM_MASK);
@@ -334,13 +330,13 @@ impl Esp32Uart {
             // Interrupt-driven operation is not wired up yet: mask every source
             // and clear anything already latched, so a stale bit cannot raise a
             // spurious IRQ once the interrupt matrix is enabled.
-            self.reg(UART_INT_ENA).write_volatile(0);
-            self.reg(UART_INT_CLR).write_volatile(0xFFFF_FFFF);
+            reg::at(self.base, UART_INT_ENA).write_volatile(0);
+            reg::at(self.base, UART_INT_CLR).write_volatile(0xFFFF_FFFF);
 
             // RX threshold 1 byte, TX-empty threshold 32 bytes. Only consulted
             // once interrupts are enabled, but leaving CONF1 at reset would
             // give a 96-byte RX threshold, which stalls interactive input.
-            self.reg(UART_CONF1).write_volatile(1 | (32 << 8));
+            reg::at(self.base, UART_CONF1).write_volatile(1 | (32 << 8));
         }
 
         self.reset_fifos();
@@ -366,7 +362,7 @@ impl ByteStream for Esp32Uart {
             if self.tx_fifo_count() >= UART_TXFIFO_DEPTH {
                 break;
             }
-            unsafe { self.reg(UART_FIFO).write_volatile(b as u32) };
+            unsafe { reg::at(self.base, UART_FIFO).write_volatile(b as u32) };
             written += 1;
         }
         written
@@ -394,7 +390,7 @@ impl ByteStream for Esp32Uart {
     /// to `UART_INT_CLR`, so a caller that polls this gets every error since the
     /// last poll, then a clean slate.
     fn errors(&self) -> StreamErrors {
-        let raw = unsafe { self.reg(UART_INT_RAW).read_volatile() };
+        let raw = unsafe { reg::at(self.base, UART_INT_RAW).read_volatile() };
         let errs = StreamErrors {
             overrun: raw & INT_RXFIFO_OVF != 0,
             parity: raw & INT_PARITY_ERR != 0,
@@ -402,7 +398,7 @@ impl ByteStream for Esp32Uart {
         };
         if errs.any() {
             unsafe {
-                self.reg(UART_INT_CLR)
+                reg::at(self.base, UART_INT_CLR)
                     .write_volatile(INT_RXFIFO_OVF | INT_FRM_ERR | INT_PARITY_ERR);
             }
         }

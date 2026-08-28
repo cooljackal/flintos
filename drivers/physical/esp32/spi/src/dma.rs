@@ -269,12 +269,12 @@ impl Esp32Spi {
         // does not gate on it.
         let mut deadline = poll::Deadline::new(SPI_TIMEOUT_US);
         loop {
-            let done = self.reg(SPI_SLAVE).read_volatile() & SPI_TRANS_DONE != 0;
+            let done = reg::at(self.base, SPI_SLAVE).read_volatile() & SPI_TRANS_DONE != 0;
             // The receive DMA raises IN_SUC_EOF once its last byte has landed in
             // memory — which trails the SPI transaction by a burst. Waiting on it
             // as well as TRANS_DONE is what stops the tail of `rx` coming back
             // short by the previous transfer's byte count.
-            let int_raw = self.reg(SPI_DMA_INT_RAW).read_volatile();
+            let int_raw = reg::at(self.base, SPI_DMA_INT_RAW).read_volatile();
             let rx_landed = int_raw & SPI_IN_SUC_EOF != 0;
             // The transmit DMA raises OUT_EOF when it has read the last byte of
             // the out chain. Without waiting for it the out engine can still be
@@ -320,7 +320,7 @@ impl Esp32Spi {
     /// Both chains and their buffers must stay valid until the transfer ends,
     /// and the host must own a DMA channel.
     unsafe fn dma_setup_and_fire(&self, tx_chain: u32, rx_chain: u32, len: usize) {
-        let conf = self.reg(SPI_DMA_CONF);
+        let conf = reg::at(self.base, SPI_DMA_CONF);
         // NuttX's `esp32_spi_dma_exchange` per-transfer order, which is what
         // makes *consecutive* DMA transfers whole. The essential parts a DMA-only
         // reset misses: the links are disarmed first, and the SPI **core** FSM is
@@ -329,12 +329,12 @@ impl Esp32Spi {
         // first byte of every transfer after the first.
 
         // (1) Disarm both links before resetting anything.
-        self.reg(SPI_DMA_IN_LINK).write_volatile(0);
-        self.reg(SPI_DMA_OUT_LINK).write_volatile(0);
+        reg::at(self.base, SPI_DMA_IN_LINK).write_volatile(0);
+        reg::at(self.base, SPI_DMA_OUT_LINK).write_volatile(0);
 
         // (2) Reset the SPI core transfer FSM, then the DMA engine (both
         // directions + AHB master/FIFO), with the links idle.
-        let slave = self.reg(SPI_SLAVE);
+        let slave = reg::at(self.base, SPI_SLAVE);
         reg::set(slave, SPI_SYNC_RESET);
         reg::clear(slave, SPI_SYNC_RESET);
         let dma_rst = SPI_IN_RST | SPI_OUT_RST | SPI_AHBM_RST | SPI_AHBM_FIFO_RST;
@@ -350,24 +350,24 @@ impl Esp32Spi {
 
         // (3) Clear the prior transaction's completion flags.
         reg::clear(slave, SPI_TRANS_DONE);
-        self.reg(SPI_DMA_INT_CLR)
+        reg::at(self.base, SPI_DMA_INT_CLR)
             .write_volatile(SPI_IN_SUC_EOF | SPI_OUT_EOF);
 
         // (4) Bit lengths (bits − 1).
         let bits = (len as u32) * 8 - 1;
-        self.reg(SPI_MOSI_DLEN).write_volatile(bits);
-        self.reg(SPI_MISO_DLEN).write_volatile(bits);
+        reg::at(self.base, SPI_MOSI_DLEN).write_volatile(bits);
+        reg::at(self.base, SPI_MISO_DLEN).write_volatile(bits);
 
         // (5) Arm the out-link (TX) then the in-link (RX).
-        self.reg(SPI_DMA_OUT_LINK)
+        reg::at(self.base, SPI_DMA_OUT_LINK)
             .write_volatile(dma::link_addr(tx_chain) | SPI_OUTLINK_START);
-        self.reg(SPI_DMA_IN_LINK)
+        reg::at(self.base, SPI_DMA_IN_LINK)
             .write_volatile(dma::link_addr(rx_chain) | SPI_INLINK_AUTO_RET | SPI_INLINK_START);
 
         // (6) Enable the data phases. Match esp-idf's SPI_USER (0x18000051):
         // full-duplex, CS-hold, MISO-sampling edge, plus CPHA's clock-out edge.
         let ck_out = if self.cpha { SPI_CK_OUT_EDGE } else { 0 };
-        self.reg(SPI_USER).write_volatile(
+        reg::at(self.base, SPI_USER).write_volatile(
             SPI_DOUTDIN | SPI_CS_HOLD | SPI_CK_I_EDGE | SPI_USR_MOSI | SPI_USR_MISO | ck_out,
         );
 
@@ -376,14 +376,14 @@ impl Esp32Spi {
         // status bit; without it a re-armed transfer clocks out its first byte
         // as zero.
         let mut deadline = poll::Deadline::new(SPI_TIMEOUT_US);
-        while self.reg(SPI_DMA_RSTATUS).read_volatile() & SPI_DMA_TX_FIFO_EMPTY != 0 {
+        while reg::at(self.base, SPI_DMA_RSTATUS).read_volatile() & SPI_DMA_TX_FIFO_EMPTY != 0 {
             if deadline.expired() {
                 break;
             }
             core::hint::spin_loop();
         }
 
-        self.reg(SPI_CMD).write_volatile(SPI_CMD_USR);
+        reg::at(self.base, SPI_CMD).write_volatile(SPI_CMD_USR);
     }
 
     /// Run one full-duplex transfer of `len` bytes over DMA, polled to
@@ -417,7 +417,7 @@ impl Esp32Spi {
     pub fn dma_int_enable(&self, mask: u32) {
         // SAFETY: a volatile write to this host's own register; single
         // ownership of the driver is what makes that sound.
-        unsafe { self.reg(SPI_DMA_INT_ENA).write_volatile(mask) };
+        unsafe { reg::at(self.base, SPI_DMA_INT_ENA).write_volatile(mask) };
     }
 
     /// Acknowledge DMA interrupt flags. **A top-half must call this.**
@@ -431,7 +431,7 @@ impl Esp32Spi {
     pub fn dma_int_clear(&self, mask: u32) {
         // SAFETY: a volatile write to this host's own register; single
         // ownership of the driver is what makes that sound.
-        unsafe { self.reg(SPI_DMA_INT_CLR).write_volatile(mask) };
+        unsafe { reg::at(self.base, SPI_DMA_INT_CLR).write_volatile(mask) };
     }
 
     /// Acknowledge **everything** this host can be interrupting for.
@@ -447,10 +447,10 @@ impl Esp32Spi {
         // SAFETY: register writes to this host's own interrupt-clear and slave
         // registers; single ownership of the driver is what makes that sound.
         unsafe {
-            self.reg(SPI_DMA_INT_CLR).write_volatile(u32::MAX);
+            reg::at(self.base, SPI_DMA_INT_CLR).write_volatile(u32::MAX);
             // Write-zero-to-clear, and only this bit: the rest of SPI_SLAVE_REG
             // holds mode configuration that a blind write would flatten.
-            let slave = self.reg(SPI_SLAVE);
+            let slave = reg::at(self.base, SPI_SLAVE);
             reg::clear(slave, SPI_TRANS_DONE);
         }
     }
@@ -484,7 +484,7 @@ impl Esp32Spi {
     pub fn dma_int_raw(&self) -> u32 {
         // SAFETY: a volatile read of this host's own register; single ownership
         // of the driver is what makes that sound.
-        unsafe { self.reg(SPI_DMA_INT_RAW).read_volatile() }
+        unsafe { reg::at(self.base, SPI_DMA_INT_RAW).read_volatile() }
     }
 
     /// Halt both links.
@@ -495,8 +495,8 @@ impl Esp32Spi {
         // SAFETY: volatile writes to this host's own registers; single
         // ownership of the driver is what makes that sound.
         unsafe {
-            self.reg(SPI_DMA_OUT_LINK).write_volatile(SPI_OUTLINK_STOP);
-            self.reg(SPI_DMA_IN_LINK).write_volatile(SPI_INLINK_STOP);
+            reg::at(self.base, SPI_DMA_OUT_LINK).write_volatile(SPI_OUTLINK_STOP);
+            reg::at(self.base, SPI_DMA_IN_LINK).write_volatile(SPI_INLINK_STOP);
         }
     }
 

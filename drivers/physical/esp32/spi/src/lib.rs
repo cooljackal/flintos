@@ -340,14 +340,10 @@ impl Esp32Spi {
         Ok(spi)
     }
 
-    pub(crate) fn reg(&self, offset: u32) -> *mut u32 {
-        (self.base + offset) as *mut u32
-    }
-
     /// Program SPI_CLOCK for `speed_hz` off the APB clock.
     fn apply_clock(&self, speed_hz: u32) {
         unsafe {
-            self.reg(SPI_CLOCK)
+            reg::at(self.base, SPI_CLOCK)
                 .write_volatile(spi_clock_reg(APB_HZ, speed_hz));
         }
     }
@@ -375,7 +371,7 @@ impl Esp32Spi {
                 let start = w * 4;
                 let end = (start + 4).min(len);
                 let word = pack_word(&tx[start..end]);
-                self.reg(SPI_W0 + (w as u32 * 4)).write_volatile(word);
+                reg::at(self.base, SPI_W0 + (w as u32 * 4)).write_volatile(word);
             }
 
             // Bit-length fields, not byte count minus one: SPI_MOSI_DLEN /
@@ -383,8 +379,8 @@ impl Esp32Spi {
             // count into USER1, which holds an address-phase bit-length
             // field, not the data-phase length.
             let bits = (len as u32) * 8 - 1;
-            self.reg(SPI_MOSI_DLEN).write_volatile(bits);
-            self.reg(SPI_MISO_DLEN).write_volatile(bits);
+            reg::at(self.base, SPI_MOSI_DLEN).write_volatile(bits);
+            reg::at(self.base, SPI_MISO_DLEN).write_volatile(bits);
 
             // Configure the transfer: full duplex, MOSI + MISO phases, byte
             // order left at its little-endian reset default (bits 10/11 unset)
@@ -393,17 +389,17 @@ impl Esp32Spi {
             // `enable_cs0` marks a hardware-framed master by setting these
             // bits. Preserve them across this whole-register USER write;
             // otherwise CTRL2's setup/hold values never take effect.
-            let cs_timing = self.reg(SPI_USER).read_volatile() & (SPI_CS_SETUP | SPI_CS_HOLD);
-            self.reg(SPI_USER)
+            let cs_timing = reg::at(self.base, SPI_USER).read_volatile() & (SPI_CS_SETUP | SPI_CS_HOLD);
+            reg::at(self.base, SPI_USER)
                 .write_volatile(SPI_DOUTDIN | SPI_USR_MOSI | SPI_USR_MISO | ck_out | cs_timing);
 
             // Start the transfer (SPI_USR, bit 18 -- not bit 0).
-            self.reg(SPI_CMD).write_volatile(SPI_CMD_USR);
+            reg::at(self.base, SPI_CMD).write_volatile(SPI_CMD_USR);
 
             // Wait for completion, bounded: SPI_USR self-clears when the
             // hardware finishes the transaction.
             let mut deadline = poll::Deadline::new(SPI_TIMEOUT_US);
-            while self.reg(SPI_CMD).read_volatile() & SPI_CMD_USR != 0 {
+            while reg::at(self.base, SPI_CMD).read_volatile() & SPI_CMD_USR != 0 {
                 if deadline.expired() {
                     return Err(BusError::Timeout);
                 }
@@ -414,7 +410,7 @@ impl Esp32Spi {
             for w in 0..nwords {
                 let start = w * 4;
                 let end = (start + 4).min(len);
-                let word = self.reg(SPI_W0 + (w as u32 * 4)).read_volatile();
+                let word = reg::at(self.base, SPI_W0 + (w as u32 * 4)).read_volatile();
                 unpack_word(word, &mut rx[start..end]);
             }
         }
@@ -439,8 +435,8 @@ impl Esp32Spi {
         // SAFETY: register writes to this host's own registers; single
         // ownership of the driver is what makes that sound.
         unsafe {
-            reg::clear(self.reg(SPI_PIN), 1); // clear cs0_dis (SPI_PIN bit 0)
-            reg::set(self.reg(SPI_USER), SPI_CS_SETUP | SPI_CS_HOLD);
+            reg::clear(reg::at(self.base, SPI_PIN), 1); // clear cs0_dis (SPI_PIN bit 0)
+            reg::set(reg::at(self.base, SPI_USER), SPI_CS_SETUP | SPI_CS_HOLD);
         }
     }
 
@@ -511,10 +507,10 @@ impl PhysicalBus for Esp32Spi {
                     // drive a peripheral CS; leaving one enabled asserts it around
                     // every transfer with a setup/hold that corrupts the first
                     // byte. esp-idf disables them the same way (PIN = 0x…1f).
-                    let mut pin = self.reg(SPI_PIN).read_volatile();
+                    let mut pin = reg::at(self.base, SPI_PIN).read_volatile();
                     pin |= 0b111; // cs0_dis | cs1_dis | cs2_dis
                     if cpol != 0 { pin |= 1 << 29; } else { pin &= !(1 << 29); }
-                    self.reg(SPI_PIN).write_volatile(pin);
+                    reg::at(self.base, SPI_PIN).write_volatile(pin);
 
                     // Timing register, set to esp-idf's computed value for a
                     // GPIO-matrix master at these clocks (SPI_CTRL2 = 0x0002_001f):
@@ -528,13 +524,13 @@ impl PhysicalBus for Esp32Spi {
                     //     the reset default of 1 is too short, and the first byte
                     //     of every transfer then clocks out (and reads back) zero.
                     //   HOLD_TIME = 1 ([7:4]) — reset default, left as esp-idf has.
-                    let mut ctrl2 = self.reg(SPI_CTRL2).read_volatile();
+                    let mut ctrl2 = reg::at(self.base, SPI_CTRL2).read_volatile();
                     ctrl2 &= !((0b11 << 16) | 0xF);
                     ctrl2 |= (0b10 << 16) | 0xF;
-                    self.reg(SPI_CTRL2).write_volatile(ctrl2);
+                    reg::at(self.base, SPI_CTRL2).write_volatile(ctrl2);
 
                     // Enable master mode, disable slave.
-                    let slave = self.reg(SPI_SLAVE);
+                    let slave = reg::at(self.base, SPI_SLAVE);
                     reg::clear(slave, 1);
                 }
 

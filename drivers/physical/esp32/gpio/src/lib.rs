@@ -3,6 +3,7 @@
 #![no_std]
 
 use hal::bus::{BusError, BusResult};
+use soc_esp32::reg;
 
 /// ESP32 GPIO driver (pins 0-39; 32-39 are input-only on real silicon but the
 /// register plumbing is symmetric, so this driver does not special-case them).
@@ -128,10 +129,6 @@ impl Esp32Gpio {
         &GPIO
     }
 
-    fn reg(&self, offset: u32) -> *mut u32 {
-        (self.base + offset) as *mut u32
-    }
-
     /// Set pin direction.
     pub fn set_mode(&self, pin: u8, mode: PinMode) -> BusResult<()> {
         let (hi, bit) = pin_bit(pin).ok_or(BusError::InvalidConfig)?;
@@ -156,7 +153,7 @@ impl Esp32Gpio {
                     true,
                     hal::pinmux::PinPull::None,
                 )?;
-                self.reg(set_off).write_volatile(bit);
+                reg::at(self.base, set_off).write_volatile(bit);
             },
             PinMode::Input => unsafe {
                 soc_esp32::io_mux::configure(
@@ -165,7 +162,7 @@ impl Esp32Gpio {
                     true,
                     hal::pinmux::PinPull::None,
                 )?;
-                self.reg(clr_off).write_volatile(bit);
+                reg::at(self.base, clr_off).write_volatile(bit);
             },
             // Pull-up/-down and open-drain need the IO_MUX / GPIO_PIN pad
             // registers this driver does not program yet. Refuse them rather
@@ -188,8 +185,8 @@ impl Esp32Gpio {
             (GPIO_OUT_W1TS, GPIO_OUT_W1TC)
         };
         match level {
-            PinLevel::High => unsafe { self.reg(set_off).write_volatile(bit) },
-            PinLevel::Low => unsafe { self.reg(clr_off).write_volatile(bit) },
+            PinLevel::High => unsafe { reg::at(self.base, set_off).write_volatile(bit) },
+            PinLevel::Low => unsafe { reg::at(self.base, clr_off).write_volatile(bit) },
         }
         Ok(())
     }
@@ -198,7 +195,7 @@ impl Esp32Gpio {
     pub fn read(&self, pin: u8) -> BusResult<PinLevel> {
         let (hi, bit) = pin_bit(pin).ok_or(BusError::InvalidConfig)?;
         let off = if hi { GPIO_IN1 } else { GPIO_IN };
-        let val = unsafe { self.reg(off).read_volatile() };
+        let val = unsafe { reg::at(self.base, off).read_volatile() };
         Ok(if val & bit != 0 {
             PinLevel::High
         } else {
@@ -210,7 +207,7 @@ impl Esp32Gpio {
     pub fn clear_interrupt(&self, pin: u8) -> BusResult<()> {
         let (hi, bit) = pin_bit(pin).ok_or(BusError::InvalidConfig)?;
         let off = if hi { GPIO_STATUS1_W1TC } else { GPIO_STATUS_W1TC };
-        unsafe { self.reg(off).write_volatile(bit) };
+        unsafe { reg::at(self.base, off).write_volatile(bit) };
         Ok(())
     }
 }
