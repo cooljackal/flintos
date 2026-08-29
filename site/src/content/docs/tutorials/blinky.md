@@ -107,10 +107,10 @@ returned early on one is worse than one that keeps going.
 | The task does | logs a counter | toggles the onboard LED |
 | You see | text on the console | a blinking LED |
 
-## Next: interrupts
+## Next: drive it from a timer
 
-This blink is a busy `sleep`/`toggle` loop — the LED is a plain on/off pin, so
-that's all it takes. An **addressable** RGB LED (the M5Stack Atom's) is a
-different animal: its colour is a *timed* signal, streamed through a peripheral
-and refilled from an **interrupt** as it drains. That's the `blink` example
-(`apps/examples/blink`), and the subject of the next step.
+This blink is a busy `sleep`/`toggle` loop — the task spends nearly all its time
+waiting. Next, [Blinky on a timer](/tutorials/blinky-timer/) hands the toggling
+to the kernel's timer, so `main` just arms a callback and returns — no busy task.
+Then, later, an **addressable** RGB LED whose timed signal is refilled from an
+interrupt you connect yourself.

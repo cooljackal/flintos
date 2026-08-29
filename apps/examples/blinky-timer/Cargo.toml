@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "blinky-timer"
+publish = false
+version.workspace = true
+edition.workspace = true
+description = "FlintOS blink example — the onboard LED toggled by a periodic timer, not a delay loop"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel = { path = "../../../kernel", default-features = false }
+api = { path = "../../../api" }
+# Same as `blinky`: the board opens the onboard LED for us (`board::user_led`).
+board = { path = "../../../board" }
+
+[build-dependencies]
+build = { path = "../../../tools/build" }
+
+[features]
+default = ["kernel/debug-level-1"]
+
+# See hello/Cargo.toml: `build::link()` reads this to size the DRAM map.
+radio-bt = []

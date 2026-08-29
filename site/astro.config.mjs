@@ -47,6 +47,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Hello, world', slug: 'tutorials/hello-world' },
 						{ label: 'Blinky', slug: 'tutorials/blinky' },
+						{ label: 'Blinky on a timer', slug: 'tutorials/blinky-timer' },
 					],
 				},
 				{
