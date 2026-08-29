@@ -235,8 +235,13 @@ value was wrong once.
 
 ## Registering it
 
-Add to the workspace `members`, then to the board manifest's `TARGET_BUSES` or
-`TARGET_DEVICES`. See [Adding a Board](/developers/adding-a-board/).
+`make add-driver NAME=<name> [CATEGORY=physical|bus|logical]` scaffolds the
+crate and registers it in the workspace `members` for you (drivers are listed,
+not globbed). If you wrote the crate by hand instead, add it to `members`
+yourself. Either way, wire it into the board manifest's `TARGET_BUSES` or
+`TARGET_DEVICES` — see [Adding a Board](/developers/adding-a-board/) — and, to
+depend on it from an app, `make enable-driver APP=<app> DRIVER=<name>`
+(`make disable-driver` drops it again).
 
 Adding it to `members` is what puts it in CI: the host jobs select the whole
 workspace minus the few crates that need the Xtensa toolchain, so a new driver

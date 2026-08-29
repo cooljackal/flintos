@@ -213,7 +213,8 @@ invariant esp-idf relies on, reached from FlintOS's own primitives.
 The stall survives as a bounded fallback, and `esp32_flash::PARK_FELL_BACK`
 records it if it ever fires. `esp32_flash::PARKS` counts the handshakes, so a
 dead handshake and a working one can be told apart — `apps/tests/flashprobe` prints
-both, and is the only application that starts the second core.
+both. (`apps/tests/smp` also starts the second core, to pin tasks across cores;
+flashprobe is the one that reports the park handshake counters.)
 
 ### Interrupts during a flash operation
 

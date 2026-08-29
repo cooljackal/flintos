@@ -55,4 +55,4 @@ contracts and pure code with no hardware. See [Libraries](/developers/libraries/
 The reference covers the crates that build on the host: the `api` surface, the
 driver/bus traits, the logical drivers, and `lib/*`. Architecture- and
 chip-specific internals (`arch/*`, `soc/*`) are documented in their own source
-and in the [Hardware](/#hardware) pages, not in this reference.
+and in the [Hardware](/hardware/soc-esp32/) pages, not in this reference.

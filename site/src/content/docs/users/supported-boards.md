@@ -11,12 +11,12 @@ feature that matches your hardware; `BOARD` has no default.
 | [ESP32-DevKitC / WROOM-32](/hardware/board-esp32-devkitc/) | Xtensa LX6 / ESP32 | `board-esp32-devkitc` | 🟢 verified — the reference board |
 | [M5Stack Atom Matrix](/hardware/board-m5stack-atom/) | Xtensa LX6 / ESP32-PICO | `board-m5-atom-matrix` | 🟢 verified — LED panel, IMU, ADC |
 | [M5Stack Atom Lite](/hardware/board-m5stack-atom/) | Xtensa LX6 / ESP32-PICO | `board-m5-atom-lite` | 🟢 verified — one LED |
-| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | `board-m5-core2` | 🟢 bring-up — power rails, MPU6886 IMU, ILI9342C LCD and FT6336U touch verified on hardware |
+| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | `board-m5-core2` | 🟠 bring-up in progress — power rails, MPU6886 IMU, ILI9342C LCD and FT6336U touch verified on hardware |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | `board-wio-rp2040-mini` | 🟢 verified — kernel suite, both cores |
 | Raspberry Pi Pico | ARMv6-M / RP2040 | `board-raspberry-pi-pico` | 🟢 verified — kernel + peripheral suite over SWD |
 | [ESP32-WROVER](/hardware/board-esp32-wrover/) | Xtensa LX6 / ESP32 | `board-esp32-wrover` | 🟡 manifest written, never flashed |
 
-🟢 checked on real silicon · 🟡 should work, nobody has flashed it
+🟢 checked on real silicon · 🟠 bring-up in progress, some subsystems verified · 🟡 should work, nobody has flashed it
 
 ```bash
 make flash BOARD=board-esp32-devkitc

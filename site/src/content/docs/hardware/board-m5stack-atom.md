@@ -125,8 +125,12 @@ has no native pads anyway.
 
 ## Free pins
 
-Broken out on the Atom's headers: **19, 21, 22, 23, 25, 33** plus the Grove pins
-**26, 32** and the reserved-but-free **16, 17**.
+Broken out on the Atom's headers: **19, 22, 23, 33** plus the Grove pins
+**26, 32**. On the Lite, **21** and **25** are free as well; on the Matrix they
+are the IMU's private I²C bus (`IMU_SCL_GPIO = 21`, `IMU_SDA_GPIO = 25`), so
+don't reuse them there. **16, 17** are *not* free — they reach the in-package
+flash (`RESERVED_GPIOS = [16, 17]`); routing a peripheral onto GPIO16 kills the
+running image.
 
 Careful with **0, 2, 5, 12, 15** — strapping pins. GPIO12 especially: pulling it
 high at boot sets the flash voltage wrong and can brick the module.

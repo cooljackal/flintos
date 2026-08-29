@@ -3,9 +3,26 @@ title: Adding a board
 ---
 
 
-One file, plus four one-line edits to register it. If your board uses a chip FlintOS
+One file, plus a little wiring to register it. If your board uses a chip FlintOS
 already supports, that's the whole job — the SoC crate already knows the
 peripheral addresses, the IRQ numbers and how to route pins.
+
+## The quick way
+
+If you're cloning a board that already works and changing a few facts — often
+just a pin — let the scaffolder do the wiring:
+
+```bash
+make new-board NAME=my-board FROM=board-esp32-devkitc
+```
+
+It writes `board/src/my_board.rs` (a clone of `FROM`), adds the `board-my-board`
+feature to `board` and `kernel`, registers the module in `board/src/lib.rs`,
+and — for an RP2040 board — adds it to the Makefile. You then edit only what
+differs. The [Add a board](/tutorials/new-board/) tutorial walks through it.
+
+The rest of this page is what that command does, for when you're adding a board
+from scratch or want to understand the result.
 
 > **What belongs in a manifest:** every fact an application would otherwise
 > look up in a datasheet — pins, base addresses, IRQs, and the *shape* of
@@ -18,7 +35,7 @@ peripheral addresses, the IRQ numbers and how to route pins.
 ## 1. Copy a manifest
 
 ```bash
-cp board/src/esp32_devkitc.rs board/src/my_board.rs
+cp board/src/esp32_devkitc.rs board/src/my_board.rs   # or: make new-board
 ```
 
 Edit the name, the tick, and the pins:
@@ -109,28 +126,27 @@ they return `Error::Other` (or `None`) so the app can say why.
 board-my-board = []
 ```
 
-`board/src/lib.rs` — four one-line edits:
+`board/src/lib.rs` — three one-line edits:
 
 ```rust
 // 1. the module
 #[cfg(feature = "board-my-board")]
 pub mod my_board;
 
-// 2. one more term in the counted assert
+// 2. one more term in the counted assert (above the `+ 0` anchor)
 const SELECTED: usize = /* … */ + cfg!(feature = "board-my-board") as usize;
 
-// 3. one line in the "no board selected" compile_error! list
-
-// 4. an arm in the `active` re-export
+// 3. an arm in the `active` re-export
 #[cfg(feature = "board-my-board")]
 pub use my_board as active;
 ```
 
 Two guards keep exactly one board on. The "no board selected" case is a
-`compile_error!` that lists the boards. The "more than one" case is a **counted
-assert** — `assert!(SELECTED <= 1, …)` over a `const SELECTED` that sums
-`cfg!(feature = …) as usize` per board — so adding a board is one term, not a
-pairwise line against every existing board.
+`compile_error!` keyed on the driver bundles (`esp32-drivers` / `rp2040-drivers`)
+— every board enables one, so it needs no per-board edit. The "more than one"
+case is a **counted assert** — `assert!(SELECTED <= 1, …)` over a `const
+SELECTED` that sums `cfg!(feature = …) as usize` per board — so adding a board is
+one term, not a pairwise line against every existing board.
 
 Registering a board touches more than one file — the manifest, `board/Cargo.toml`,
 the four places in `board/src/lib.rs` above, `kernel/Cargo.toml`, and the

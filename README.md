@@ -9,7 +9,8 @@
    ╚═╝     ╚══════╝╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚══════╝
 ```
 
-**A preemptive real-time OS for 32-bit microcontrollers, in `no_std` Rust.**
+**A preemptive real-time OS for 32-bit microcontrollers, in `no_std` Rust — and
+an AI-friendly codebase to build on.**
 
 No Kconfig. No CMake. No vendor SDK. No POSIX pretense. `git clone` →
 `make flash BOARD=<your board>` → three tasks running on real silicon.
@@ -167,7 +168,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 | ESP32-DevKitC / WROOM-32 | Xtensa LX6 / ESP32 | ✅ verified — reference board; rev 1 & rev 3, full self-test suite + Wi-Fi/IP stack |
 | M5Stack Atom Matrix | Xtensa LX6 / ESP32-PICO | ✅ verified — LED panel, IMU, ADC |
 | M5Stack Atom Lite | Xtensa LX6 / ESP32-PICO | ✅ verified — one LED |
-| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟡 bring-up in progress — AXP192 power rails + battery status, MPU6886 IMU, ILI9342C LCD (SPI-DMA fills/blits/throughput) and FT6336U touch (coordinates confirmed under finger) all verified on hardware |
+| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟠 bring-up in progress — AXP192 power rails + battery status, MPU6886 IMU, ILI9342C LCD (SPI-DMA fills/blits/throughput) and FT6336U touch (coordinates confirmed under finger) all verified on hardware |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
 | Raspberry Pi Pico | ARMv6-M / RP2040 | ✅ verified — kernel, peripherals and native USB device transport |
 | ESP32-WROVER | Xtensa LX6 / ESP32 | 🟡 manifest written, never flashed |
@@ -226,13 +227,15 @@ kernel::flint_app!(main, abi = 2);
 
 fn main() {
     // runs once, after the kernel is up but before interrupts unmask
-    Task::new("blink", blink).spawn().expect("spawn");
+    Task::new("hello", hello).spawn().expect("spawn");
 }
 
-fn blink() {
+fn hello() {
+    let mut n = 0u32;
     loop {
-        log_info!("tick at {} ms", timer::now_ms());
-        sleep_ms(500);
+        n += 1;
+        log_info!("n={n}");
+        sleep_ms(1000);
     }
 }
 ```
@@ -241,7 +244,7 @@ fn blink() {
 `.on_core(..)` are optional builder steps before `.spawn()`, which returns `None`
 if the task pool is full.
 
-Priorities are banded — `Critical`, `Normal`, `Background`, each `0..15` — so you
+Priorities are banded — `Critical`, `Normal`, `Background`, each 0–15 — so you
 slot a task in without renumbering. Queues (`api::queue`) are typed and bounded,
 with an ISR-safe `send_isr()`; mutexes (`api::mutex`) carry priority inheritance.
 Full tutorial: [Tutorial: Hello World][tutorial].

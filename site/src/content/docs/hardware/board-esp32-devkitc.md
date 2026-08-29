@@ -17,8 +17,8 @@ Tick: 1 ms.
 rev v3.0 module (4 MB flash, dual core, Wi-Fi and BT) — see
 [What has actually been run](#what-has-actually-been-run) below.
 
-Note the *default* board is the WROVER, which nobody has flashed. Pass
-`BOARD=board-esp32-devkitc` to get the verified path.
+The WROVER manifest has never been flashed, so pass
+`BOARD=board-esp32-devkitc` for the verified path.
 
 ## The DevKitC difference
 

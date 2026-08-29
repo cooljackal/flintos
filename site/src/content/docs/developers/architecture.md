@@ -15,7 +15,7 @@ is built on:
 
 | Where | What assumes it |
 |---|---|
-| `hal::types::TaskContext` | `#[repr(C)]` of `u32`s, indexed by fixed byte offset from `vectors.S`, size asserted at 96 |
+| `arch/xtensa` `TaskContext` | `#[repr(C)]` of `u32`s, indexed by fixed byte offset from `vectors.S`, size asserted at 96 |
 | `arch/xtensa/flint32.ld` | Every region origin and length |
 | `hal::bus::PhysicalBus` | Peripheral bases are `u32` |
 | `soc/esp32` | The whole peripheral map, IO_MUX table and signal indices |
@@ -59,12 +59,18 @@ an application drive one LED of a 25-LED panel and look correct while 24 stayed
 dark. That is why the Atom is two boards, `-lite` and `-matrix`, declaring
 `RGB_LED_COUNT` and `RGB_LED_LAYOUT` as well as the pin.
 
-**Honest limit:** the directories and the dependency graph are in the right
-shape for a second architecture, but the seam is not yet parameterised. There
-is no arch-selection axis (`cfg(target_os = "none")` is equally true for a
-Cortex-M target), `hal::TaskContext` is a set of Xtensa register-window fields,
-and the kernel's fatal-fault path writes a hard-coded ESP32 UART address. A
-second arch means building that axis first.
+**Two architectures today.** The seam is parameterised now. Beside the
+Xtensa/ESP32 pair sit `arch/armv6m` and `soc/rp2040`, and the RP2040 boards
+(`board-wio-rp2040-mini`, `board-raspberry-pi-pico`) build through the same
+kernel. The arch is selected by a Cargo feature (`arch-xtensa` / `arch-armv6m`)
+that each board pulls in, and `hal::TaskContext` is a trait each arch implements
+— the Xtensa register window and the Cortex-M exception frame are two impls of
+it. Adding a third arch is another `arch/` + `soc/` pair, not a kernel rewrite.
+
+One Xtensa-specific remnant remains: the raw early-boot fault reporter
+(`kernel/src/debug/fault.rs`) writes the ESP32 UART0 FIFO directly, so it prints
+only on ESP32 targets. It runs before the console exists; the board-owned
+console (`board::console`) is what everything after bring-up uses.
 
 ### Why pin routing lives in the SoC tier
 

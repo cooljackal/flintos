@@ -18,10 +18,11 @@ where it died**.
 | `entering idle`, then silence | Died in its first interrupt — trap entry or `_flint_trap` |
 | `DBL <cause> <epc1> <depc> <vaddr>` | Double exception. Those four words locate it exactly |
 
-### Reading a `DBL` line
+### If it printed a `DBL` line
 
-`DBL <exccause> <epc1> <depc> <excvaddr>`, and the order matters: **`epc1` is
-where the *first* fault happened, `depc` where the second one did.**
+That's a double exception; [Reading a `DBL` line](#reading-a-dbl-line) below
+breaks down the four words. The one to read first in this boot-silence case is
+`depc`, the *second* fault's PC:
 
 If `depc` lands between `VECBASE` and `VECBASE+0x180` you are in a window
 overflow or underflow handler, and `excvaddr` is the address it tried to spill
