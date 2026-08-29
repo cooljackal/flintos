@@ -250,7 +250,7 @@ COMMA          := ,
 # whatever the app still owns (self-test, blobs, watchdog-test-*, radio-bt) or a
 # further kernel feature (`kernel/radio-ble`).
 APP_FEATURES   := kernel/$(BOARD),kernel/$(DEBUG)$(if $(EXTRA_FEATURES),$(COMMA)$(EXTRA_FEATURES))
-RP2040_BOARDS  := board-wio-rp2040-mini board-raspberry-pi-pico
+RP2040_BOARDS  := board-wio-rp2040-mini board-raspberry-pi-pico board-pico-ext-led
 RP2040_BOARD_NAME := $(patsubst board-%,%,$(BOARD))
 ifneq ($(filter $(BOARD),$(RP2040_BOARDS)),)
 CARGO          := cargo
@@ -423,6 +423,10 @@ apps: ## List the applications in apps/examples/ and apps/tests/
 .PHONY: new-app
 new-app: ## Scaffold a new app: make new-app NAME=<name> [DESC="..."]
 	@NAME="$(NAME)" DESC="$(DESC)" $(BASH) tools/new-app.sh
+
+.PHONY: new-board
+new-board: ## Scaffold a board by cloning one: make new-board NAME=<name> [FROM=<board>] [DESC="..."]
+	@NAME="$(NAME)" FROM="$(FROM)" DESC="$(DESC)" $(BASH) tools/new-board.sh
 
 .PHONY: drivers
 drivers: ## List drivers: make drivers [CATEGORY=physical|bus|logical] [MATCH=<pat>]

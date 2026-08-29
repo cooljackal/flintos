@@ -95,9 +95,13 @@ fn toggle() {
 | While idle | the task sleeps | nothing runs but idle |
 | Logged from | the task (`[blink]`) | the callback (`[isr]`) |
 
-## Next: interrupts
+## Next: run it on your own board
 
-A timer callback already *is* an interrupt handler the kernel calls for you. The
-next step wires up your own: the `blink` example (`apps/examples/blink`) drives
-an addressable RGB LED whose colour is a timed signal, streamed through a
-peripheral and refilled from an interrupt you connect yourself.
+So far the LED pin came from whichever board you flashed. Next,
+[Add a board](/tutorials/new-board/) shows the other side of that seam: clone an
+existing board onto a **different pin**, then run this same Blinky at it without
+touching the app.
+
+Further on, an **addressable** RGB LED whose timed signal is refilled from an
+interrupt you connect yourself — the `blink` example (`apps/examples/blink`)
+builds on the callback idea this tutorial introduced.

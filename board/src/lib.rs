@@ -36,10 +36,14 @@
 //! cargo build -p kernel   # default: board-esp32-wrover
 //! ```
 //!
-//! Adding a new board: add a `board-<name>` feature in `Cargo.toml`, a
-//! `#[cfg(feature = "board-<name>")] pub mod <name>;` line below, one line
-//! in the `SELECTED` count, one line in the "no board selected" message, and
-//! an arm in the `active` re-export block.
+//! Adding a new board: run `make new-board NAME=<name> FROM=<board>`, which
+//! clones an existing manifest to `src/<name>.rs` and does the wiring — the
+//! `board-<name>` feature in this crate and `kernel`, the `pub mod` and `pub use
+//! … as active` lines below, the `SELECTED` count, and (for an RP2040 board)
+//! the Makefile's `RP2040_BOARDS`. You then edit only what differs (a pin). The
+//! device accessors (`user_led`, `console`, …) are keyed on the driver bundle
+//! (`rp2040-drivers` / `esp32-drivers`), not on board names, so a cloned board
+//! of a known family gets them for free. See the "Add a board" tutorial.
 
 #![no_std]
 
@@ -60,6 +64,7 @@ pub fn programmable_io(index: u8) -> Result<impl hal::pio::ProgrammableIo, hal::
 #[cfg(feature = "board-esp32-wrover")]
 pub mod esp32_wrover;
 
+
 #[cfg(feature = "board-esp32-devkitc")]
 pub mod esp32_devkitc;
 
@@ -78,11 +83,17 @@ mod display;
 #[cfg(feature = "esp32-drivers")]
 pub use display::Esp32DisplayInterface;
 
-#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+// The shared RP2040 base manifest, present for every RP2040 board (each selects
+// `rp2040-drivers`). A board-specific module like `raspberry_pi_pico` re-exports
+// from it and overrides only what differs — see the "Add a board" tutorial.
+#[cfg(feature = "rp2040-drivers")]
 pub mod wio_rp2040_mini;
 
 #[cfg(feature = "board-raspberry-pi-pico")]
 pub mod raspberry_pi_pico;
+
+#[cfg(feature = "board-pico-ext-led")]
+pub mod pico_ext_led;
 
 /// Pin map shared by both Atom variants. Not selectable on its own: it declares
 /// no LED count, because that is the only thing the two disagree about.
@@ -95,18 +106,14 @@ mod esp32_wroom_common;
 
 // ── Exactly-one-board enforcement ───────────────────────────────────────────
 
+// A board is chosen by a `board-*` feature, and every one enables its SoC's
+// driver bundle (`esp32-drivers` / `rp2040-drivers`). So "no bundle enabled" is
+// exactly "no board selected" -- keyed on the bundles, this guard needn't be
+// re-listed each time a board is added (a scaffolded board just works).
 // `board-m5-atom` is excluded here because it has its own message below, and
 // two compile errors for one mistake buries the one that says what to do.
 #[cfg(all(
-    not(any(
-        feature = "board-esp32-wrover",
-        feature = "board-esp32-devkitc",
-        feature = "board-m5-atom-lite",
-        feature = "board-m5-atom-matrix",
-        feature = "board-m5-core2",
-        feature = "board-wio-rp2040-mini",
-        feature = "board-raspberry-pi-pico",
-    )),
+    not(any(feature = "esp32-drivers", feature = "rp2040-drivers")),
     not(feature = "board-m5-atom")
 ))]
 compile_error!(
@@ -128,17 +135,20 @@ compile_error!(
      	board-raspberry-pi-pico Raspberry Pi Pico           (connected)"
 );
 
-// How many `board-*` features are on. `cfg!()` is a const bool, so the count
-// is a const and the assert fails at compile time with the message below.
-// A new board is one line here: `+ cfg!(feature = "board-<name>") as usize`.
-// (The zero case has its own `compile_error!` above so it can list the boards.)
+// How many `board-*` features are on. `cfg!()` is a const bool, so the count is
+// a const and the assert fails at compile time with the message below. The
+// trailing `+ 0` is a stable anchor: `make new-board` inserts a scaffolded
+// board's `+ cfg!(...)` term on the line just above it.
 const SELECTED: usize = cfg!(feature = "board-esp32-wrover") as usize
     + cfg!(feature = "board-esp32-devkitc") as usize
     + cfg!(feature = "board-m5-atom-lite") as usize
     + cfg!(feature = "board-m5-atom-matrix") as usize
     + cfg!(feature = "board-m5-core2") as usize
     + cfg!(feature = "board-wio-rp2040-mini") as usize
-    + cfg!(feature = "board-raspberry-pi-pico") as usize;
+    + cfg!(feature = "board-raspberry-pi-pico") as usize
+    + cfg!(feature = "board-pico-ext-led") as usize
+    // new-board:selected — `make new-board` inserts scaffolded boards above.
+    + 0;
 
 const _: () = assert!(
     SELECTED <= 1,
@@ -172,6 +182,7 @@ compile_error!(
 #[cfg(feature = "board-esp32-wrover")]
 pub use esp32_wrover as active;
 
+
 #[cfg(feature = "board-esp32-devkitc")]
 pub use esp32_devkitc as active;
 
@@ -189,6 +200,9 @@ pub use wio_rp2040_mini as active;
 
 #[cfg(feature = "board-raspberry-pi-pico")]
 pub use raspberry_pi_pico as active;
+
+#[cfg(feature = "board-pico-ext-led")]
+pub use pico_ext_led as active;
 
 // ── The board as one value ──────────────────────────────────────────────────
 //
@@ -269,13 +283,7 @@ pub struct SelftestPads {
 /// An I2C device wired onto the board: which controller and pins bring it up
 /// (an [`I2cPort`](soc_esp32::I2cPort), so "which controller" is no longer
 /// half-declared), and the 7-bit address it answers at.
-#[cfg(any(
-    feature = "board-esp32-wrover",
-    feature = "board-esp32-devkitc",
-    feature = "board-m5-atom-lite",
-    feature = "board-m5-atom-matrix",
-    feature = "board-m5-core2",
-))]
+#[cfg(feature = "esp32-drivers")]
 #[derive(Copy, Clone, Debug)]
 pub struct I2cAttachment {
     pub port: soc_esp32::I2cPort,
@@ -302,13 +310,7 @@ pub struct RailSetup {
 /// express — which rail must be up before the peripherals that sit on it. The
 /// system rail (DCDC1 on the Core2, powering the ESP32 itself) must never
 /// appear in `rails`; `power_init` refuses it rather than brown the CPU out.
-#[cfg(any(
-    feature = "board-esp32-wrover",
-    feature = "board-esp32-devkitc",
-    feature = "board-m5-atom-lite",
-    feature = "board-m5-atom-matrix",
-    feature = "board-m5-core2",
-))]
+#[cfg(feature = "esp32-drivers")]
 #[derive(Copy, Clone, Debug)]
 pub struct PmicAttachment {
     pub port: soc_esp32::I2cPort,
@@ -320,13 +322,7 @@ pub struct PmicAttachment {
 /// the two GPIOs — data/command and chip-select — the transport toggles. The
 /// panel's own reset (an AXP192 GPIO on the Core2) is the driver's `init`
 /// closure, not a manifest pin.
-#[cfg(any(
-    feature = "board-esp32-wrover",
-    feature = "board-esp32-devkitc",
-    feature = "board-m5-atom-lite",
-    feature = "board-m5-atom-matrix",
-    feature = "board-m5-core2",
-))]
+#[cfg(feature = "esp32-drivers")]
 #[derive(Copy, Clone, Debug)]
 pub struct DisplayAttachment {
     pub port: soc_esp32::SpiPort,
@@ -340,42 +336,18 @@ pub struct Board {
     /// Human-readable board name.
     pub name: &'static str,
     /// The onboard IMU, if the board has one on a private I2C bus.
-    #[cfg(any(
-        feature = "board-esp32-wrover",
-        feature = "board-esp32-devkitc",
-        feature = "board-m5-atom-lite",
-        feature = "board-m5-atom-matrix",
-        feature = "board-m5-core2",
-    ))]
+    #[cfg(feature = "esp32-drivers")]
     pub imu: Option<I2cAttachment>,
     /// The onboard PMIC and the rails it brings up at boot, if the board has
     /// one. `None` on a board wired straight to a regulator.
-    #[cfg(any(
-        feature = "board-esp32-wrover",
-        feature = "board-esp32-devkitc",
-        feature = "board-m5-atom-lite",
-        feature = "board-m5-atom-matrix",
-        feature = "board-m5-core2",
-    ))]
+    #[cfg(feature = "esp32-drivers")]
     pub pmic: Option<PmicAttachment>,
     /// The onboard capacitive-touch controller, if any. On the Core2 it shares
     /// the internal I2C bus with the IMU and PMIC.
-    #[cfg(any(
-        feature = "board-esp32-wrover",
-        feature = "board-esp32-devkitc",
-        feature = "board-m5-atom-lite",
-        feature = "board-m5-atom-matrix",
-        feature = "board-m5-core2",
-    ))]
+    #[cfg(feature = "esp32-drivers")]
     pub touch: Option<I2cAttachment>,
     /// The onboard SPI display panel, if any.
-    #[cfg(any(
-        feature = "board-esp32-wrover",
-        feature = "board-esp32-devkitc",
-        feature = "board-m5-atom-lite",
-        feature = "board-m5-atom-matrix",
-        feature = "board-m5-core2",
-    ))]
+    #[cfg(feature = "esp32-drivers")]
     pub display: Option<DisplayAttachment>,
     /// The onboard addressable RGB LED or panel, if any.
     pub rgb_led: Option<RgbLed>,
@@ -388,15 +360,8 @@ pub struct Board {
 }
 
 /// The active board, as one value. Re-exported from the selected board module.
-#[cfg(any(
-    feature = "board-esp32-wrover",
-    feature = "board-esp32-devkitc",
-    feature = "board-m5-atom-lite",
-    feature = "board-m5-atom-matrix",
-    feature = "board-m5-core2",
-    feature = "board-wio-rp2040-mini",
-    feature = "board-raspberry-pi-pico",
-))]
+/// Every board selects one of the two driver bundles, so this is "any board".
+#[cfg(any(feature = "esp32-drivers", feature = "rp2040-drivers"))]
 pub use active::BOARD;
 
 // ── Device accessors ─────────────────────────────────────────────────────────
@@ -883,7 +848,7 @@ pub fn fold_spi_loopback() -> hal::Result<()> {
 static CONSOLE: api::Once<esp32_uart::Esp32Uart> = api::Once::new();
 
 /// The RP2040 board console on UART0.
-#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+#[cfg(feature = "rp2040-drivers")]
 static CONSOLE: api::Once<rp2040_uart::Rp2040Uart> = api::Once::new();
 
 /// Bring up the console. Called once, first thing in `startup::init`.
@@ -940,7 +905,7 @@ pub fn console() -> Option<&'static dyn hal::stream::ByteStream> {
 }
 
 /// Bring up the RP2040 UART0 console from the selected board's manifest.
-#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+#[cfg(feature = "rp2040-drivers")]
 pub fn console_init() -> bool {
     if CONSOLE.get().is_some() {
         return true;
@@ -955,7 +920,7 @@ pub fn console_init() -> bool {
 }
 
 /// The selected RP2040 board's UART0 console.
-#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+#[cfg(feature = "rp2040-drivers")]
 pub fn console() -> Option<&'static dyn hal::stream::ByteStream> {
     CONSOLE.get().map(|uart| uart as &dyn hal::stream::ByteStream)
 }
@@ -965,12 +930,12 @@ pub fn console() -> Option<&'static dyn hal::stream::ByteStream> {
 /// The board does the Layer-1 GPIO bring-up so the application never names the
 /// GPIO driver: it gets a ready `Led` from [`user_led`] and just turns it on and
 /// off. See the `blinky` example.
-#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+#[cfg(feature = "rp2040-drivers")]
 pub struct Led {
     pin: rp2040_gpio::Rp2040Pin,
 }
 
-#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+#[cfg(feature = "rp2040-drivers")]
 impl Led {
     /// Turn the LED on.
     pub fn on(&self) -> hal::Result<()> {
@@ -994,7 +959,7 @@ impl Led {
 }
 
 /// Open this board's onboard user LED (`USER_LED`) as a push-pull output.
-#[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+#[cfg(feature = "rp2040-drivers")]
 pub fn user_led() -> hal::Result<Led> {
     let pin = rp2040_gpio::Rp2040Pin::open(&active::USER_LED)?;
     pin.set_mode(rp2040_gpio::PinMode::Output)?;
@@ -1022,9 +987,9 @@ mod tests {
     // the selected SoC's `SystemOnChip` impl rather than being keyed on the
     // board name here. The board type is the one thing that still varies by
     // family, so it is picked by which soc crate this board pulls in.
-    #[cfg(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico"))]
+    #[cfg(feature = "rp2040-drivers")]
     use soc_rp2040::Rp2040 as SelectedSoc;
-    #[cfg(not(any(feature = "board-wio-rp2040-mini", feature = "board-raspberry-pi-pico")))]
+    #[cfg(not(feature = "rp2040-drivers"))]
     use soc_esp32::Esp32 as SelectedSoc;
 
     const PERIPH_BASE_LOW: u32 = SelectedSoc::PERIPHERAL_WINDOW.0;

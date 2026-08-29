@@ -100,6 +100,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "blinky"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "board",
+ "build",
+ "kernel",
+]
+
+[[package]]
+name = "blinky-timer"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "board",
+ "build",
+ "kernel",
+]
+
+[[package]]
 name = "bme280"
 version = "0.1.0"
 dependencies = [
@@ -130,6 +150,7 @@ dependencies = [
  "i2c-bus",
  "led-matrix",
  "rp2040-flash",
+ "rp2040-gpio",
  "rp2040-i2c",
  "rp2040-pio",
  "rp2040-spi",
