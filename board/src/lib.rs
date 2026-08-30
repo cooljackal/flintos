@@ -137,8 +137,9 @@ compile_error!(
 
 // How many `board-*` features are on. `cfg!()` is a const bool, so the count is
 // a const and the assert fails at compile time with the message below. The
-// trailing `+ 0` is a stable anchor: `make new-board` inserts a scaffolded
-// board's `+ cfg!(...)` term on the line just above it.
+// `new-board:selected` marker is a stable anchor: `make new-board` inserts a
+// scaffolded board's `+ cfg!(...)` term on the line just above it. The `;` is on
+// its own line so the last real term needs no special-casing.
 const SELECTED: usize = cfg!(feature = "board-esp32-wrover") as usize
     + cfg!(feature = "board-esp32-devkitc") as usize
     + cfg!(feature = "board-m5-atom-lite") as usize
@@ -148,7 +149,7 @@ const SELECTED: usize = cfg!(feature = "board-esp32-wrover") as usize
     + cfg!(feature = "board-raspberry-pi-pico") as usize
     + cfg!(feature = "board-pico-ext-led") as usize
     // new-board:selected — `make new-board` inserts scaffolded boards above.
-    + 0;
+    ;
 
 const _: () = assert!(
     SELECTED <= 1,

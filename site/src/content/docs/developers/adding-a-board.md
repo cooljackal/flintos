@@ -133,7 +133,7 @@ board-my-board = []
 #[cfg(feature = "board-my-board")]
 pub mod my_board;
 
-// 2. one more term in the counted assert (above the `+ 0` anchor)
+// 2. one more term in the counted assert (above the new-board:selected marker)
 const SELECTED: usize = /* … */ + cfg!(feature = "board-my-board") as usize;
 
 // 3. an arm in the `active` re-export

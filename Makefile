@@ -556,6 +556,10 @@ ATOM_BOARD          := board-m5-atom-matrix
 # they cannot build against the default board and are checked against theirs.
 CORE2_APPS          := backlight lcd touch
 CORE2_BOARD         := board-m5-core2
+# RP2040-only examples: they open the onboard LED via `board::user_led()`, which
+# exists only under the rp2040-drivers bundle, so they cannot build against an
+# ESP32 board. Excluded from the Xtensa workspace check and built per ARM board.
+RP2040_APPS         := blinky blinky-timer
 
 .PHONY: check-all
 check-all: ## Full check including Xtensa and ARM architectures
@@ -563,6 +567,7 @@ check-all: ## Full check including Xtensa and ARM architectures
 		--workspace --exclude build --exclude size --exclude apidoc --exclude usb-control \
 		$(addprefix --exclude ,$(BOARD_SPECIFIC_APPS)) \
 		$(addprefix --exclude ,$(CORE2_APPS)) \
+		$(addprefix --exclude ,$(RP2040_APPS)) \
 		$(XTENSA_BOARD_FEATURES)
 	@for a in $(BOARD_SPECIFIC_APPS); do \
 		echo "== $$a ($(ATOM_BOARD))"; \
@@ -580,7 +585,7 @@ check-all: ## Full check including Xtensa and ARM architectures
 	@# with a prebuilt core, so this needs `rustup target add $(ARM_TARGET)`
 	@# on that toolchain rather than build-std. ci.yml installs it.
 	@for b in $(ARM_BOARDS); do \
-		for a in arm-selftest usb-selftest; do \
+		for a in arm-selftest usb-selftest $(RP2040_APPS); do \
 			echo "== $$a ($$b)"; \
 			cargo check --target $(ARM_TARGET) -p $$a --no-default-features \
 				--features "kernel/$$b,kernel/debug-level-1" || exit 1; \

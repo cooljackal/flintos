@@ -768,35 +768,24 @@ fn unlock_plan(qer: u8, mfr: u32, sr1: u8) -> Option<UnlockPlan> {
     // if/else chain, not a `match`, deliberately: a `match` on this small dense
     // range can compile to a jump table in `.rodata` (flash), and this runs with
     // the cache off, where reading flash wedges the CPU with no fault.
-    let bp_mask;
-    let qe_in_sr2;
-    let keep_sr1_qe;
-    if qer == 1 || qer == 4 || qer == 5 || qer == 6 {
+    let (bp_mask, qe_in_sr2, keep_sr1_qe) = if qer == 1 || qer == 4 || qer == 5 || qer == 6 {
         // QE is SR2 bit 1. SR1 protection is [6:2]; the write is two bytes so a
         // one-byte WRSR cannot zero SR2's QE.
-        bp_mask = bp_wide;
-        qe_in_sr2 = true;
-        keep_sr1_qe = false;
+        (bp_wide, true, false)
     } else if qer == 0 {
         // No QE bit. Clear SR1 protection [6:2] with a one-byte write.
-        bp_mask = bp_wide;
-        qe_in_sr2 = false;
-        keep_sr1_qe = false;
+        (bp_wide, false, false)
     } else if qer == 2 {
         // QE is SR1 bit 6 (Macronix/ISSI, and this Core2 part). Then block-protect
         // is only [5:2], and bit 6 must be kept set.
-        bp_mask = STATUS_BP_MASK_QER2 as u8;
-        qe_in_sr2 = false;
-        keep_sr1_qe = true;
+        (STATUS_BP_MASK_QER2 as u8, false, true)
     } else if mfr == MFR_GIGADEVICE || mfr == MFR_WINBOND {
         // QER 3/7 (odd/reserved) or SFDP unreadable: fall back to the manufacturer
         // gate the driver shipped with. GigaDevice/Winbond put QE in SR2 bit 1.
-        bp_mask = bp_wide;
-        qe_in_sr2 = true;
-        keep_sr1_qe = false;
+        (bp_wide, true, false)
     } else {
         return None;
-    }
+    };
     let protection = srp0 | bp_mask;
     // The two-byte path writes SR1 = 0 (all protection off) and SR2 = QE, the
     // original sequence; the one-byte path preserves the rest of SR1, keeping
