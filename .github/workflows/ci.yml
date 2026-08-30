@@ -282,14 +282,18 @@ jobs:
               backlight|lcd|touch) board=board-m5-core2 ;;
               arm-selftest)  board=board-wio-rp2040-mini ;;
               usb-selftest)  board=board-raspberry-pi-pico ;;
+              # blinky/blinky-timer open the onboard LED via board::user_led(),
+              # which exists only under the rp2040-drivers bundle.
+              blinky|blinky-timer) board=board-raspberry-pi-pico ;;
               *)             board=board-esp32-devkitc ;;
             esac
-            if [ "$name" = arm-selftest ] || [ "$name" = usb-selftest ]; then
-              build=(cargo build --target thumbv6m-none-eabi)
-            else
-              build=(cargo +esp build --target xtensa-esp32-none-elf
-                     -Z build-std=core,compiler_builtins)
-            fi
+            case "$name" in
+              arm-selftest|usb-selftest|blinky|blinky-timer)
+                build=(cargo build --target thumbv6m-none-eabi) ;;
+              *)
+                build=(cargo +esp build --target xtensa-esp32-none-elf
+                       -Z build-std=core,compiler_builtins) ;;
+            esac
             echo "::group::$name ($board)"
             set -o pipefail
             # Board and debug level are kernel features passed on the command

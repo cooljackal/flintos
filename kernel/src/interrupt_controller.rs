@@ -55,7 +55,11 @@ impl InterruptController for Selected {
     }
 }
 
-#[cfg(feature = "soc-rp2040")]
+// Compiled on hardware (used by `Selected::route`) and in host unit tests (used
+// by the tests below), but not in a plain host lib build, where `Selected` is
+// `target_os = "none"`-gated away and the function would be dead under
+// `-D warnings`.
+#[cfg(all(feature = "soc-rp2040", any(target_os = "none", test)))]
 fn rp2040_can_route(source: u8, cpu_int: u8) -> bool {
     source == cpu_int && source < soc_rp2040::NVIC_IRQ_COUNT
 }
