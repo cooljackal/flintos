@@ -35,3 +35,7 @@ esp-idf/
 # Makefile). Holds the Wi-Fi credentials `wificonnect` compiles in --
 # FLINT_WIFI_SSID / FLINT_WIFI_PASS -- so it must never be committed.
 .env
+
+# Local Wrangler state (cache + account info) from `npx wrangler` — the site
+# deploys from CI, so this never belongs in the repo.
+.wrangler/
