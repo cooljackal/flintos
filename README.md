@@ -168,7 +168,7 @@ any part that keeps the contract. See [Libraries](https://flintos.dev/developers
 | ESP32-DevKitC / WROOM-32 | Xtensa LX6 / ESP32 | ✅ verified — reference board; rev 1 & rev 3, full self-test suite + Wi-Fi/IP stack |
 | M5Stack Atom Matrix | Xtensa LX6 / ESP32-PICO | ✅ verified — LED panel, IMU, ADC |
 | M5Stack Atom Lite | Xtensa LX6 / ESP32-PICO | ✅ verified — one LED |
-| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | 🟠 bring-up in progress — AXP192 power rails + battery status, MPU6886 IMU, ILI9342C LCD (SPI-DMA fills/blits/throughput) and FT6336U touch (coordinates confirmed under finger) all verified on hardware |
+| M5Stack Core2 | Xtensa LX6 / ESP32-D0WDQ6 | ✅ verified — AXP192 power rails + battery, MPU6886 IMU, ILI9342C LCD (SPI-DMA fills/blits/throughput), FT6336U touch, and flash write/erase, all on hardware |
 | Wio RP2040 Mini | ARMv6-M / RP2040 | ✅ verified — kernel suite, both cores |
 | Raspberry Pi Pico | ARMv6-M / RP2040 | ✅ verified — kernel, peripherals and native USB device transport |
 | ESP32-WROVER | Xtensa LX6 / ESP32 | 🟡 manifest written, never flashed |
